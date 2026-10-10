@@ -1042,7 +1042,10 @@ impl Checker<'_> {
             Expr::Format(segments) if expected == Type::Owned => {
                 for segment in segments {
                     // 插值只读取变量，不移动；未支持的类型在检查阶段拒绝。
-                    if !matches!(self.ty(segment)?, Type::Owned | Type::Int | Type::Bool) {
+                    if !matches!(
+                        self.ty(segment)?,
+                        Type::Owned | Type::Shared | Type::Mutable | Type::Int | Type::Bool
+                    ) {
                         return Err("cannot interpolate this value".into());
                     }
                 }

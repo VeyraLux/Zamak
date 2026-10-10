@@ -84,5 +84,20 @@ fn borrowed_byte_length() {
     }
     fs::write(&path, format!("{declarations}fn main() {{\nlet r = Root {{ leaf: Leaf {{ name: \"x\" }} }}\nchange(&mut r.leaf.name)\n}}" )).unwrap();
     assert!(!invoke("check").status.success());
+    fs::write(
+        &path,
+        "fn show(s: &string) { println(\"value={s}\") }\nfn edit(s: &mut string) { println(\"value={s}\") }\nfn main() {\nlet mut name = \"before\"\nshow(&name)\nedit(&mut name)\nname = \"after\"\nprintln(name)\n}\n",
+    )
+    .unwrap();
+    let output = invoke("run");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).ends_with("value=before\nvalue=before\nafter\n")
+    );
+
     fs::remove_file(path).unwrap();
 }
