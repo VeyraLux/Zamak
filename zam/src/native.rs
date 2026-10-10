@@ -33,7 +33,7 @@ static int64_t remainder(int64_t a, int64_t b) {
     if (!b || (a == INT64_MIN && b == -1)) arithmetic_error(); return a%b;
 }
 static int64_t checked_index(int64_t index, size_t length) {
-    if (index < 0 || (uintmax_t)index >= length) { fputs("zam: array index out of bounds\\n", stderr); exit(1); }
+    if (index < 0 || (uintmax_t)index >= length) { fputs("zam: array index out of bounds\n", stderr); exit(1); }
     return index;
 }
 #ifdef _WIN32

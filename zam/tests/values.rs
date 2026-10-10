@@ -97,6 +97,13 @@ fn scalar_values_and_checked_arithmetic() {
     .unwrap();
     let result = invoke("run");
     assert!(!result.status.success());
-    assert!(String::from_utf8_lossy(&result.stderr).contains("array index out of bounds"));
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        stderr
+            .lines()
+            .any(|line| line == "zam: array index out of bounds"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains(r"array index out of bounds\n"), "{stderr}");
     fs::remove_dir_all(root).unwrap();
 }
