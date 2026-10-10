@@ -533,8 +533,8 @@ impl Project {
         let (tool, identity) = native::tool()?;
         let entry = format!("{}:main", self.entry);
         // ponytail: 两段式。先把所有模块并行「生成 C + 查缓存」（每模块 3–8ms，忽略不计），
-        // 再把 MISS 单独排队编译。按模块下标分块会让已命中的模块白占并发位——改一处公开
-        // 签名时 11 个模块里只有 7 个 MISS，按下标分块要排 3 轮编译，按 MISS 排只要 2 轮。
+        // 再把 MISS 交给有界工作队列编译。已命中的模块不占编译位，空闲线程立即
+        // 领取下一个 MISS，不再等待整批中最慢的模块。
         // 每个 MISS 仍然在自己的 `cl` 里编 `program.c`，对象字节不变。
         // 并发度按内存封顶（每个编译器约 30–60 MB，DESIGN §8 要求构建峰值 < 200 MB），
         // 需要调就设 ZAMAK_JOBS。
@@ -588,31 +588,40 @@ impl Project {
                 }
             }
         }
-        for chunk in misses.chunks(jobs) {
-            let results = std::thread::scope(|scope| {
-                let handles: Vec<_> = chunk
-                    .iter()
-                    .map(|(_, key, source)| {
-                        let (cache, tool, key, source) = (cache, &tool, key, source);
-                        scope.spawn(move || -> Result<Vec<u8>> {
+        // 完成一个模块就领取下一个，避免每批等待最慢的编译进程。
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let results = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..jobs.min(misses.len()))
+                .map(|_| {
+                    let (misses, next, tool) = (&misses, &next, &tool);
+                    scope.spawn(move || -> Result<Vec<(usize, String, Vec<u8>)>> {
+                        let mut completed = Vec::new();
+                        loop {
+                            let index = next.fetch_add(1, Ordering::Relaxed);
+                            let Some((slot, key, source)) = misses.get(index) else {
+                                break;
+                            };
                             let (bytes, _) = native_cached(cache, key, "obj", |scratch| {
                                 native::compile(tool, scratch, source)
                             })?;
-                            Ok(bytes)
-                        })
+                            completed.push((*slot, key.clone(), bytes));
+                        }
+                        Ok(completed)
                     })
-                    .collect();
-                handles
-                    .into_iter()
-                    .map(|handle| {
-                        handle
-                            .join()
-                            .unwrap_or_else(|_| Err("worker panicked".into()))
-                    })
-                    .collect::<Vec<Result<Vec<u8>>>>()
-            });
-            for ((slot, key, _), bytes) in chunk.iter().zip(results) {
-                slots[*slot] = Some((key.clone(), bytes?));
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .unwrap_or_else(|_| Err("worker panicked".into()))
+                })
+                .collect::<Vec<_>>()
+        });
+        for result in results {
+            for (slot, key, bytes) in result? {
+                slots[slot] = Some((key, bytes));
             }
         }
         let mut objects = Vec::with_capacity(slots.len());
