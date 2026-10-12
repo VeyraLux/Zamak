@@ -195,8 +195,9 @@ def benchmark(args):
                 item['samples'].append(elapsed); item['raw'].append(dict(stdout=out,stderr=stderr,seconds=elapsed,sample=sample))
         for lang,item in pending.items():
             median=statistics.median(item['samples'])
-            rows.append(dict(language=lang,kernel=kernel,repeats=item['repeats'],checksum=item['expected'],command=[str(x) for x in item['run']],samples_seconds=item['samples'],median_seconds=median,median_batch_ms=median*1000/item['repeats'],raw=item['raw']))
-            print(f'Median {kernel}/{lang}: {median*1000/item["repeats"]:.6f} ms/batch',flush=True)
+            mad=statistics.median([abs(s-median) for s in item['samples']])
+            rows.append(dict(language=lang,kernel=kernel,repeats=item['repeats'],checksum=item['expected'],command=[str(x) for x in item['run']],samples_seconds=item['samples'],median_seconds=median,median_batch_ms=median*1000/item['repeats'],mad_seconds=mad,mad_batch_ms=mad*1000/item['repeats'],raw=item['raw']))
+            print(f'Median {kernel}/{lang}: {median*1000/item["repeats"]:.6f} ms/batch +- {mad*1000/item["repeats"]:.6f} MAD',flush=True)
     versions={'Python':sys.version,'platform':platform.platform(),'cpu':platform.processor(),'Go':command([args.go,'version'])[0] if args.go else None,'C':dict(path=args.cc,version=subprocess.run([args.cc] if Path(args.cc).stem.lower()=='cl' else [args.cc,'--version'],capture_output=True,text=True,encoding='utf-8',errors='replace').stdout)}
     for name,cmd in [('Zamak',[args.zam,'--version']),('Rust',[args.rustc,'--version'] if args.rustc else None)]:
         if cmd: versions[name]=command(cmd)[0]
@@ -205,7 +206,7 @@ def benchmark(args):
     old_criteria={k:next(r['median_batch_ms'] for r in rows if r['kernel']==k and r['language']=='Zamak')<=3*next(r['median_batch_ms'] for r in rows if r['kernel']==k and r['language']=='C') for k in selected}
     medians={(r['kernel'],r['language']):r['median_batch_ms'] for r in rows}
     modern_criteria={k:medians[k,'Zamak'] < medians[k,'Rust'] and medians[k,'Zamak'] < medians[k,'Go'] for k in selected if (k,'Rust') in medians and (k,'Go') in medians}
-    report=dict(versions=versions,min_seconds=args.min_seconds,samples=args.samples,seed_cycle=list(range(8)),screening_limit_zamak_over_c=3,screening_pass_legacy=old_criteria,screening_pass_modern=modern_criteria,reference_by_seed={n:[f(s) for s in range(8)] for n,f in KERNELS.items()},methodology='Same seven algorithms, fixed i64 arrays (N=64), seeded checksum cycle, fresh-process wall clock, median of five samples per language/kernel, launch and output included. Rust release opt-level=3 overflow-checks=off; Rust checked diagnoses arithmetic-check overhead. Go is built with the default optimized compiler pipeline. Compile time excluded.',benchmark_c=args.cc,benchmark_zamak_backend=os.environ.get('CC','MSVC default on Windows; cc otherwise'))
+    report=dict(versions=versions,min_seconds=args.min_seconds,samples=args.samples,seed_cycle=list(range(8)),screening_limit_zamak_over_c=3,screening_pass_legacy=old_criteria,screening_pass_modern=modern_criteria,reference_by_seed={n:[f(s) for s in range(8)] for n,f in KERNELS.items()},methodology='Same seven algorithms, fixed i64 arrays (N=64), seeded checksum cycle, fresh-process wall clock, median of five samples per language/kernel reported with its median absolute deviation (median_batch_ms and mad_batch_ms), launch and output included. Rust release opt-level=3 overflow-checks=off; Rust checked diagnoses arithmetic-check overhead. Go is built with the default optimized compiler pipeline. Compile time excluded: these are program run times only, and Zamak run times still include the C compiler that builds the generated C.',benchmark_c=args.cc,benchmark_zamak_backend=os.environ.get('CC','MSVC default on Windows; cc otherwise'))
     report.update(builds=builds,calibrations=calibrations,results=rows); path=output/'results.json'; path.write_text(json.dumps(report,indent=2,default=str),encoding='utf-8'); print(f'JSON: {path}')
 
 if __name__=='__main__':
