@@ -6,7 +6,7 @@
 
 [教程](TUTORIAL.md) · [预览版安装](PREVIEW.md) · [参与开发](CONTRIBUTING.md) · [AI 工作流](docs/AI_WORKFLOW.md) · [案例验证](docs/VALIDATION.md) · [工程指标](docs/ENGINEERING.md)
 
-<img width="160" height="160" alt="Zamak" src="ico/Zamak.png" />
+<img width="160" height="160" alt="Zamak" src="ico/Zamak_256x256.png" />
 
 Zamak 是为频繁构建、多 worktree 协作设计的语言原型。当前 `zam` 支持多模块构建缓存、独立原生可执行文件，以及 `string` 的所有权和调用帧借用检查。原生后端先生成 C，再调用 MSVC（Windows）或 `cc`（Unix）生成机器码；安全语义由 Zamak 检查，用户程序不经过 Rust 编译器。
 
