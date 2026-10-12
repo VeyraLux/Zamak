@@ -1,5 +1,6 @@
 """Dependency-free cross-language benchmark driver; invoked by bench-common.ps1."""
 import argparse
+import ctypes
 import datetime
 import json
 import os
@@ -9,6 +10,7 @@ import random
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 
 N = 64
@@ -131,13 +133,48 @@ func recurrence(seed int64)int64{a,b,total:=seed+1,seed+3,int64(0);for i:=0;i<50
 func main(){k,_:=strconv.Atoi(os.Args[1]);repeats,_:=strconv.ParseInt(os.Args[2],10,64);total:=int64(0);for r:=int64(0);r<repeats;r++{s:=r%8;switch k{case 0:total+=gcd(s);case 1:total+=prime(s);case 2:total+=fibonacci(s);case 3:total+=insertion(s);case 4:total+=binary(s);case 5:total+=dot(s);default:total+=recurrence(s)}};fmt.Println(total)}
 '''
 
+class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+    _fields_ = [("cb", ctypes.c_ulong), ("PageFaultCount", ctypes.c_ulong), ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t), ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t), ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t), ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t)]
+
+def open_process(pid):
+    """Handle used only to read the child's memory counters; None when unavailable."""
+    if os.name != "nt": return None
+    return ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
+
+def peak_working_set(handle, pid):
+    """PeakWorkingSetSize is an OS high-water mark, so any single read before exit is the true peak."""
+    if handle:
+        counters = PROCESS_MEMORY_COUNTERS()
+        counters.cb = ctypes.sizeof(counters)
+        if ctypes.windll.psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb): return int(counters.PeakWorkingSetSize)
+        return 0
+    try:
+        for line in Path(f"/proc/{pid}/status").read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("VmHWM:"): return int(line.split()[1]) * 1024
+    except OSError:
+        pass
+    return 0
+
 def command(args, cwd=None, env=None):
+    """Returns (stdout, elapsed_seconds, stderr, peak_working_set_bytes)."""
     started = time.perf_counter()
-    result = subprocess.run([str(a) for a in args], cwd=cwd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace")
-    elapsed = time.perf_counter() - started
-    if result.returncode:
-        raise RuntimeError(f"Command failed ({result.returncode}): {args}\n{result.stdout}\n{result.stderr}")
-    return result.stdout.strip(), elapsed, result.stderr
+    with tempfile.TemporaryFile() as out_file, tempfile.TemporaryFile() as err_file:
+        process = subprocess.Popen([str(a) for a in args], cwd=cwd, env=env, stdout=out_file, stderr=err_file)
+        handle = open_process(process.pid)
+        peak = 0
+        while True:
+            current = peak_working_set(handle, process.pid)
+            if current > peak: peak = current
+            if process.poll() is not None: break
+            time.sleep(0.005)
+        if handle: ctypes.windll.kernel32.CloseHandle(handle)
+        elapsed = time.perf_counter() - started
+        out_file.seek(0); err_file.seek(0)
+        stdout = out_file.read().decode("utf-8", "replace")
+        stderr = err_file.read().decode("utf-8", "replace")
+    if process.returncode:
+        raise RuntimeError(f"Command failed ({process.returncode}): {args}\n{stdout}\n{stderr}")
+    return stdout.strip(), elapsed, stderr, peak
 
 def benchmark(args):
     root = Path(__file__).resolve().parent.parent
@@ -150,17 +187,17 @@ def benchmark(args):
         obj = output / (label + '.obj')
         cmd=[args.cc,'/nologo','/O2','/MT','/utf-8',path,f'/Fe:{exe}',f'/Fo:{obj}']
         if Path(args.cc).stem.lower()!='cl': cmd=[args.cc,'-O2','-std=c11',path,'-o',exe]
-        out,sec,err=command(cmd,cwd=output); builds.append(dict(language=label,seconds=sec,command=[str(x) for x in cmd],stdout=out,stderr=err)); return exe
+        out,sec,err,_=command(cmd,cwd=output); builds.append(dict(language=label,seconds=sec,command=[str(x) for x in cmd],stdout=out,stderr=err)); return exe
     c_exe=compile_c('common-c',C_SOURCE,'')
     runners={'Zamak':None,'C':c_exe,'Python':Path(__file__).resolve()}
     if args.rustc:
         for label, checked in [('Rust',False),('Rust checked',True)]:
-            p=output/f"{label.replace(' ','-')}.rs"; p.write_text(RUST_SOURCE,encoding='utf-8'); exe=output/f"{label.replace(' ','-')}.exe"; cmd=[args.rustc,'-C','opt-level=3','-C',f'overflow-checks={str(checked).lower()}',p,'-o',exe]; out,sec,err=command(cmd); builds.append(dict(language=label,seconds=sec,command=[str(x) for x in cmd],stdout=out,stderr=err)); runners[label]=exe
+            p=output/f"{label.replace(' ','-')}.rs"; p.write_text(RUST_SOURCE,encoding='utf-8'); exe=output/f"{label.replace(' ','-')}.exe"; cmd=[args.rustc,'-C','opt-level=3','-C',f'overflow-checks={str(checked).lower()}',p,'-o',exe]; out,sec,err,_=command(cmd); builds.append(dict(language=label,seconds=sec,command=[str(x) for x in cmd],stdout=out,stderr=err)); runners[label]=exe
     if args.go:
-        p=output/'common.go'; p.write_text(GO_SOURCE,encoding='utf-8'); exe=output/'common-go.exe'; cmd=[args.go,'build','-trimpath','-o',exe,p]; out,sec,err=command(cmd); builds.append(dict(language='Go',seconds=sec,command=[str(x) for x in cmd],stdout=out,stderr=err)); runners['Go']=exe
+        p=output/'common.go'; p.write_text(GO_SOURCE,encoding='utf-8'); exe=output/'common-go.exe'; cmd=[args.go,'build','-trimpath','-o',exe,p]; out,sec,err,_=command(cmd); builds.append(dict(language='Go',seconds=sec,command=[str(x) for x in cmd],stdout=out,stderr=err)); runners['Go']=exe
     def prepare(lang,kernel,repeats):
         if lang=='Zamak':
-            p=output/f'{kernel}_{repeats}.zm'; p.write_text(template+f'''fn main() {{\n    let mut r = 0\n    let mut total = 0\n    while r < {repeats} {{\n        total = total + {kernel}_batch(r % 8)\n        r = r + 1\n    }}\n    println(total)\n}}\n''',encoding='utf-8'); out,sec,err=command([args.zam,'build',p],env=env); builds.append(dict(language='Zamak',kernel=kernel,repeats=repeats,seconds=sec,command=[args.zam,'build',p],stdout=out,stderr=err)); paths=[line[7:] for line in err.splitlines() if line.startswith('OUTPUT ')]; return [paths[0]]
+            p=output/f'{kernel}_{repeats}.zm'; p.write_text(template+f'''fn main() {{\n    let mut r = 0\n    let mut total = 0\n    while r < {repeats} {{\n        total = total + {kernel}_batch(r % 8)\n        r = r + 1\n    }}\n    println(total)\n}}\n''',encoding='utf-8'); out,sec,err,_=command([args.zam,'build',p],env=env); builds.append(dict(language='Zamak',kernel=kernel,repeats=repeats,seconds=sec,command=[args.zam,'build',p],stdout=out,stderr=err)); paths=[line[7:] for line in err.splitlines() if line.startswith('OUTPUT ')]; return [paths[0]]
         if lang=='Python': return [sys.executable,runners[lang],'--kernel',kernel,'--repeats',repeats]
         return [runners[lang],list(KERNELS).index(kernel),repeats]
     languages=list(runners)
@@ -170,19 +207,19 @@ def benchmark(args):
         pending={}
         for lang in languages:
             if args.smoke:
-                run=prepare(lang,kernel,8); out,elapsed,_=command(run)
+                run=prepare(lang,kernel,8); out,elapsed,_,_=command(run)
                 if int(out)!=cycle: raise AssertionError(f'{lang}/{kernel}: {out} != {cycle}')
                 print(f'Smoke {kernel}/{lang}: {out}',flush=True)
                 rows.append(dict(language=lang,kernel=kernel,checksum=cycle))
                 continue
             repeats=8
             while True:
-                run=prepare(lang,kernel,repeats); out,elapsed,_=command(run); expected=cycle*(repeats//8)
+                run=prepare(lang,kernel,repeats); out,elapsed,_,_=command(run); expected=cycle*(repeats//8)
                 if int(out)!=expected: raise AssertionError(f'{lang}/{kernel}: {out} != {expected}')
                 calibrations.append(dict(language=lang,kernel=kernel,repeats=repeats,seconds=elapsed,checksum=out))
                 if elapsed>=args.min_seconds*1.5: break
                 repeats=max(repeats+8,int(repeats*args.min_seconds*2/max(elapsed,0.001)/8+1)*8)
-            pending[lang]=dict(run=run,repeats=repeats,expected=expected,samples=[],raw=[])
+            pending[lang]=dict(run=run,repeats=repeats,expected=expected,samples=[],peaks=[],raw=[])
             print(f'Calibrated {kernel}/{lang}: {repeats} batches, {elapsed:.3f}s', flush=True)
         if args.smoke: continue
         rng=random.Random(list(KERNELS).index(kernel))
@@ -190,14 +227,14 @@ def benchmark(args):
             order=list(languages); rng.shuffle(order)
             for lang in order:
                 item=pending[lang]
-                out,elapsed,stderr=command(item['run'])
+                out,elapsed,stderr,peak=command(item['run'])
                 if int(out)!=item['expected'] or elapsed<args.min_seconds: raise AssertionError(f'{lang}/{kernel}: invalid timed sample')
-                item['samples'].append(elapsed); item['raw'].append(dict(stdout=out,stderr=stderr,seconds=elapsed,sample=sample))
+                item['samples'].append(elapsed); item['peaks'].append(peak); item['raw'].append(dict(stdout=out,stderr=stderr,seconds=elapsed,peak_bytes=peak,sample=sample))
         for lang,item in pending.items():
             median=statistics.median(item['samples'])
             mad=statistics.median([abs(s-median) for s in item['samples']])
-            rows.append(dict(language=lang,kernel=kernel,repeats=item['repeats'],checksum=item['expected'],command=[str(x) for x in item['run']],samples_seconds=item['samples'],median_seconds=median,median_batch_ms=median*1000/item['repeats'],mad_seconds=mad,mad_batch_ms=mad*1000/item['repeats'],raw=item['raw']))
-            print(f'Median {kernel}/{lang}: {median*1000/item["repeats"]:.6f} ms/batch +- {mad*1000/item["repeats"]:.6f} MAD',flush=True)
+            rows.append(dict(language=lang,kernel=kernel,repeats=item['repeats'],checksum=item['expected'],command=[str(x) for x in item['run']],samples_seconds=item['samples'],median_seconds=median,median_batch_ms=median*1000/item['repeats'],mad_seconds=mad,mad_batch_ms=mad*1000/item['repeats'],peak_bytes_max=max(item['peaks']) if item['peaks'] else None,peak_bytes_samples=item['peaks'],raw=item['raw']))
+            print(f'Median {kernel}/{lang}: {median*1000/item["repeats"]:.6f} ms/batch +- {mad*1000/item["repeats"]:.6f} MAD, peak {max(item["peaks"])/1048576 if item["peaks"] else 0:.1f} MiB',flush=True)
     versions={'Python':sys.version,'platform':platform.platform(),'cpu':platform.processor(),'Go':command([args.go,'version'])[0] if args.go else None,'C':dict(path=args.cc,version=subprocess.run([args.cc] if Path(args.cc).stem.lower()=='cl' else [args.cc,'--version'],capture_output=True,text=True,encoding='utf-8',errors='replace').stdout)}
     for name,cmd in [('Zamak',[args.zam,'--version']),('Rust',[args.rustc,'--version'] if args.rustc else None)]:
         if cmd: versions[name]=command(cmd)[0]
@@ -206,7 +243,7 @@ def benchmark(args):
     old_criteria={k:next(r['median_batch_ms'] for r in rows if r['kernel']==k and r['language']=='Zamak')<=3*next(r['median_batch_ms'] for r in rows if r['kernel']==k and r['language']=='C') for k in selected}
     medians={(r['kernel'],r['language']):r['median_batch_ms'] for r in rows}
     modern_criteria={k:medians[k,'Zamak'] < medians[k,'Rust'] and medians[k,'Zamak'] < medians[k,'Go'] for k in selected if (k,'Rust') in medians and (k,'Go') in medians}
-    report=dict(versions=versions,min_seconds=args.min_seconds,samples=args.samples,seed_cycle=list(range(8)),screening_limit_zamak_over_c=3,screening_pass_legacy=old_criteria,screening_pass_modern=modern_criteria,reference_by_seed={n:[f(s) for s in range(8)] for n,f in KERNELS.items()},methodology='Same seven algorithms, fixed i64 arrays (N=64), seeded checksum cycle, fresh-process wall clock, median of five samples per language/kernel reported with its median absolute deviation (median_batch_ms and mad_batch_ms), launch and output included. Rust release opt-level=3 overflow-checks=off; Rust checked diagnoses arithmetic-check overhead. Go is built with the default optimized compiler pipeline. Compile time excluded: these are program run times only, and Zamak run times still include the C compiler that builds the generated C.',benchmark_c=args.cc,benchmark_zamak_backend=os.environ.get('CC','MSVC default on Windows; cc otherwise'))
+    report=dict(versions=versions,min_seconds=args.min_seconds,samples=args.samples,seed_cycle=list(range(8)),screening_limit_zamak_over_c=3,screening_pass_legacy=old_criteria,screening_pass_modern=modern_criteria,reference_by_seed={n:[f(s) for s in range(8)] for n,f in KERNELS.items()},methodology='Same seven algorithms, fixed i64 arrays (N=64), seeded checksum cycle, fresh-process wall clock, median of the configured sample count per language/kernel reported with its median absolute deviation (median_batch_ms and mad_batch_ms), launch and output included. Rust release opt-level=3 overflow-checks=off; Rust checked diagnoses arithmetic-check overhead. Go is built with the default optimized compiler pipeline. Compile time excluded: these are program run times only, and Zamak run times still include the C compiler that builds the generated C. Peak working set (peak_bytes_max, peak_bytes_samples) is the whole-process OS high-water mark read while each timed process ran, so it includes the language runtime and allocator baseline; it is a separate indicator and is never combined with the timings.',benchmark_c=args.cc,benchmark_zamak_backend=os.environ.get('CC') or 'MSVC default on Windows (CC unset)')
     report.update(builds=builds,calibrations=calibrations,results=rows); path=output/'results.json'; path.write_text(json.dumps(report,indent=2,default=str),encoding='utf-8'); print(f'JSON: {path}')
 
 if __name__=='__main__':
