@@ -10,42 +10,54 @@
     "id": "syntax-character",
     "source": "fn main() {\n    println(@)\n}\n",
     "expected_code": "ZM100",
-    "patches": ["replace @ with 1"],
+    "patches": [
+      { "find": "println(@)", "replace": "println(1)" }
+    ],
     "expected_output": "1\n"
   },
   {
     "id": "ownership-move",
     "source": "fn main() {\n    let a = \"x\"\n    let b = a\n    println(a)\n}\n",
     "expected_code": "ZM301",
-    "patches": ["print b instead of a"],
+    "patches": [
+      { "find": "println(a)", "replace": "println(b)" }
+    ],
     "expected_output": "x\n"
   },
   {
     "id": "missing-return",
     "source": "fn value() -> string {}\nfn main() { println(value()) }\n",
     "expected_code": "ZM510",
-    "patches": ["return a string"],
+    "patches": [
+      { "find": "fn value() -> string {}", "replace": "fn value() -> string {\n    return \"ok\"\n}" }
+    ],
     "expected_output": "ok\n"
   },
   {
     "id": "type-mismatch",
     "source": "fn main() {\n    let x: i64 = \"s\"\n}\n",
     "expected_code": "ZM200",
-    "patches": ["use an integer literal"],
+    "patches": [
+      { "find": "let x: i64 = \"s\"", "replace": "let x: i64 = 1" }
+    ],
     "expected_output": ""
   },
   {
     "id": "immutable-assign",
     "source": "fn main() {\n    let count = 1\n    count = 2\n    println(count)\n}\n",
     "expected_code": "ZM302",
-    "patches": ["declare count as mutable"],
+    "patches": [
+      { "find": "let count = 1", "replace": "let mut count = 1" }
+    ],
     "expected_output": "2\n"
   },
   {
     "id": "borrow-missing-ampersand",
     "source": "fn take(text: &string) -> i64 {\n    return 1\n}\nfn main() {\n    let text = \"x\"\n    println(take(text))\n}\n",
     "expected_code": "ZM425",
-    "patches": ["pass an explicit shared borrow"],
+    "patches": [
+      { "find": "take(text)", "replace": "take(&text)" }
+    ],
     "expected_output": "1\n"
   },
   {
@@ -59,14 +71,18 @@
     "id": "array-bounds",
     "source": "fn main() {\n    let a = [1, 2, 3]\n    println(a[5])\n}\n",
     "expected_code": "ZM406",
-    "patches": ["use an in-range index"],
+    "patches": [
+      { "find": "println(a[5])", "replace": "println(a[2])" }
+    ],
     "expected_output": "3\n"
   },
   {
     "id": "literal-overflow",
     "source": "fn main() {\n    let x = 9223372036854775808\n    println(x)\n}\n",
     "expected_code": "ZM600",
-    "patches": ["use the largest i64 literal"],
+    "patches": [
+      { "find": "9223372036854775808", "replace": "9223372036854775807" }
+    ],
     "expected_output": "9223372036854775807\n"
   }
 ]
