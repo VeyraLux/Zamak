@@ -239,9 +239,12 @@ $report = [pscustomobject]@{
     powershell = $PSVersionTable.PSVersion.ToString()
     zam = $zam
     zam_version = $toolVersion.Stdout.Trim()
+    # 记录本次测量实际使用的 C 后端：本脚本从不设置 CC，所以子进程继承调用者的 CC。
+    # Windows 上未设置 CC 时 Zamak 走 MSVC 后端，与 tools/common-kernel.py 的 benchmark_zamak_backend 对齐。
+    zamak_backend = if ([string]::IsNullOrWhiteSpace($env:CC)) { 'MSVC default on Windows (CC unset)' } else { $env:CC }
     commands = @('check --json <file|project-dir>', 'build --json <file|project-dir>', '<artifact>')
     latency_repeats = $LatencyRepeats
-    latency_note = 'Samples are first plus warm process launches; no cold OS-cache claim is made.'
+    latency_note = 'Samples are first plus warm process launches; no cold OS-cache claim is made. Latencies reflect the recorded zamak_backend.'
     cases = $records
     unsupported_reject_count = @($records | Where-Object unsupported_rejected).Count
     first_pass_rate = [math]::Round((($records | Where-Object first_pass).Count / $records.Count), 3)
