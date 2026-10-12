@@ -54,5 +54,19 @@
     "expected_code": "ZM900",
     "patches": [],
     "expected_output": ""
+  },
+  {
+    "id": "array-bounds",
+    "source": "fn main() {\n    let a = [1, 2, 3]\n    println(a[5])\n}\n",
+    "expected_code": "ZM406",
+    "patches": ["use an in-range index"],
+    "expected_output": "3\n"
+  },
+  {
+    "id": "literal-overflow",
+    "source": "fn main() {\n    let x = 9223372036854775808\n    println(x)\n}\n",
+    "expected_code": "ZM600",
+    "patches": ["use the largest i64 literal"],
+    "expected_output": "9223372036854775807\n"
   }
 ]
