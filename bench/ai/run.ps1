@@ -84,6 +84,8 @@ function Repair([string]$id, [string]$source) {
         'type-mismatch' { return $source.Replace('let x: i64 = "s"', 'let x: i64 = 1') }
         'immutable-assign' { return $source.Replace('let count = 1', 'let mut count = 1') }
         'borrow-missing-ampersand' { return $source.Replace('take(text)', 'take(&text)') }
+        'array-bounds' { return $source.Replace('println(a[5])', 'println(a[2])') }
+        'literal-overflow' { return $source.Replace('9223372036854775808', '9223372036854775807') }
         default { return $source }
     }
 }
