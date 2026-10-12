@@ -306,7 +306,17 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
             "type",
             Some("match the expression type to the declared type"),
         )
-    } else if message.contains("unknown variable ") || message.contains("unknown function ") {
+    } else if message.contains("unknown field ") {
+        (
+            "ZM202",
+            "name",
+            Some("check the field name against the struct declaration"),
+        )
+    } else if message.contains("unknown variable ")
+        || message.contains("unknown function ")
+        || message.contains("unknown struct")
+        || message.contains("unknown type name")
+    {
         (
             "ZM201",
             "name",
@@ -444,6 +454,9 @@ mod tests {
             ("string type mismatch", "ZM200"),
             ("unknown variable text", "ZM201"),
             ("entry: unknown function text", "ZM201"),
+            ("unknown struct Point", "ZM201"),
+            ("unknown type name Thing", "ZM201"),
+            ("unknown field z", "ZM202"),
             ("cannot assign immutable value count", "ZM302"),
             ("unsupported type f64", "ZM900"),
             ("i64 literal overflow", "ZM600"),

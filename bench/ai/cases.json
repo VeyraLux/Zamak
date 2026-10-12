@@ -117,7 +117,7 @@
   {
     "id": "unknown-struct-field",
     "source": "struct Point {\n    x: i64\n    y: i64\n}\n\nfn main() {\n    let p = Point {\n        x: 1\n        y: 2\n    }\n    println(p.z)\n}\n",
-    "expected_code": "ZM999",
+    "expected_code": "ZM202",
     "patches": [
       { "find": "println(p.z)", "replace": "println(p.x)" }
     ],
