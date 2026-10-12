@@ -161,6 +161,8 @@ fn json_diagnostics_are_one_line_and_structured() {
     fs::remove_file(path).unwrap();
 }
 
+/// 每段都是真实源码：必须被 `check` 拒绝，并归到表里那一个诊断码。
+/// 只断言单元测试里造出来的字符串不够——`classify` 匹配的是前端真实文案。
 #[test]
 fn json_codes_classify_real_sources() {
     let path = std::env::temp_dir().join(format!("zam-classify-{}.zm", std::process::id()));
@@ -216,6 +218,31 @@ fn json_codes_classify_real_sources() {
             "fn main() {\n    let x: f64 = 1\n}\n",
             "ZM900",
             "unsupported",
+        ),
+        (
+            "fn main() {\n    println(\"a\\qb\")\n}\n",
+            "ZM101",
+            "syntax",
+        ),
+        (
+            "fn main() {\n    let x = 9223372036854775808\n    println(x)\n}\n",
+            "ZM600",
+            "arithmetic",
+        ),
+        (
+            "fn main() {\n    let a = [1, 2, 3]\n    println(a[5])\n}\n",
+            "ZM406",
+            "bounds",
+        ),
+        (
+            "fn load(p: &string) -> i64!string {\n    return 1\n}\nfn main() {\n    let v = load(\"a\")\n    println(v)\n}\n",
+            "ZM500",
+            "error_handling",
+        ),
+        (
+            "fn f() -> i64!i64 {\n    return 1\n}\nfn main() {\n    println(1)\n}\n",
+            "ZM509",
+            "error_handling",
         ),
     ] {
         fs::write(&path, source).unwrap();
