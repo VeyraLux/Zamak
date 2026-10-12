@@ -120,7 +120,10 @@ fn json_diagnostics_are_one_line_and_structured() {
         "\"line\":2",
         "\"column\":9",
         "\"function\":null",
+        "\"code\":\"ZM100\"",
+        "\"category\":\"syntax\"",
         "\"message\":\"unexpected character '@'\"",
+        "\"suggestion\":\"remove or replace the unsupported character\"",
     ] {
         assert!(stdout.contains(field), "{field} missing from {stdout}");
     }
@@ -147,6 +150,95 @@ fn json_diagnostics_are_one_line_and_structured() {
         .unwrap();
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("--json is only supported"));
+
+    let output = Command::new(env!("CARGO_BIN_EXE_zam"))
+        .args(["check", "--json", "--json"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("may be specified once"));
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn json_codes_classify_real_sources() {
+    let path = std::env::temp_dir().join(format!("zam-classify-{}.zm", std::process::id()));
+    for (source, code, category) in [
+        (
+            "fn main() {\n    let x: i64 = \"s\"\n}\n",
+            "ZM200",
+            "type",
+        ),
+        ("fn main() {\n    println(nope)\n}\n", "ZM201", "name"),
+        ("fn main() {\n    nope()\n}\n", "ZM201", "name"),
+        (
+            "fn main() {\n    let a = \"x\"\n    let b = a\n    println(a)\n}\n",
+            "ZM301",
+            "ownership",
+        ),
+        (
+            "fn main() {\n    let x = 1\n    x = 2\n}\n",
+            "ZM302",
+            "ownership",
+        ),
+        (
+            "fn f(a: &string, b: string) -> i64 {\n    return 1\n}\nfn main() {\n    let s = \"x\"\n    f(&s, s)\n}\n",
+            "ZM421",
+            "ownership",
+        ),
+        (
+            "fn main() {\n    let s = \"x\"\n    let r = &s\n}\n",
+            "ZM422",
+            "ownership",
+        ),
+        (
+            "fn f(a: &mut string) -> i64 {\n    return 1\n}\nfn main() {\n    let mut s = \"x\"\n    f(&s)\n}\n",
+            "ZM423",
+            "ownership",
+        ),
+        (
+            "fn f(a: &mut string) -> i64 {\n    return 1\n}\nfn main() {\n    let s = \"x\"\n    f(&mut s)\n}\n",
+            "ZM424",
+            "ownership",
+        ),
+        (
+            "fn f(a: &mut string) -> i64 {\n    return 1\n}\nfn main() {\n    let s = \"x\"\n    f(s)\n}\n",
+            "ZM425",
+            "ownership",
+        ),
+        (
+            "fn f() -> string {}\nfn main() {}\n",
+            "ZM510",
+            "control_flow",
+        ),
+        (
+            "fn main() {\n    let x: f64 = 1\n}\n",
+            "ZM900",
+            "unsupported",
+        ),
+    ] {
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_zam"))
+            .args(["check", "--json"])
+            .arg(&path)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        assert!(!output.status.success(), "accepted {source}");
+        assert_eq!(stdout.lines().count(), 1, "{source}: {stdout}");
+        for field in [
+            format!("\"code\":\"{code}\""),
+            format!("\"category\":\"{category}\""),
+            "\"suggestion\":\"".to_string(),
+        ] {
+            assert!(stdout.contains(&field), "{source}: {field} missing from {stdout}");
+        }
+        assert!(
+            !stdout.contains("\"suggestion\":null"),
+            "{source}: missing suggestion in {stdout}"
+        );
+    }
     fs::remove_file(path).unwrap();
 }
 
