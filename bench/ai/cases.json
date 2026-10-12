@@ -1,0 +1,58 @@
+[
+  {
+    "id": "valid-control",
+    "source": "fn main() {\n    println(7)\n}\n",
+    "expected_code": null,
+    "patches": [],
+    "expected_output": "7\n"
+  },
+  {
+    "id": "syntax-character",
+    "source": "fn main() {\n    println(@)\n}\n",
+    "expected_code": "ZM100",
+    "patches": ["replace @ with 1"],
+    "expected_output": "1\n"
+  },
+  {
+    "id": "ownership-move",
+    "source": "fn main() {\n    let a = \"x\"\n    let b = a\n    println(a)\n}\n",
+    "expected_code": "ZM301",
+    "patches": ["print b instead of a"],
+    "expected_output": "x\n"
+  },
+  {
+    "id": "missing-return",
+    "source": "fn value() -> string {}\nfn main() { println(value()) }\n",
+    "expected_code": "ZM510",
+    "patches": ["return a string"],
+    "expected_output": "ok\n"
+  },
+  {
+    "id": "type-mismatch",
+    "source": "fn main() {\n    let x: i64 = \"s\"\n}\n",
+    "expected_code": "ZM200",
+    "patches": ["use an integer literal"],
+    "expected_output": ""
+  },
+  {
+    "id": "immutable-assign",
+    "source": "fn main() {\n    let count = 1\n    count = 2\n    println(count)\n}\n",
+    "expected_code": "ZM302",
+    "patches": ["declare count as mutable"],
+    "expected_output": "2\n"
+  },
+  {
+    "id": "borrow-missing-ampersand",
+    "source": "fn take(text: &string) -> i64 {\n    return 1\n}\nfn main() {\n    let text = \"x\"\n    println(take(text))\n}\n",
+    "expected_code": "ZM425",
+    "patches": ["pass an explicit shared borrow"],
+    "expected_output": "1\n"
+  },
+  {
+    "id": "unsupported-feature",
+    "source": "fn main() {\n    let x: f64 = 1\n}\n",
+    "expected_code": "ZM900",
+    "patches": [],
+    "expected_output": ""
+  }
+]

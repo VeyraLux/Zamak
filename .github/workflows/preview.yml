@@ -1,0 +1,25 @@
+name: Preview package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-preview:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate compiler
+        run: cargo test --manifest-path zam/Cargo.toml --locked
+      - name: Package and smoke test
+        shell: pwsh
+        run: ./tools/package-preview.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zamak-windows-x64-preview
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error

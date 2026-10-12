@@ -15,7 +15,30 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
+      - name: 格式检查
+        run: cargo fmt --manifest-path zam/Cargo.toml -- --check
       - name: 集成回归
         run: cargo test --manifest-path zam/Cargo.toml --locked
       - name: 严格 lint
         run: cargo clippy --manifest-path zam/Cargo.toml --all-targets --locked -- -D warnings
+
+  editor-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 编辑器语法配置检查
+        run: node editors/vscode/scripts/check-grammar.mjs
+
+  ai-workflow:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 构建编译器
+        run: cargo build --manifest-path zam/Cargo.toml --locked
+      - name: 离线 AI 闭环评测
+        run: pwsh -File bench/ai/run.ps1 -ZamPath zam/target/debug/zam.exe -LatencyRepeats 3
+      - name: 构建与体积测量
+        run: pwsh -File tools/measure-build.ps1 -ZamPath zam/target/debug/zam.exe -Modules 4 -Repetitions 1
