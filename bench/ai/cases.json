@@ -211,5 +211,23 @@
       { "find": "fn foo() -> i64 {\n    return 2\n}\n\n", "replace": "" }
     ],
     "expected_output": "1\n"
+  },
+  {
+    "id": "unsupported-escape",
+    "source": "fn main() {\n    println(\"\\q\")\n}\n",
+    "expected_code": "ZM101",
+    "patches": [
+      { "find": "\"\\q\"", "replace": "\"ok\"" }
+    ],
+    "expected_output": "ok\n"
+  },
+  {
+    "id": "semicolon-statement",
+    "source": "fn main() {\n    println(\"hi\");\n}\n",
+    "expected_code": "ZM110",
+    "patches": [
+      { "find": "\"hi\");", "replace": "\"hi\")" }
+    ],
+    "expected_output": "hi\n"
   }
 ]
