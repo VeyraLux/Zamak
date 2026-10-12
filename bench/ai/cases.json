@@ -84,5 +84,80 @@
       { "find": "9223372036854775808", "replace": "9223372036854775807" }
     ],
     "expected_output": "9223372036854775807\n"
+  },
+  {
+    "id": "error-unhandled",
+    "source": "fn parse(text: &string) -> i64!string {\n    return 42\n}\n\nfn main() {\n    let text = \"42\"\n    let value = parse(&text)\n    println(value)\n}\n",
+    "expected_code": "ZM500",
+    "patches": [
+      { "find": "fn main() {", "replace": "fn main() -> !string {" },
+      { "find": "let value = parse(&text)", "replace": "let value = parse(&text)?" }
+    ],
+    "expected_output": "42\n"
+  },
+  {
+    "id": "error-type-not-string",
+    "source": "fn parse() -> i64!i64 {\n    return 42\n}\n\nfn main() -> !i64 {\n    let value = parse()?\n    println(value)\n}\n",
+    "expected_code": "ZM509",
+    "patches": [
+      { "find": "fn parse() -> i64!i64 {", "replace": "fn parse() -> i64!string {" },
+      { "find": "fn main() -> !i64 {", "replace": "fn main() -> !string {" }
+    ],
+    "expected_output": "42\n"
+  },
+  {
+    "id": "unknown-function",
+    "source": "fn double(value: i64) -> i64 {\n    return value * 2\n}\n\nfn main() {\n    println(triple(21))\n}\n",
+    "expected_code": "ZM201",
+    "patches": [
+      { "find": "println(triple(21))", "replace": "println(double(21))" }
+    ],
+    "expected_output": "42\n"
+  },
+  {
+    "id": "unknown-struct-field",
+    "source": "struct Point {\n    x: i64\n    y: i64\n}\n\nfn main() {\n    let p = Point {\n        x: 1\n        y: 2\n    }\n    println(p.z)\n}\n",
+    "expected_code": "ZM999",
+    "patches": [
+      { "find": "println(p.z)", "replace": "println(p.x)" }
+    ],
+    "expected_output": "1\n"
+  },
+  {
+    "id": "borrow-conflict",
+    "source": "fn combine(a: &string, b: &mut string) {\n    println(a)\n    b = \"changed\"\n}\n\nfn main() {\n    let mut message = \"hi\"\n    combine(&message, &mut message)\n}\n",
+    "expected_code": "ZM421",
+    "patches": [
+      { "find": "let mut message = \"hi\"", "replace": "let message = \"hi\"\n    let mut other = \"second\"" },
+      { "find": "combine(&message, &mut message)", "replace": "combine(&message, &mut other)" }
+    ],
+    "expected_output": "hi\n"
+  },
+  {
+    "id": "borrow-immutable-mutable",
+    "source": "fn update(text: &mut string) {\n    text = \"changed\"\n    println(text)\n}\n\nfn main() {\n    let message = \"hi\"\n    update(&mut message)\n}\n",
+    "expected_code": "ZM424",
+    "patches": [
+      { "find": "let message = \"hi\"", "replace": "let mut message = \"hi\"" }
+    ],
+    "expected_output": "changed\n"
+  },
+  {
+    "id": "borrow-type-mismatch",
+    "source": "fn show(text: &string) {\n    println(text)\n}\n\nfn main() {\n    let mut message = \"hi\"\n    show(&mut message)\n}\n",
+    "expected_code": "ZM423",
+    "patches": [
+      { "find": "show(&mut message)", "replace": "show(&message)" }
+    ],
+    "expected_output": "hi\n"
+  },
+  {
+    "id": "borrow-escape",
+    "source": "fn main() {\n    let message = \"hi\"\n    let stored = &message\n    println(stored)\n}\n",
+    "expected_code": "ZM422",
+    "patches": [
+      { "find": "let stored = &message", "replace": "let stored = message" }
+    ],
+    "expected_output": "hi\n"
   }
 ]
