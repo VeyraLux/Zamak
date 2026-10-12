@@ -28,7 +28,10 @@ function Invoke-ProcessCapture([string]$filePath, [string[]]$argumentList, [stri
             [Environment]::SetEnvironmentVariable($key, [string]$environment[$key], 'Process')
         }
         $sw = [Diagnostics.Stopwatch]::StartNew()
-        $process = Start-Process -FilePath $filePath -ArgumentList $arguments -WorkingDirectory $workingDirectory -NoNewWindow -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -Wait
+        $process = Start-Process -FilePath $filePath -ArgumentList $arguments -WorkingDirectory $workingDirectory -NoNewWindow -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        # 只等直接子进程，不能等子孙进程：Start-Process -Wait 会连后代一起等，而 MSVC 的 cl.exe 会派生常驻的 vctip.exe 遥测进程，
+        # 导致每次触发编译后长时间挂起（实测挂起 11 分钟以上）。
+        $process.WaitForExit()
         $sw.Stop()
     }
     finally {
@@ -76,18 +79,17 @@ function Get-OutputPath([string]$stderr) {
     return $line[0].Substring(7).Trim()
 }
 
-function Repair([string]$id, [string]$source) {
-    switch ($id) {
-        'syntax-character' { return $source.Replace('println(@)', 'println(1)') }
-        'ownership-move' { return $source.Replace('println(a)', 'println(b)') }
-        'missing-return' { return ('fn value() -> string {' + [Environment]::NewLine + '    return "ok"' + [Environment]::NewLine + '}' + [Environment]::NewLine + 'fn main() {' + [Environment]::NewLine + '    println(value())' + [Environment]::NewLine + '}' + [Environment]::NewLine) }
-        'type-mismatch' { return $source.Replace('let x: i64 = "s"', 'let x: i64 = 1') }
-        'immutable-assign' { return $source.Replace('let count = 1', 'let mut count = 1') }
-        'borrow-missing-ampersand' { return $source.Replace('take(text)', 'take(&text)') }
-        'array-bounds' { return $source.Replace('println(a[5])', 'println(a[2])') }
-        'literal-overflow' { return $source.Replace('9223372036854775808', '9223372036854775807') }
-        default { return $source }
+function Repair($case, [string]$source) {
+    $text = $source
+    foreach ($patch in @($case.patches)) {
+        $find = [string]$patch.find
+        $replace = [string]$patch.replace
+        if (-not $text.Contains($find)) {
+            throw "case '$($case.id)': patch anchor not found: '$find'"
+        }
+        $text = $text.Replace($find, $replace)
     }
+    return $text
 }
 
 $records = @()
@@ -112,9 +114,9 @@ foreach ($case in $cases) {
         else { $warmMedian = ($warmSamples[$warmSamples.Count / 2 - 1] + $warmSamples[$warmSamples.Count / 2]) / 2 }
     }
     $solved = [bool]$firstParsed.SuccessPass
-    if (-not $solved -and $case.patches.Count -gt 0) {
+    if (-not $solved -and @($case.patches).Count -gt 0) {
         $rounds = 1
-        $current = Repair $case.id $current
+        $current = Repair $case $current
         Set-Content -Path $path -Value $current -NoNewline
         $fixed = Invoke-ProcessCapture $zam @('check', '--json', $path) $root $dir
         $fixedParsed = Parse-JsonResult $fixed 'check' ([bool]$true)
@@ -156,7 +158,7 @@ foreach ($case in $cases) {
     else { $codeMatch = $false }
     $recordValidationPass = $firstParsed.JsonShapePass -and $firstParsed.ExitConsistent -and $firstParsed.StderrFailurePass -and
         ($diagnosticCount -eq 0 -or $diagnostics[0].code -eq $case.expected_code) -and
-        (($case.patches.Count -eq 0 -and ($unsupportedRejected -or $executionPass)) -or ($case.patches.Count -gt 0 -and $solved -and $executionPass))
+        ((@($case.patches).Count -eq 0 -and ($unsupportedRejected -or $executionPass)) -or (@($case.patches).Count -gt 0 -and $solved -and $executionPass))
     $records += [pscustomobject]@{
         id = $case.id
         first_pass = [bool]$firstParsed.SuccessPass
