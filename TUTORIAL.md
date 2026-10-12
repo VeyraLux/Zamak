@@ -1,12 +1,14 @@
 # Zamak 入门教程
 
-这是一份给零基础读者的 Zamak 教程，按小节从零讲到能写小项目。每个小节的代码都实际编译运行过，**输出就是真实的运行结果**；示例源码在 `examples/` 下，可以直接跑。
+本教程介绍 Zamak 0.1.0 的基本语法、类型与所有权规则。完成后，你将能够创建多模块项目，编译原生程序，并使用错误值处理失败路径。示例面向初学者，不要求 Rust 或 C 编程经验。
 
-Zamak 目前是原型：语法接近 Python 的阅读体验，编译成原生可执行文件，并且对 `string` 做所有权与借用检查。它还不适合生产使用，缺什么见最后一节。
+先阅读 [安装说明](PREVIEW.md)，准备 `zam` 和平台 C 工具链。安装命令在仓库根目录执行；项目命令在包含 `zam.toml` 的目录执行，或显式指定项目、源码文件的路径。代码块后的输出表示该示例的预期结果。教程测试会提取 Zamak 代码块并运行 `zam check`；它验证编译检查能够通过，不逐项核对本页的运行输出。其他集成测试覆盖原生运行和错误路径。
+
+Zamak 仍处于原型阶段，语法与接口可能变化。支持范围和限制见本教程最后一节及 [README](README.md)。学习顺序为：基础值与控制流 → 函数和字符串 → 数组与结构体 → 所有权 → 错误处理 → 多模块项目。
 
 ## 第 0 节：准备环境
 
-本机已安装时，直接确认版本：
+安装完成后，确认命令可用：
 
 ```powershell
 zam --version
@@ -16,17 +18,17 @@ zam --version
 0.1.0
 ```
 
-没有安装就从源码装一次（需要 Rust 工具链；Windows 上还需要 Visual Studio 的 C++ 工具，Unix 上需要 `cc`）：
+如果尚未安装 `zam`，在仓库根目录执行以下命令。源码安装需要 Rust 工具链；构建 Zamak 程序时，Windows 还需要 Visual Studio 的 C++ 工具，Unix 需要 `cc`：
 
 ```powershell
 cargo install --path zam --locked
 ```
 
-Zamak 的编译器就是 `zam` 本身，它生成 C 代码再调用系统 C 编译器，所以**编译出来的程序不依赖 Zamak 也不依赖 Rust**。
+`zam` 是 Zamak 编译器的命令行工具。它将源码转换为 C 代码，再调用系统 C 编译器生成原生可执行文件。生成的程序运行时不需要安装 Zamak 或 Rust。
 
 ## 第 1 节：第一个程序
 
-新建一个项目，然后运行它：
+在可写目录中创建名为 `hello` 的项目，再进入项目目录运行。目标目录不能已存在：
 
 ```powershell
 zam new hello
@@ -35,19 +37,12 @@ zam run
 ```
 
 ```text
-NEW hello\zam.toml
-NEW hello\src\main.zm
-NEW hello\.gitignore
-CACHE MISS d04a3b53b61b main
-OBJECT MISS 85ce7172e7cb main
-LINK MISS 3a1c51f75bfb
-OUTPUT .\build\hello-3a1c51f75bfb5ee1b69a694147559f6e0765bfcf172cbde2e98f5ea957ced16d.exe
 hello from zamak
 ```
 
-`CACHE`/`OBJECT`/`LINK`/`OUTPUT` 这些进度行写到标准错误（stderr），程序自己的输出写到标准输出（stdout），所以**只需要程序输出时可以放心重定向 stdout**。
+上面只列出程序的标准输出（stdout）。`zam new` 的 `NEW` 行，以及构建时的 `CACHE`、`OBJECT`、`LINK`、`OUTPUT` 行写入标准错误（stderr）；实际路径、缓存哈希和命中状态取决于环境及构建历史。需要保存程序输出时，可以单独重定向 stdout。
 
-最小程序长这样，保存为 `hello.zm` 后运行 `zam run hello.zm`：
+也可以直接运行单个源码文件。在当前目录新建 `hello.zm`，写入以下内容，再执行 `zam run hello.zm`：
 
 ```zamak
 fn main() {
@@ -62,11 +57,13 @@ fn main() {
 要点：
 
 - 程序从 `fn main()` 开始执行。
-- `println(...)` 打印一行，字符串用双引号。
-- 函数体用大括号包起来，缩进是 4 个空格（`zam fmt` 会帮你对齐）。
+- `println(...)` 打印一行，字符串字面量使用双引号。
+- 函数体使用大括号。本教程采用 4 个空格缩进，`zam fmt` 可以整理缩进。
 - 注释用 `//`（行注释），也可以用 `#`。
 
 ## 第 2 节：变量与类型
+
+第 2 至 11 节的每个完整代码块都是独立程序。可以将当前示例保存为 `lesson.zm`，执行 `zam check lesson.zm` 检查，再执行 `zam run lesson.zm` 观察输出。切换示例时替换整个文件内容，不要将多个 `fn main()` 合并到同一文件。
 
 ```zamak
 fn main() {
@@ -88,13 +85,13 @@ true
 
 要点：
 
-- `let` 声明变量，**默认不可重新赋值**；要改就写 `let mut`。
-- 类型写冒号后面：`let mut count: i64 = 3`。也可以省略，让编译器从初值推断。
+- `let` 声明变量，默认不可重新赋值；需要重新赋值时使用 `let mut`。
+- 类型标注写在冒号后，如 `let mut count: i64 = 3`。省略类型标注时，编译器根据初值推断类型。
 - 三种基本类型：`i64`（64 位整数）、`bool`（`true`/`false`）、`string`（字符串）。
-- **没有变量遮蔽**：同一作用域里不能再用 `let` 声明一个同名变量。
-- 标量是复制语义，`let copy = count` 得到独立的值。
+- **没有变量遮蔽**：同一作用域内不能再次用 `let` 声明同名变量。
+- `i64` 和 `bool` 使用复制语义，`let copy = count` 得到独立的值，`count` 仍可使用。
 
-试一试：把 `let mut count` 改成 `let count`，看看 `count = count + 1` 报什么错。
+练习：将 `let mut count` 改为 `let count`，保存后运行 `zam check` 并指定该文件。确认编译器拒绝给不可变变量重新赋值，再恢复 `mut`。
 
 ## 第 3 节：运算符
 
@@ -122,11 +119,11 @@ false
 
 要点：
 
-- 算术：`+` `-` `*` `/` `%`；整数除法**向下取整**，`7 / 2` 得 `3`。
+- 算术：`+` `-` `*` `/` `%`。整数除法向零截断，例如 `7 / 2` 得到 `3`，`-7 / 2` 得到 `-3`；余数的符号与被除数一致，例如 `-7 % 2` 得到 `-1`。
 - 比较：`==` `!=` `<` `>` `<=` `>=`，结果是 `bool`。
 - 逻辑：`!`（非）、`&&`（与）、`||`（或）。
-- 数字里可以用 `_` 分组，`1_000_000` 就是一百万。
-- 乘除的优先级高于加减，和数学一样；需要时加括号。
+- 整数字面量的数字之间可以用单个 `_` 分组，例如 `1_000_000` 表示一百万。
+- 乘、除、取余的优先级高于加、减；可以用括号明确运算顺序。整数溢出和除零会导致运行失败。
 
 ## 第 4 节：条件判断
 
@@ -156,10 +153,10 @@ positive
 
 要点：
 
-- `if` 的条件**不加括号**，条件后面直接跟代码块。
-- `else if` 可以串很多个。
+- `if` 的条件不需要外层括号，条件后紧接代码块。
+- 多个条件可以使用 `else if` 依次判断。
 - 条件必须是 `bool`，Zamak 不做真假值隐式转换。
-- `return` 立刻从函数返回；只要所有分支都返回了，函数就一定能返回 `string`。
+- `return` 立即从当前函数返回。本例各分支都返回 `string`，因此覆盖了函数的所有返回路径。
 
 ## 第 5 节：循环
 
@@ -187,8 +184,8 @@ fn main() {
 
 要点：
 
-- Zamak **只有 `while`，没有 `for`**；遍历数组要自己数下标。
-- **没有 `+=` 这类复合赋值**，写 `i = i + 1`。
+- Zamak 支持 `while`，尚不支持 `for`；遍历数组时需要显式维护下标。
+- 尚不支持 `+=` 等复合赋值，递增应写为 `i = i + 1`。
 - `continue` 跳过本次循环剩下的部分，`break` 直接结束循环。
 - 循环条件必须是 `bool`。
 
@@ -217,13 +214,13 @@ fn main() {
 
 要点：
 
-- 参数写成 `名字: 类型`，多个参数用逗号隔开。
-- `-> 类型` 是返回值类型；不写就是没有返回值。
-- 函数体**最后一个表达式就是返回值**，所以 `add` 不用写 `return`；也可以用 `return` 提前返回。
+- 参数写为 `名称: 类型`，多个参数以逗号分隔。
+- `-> 类型` 声明返回值类型；省略时表示函数不返回值。
+- 函数体末尾的值表达式可以作为返回值，因此 `add` 无需显式写 `return`。也可以使用 `return` 明确返回或提前结束函数。
 - 跨模块调用需要 `pub fn`（见第 12 节）。
-- 没有泛型、没有闭包、没有函数重载；本教程一律用 `while` 写循环，没有验证递归。
+- 当前不支持泛型、闭包和函数重载。本教程使用 `while` 讲解重复执行，不涉及递归。
 
-试一试：把 `greet` 的参数改成 `name: &string`，然后 `println(greet(&who))`。这会报 `cannot interpolate this value`——**字符串插值目前只接受拥有所有权的 `string`**，不能直接插值借用来的字符串。
+练习：将 `greet` 的参数改为 `name: &string`，并使用 `println(greet(&who))` 调用。借用字符串可以用于插值；插值只读取内容，不移动或修改原字符串。调用后再加入 `println(who)`，检查借用结束后原变量仍可使用。
 
 ## 第 7 节：字符串、转义与插值
 
@@ -254,12 +251,12 @@ true
 
 要点：
 
-- `{变量}` 把值插进字符串里，变量和结构体字段都行：`"{point.x}"`。
+- 插值语法 `{变量}` 将值写入字符串，也支持结构体字段，例如 `"{point.x}"`。插值只读取值，不移动原变量。
 - 转义：`\n` 换行、`\r` 回车、`\t` 制表、`\"` 双引号、`\\` 反斜杠。
-- 想输出真正的大括号，写 `{{` 和 `}}`。
-- 字符串**不能换行**（一个字符串字面量必须写在一行里）。
-- 标准库 `std/string` 提供三个函数：`string.byte_len(&s)` 按字节数、`string.char_len(&s)` 按 Unicode 字符数、`string.equal(&a, &b)` 判断内容相等。上面 `你好，Zamak！` 是 17 字节 9 个字，正好说明两者的区别。
-- 中文用 UTF-8，所以按字节算长度会大于按字符算。
+- 输出字面大括号时使用 `{{` 和 `}}`。
+- 字符串字面量必须写在一行内；字符串内容需要换行时，使用 `\n` 转义。
+- 标准库 `std/string` 提供三个函数：`string.byte_len(&s)` 返回 UTF-8 字节数，`string.char_len(&s)` 返回 Unicode 码点数，`string.equal(&a, &b)` 判断内容是否相等。本例的 `你好，Zamak！` 占 17 字节，包含 9 个码点。
+- Unicode 码点不等同于用户看到的一个字符（字素簇）。组合附加符号或由多个码点组成的 emoji 可能显示为一个字符，`char_len` 仍逐个码点计数。常见汉字在 UTF-8 中通常占 3 字节，因此字节数与码点数不同。
 
 ## 第 8 节：数组
 
@@ -284,8 +281,8 @@ fn main() {
 要点：
 
 - 类型写成 `[i64; 3]`（元素类型 + 分号 + 长度），长度必须在 1 到 1024 之间。
-- 下标从 0 开始，**运行时做边界检查**：越界会直接报错退出，不会读到别的内存。
-- 数组只能作为局部变量，不能当函数参数或返回值。
+- 下标从 0 开始，范围为 `0` 到 `长度 - 1`。运行时会检查边界；越界访问会报错并退出。
+- 当前数组元素类型仅支持 `i64`，数组只能作为局部值，不能用于函数参数、返回值或结构体字段。
 - 遍历用 `while` 加下标变量。
 
 ## 第 9 节：结构体
@@ -325,11 +322,11 @@ fn main() {
 
 要点：
 
-- 声明字段时**每行一个、不用逗号**（这一点和函数参数不同，参数用逗号）。
+- 结构体声明每行写一个字段，字段之间不用逗号；函数参数之间仍需要逗号。
 - 构造用 `Point { x: 1 y: 2 }`，字段之间同样不写逗号，可以写在一行也可以分行。
-- 字段用 `.` 访问，可以直接赋值：`p.y = p.y + 3`。
-- 结构体是**移动语义**：`let moved = p` 之后 `p` 就不能再用了，继续用会报 `use after move`。想让 `p` 复活，就整体重新赋值：`p = Point { ... }`。
-- 嵌套结构体字段也能一路点下去：`group.leader.age = group.leader.age + 1`。
+- 字段通过 `.` 访问。修改字段要求所属变量可变，如本例的 `let mut p`。
+- 结构体使用移动语义：执行 `let moved = p` 后，再读取 `p` 会报 `use after move`。对于可变变量，可以通过整体重新赋值恢复其有效值，例如 `p = Point { x: 1 y: 2 }`。
+- 嵌套结构体字段可以连续访问，例如 `group.leader.age = group.leader.age + 1`。
 
 ## 第 10 节：所有权与借用
 
@@ -364,16 +361,18 @@ fn main() {
 
 要点：
 
-- `string` 是拥有所有权的值。传参会**移动**它，传走以后原变量失效——这就是 `consume(text: string)` 的用法。
-- 只想读，就借出去：`&message` 传给 `text: &string`。
-- 想改，就借出去一个可变的：`&mut message` 传给 `text: &mut string`（原变量必须是 `let mut`）。
-- 借用只在这次调用期间有效，所以 `show` 和 `update` 之后 `message` 还能继续用。
-- 检查发生在编译期（`zam check` 就能发现），报错信息形如 `line 4, column 1: main:main: use after move: a`。
-- 目前只有 `string` 和结构体受这套规则约束，`i64`/`bool` 是复制语义。
+- `string` 使用所有权管理。赋值给另一变量，或传给 `text: string` 这样的值参数时，会转移所有权（移动），原变量随后不能再读取。本例的 `consume` 接收字符串所有权。
+- 只需读取字符串时，使用共享借用：将 `&message` 传给 `text: &string`。
+- 需要修改字符串时，使用可变借用：将 `&mut message` 传给 `text: &mut string`，原变量必须通过 `let mut` 声明。
+- 借用仅在本次函数调用期间有效；`show` 和 `update` 返回后，`message` 仍可使用。同一次调用中，共享借用可以有多个，可变借用必须独占。借用只能用于参数，不能返回或保存在局部变量中。
+- 所有权和借用检查发生在编译期，运行 `zam check` 即可检查。诊断信息示例为 `line 4, column 1: main:main: use after move: a`。
+- 当前 `string` 和结构体使用移动语义，`i64` 和 `bool` 使用复制语义。字符串字段支持借用；整体结构体借用和单独移出拥有所有权的字段尚不支持。
 
 ## 第 11 节：错误处理
 
-函数可以在返回类型后面加 `!错误类型` 表示「可能失败」；当前只支持 `E = string`。
+函数在返回类型后加 `!错误类型`，表示调用可能失败；当前错误类型仅支持 `string`。
+
+下面的 `parse` 仅用于演示错误处理：它拒绝空字符串，并对所有非空字符串返回固定值 `42`，不执行整数解析。它不是可用于输入校验的解析器，标准库目前也未提供字符串转整数接口。
 
 ```zamak
 use std/string
@@ -402,20 +401,20 @@ fn main() -> !string {
 42
 ```
 
-三件事：
+错误处理语法：
 
 - `i64!string`：成功返回 `i64`，失败返回 `string` 错误信息。
-- `fail "empty input"`：产生一个错误值（只能在声明了错误的函数里用）。
-- `parse(text)?`：**把错误直接往上抛**；如果 `parse` 失败，`load` 立刻带着这个错误返回。用了 `?` 的函数自己必须也是可失败的，且错误类型要一致。
+- `fail "empty input"`：产生错误并立即从当前函数返回，只能在声明了错误类型的函数中使用。
+- `parse(text)?`：成功时取得返回值，失败时立即从 `load` 返回同一错误。使用 `?` 的函数必须声明相同的错误类型。
 
-`main` 也可以写成 `-> !string`，表示「顶层可能失败」。没人接住的错误会打到 stderr 并以退出码 1 结束。把上面的 `"42"` 改成 `""` 就能看到失败过程：
+`main` 可以声明为 `-> !string`，表示不返回成功值，但可能失败。传播到 `main` 且未处理的错误会写入 stderr，程序以退出码 1 结束。将上例的 `"42"` 改为 `""` 后，`zam run` 的错误输出为：
 
 ```text
 empty input
 zam: program failed: exit code: 1
 ```
 
-只想就地处理、不往上抛，用 `catch`：
+使用 `catch` 可以在调用处处理错误。以下 `parse` 与前例相同，仍是返回固定值的占位函数：
 
 ```zamak
 use std/string
@@ -438,7 +437,7 @@ fn main() {
 }
 ```
 
-成功时输出 `42`；把 `text` 改成 `""` 就输出：
+成功时输出 `42`。将 `text` 的初值改为 `""` 后，错误分支输出以下内容，并从 `main` 返回；此时程序正常结束：
 
 ```text
 解析失败：empty input
@@ -447,12 +446,12 @@ fn main() {
 要点：
 
 - `catch e { ... }` 里的 `e` 是错误值，只在块内可见。
-- 块内**必须 `return`**（或者给出一个与 `let value` 类型匹配的值），不能什么都不返回。
-- 目前错误类型只能是 `string`，也只有一个 `?`，没有泛型错误、没有错误堆栈。
+- `catch` 块必须在所有路径上使用 `return` 从当前函数返回；若块内有条件分支，每个分支都必须返回。它不支持用末尾表达式为 `let value` 提供恢复值。成功时才会给 `value` 赋值并继续执行后续语句。
+- 当前错误类型仅支持 `string`，不支持泛型错误和错误堆栈。可失败调用必须使用 `?` 传播或使用 `catch` 处理。
 
 ## 第 12 节：多模块项目
 
-单个 `.zm` 文件可以直接 `zam run`，但项目通常会有多个模块，用 `zam.toml` 描述：
+单个源码文件可以通过 `zam run 文件名.zm` 运行。多个模块组成的项目使用 `zam.toml` 配置入口和模块目录。在第 1 节创建的 `hello` 项目中，确认配置如下，再添加下方的两个源码文件：
 
 ```toml
 [project]
@@ -489,7 +488,7 @@ pub fn hello() {
 }
 ```
 
-在项目根目录执行 `zam run`（也可以 `zam run examples/hello`）得到：
+在 `hello` 项目根目录执行 `zam run`，得到以下程序输出。如果当前位于仓库根目录，也可以执行 `zam run examples/hello` 运行对应的仓库示例：
 
 ```text
 hello from zamak
@@ -503,7 +502,7 @@ hello from zamak
 - 跨模块可见的函数、结构体要加 `pub`。
 - 跨模块用类型要写模块前缀：`leader: model.Person`。
 - 文件后缀统一是 `.zm`；入口必须是 `.zm`（否则报 `entry must be a .zm file`）。
-- 不想写配置文件时，`zam check`/`build`/`run`/`fmt` 也接受单个 `.zm` 文件。
+- 对于单文件程序，`zam check`/`build`/`run`/`fmt` 也接受单个 `.zm` 文件。
 
 ## 第 13 节：命令行工具
 
@@ -520,13 +519,13 @@ zam 0.1.0
   zam --version
 ```
 
-- `zam check`：只做词法、语法、类型与所有权检查，不生成机器码，所以**不需要 C 编译器**，适合编辑器里快速反馈。成功打印 `CHECK OK main`。
+- `zam check`：只做词法、语法、类型与所有权检查，不生成机器码，因此不需要 C 编译器，适合在修改源码后快速验证。成功打印 `CHECK OK main`。
 - `zam build`：生成可执行文件，路径以 `OUTPUT <path>` 写到 stderr，可以直接运行。
 - `zam run`：先构建再运行，程序输出就是它的 stdout。
-- `zam fmt`：就地整理缩进（4 个空格）、去行尾空白、结尾留一个换行，保留原来的 CRLF/LF。只改空白、不重建 token，所以注释和字符串原样保留；语法有错的代码会被拒绝而不会被改写。改写过的文件用 `FORMAT <path>` 报出来。
+- `zam fmt`：就地整理缩进（4 个空格）、去行尾空白、结尾留一个换行，保留原来的 CRLF/LF。只调整空白，不重建词法单元，因此保留注释和字符串内容；语法有错的代码会被拒绝而不会被改写。修改过的文件通过 `FORMAT <path>` 写入 stderr。它不调整行内空格或自动折行。
 - `zam new <directory>`：生成最小项目骨架（第 1 节）。目录名必须是合法标识符，已存在的目录会被拒绝，不会覆盖任何文件。
-- `zam demo`：跑一遍内置的双目录缓存演示，展示第二次构建全命中。
-- `zam --json`（只给 `check`/`build` 用）：结果写成一行 JSON，方便编辑器和 CI 读取：
+- `zam demo`：运行内置的双目录缓存演示，展示相同源码的缓存复用。
+- `zam check --json` / `zam build --json`：将结果以一行 JSON 写入 stdout，供编辑器或持续集成（CI）读取。其他子命令不接受 `--json`。诊断示例如下：
 
 ```text
 {"command":"check","ok":false,"diagnostics":[{"file":".tmp-tut\\13_broken.zm","line":2,"column":1,"function":null,"message":"unterminated function block"}]}
@@ -543,44 +542,44 @@ zam 0.1.0
 <文件>: line <行>, column <列>: <模块>:<函数>: <信息>
 ```
 
-词法和语法错误没有「模块:函数」这一段。列号从 1 开始、按字符计，制表符算一个字符。
+命令行诊断通常以 `zam:` 开头；词法和语法错误不包含“模块:函数”部分。行、列号从 1 开始，列号按 Unicode 码点计数，制表符计为一个码点。
 
-| 报错信息 | 原因 | 怎么改 |
+| 报错信息 | 原因 | 处理方法 |
 | --- | --- | --- |
-| `unexpected character '@'` | 出现了不属于 Zamak 的字符 | 删掉或换掉该字符 |
-| `expected '{', found Some(Word("string"))` | 语法没写对，比如类型写错位置 | 对照前面的小节检查该行结构 |
-| `unterminated function block` | 大括号没配对 | 补上 `}` |
-| `use after move: a` | 变量已经被移动给别人了 | 用 `&a` 借用，或重新赋值 |
-| `cannot interpolate this value` | 字符串插值用了 `&string` | 把参数类型改成 `string` |
-| `borrow escape: functions cannot return references` | 函数想返回 `&string`/`&mut string` | 返回拥有所有权的 `string` |
+| `unexpected character '@'` | 出现了不属于 Zamak 的字符 | 删除或替换该字符 |
+| `expected '{', found Some(Word("string"))` | 语法不符合要求，例如类型标注位置错误 | 对照前面的小节检查该行结构 |
+| `unterminated function block` | 大括号未配对 | 补上 `}` |
+| `use after move: a` | 变量的所有权已转移 | 用 `&a` 借用，或重新赋值 |
+| `cannot interpolate this value` | 插值中使用了结构体或数组等不支持的值 | 使用字符串、借用字符串、整数或布尔字段 |
+| `borrow escape: functions cannot return references` | 函数尝试返回 `&string`/`&mut string` | 返回拥有所有权的 `string` |
 | `arrays are only supported as local values` | 把数组当参数或返回值 | 改成多个标量参数，或在函数内建数组 |
-| `fallible call main:f must be handled with ?` | 漏写 `?` | 加 `?`，或用 `catch` 就地处理 |
-| `? cannot propagate the error of main:f from this function` | 当前函数没声明错误类型，或错误类型不一致 | 函数签名写 `-> T!string` |
+| `fallible call main:f must be handled with ?` | 可失败调用未被处理 | 加 `?`，或用 `catch` 就地处理 |
+| `? cannot propagate the error of main:f from this function` | 当前函数未声明错误类型，或错误类型不一致 | 函数签名写 `-> T!string` |
 | `fail requires a function that declares an error type` | 在不可失败的函数里用了 `fail` | 给函数加 `!string` |
-| `catch block for f must return a value` | `catch` 块里没有 `return` | 加 `return` |
+| `catch block for f must return a value` | `catch` 块存在未返回的路径 | 确保所有路径都从当前函数 `return` |
 | `only string error types are supported for now` | 用了 `!i64` 之类的错误类型 | 改成 `!string` |
 | `entry must be a .zm file` | `zam.toml` 的入口后缀不对 | 改成 `.zm` |
-| `zam.toml: 系统找不到指定的文件` | 目录里没有 `zam.toml` | 用 `zam new` 建项目，或直接传单个 `.zm` 文件 |
-| `project name must be an identifier` | `zam new` 的目录名不是合法标识符 | 换成字母/数字/下划线 |
-| `<dir>: already exists` | 目标目录已存在 | 换个目录名，或先删掉 |
-| `zam: program failed: exit code: 1` | 程序里的错误没人接住 | 用 `?` 传到 `main`，或用 `catch` 处理 |
+| `zam.toml: 系统找不到指定的文件` | 目录内没有 `zam.toml` | 用 `zam new` 建项目，或直接传单个 `.zm` 文件 |
+| `project name must be an identifier` | `zam new` 的目录名不是合法标识符 | 使用合法标识符，例如 `hello_app`；不要使用连字符或以数字开头 |
+| `<dir>: already exists` | 目标目录已存在 | 使用尚不存在的目标目录 |
+| `zam: program failed: exit code: 1` | 未处理的错误传播到 `main` | 检查错误信息和输入；需要处理时在调用处使用 `catch` |
 
-## 第 15 节：还没实现的功能
+## 第 15 节：支持范围与限制
 
-写代码前先知道边界，省得白试：
+Zamak 0.1.0 的支持范围有限。编写程序时需注意以下限制：
 
-- 没有 `for`、没有 `switch`/`match`、没有 `enum`、没有泛型、没有闭包、没有 trait/接口。
-- 没有包管理器、没有 REPL、没有文档生成、没有格式化以外的重构工具。
+- 尚不支持 `for`、`switch`/`match`、枚举、泛型、闭包和 trait/接口。
+- 尚不提供包管理器、交互式执行环境（REPL）、文档生成工具或重构工具。
 - 标准库只有 `std/string` 的 `byte_len`/`char_len`/`equal`，`std/io` 与 `std/fmt` 的 `println`。
 - 错误类型只能是 `string`，没有错误堆栈。
-- 数组只能做局部变量，不能当参数或返回值；没有切片、没有动态数组。
-- 所有权检查只覆盖 `string` 和结构体；没有线程、没有 `unsafe`、没有 FFI。
-- 编辑器支持只有一份 VS Code 语法高亮扩展（`editors/vscode/`），没有语言服务器、补全和调试器。
-- 安装/发行流程（预编译产物、包管理器）尚未提供。
+- 数组仅支持固定长度的 `i64` 局部值，不能用于函数参数、返回值或结构体字段；尚不支持切片和动态数组。
+- 所有权检查覆盖 `string` 和结构体；尚不支持线程、`unsafe` 和外部函数接口（FFI）。
+- 编辑器支持为 VS Code 语法高亮扩展（`editors/vscode/`），没有语言服务器、补全和调试器。
+- 本教程采用源码安装；安装步骤和平台工具链要求见 [安装说明](PREVIEW.md)。
 
-## 附：示例与测试索引
+## 附录：示例与测试
 
-想直接读代码，`examples/` 下都是能跑的：
+仓库的 `examples/` 目录提供以下可运行示例。在仓库根目录执行 `zam run` 并指定示例目录即可运行：
 
 | 示例 | 内容 |
 | --- | --- |
@@ -590,4 +589,4 @@ zam 0.1.0
 | `examples/control/` | 条件、`while`、`break`/`continue`、函数 |
 | `examples/values/` | 变量、运算符、字符串、数组、格式化、错误值、`catch` |
 
-每个特性都有对应的集成测试（`zam/tests/`），例如 `errors.rs` 覆盖 `T!string`/`fail`/`?`/`catch` 的成功与失败路径，`source_format.rs` 覆盖 `zam fmt` 的行为。想确认某个写法到底行不行，最快的办法是写个小文件跑 `zam check`。
+集成测试位于 `zam/tests/`。其中 `tutorial.rs` 检查本教程的 Zamak 代码块，`errors.rs` 覆盖 `T!string`、`fail`、`?`、`catch` 的成功与失败路径，`source_format.rs` 覆盖 `zam fmt` 的行为。验证新的写法时，可以先保存为独立 `.zm` 文件并运行 `zam check 文件名.zm`；需要确认运行行为时再使用 `zam run`。

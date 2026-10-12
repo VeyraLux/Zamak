@@ -5,7 +5,7 @@ description: 编写、运行、调试 Zamak（.zm）程序，或修改 Zamak 编
 
 # Zamak
 
-Zamak 是静态类型、编译到原生可执行文件的小语言，仓库在 `C:\Zamak`。`zam` 就是它自己的编译器：Rust 前端（`zam/src/compiler.rs` 词法/语法/检查）→ C11 后端（`zam/src/native.rs`）→ MSVC `cl`（Windows）或 `cc`（Unix）。生成的产物不需要安装 Zamak 或 Rust。
+Zamak 是静态类型、编译到原生可执行文件的小语言，仓库位置以当前工作目录为准（本环境为 `E:\CODE\Zamak`）。`zam` 就是它自己的编译器：Rust 前端（`zam/src/compiler.rs` 词法/语法/检查）→ C11 后端（`zam/src/native.rs`）→ MSVC `cl`（Windows）或 `cc`（Unix）。生成的产物不需要安装 Zamak 或 Rust。
 
 ## 命令
 
