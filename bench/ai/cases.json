@@ -159,5 +159,39 @@
       { "find": "let stored = &message", "replace": "let stored = message" }
     ],
     "expected_output": "hi\n"
+  },
+  {
+    "id": "multi-module-valid",
+    "files": [
+      { "path": "main.zm", "source": "use greeting\nuse std/io\n\nfn main() {\n    greeting.hello()\n    io.println(\"main done\")\n}\n" },
+      { "path": "greeting.zm", "source": "pub fn hello() {\n    println(\"hello from zamak\")\n}\n" }
+    ],
+    "expected_code": null,
+    "patches": [],
+    "expected_output": "hello from zamak\nmain done\n"
+  },
+  {
+    "id": "multi-module-borrow",
+    "files": [
+      { "path": "main.zm", "source": "use greeting\n\nfn main() {\n    let message: string = \"hi\"\n    greeting.show(message)\n}\n" },
+      { "path": "greeting.zm", "source": "pub fn show(text: &string) {\n    println(text)\n}\n" }
+    ],
+    "expected_code": "ZM425",
+    "patches": [
+      { "find": "greeting.show(message)", "replace": "greeting.show(&message)" }
+    ],
+    "expected_output": "hi\n"
+  },
+  {
+    "id": "multi-module-unknown",
+    "files": [
+      { "path": "main.zm", "source": "use greeting\n\nfn main() {\n    greeting.nope()\n}\n" },
+      { "path": "greeting.zm", "source": "pub fn hello() {\n    println(\"hello from zamak\")\n}\n" }
+    ],
+    "expected_code": "ZM201",
+    "patches": [
+      { "find": "greeting.nope()", "replace": "greeting.hello()" }
+    ],
+    "expected_output": "hello from zamak\n"
   }
 ]
