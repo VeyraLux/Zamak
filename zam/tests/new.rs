@@ -55,5 +55,26 @@ fn new_scaffolds_a_runnable_project_and_refuses_existing() {
     assert!(String::from_utf8_lossy(&rejected.stderr).contains("identifier"));
     assert!(!bad.exists());
 
+    let ai = root.join("ai");
+    let output = zam(&["new", ai.to_str().unwrap(), "--template", "ai"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(output.stdout.is_empty());
+    assert!(ai.join("AI.md").exists());
+    assert!(ai.join("README.md").exists());
+    assert!(zam(&["check", "--json", ai.to_str().unwrap()])
+        .status
+        .success());
+    let run = zam(&["run", ai.to_str().unwrap()]);
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "hello from zamak\n");
+    let formatted = zam(&["fmt", ai.to_str().unwrap()]);
+    assert!(formatted.status.success());
+    assert!(!String::from_utf8_lossy(&formatted.stderr).contains("FORMAT"));
+
     fs::remove_dir_all(&root).unwrap();
 }
