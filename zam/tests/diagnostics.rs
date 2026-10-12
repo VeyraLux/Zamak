@@ -175,6 +175,11 @@ fn json_codes_classify_real_sources() {
         ("fn main() {\n    println(nope)\n}\n", "ZM201", "name"),
         ("fn main() {\n    nope()\n}\n", "ZM201", "name"),
         (
+            "struct Point {\n    x: i64\n    y: i64\n}\nfn main() {\n    let p = Point {\n        x: 1\n        y: 2\n    }\n    println(p.z)\n}\n",
+            "ZM202",
+            "name",
+        ),
+        (
             "fn main() {\n    let a = \"x\"\n    let b = a\n    println(a)\n}\n",
             "ZM301",
             "ownership",
