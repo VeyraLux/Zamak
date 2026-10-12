@@ -79,25 +79,61 @@ function Get-OutputPath([string]$stderr) {
     return $line[0].Substring(7).Trim()
 }
 
-function Repair($case, [string]$source) {
-    $text = $source
+function Get-CaseFiles($case) {
+    if ($null -ne $case.files) {
+        $list = @()
+        foreach ($f in @($case.files)) {
+            $list += [pscustomobject]@{ Rel = [string]$f.path; Source = [string]$f.source }
+        }
+        return $list
+    }
+    return @([pscustomobject]@{ Rel = 'main.zm'; Source = [string]$case.source })
+}
+
+function Write-CaseFiles($dir, $files, [bool]$projectMode, [string]$projectName) {
+    if ($projectMode) {
+        $srcDir = Join-Path $dir 'src'
+        New-Item -ItemType Directory -Force $srcDir | Out-Null
+        $manifest = "[project]`nname = `"$projectName`"`nentry = `"src/main.zm`"`nmodules = `"src`"`n"
+        Set-Content -Path (Join-Path $dir 'zam.toml') -Value $manifest -NoNewline
+        foreach ($f in $files) {
+            $dest = Join-Path $srcDir $f.Rel
+            $parent = Split-Path -Parent $dest
+            if ($parent -and -not (Test-Path $parent)) { New-Item -ItemType Directory -Force $parent | Out-Null }
+            Set-Content -Path $dest -Value $f.Source -NoNewline
+        }
+    } else {
+        Set-Content -Path (Join-Path $dir $files[0].Rel) -Value $files[0].Source -NoNewline
+    }
+}
+
+function Repair-Files($case, $files) {
+    $updated = @()
+    foreach ($f in $files) { $updated += [pscustomobject]@{ Rel = $f.Rel; Source = $f.Source } }
     foreach ($patch in @($case.patches)) {
         $find = [string]$patch.find
         $replace = [string]$patch.replace
-        if (-not $text.Contains($find)) {
-            throw "case '$($case.id)': patch anchor not found: '$find'"
+        $hit = $false
+        foreach ($u in $updated) {
+            if ($u.Source.Contains($find)) {
+                $u.Source = $u.Source.Replace($find, $replace)
+                $hit = $true
+            }
         }
-        $text = $text.Replace($find, $replace)
+        if (-not $hit) { throw "case '$($case.id)': patch anchor not found: '$find'" }
     }
-    return $text
+    return $updated
 }
 
 $records = @()
 foreach ($case in $cases) {
     $dir = Join-Path $outDir $case.id
     New-Item -ItemType Directory -Force $dir | Out-Null
-    $path = Join-Path $dir 'main.zm'
-    Set-Content -Path $path -Value $case.source -NoNewline
+    $projectMode = $null -ne $case.files
+    $projectName = ($case.id -replace '[^A-Za-z0-9_]', '_')
+    $files = Get-CaseFiles $case
+    Write-CaseFiles $dir $files $projectMode $projectName
+    $path = if ($projectMode) { $dir } else { Join-Path $dir 'main.zm' }
     $first = Invoke-ProcessCapture $zam @('check', '--json', $path) $root $dir
     $firstParsed = Parse-JsonResult $first 'check' ([bool]$true)
     $latencies = @($first.Ms)
@@ -106,7 +142,6 @@ foreach ($case in $cases) {
         $latencies += $sample.Ms
     }
     $rounds = 0
-    $current = $case.source
     $warmSamples = @($latencies | Select-Object -Skip 1 | Sort-Object)
     $warmMedian = $null
     if ($warmSamples.Count -gt 0) {
@@ -116,8 +151,8 @@ foreach ($case in $cases) {
     $solved = [bool]$firstParsed.SuccessPass
     if (-not $solved -and @($case.patches).Count -gt 0) {
         $rounds = 1
-        $current = Repair $case $current
-        Set-Content -Path $path -Value $current -NoNewline
+        $files = Repair-Files $case $files
+        Write-CaseFiles $dir $files $projectMode $projectName
         $fixed = Invoke-ProcessCapture $zam @('check', '--json', $path) $root $dir
         $fixedParsed = Parse-JsonResult $fixed 'check' ([bool]$true)
         $solved = [bool]$fixedParsed.SuccessPass
@@ -204,7 +239,7 @@ $report = [pscustomobject]@{
     powershell = $PSVersionTable.PSVersion.ToString()
     zam = $zam
     zam_version = $toolVersion.Stdout.Trim()
-    commands = @('check --json <file>', 'build --json <file>', '<artifact>')
+    commands = @('check --json <file|project-dir>', 'build --json <file|project-dir>', '<artifact>')
     latency_repeats = $LatencyRepeats
     latency_note = 'Samples are first plus warm process launches; no cold OS-cache claim is made.'
     cases = $records
