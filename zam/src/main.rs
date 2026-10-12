@@ -282,6 +282,12 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
             "error_handling",
             Some("use `!string` or `T!string` for the error type"),
         )
+    } else if message.contains("literal overflow") {
+        (
+            "ZM600",
+            "arithmetic",
+            Some("use a literal that fits in `i64` (max 9223372036854775807)"),
+        )
     } else if message.contains("overflow") || message.contains("division by zero") {
         (
             "ZM600",
@@ -440,12 +446,24 @@ mod tests {
             ("entry: unknown function text", "ZM201"),
             ("cannot assign immutable value count", "ZM302"),
             ("unsupported type f64", "ZM900"),
+            ("i64 literal overflow", "ZM600"),
         ] {
             let d = diagnostic("entry.zm", message);
             assert_eq!(d.code, code, "{message}");
             assert!(d.suggestion.is_some());
             assert_eq!(d.message, message);
         }
+    }
+
+    #[test]
+    fn literal_overflow_suggests_a_smaller_literal() {
+        let d = diagnostic("entry.zm", "i64 literal overflow");
+        assert_eq!(d.code, "ZM600");
+        assert_eq!(d.category, "arithmetic");
+        assert_eq!(
+            d.suggestion,
+            Some("use a literal that fits in `i64` (max 9223372036854775807)")
+        );
     }
 
     fn parse(entry: &str, error: &str) -> Diagnostic {
