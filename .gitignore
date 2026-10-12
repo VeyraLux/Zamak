@@ -1,6 +1,8 @@
 # 构建缓存与生成物（可重建，不入库）
-bench/
+bench/*
+!bench/ai/
 results/
+dist/
 
 # 内部设计与开发文档：只在本地维护，不进公开仓库
 DESIGN.md
@@ -20,6 +22,8 @@ target/
 # 杂项
 .DS_Store
 *.log
+__pycache__/
+*.pyc
 
 # 会话恢复材料（本地上下文，不属于仓库内容）
 _session-restore/

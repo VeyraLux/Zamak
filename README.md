@@ -1,61 +1,72 @@
 # Zamak
 
-一个适合AI时代使用的超级缝合怪语言
+面向快速构建的静态类型原生语言原型。
 
-<img width="1254" height="1254" alt="Zamak" src="ico/Zamak.png" />
+[![CI](https://github.com/rayL-K/Zamak/actions/workflows/ci.yml/badge.svg)](https://github.com/rayL-K/Zamak/actions/workflows/ci.yml)
+
+[教程](TUTORIAL.md) · [预览版安装](PREVIEW.md) · [参与开发](CONTRIBUTING.md) · [AI 工作流](docs/AI_WORKFLOW.md) · [案例验证](docs/VALIDATION.md) · [工程指标](docs/ENGINEERING.md)
+
+<img width="160" height="160" alt="Zamak" src="ico/Zamak.png" />
 
 Zamak 是为频繁构建、多 worktree 协作设计的语言原型。当前 `zam` 支持多模块构建缓存、独立原生可执行文件，以及 `string` 的所有权和调用帧借用检查。原生后端先生成 C，再调用 MSVC（Windows）或 `cc`（Unix）生成机器码；安全语义由 Zamak 检查，用户程序不经过 Rust 编译器。
 
 ## 定位
 
-- **要解决的痛点**：频繁构建的开发循环。模块级缓存让同一份源码在不同目录和工作树之间共享模块产物，热构建只重编译改动模块（本机两模块示例实测全命中约 262 ms，仅两次样本，未做多轮统计，也没有旧后端同机基线）。
-- **目标用户**：写系统层代码、但不想承担复杂构建与长编译的人。语法目标是接近 Python 的阅读体验，同时在需要时能约束内存——目前约束只覆盖 `string` 的所有权与调用帧借用。
-- **技术路线**：静态类型，编译成原生可执行文件。后端先生成 C，再由 MSVC（Windows）或 `cc`（Unix）编译链接；不做解释器，也不依赖 LLVM。安全语义和缓存都由 Zamak 自己实现，用户程序不经过 Rust 编译器。
+- **构建与缓存**：同一份源码可以在不同目录和工作树之间共享缓存。实现变更只需重编译受影响的原生模块；使用到的函数接口或结构体布局变化会使调用方失效。
+- **类型与所有权**：静态类型检查覆盖变量、函数和结构体；字符串和结构体使用移动语义，字符串支持调用期间的共享与独占借用。
+- **原生执行**：生成 C 后调用平台工具链编译。生成的程序可以独立运行，无需安装 Zamak 或 Rust。
+
+当前版本适合学习、语言实验与小规模算法程序。标准库与工具生态尚不完整，不适合生产使用。
 
 ### 生态现状
 
-如实标注：只有 `check`、`build`、`run`、`fmt`、`new`、`demo` 六个子命令（外加 `--help`/`--version`）。标准库停在起步阶段（`std/string` 的 `byte_len`/`char_len`/`equal`，`std/io`、`std/fmt` 的 `println`）；编辑器支持只有一份做语法高亮的 VS Code 扩展（`editors/vscode/`，无语言服务器/补全/调试器），另有仓库内的 AI 技能说明（`.agents/skills/zamak/`）；没有包管理器、REPL 和文档生成；错误值只做到 `T!string` 与 `?`/`fail`/`catch`（其他错误类型、安装/发行流程尚未提供）；泛型、闭包、枚举、match、线程和 unsafe/FFI 都还没有。因此当前只适合作为原型和小规模示例，不适合生产使用。
+| 组件 | 当前能力 |
+| --- | --- |
+| 命令行 | `check`、`build`、`run`、`fmt`、`new`、`demo`；检查与构建支持 JSON 诊断 |
+| 标准库 | UTF-8 字节长度、码点数量、字符串比较，以及 `println` |
+| 错误处理 | `T!string`、`fail`、`?` 传播、`catch` 处理 |
+| 编辑器 | VS Code 语法高亮、括号与引号配对 |
+
+尚未支持浮点数、动态数组、文件或网络 I/O、泛型、枚举与 `match`、闭包、线程及 FFI。包管理器、语言服务器、REPL 和文档生成工具尚未提供。安装方式见 [预览版说明](PREVIEW.md)。
 
 ## 快速运行
 
-零基础读者从 [TUTORIAL.md](TUTORIAL.md) 开始：按小节讲语法，每段代码都给出实测输出。
+初次使用请阅读 [入门教程](TUTORIAL.md)。Windows 预览包和平台工具链要求见 [安装说明](PREVIEW.md)。
 
-首次从本地源码安装（无需发布到包注册表），在仓库根目录执行：
+从源码安装需要 Rust stable 和平台 C 编译器。在仓库根目录执行：
 
 ```powershell
 cargo install --path zam --locked
 ```
 
-安装目录需在 PATH 中；本机已配置。修改工具源码后，重新执行上述安装命令更新。日常使用直接执行：
+确保 Cargo 的安装目录（通常为用户目录下的 `.cargo/bin`）位于 PATH。修改编译器源码后，重新执行安装命令更新。首次使用可以创建并运行项目：
 
 ```powershell
-zam new hello
-zam check examples/hello
-zam build examples/hello
-zam run examples/hello
-zam fmt examples/hello
-zam demo
 zam --version
+zam new hello
+zam check hello
+zam build hello
+zam run hello
+zam fmt hello
 ```
 
-进入项目目录后可以省略路径，例如在 `examples/hello` 中执行 `zam run`。`zam` 本身就是 Zamak 的编译器（前端在 `zam/src/compiler.rs`，C 后端在 `zam/src/native.rs`，构建与缓存在 `zam/src/project.rs`）；它复用系统 C 编译器完成机器码生成，所以生成的产物不依赖 Zamak 或 Rust。
-
-运行示例输出：
+`hello` 应为尚不存在的目录。进入该目录后，可以直接执行 `zam run`。新建项目的程序输出为：
 
 ```text
 hello from zamak
-你好，Zamak
 ```
 
-`build` 在 stderr 输出 `OUTPUT <path>`，Windows 上是 `build/<name>-<hash>.exe`，Unix 上是同名的无后缀可执行文件，可以直接启动，也可用 `zam run <path>` 执行。产物不需要安装 Zamak 或 Rust；Windows 静态链接 C 运行库。命令失败返回非零退出码，错误写入 stderr。词法/语法错误包含源码文件、行号与列号；列号从 1 开始，按 Unicode 字符计数，制表符算一个字符，EOF 使用末尾位置。词法错误指向 token 起点，语法错误指向解析器发现错误的位置。语义错误包含行号、列号与所属函数，位置取当前语句的起点（`missing string return value` 取函数声明处）；因为一个模块对应一个文件，函数前面的模块名即可定位文件。没有路径参数时使用当前目录；源码后缀统一为 `.zm`；可以直接检查或构建单个源码文件。构建进度（`CACHE`/`OBJECT`/`LINK`/`OUTPUT`）和错误都写 stderr，stdout 只留程序输出。
+构建进度写入 stderr，程序输出写入 stdout。多模块、中文输出及所有权示例见 [教程](TUTORIAL.md)。
 
-`zam check --json` 与 `zam build --json` 把结果写成一行 JSON 供编辑器、CI 等工具读取：`{"command":"check","ok":false,"diagnostics":[{"file":"…","line":3,"column":9,"function":"main:main","message":"…"}]}`。`function` 与位置在无法定位时为 `null`；失败时 stderr 仍保留一行人类可读信息，退出码与不带 `--json` 时一致。其他子命令不接受 `--json`。
+`build` 在 stderr 输出 `OUTPUT <path>`，Windows 上是 `build/<name>-<hash>.exe`，Unix 上是同名的无后缀可执行文件，可以直接启动，也可用 `zam run <path>` 执行。产物不需要安装 Zamak 或 Rust；Windows 默认 MSVC 后端静态链接 C 运行库，其他 C 工具链的运行库依赖取决于其配置。命令失败返回非零退出码，错误写入 stderr。词法/语法错误包含源码文件、行号与列号；列号从 1 开始，按 Unicode 字符计数，制表符算一个字符，EOF 使用末尾位置。词法错误指向 token 起点，语法错误指向解析器发现错误的位置。语义错误包含行号、列号与所属函数，位置取当前语句的起点（`missing string return value` 取函数声明处）；因为一个模块对应一个文件，函数前面的模块名即可定位文件。没有路径参数时使用当前目录；源码后缀统一为 `.zm`；可以直接检查或构建单个源码文件。构建进度（`CACHE`/`OBJECT`/`LINK`/`OUTPUT`）和错误都写 stderr，stdout 只留程序输出。
 
-`zam new <directory>` 生成一个最小可运行的项目骨架：`zam.toml`（`name`/`entry = "src/main.zm"`/`modules = "src"`）、打印一句问候的 `src/main.zm`，以及忽略 `build/` 的 `.gitignore`；创建的文件路径以 `NEW <path>` 写到 stderr，stdout 保持为空。生成的骨架可以直接 `zam run`，而且本来就是格式化过的。目标目录已存在就报错退出，不覆盖任何已有文件；目录名必须同时是合法标识符（它会写进 `zam.toml` 的 `name`）。
+`zam check --json` 与 `zam build --json` 把结果写成一行 JSON 供编辑器、CI 和 AI 工具读取：`{"command":"check","ok":false,"diagnostics":[{"file":"…","line":3,"column":9,"function":"main:main","code":"ZM100","category":"syntax","message":"…","suggestion":"…"}]}`。`code` 和 `category` 是稳定机器字段，`message` 保持人类可读兼容；`suggestion` 在有明确修复路径时提供下一步。`function` 与位置在无法定位时为 `null`；失败时 stderr 仍保留一行人类可读信息，退出码与不带 `--json` 时一致。其他子命令不接受 `--json`。
+
+`zam new <directory>` 生成一个最小可运行的项目骨架；面向 AI 协作可使用 `zam new <directory> --template ai`，额外生成 `AI.md` 与 `README.md`，固定记录“check --json → 最小修复 → fmt → check → build → run”循环。`zam.toml`（`name`/`entry = "src/main.zm"`/`modules = "src"`）、打印一句问候的 `src/main.zm`，以及忽略 `build/` 的 `.gitignore`；创建的文件路径以 `NEW <path>` 写到 stderr，stdout 保持为空。生成的骨架可以直接 `zam run`，并已完成格式化。目标目录已存在就报错退出，不覆盖任何已有文件；目录名必须同时是合法标识符（它会写进 `zam.toml` 的 `name`）。
 
 `zam fmt [project|file]` 就地整理源码格式：按大括号深度重排每行缩进（每次 4 个空格）、去掉行尾空白、结尾统一留一个换行，并保留原有的换行风格（CRLF 文件仍是 CRLF）。它只改空白、不重建 token，所以注释、字符串内容和行内空格原样保留，不会丢注释；改写过的文件路径以 `FORMAT <path>` 写到 stderr，已经规范的文件不重写也不报告。语法不成立的代码会先被拒绝（与 `check` 同一套解析），不会被改得更难读。当前不做行内空格重排和长行折行。
 
-Windows 构建需要 Visual Studio C++ 工具，自动通过 `vswhere` 查找 x64 MSVC。本机已安装。Unix 后端调用 `cc`，可通过 `CC` 指定编译器程序；已在 Ubuntu 26.04 + gcc 15.2 上实机验证构建、执行和全部集成回归。`check` 不需要 C 编译器。旧 `.zbc` 产物已不再支持，需要重新构建。
+Windows 默认使用 Visual Studio Build Tools 的「使用 C++ 的桌面开发」及 Windows SDK，编译器通过 `vswhere` 查找 x64 MSVC。也可设置 `CC=gcc`，显式使用已安装的 MinGW GCC；`CC` 必须指向采用 GNU 命令行的编译器程序，不接受附加参数或 MSVC `cl`。Unix 后端调用 `cc`，可通过 `CC` 指定编译器程序；已在 Ubuntu 26.04 + gcc 15.2 上实机验证构建、执行和全部集成回归。`check` 不需要 C 编译器。旧 `.zbc` 产物已不再支持，需要重新构建。
 
 ## 编辑器与 AI 工具
 
@@ -126,13 +137,9 @@ fn main() {
 
 修改依赖会使该模块和其传递依赖方失效，独立模块继续命中缓存。当前仍对全部源码执行解析和检查，并比较缓存产物内容；缓存验证以正确性为优先，尚未实现只读接口的语义增量分析。
 
-性能实测（2026-10-10，本机 Windows + MSVC，11 个模块、5,250 行的生成项目；复现脚本与原始数据是本地产物，见 `results/ZAMAK.md`）：一次完整构建的中间产物加缓存约 **1.1MB**（设计目标 <50MB），构建峰值内存 134–170MB（目标 <200MB），`zam check` 约 0.1s。冷构建 **2.0s**、改一行 **0.8s**、改公开签名 **1.4s**。六语言运行基线（同一计算内核、各 3 次）中位数为 Zamak **1457ms（7.29ns/op）**、Rust **1385ms（6.93ns/op）**、Go **1312ms（6.56ns/op）**、C **1490ms（7.45ns/op）**、C++ **1509ms（7.54ns/op）**；所有原生程序输出 `18131`，Python 使用缩小输入单独计量。Zamak 的整数运算带溢出检查，基准结果会受机器与进程调度影响。
+性能验证的方法、适用范围与首轮结果见 [案例验证](docs/VALIDATION.md)，后续优化与 Rust/Go 对照见 [性能优化记录](docs/PERFORMANCE.md)。构建时间随模块规模、缓存状态、平台工具链和机器负载变化；运行性能还受整数溢出与边界检查影响。后端通过保守的整数区间分析消除可证明冗余的检查，并对有调用范围证明的同模块整数函数生成有限数量的内部版本；无法证明安全的操作保留运行时检查。GNU 风格后端使用 `-O2 -funroll-loops`，MSVC 使用 `/O2`；循环展开可能增加编译时间与代码体积，实测代价见性能记录。性能结论应与输入、检查语义和重复次数一起阅读。
 
-增量构建一度差得很远（改一行约 8.2s、改公开签名约 36.5s，设计目标是 <1s），根因不在 Zamak 的前端或代码生成，而在工具链调用方式——每次编译/链接都要重新执行 `vcvars64.bat` 装载 MSVC 环境，本机这项固定开销约 4.2s，与项目规模无关（1 个模块的 hello world 改一行也是 8.6–9.8s，而缓存全热、不调用 C 编译器时整次构建只要 0.38s）。现在改为**把 MSVC 环境捕获一次、缓存到临时目录，再用绝对路径直接调用 `cl.exe`/`link.exe`**；生成的对象字节与旧调用方式逐字节相同（用旧缓存验证：全部 `OBJECT HIT`/`LINK HIT`），因此缓存键没有改变，已有缓存继续有效。另外，各模块本来就是独立编译单元，**C 编译按模块并行**（默认并发度为可用核数，封顶 4——守住「构建峰值 <200MB」的设计判据；可用 `ZAMAK_JOBS` 覆盖）。改一行 0.8s、冷构建 2.0s 已经达标，改公开签名 1.4s 仍略超 1s：这一场景真的要重编 7 个模块，4 路并行排两轮；`zam check` 只要 0.1s，说明瓶颈不是前端。并行分块按「缓存 MISS」而不是按模块下标排队（命中缓存的模块不再白占并发位），并把「生成 C + 查缓存」和「编译 MISS」分成两段；实测默认 4 路下签名变更 1.28→1.24s、`ZAMAK_JOBS=8` 下 1.30→1.12s，对象字节不变（跨二进制验证全部 `OBJECT HIT`）。换 `clang-cl` 也试过：真实尺寸的翻译单元上不比 `cl.exe` 快（中位慢 3%），Windows 上也不减少对 VS/SDK 的依赖，因此不引入。
-
-后续把缓存 MISS 的编译调度改为有界工作队列：每个线程完成一个模块后立即领取下一个，避免等待整批中最慢的模块。默认并发上限仍为 4。本机公开签名变更各测 5 次，中位数由 1.446s 降到 1.330s（约 8%），采样峰值为 161.1MB / 154.7MB；这是单机生成项目的结果，仍未达到接口变更 <1s 的目标。旧缓存全部命中，独立冷构建的对象及可执行文件哈希一致，因此未改变缓存版本。
-
-内存安全方面，在 WSL（Ubuntu + gcc 15.2）里把 `CC` 换成 `cc -fsanitize=address,undefined` 后，12 个集成套件全部通过、无 sanitizer 报告，9 个示例程序在 LeakSanitizer 下均无泄漏。该检查只换 C 编译器，不改 Zamak 本体。对象缓存隐含要求「同一缓存键产出同一对象字节」：Windows 侧由 `/Brepro` 与 `/d2pathmap` 保证，Unix 侧由 `-ffile-prefix-map=<scratch>=.` 保证（此前缺这一项，通过 `CC` 额外传入 `-g` 会让缓存报 `corrupt cache entry`）。
+Windows 工具链环境在首次调用时捕获并缓存，后续直接调用编译器与链接器。目标文件编译使用有界工作队列；默认并发度为可用核数且不超过 4，可通过 `ZAMAK_JOBS` 调整。缓存命中的模块不占用编译队列。
 
 缓存发布过程为：同目录独占创建临时文件，写入并同步后，通过硬链接原子发布最终文件。并发构建可以重复计算，但同一缓存键只保留一个完整产物；不同内容或损坏缓存会报错。缓存所在文件系统必须支持硬链接。正常执行会清理临时文件；进程被强制终止可能留下 `.tmp` 文件。缓存清理和容量限制尚未提供子命令。
 
@@ -145,13 +152,18 @@ Windows 编译使用 `/Brepro` 与 `/d2pathmap` 将临时目录映射为固定�
 ## 验证
 
 ```powershell
-cargo test --manifest-path zam/Cargo.toml
-cargo clippy --manifest-path zam/Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path zam/Cargo.toml --locked
+cargo fmt --manifest-path zam/Cargo.toml -- --check
+cargo clippy --manifest-path zam/Cargo.toml --all-targets --locked -- -D warnings
 node editors/vscode/scripts/check-grammar.mjs
+pwsh -File bench/ai/run.ps1 -ZamPath .\zam\target\debug\zam.exe -LatencyRepeats 3
+pwsh -File tools/measure-build.ps1 -ZamPath .\zam\target\debug\zam.exe -Modules 6 -Repetitions 3
 ```
 
-最后一条校验编辑器扩展的声明式配置：三个 JSON 可解析、TextMate 语法里每条正则可编译、语言 id / 后缀 / `scopeName` / 仓库分组引用互相一致。
+第 5 条校验编辑器扩展的声明式配置：三个 JSON 可解析、TextMate 语法里每条正则可编译、语言 id / 后缀 / `scopeName` / 仓库分组引用互相一致。
 
-集成检查覆盖跨目录缓存复用、原生产物一致性、独立执行、中文输出、依赖变更和独立模块命中、四个进程共享冷缓存、缓存损坏、语法错误、可见性、依赖环和配置路径校验。另覆盖字符串移动、借用修改、返回、重新初始化、重复共享借用，以及移动后使用、借用冲突/逃逸、错误参数和不可变赋值等反例；字符串插值覆盖中文字面量、整数/布尔/字段读取、非移动读取，以及未闭合、嵌套、未知变量和移动后使用等拒绝；诊断覆盖词法/语法错误的文件与行列，以及语义错误的行列与函数定位。错误值覆盖 `?` 的跨函数传播、未捕获错误写 stderr 并以退出码 1 结束、`catch` 就地处理（成功与失败两条路径），以及漏写 `?`、无错误签名函数里的 `?`/`fail`、非 `string` 错误类型、catch 代码块不返回、对不可失败调用 catch、catch 绑定撞名等反例。`zam fmt` 覆盖项目级重排缩进、注释与字符串内容原样保留、CRLF 文件保持 CRLF、二次运行报告无改动、语法坏掉的代码被拒绝，以及单文件与整目录两种入口。`zam new` 覆盖骨架内容、生成的项目能直接 `check`、目录已存在时拒绝且不覆盖、非法项目名被拒绝。
+后两条是可重复的工程测量：离线 AI 闭环评测用固定候选和补丁验证诊断、修复、构建与输出是否全部通过；构建测量生成固定形状的多模块工程，断言冷构建全 MISS、热构建全 HIT、实现编辑只重编一个模块、接口编辑重编该模块与调用方。两者都只把结果写入被忽略的 `results/`，断言失败即报错。
+
+集成测试覆盖原生执行、模块与缓存、并发发布、所有权与借用、错误处理、源码诊断，以及新建项目与格式化。测试同时包含成功路径和应被拒绝的输入。教程代码块会自动执行编译检查；常见算法案例另有原生运行与完整输出断言。测试方法与性能结论见 [案例验证](docs/VALIDATION.md)，开发规范见 [贡献指南](CONTRIBUTING.md)。
 
 当前实现只是语言草案的一部分，多数功能还未实现；已在文档中标注的能力之外，语法与库都可能变化。
