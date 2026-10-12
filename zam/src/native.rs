@@ -6,6 +6,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Command;
 
+#[path = "native_ranges.rs"]
+mod ranges;
+
 const RUNTIME: &str = r#"#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +16,23 @@ const RUNTIME: &str = r#"#include <stdio.h>
 #include <inttypes.h>
 #include <limits.h>
 static void arithmetic_error(void) { fputs("zam: integer arithmetic error\n", stderr); exit(1); }
+#if defined(__GNUC__) || defined(__clang__)
+static int64_t add(int64_t a, int64_t b) {
+    int64_t result;
+    if (__builtin_add_overflow(a, b, &result)) arithmetic_error();
+    return result;
+}
+static int64_t sub(int64_t a, int64_t b) {
+    int64_t result;
+    if (__builtin_sub_overflow(a, b, &result)) arithmetic_error();
+    return result;
+}
+static int64_t mul(int64_t a, int64_t b) {
+    int64_t result;
+    if (__builtin_mul_overflow(a, b, &result)) arithmetic_error();
+    return result;
+}
+#else
 static int64_t add(int64_t a, int64_t b) {
     if ((b > 0 && a > INT64_MAX-b) || (b < 0 && a < INT64_MIN-b)) arithmetic_error();
     return a+b;
@@ -26,11 +46,20 @@ static int64_t mul(int64_t a, int64_t b) {
         (a < 0 && (b > 0 ? a < INT64_MIN/b : b < 0 && a < INT64_MAX/b))) arithmetic_error();
     return a*b;
 }
+#endif
 static int64_t quotient(int64_t a, int64_t b) {
-    if (!b || (a == INT64_MIN && b == -1)) arithmetic_error(); return a/b;
+    if (!b || (a == INT64_MIN && b == -1)) arithmetic_error();
+#if defined(__GNUC__) || defined(__clang__)
+    if (((uint64_t)a | (uint64_t)b) <= UINT32_MAX) return (int64_t)((uint32_t)a / (uint32_t)b);
+#endif
+    return a/b;
 }
 static int64_t remainder(int64_t a, int64_t b) {
-    if (!b || (a == INT64_MIN && b == -1)) arithmetic_error(); return a%b;
+    if (!b || (a == INT64_MIN && b == -1)) arithmetic_error();
+#if defined(__GNUC__) || defined(__clang__)
+    if (((uint64_t)a | (uint64_t)b) <= UINT32_MAX) return (int64_t)((uint32_t)a % (uint32_t)b);
+#endif
+    return a%b;
 }
 static int64_t checked_index(int64_t index, size_t length) {
     if (index < 0 || (uintmax_t)index >= length) { fputs("zam: array index out of bounds\n", stderr); exit(1); }
@@ -91,6 +120,8 @@ struct Generator<'a> {
     locals: BTreeMap<String, (String, Type)>,
     owners: Vec<(String, Type)>,
     loops: Vec<usize>,
+    proofs: ranges::Proofs,
+    call_targets: BTreeMap<usize, String>,
     code: String,
     next: usize,
     // 当前函数的签名：`?` 提前返回时要构造同样形状的结果结构体。
@@ -297,10 +328,12 @@ impl Generator<'_> {
                     Type::ArrayInt(length) => length,
                     _ => unreachable!(),
                 };
-                self.scalar(
-                    &format!("{}[checked_index({index}, {length})]", self.locals[local].0),
-                    Type::Int,
-                )
+                let index = if self.proofs.index(expr) {
+                    index
+                } else {
+                    format!("checked_index({index}, {length})")
+                };
+                self.scalar(&format!("{}[{index}]", self.locals[local].0), Type::Int)
             }
             Expr::Text(text) => self.temporary(&self.literal(text)),
             Expr::Format(segments) => {
@@ -346,7 +379,9 @@ impl Generator<'_> {
                 let ty = self.ty(expr);
                 let value = self.expr(value);
                 self.scalar(
-                    &if *op == '-' {
+                    &if *op == '-' && self.proofs.arithmetic(expr) {
+                        format!("(-{value})")
+                    } else if *op == '-' {
                         format!("sub(0, {value})")
                     } else {
                         format!("!{value}")
@@ -356,6 +391,13 @@ impl Generator<'_> {
             }
             Expr::Binary(op, left, right) => {
                 let ty = self.ty(expr);
+                // Only zero and -1 can make signed division or remainder invalid.
+                let safe_divisor =
+                    matches!(right.as_ref(), Expr::Int(value) if !matches!(*value, 0 | -1));
+                // Dynamic divisors retain the runtime's guarded 32-bit fast path.
+                // Unsigned power-of-two reduction exposes a precise result range;
+                // other constants retain signed reduction to avoid slower magic division.
+                let unsigned_constant_divisor = matches!(right.as_ref(), Expr::Int(value) if *value > 0 && (*value as u64).is_power_of_two());
                 let left = self.expr(left);
                 if matches!(op.as_str(), "&&" | "||") {
                     let value = self.scalar(&left, Type::Bool);
@@ -374,12 +416,23 @@ impl Generator<'_> {
                     return value;
                 }
                 let right = self.expr(right);
+                if matches!(op.as_str(), "/" | "%")
+                    && unsigned_constant_divisor
+                    && self.proofs.unsigned_division(expr)
+                {
+                    // Both operands are nonnegative and the divisor is positive.
+                    // Their quotient/remainder fits i64, so the cast back is exact.
+                    return self.scalar(
+                        &format!("(int64_t)((uint64_t){left} {op} (uint64_t){right})"),
+                        ty,
+                    );
+                }
                 let function = match op.as_str() {
-                    "+" => Some("add"),
-                    "-" => Some("sub"),
-                    "*" => Some("mul"),
-                    "/" => Some("quotient"),
-                    "%" => Some("remainder"),
+                    "+" if !self.proofs.arithmetic(expr) => Some("add"),
+                    "-" if !self.proofs.arithmetic(expr) => Some("sub"),
+                    "*" if !self.proofs.arithmetic(expr) => Some("mul"),
+                    "/" if !safe_divisor => Some("quotient"),
+                    "%" if !safe_divisor => Some("remainder"),
                     _ => None,
                 };
                 self.scalar(
@@ -399,7 +452,11 @@ impl Generator<'_> {
             Expr::Borrow(name, _) => self.pointer(name),
             Expr::Call(name, args) => {
                 let result = self.module.functions[name].result;
-                let call = self.raw_call(name, args);
+                let symbol = self
+                    .call_targets
+                    .get(&(expr as *const Expr as usize))
+                    .cloned();
+                let call = self.raw_call(name, args, symbol.as_deref());
                 self.call_value(&call, result)
             }
             Expr::Try(inner) => {
@@ -407,7 +464,7 @@ impl Generator<'_> {
                     unreachable!("checked ? operand")
                 };
                 let result = self.module.functions[name].result;
-                let call = self.raw_call(name, args);
+                let call = self.raw_call(name, args, None);
                 let structure = fallible_name(result);
                 let temp = format!("v{}", self.next);
                 self.next += 1;
@@ -429,7 +486,7 @@ impl Generator<'_> {
                     unreachable!("checked catch operand")
                 };
                 let result = self.module.functions[name].result;
-                let call = self.raw_call(name, args);
+                let call = self.raw_call(name, args, None);
                 let structure = fallible_name(result);
                 let temp = format!("v{}", self.next);
                 self.next += 1;
@@ -471,7 +528,7 @@ impl Generator<'_> {
             self.scalar(&format!("{temp}.value"), result)
         }
     }
-    fn raw_call(&mut self, name: &str, args: &[Expr]) -> String {
+    fn raw_call(&mut self, name: &str, args: &[Expr], symbol: Option<&str>) -> String {
         let function = &self.module.functions[name];
         let types: Vec<_> = function.params.iter().map(|(_, ty)| *ty).collect();
         let mut values = Vec::new();
@@ -491,7 +548,11 @@ impl Generator<'_> {
                 }
             });
         }
-        format!("{}({})", self.symbols[name], values.join(", "))
+        format!(
+            "{}({})",
+            symbol.unwrap_or(&self.symbols[name]),
+            values.join(", ")
+        )
     }
     fn call_value(&mut self, call: &str, result: Type) -> String {
         if result == Type::Owned {
@@ -523,9 +584,26 @@ impl Generator<'_> {
                     returned = yes_returns && no_returns;
                 }
                 Instruction::While(condition, nested) => {
+                    let invariant = self.invariant_condition(condition, nested);
+                    let hoisted = if invariant {
+                        let Expr::Binary(_, _, right) = condition else {
+                            unreachable!("invariant condition validated as comparison")
+                        };
+                        Some(self.expr(right))
+                    } else {
+                        None
+                    };
                     self.code.push_str("while (1) {\n");
                     let owners = self.owners.len();
-                    let value = self.expr(condition);
+                    let value = if let Some(right) = hoisted {
+                        let Expr::Binary(op, left, _) = condition else {
+                            unreachable!("invariant condition validated as comparison")
+                        };
+                        let left = self.expr(left);
+                        self.scalar(&format!("({left} {op} {right})"), Type::Bool)
+                    } else {
+                        self.expr(condition)
+                    };
                     self.code.push_str(&format!("int condition = {value};\n"));
                     for (name, ty) in &self.owners[owners..] {
                         self.code.push_str(&format!("{}(&{name});\n", drop_fn(*ty)));
@@ -549,10 +627,13 @@ impl Generator<'_> {
                         Type::ArrayInt(length) => length,
                         _ => unreachable!(),
                     };
-                    self.code.push_str(&format!(
-                        "{}[checked_index({index}, {length})] = {value};\n",
-                        self.locals[local].0
-                    ));
+                    let index = if self.proofs.assignment_index(instruction) {
+                        index
+                    } else {
+                        format!("checked_index({index}, {length})")
+                    };
+                    self.code
+                        .push_str(&format!("{}[{index}] = {value};\n", self.locals[local].0));
                 }
                 Instruction::AssignField(local, field, expr) => {
                     let value = self.expr(expr);
@@ -688,8 +769,231 @@ impl Generator<'_> {
     fn cleanup(&mut self) {
         self.cleanup_from(0);
     }
+
+    fn scalar_invariant_expr(
+        &self,
+        expr: &Expr,
+        mutated: &std::collections::BTreeSet<String>,
+    ) -> bool {
+        match expr {
+            Expr::Int(_) | Expr::Bool(_) => true,
+            Expr::Variable(name) => {
+                matches!(
+                    self.locals.get(name).map(|(_, ty)| ty),
+                    Some(Type::Int | Type::Bool)
+                ) && !mutated.contains(name)
+            }
+            Expr::Unary(op, value) => *op == '-' && self.scalar_invariant_expr(value, mutated),
+            Expr::Binary(op, left, right) => {
+                matches!(op.as_str(), "+" | "-" | "*" | "/" | "%")
+                    && self.scalar_invariant_expr(left, mutated)
+                    && self.scalar_invariant_expr(right, mutated)
+            }
+            _ => false,
+        }
+    }
+
+    fn loop_mutations(body: &Block, mutated: &mut std::collections::BTreeSet<String>) {
+        for (instruction, _) in body {
+            match instruction {
+                Instruction::Assign(name, _) => {
+                    mutated.insert(name.clone());
+                }
+                Instruction::AssignField(name, _, _) | Instruction::AssignIndex(name, _, _) => {
+                    mutated.insert(name.clone());
+                }
+                Instruction::If(_, yes, no) => {
+                    Self::loop_mutations(yes, mutated);
+                    Self::loop_mutations(no, mutated);
+                }
+                Instruction::While(_, nested) => Self::loop_mutations(nested, mutated),
+                _ => {}
+            }
+        }
+    }
+
+    fn invariant_condition(&self, condition: &Expr, body: &Block) -> bool {
+        let Expr::Binary(op, left, right) = condition else {
+            return false;
+        };
+        if !matches!(op.as_str(), "==" | "!=" | "<" | "<=" | ">" | ">=") {
+            return false;
+        }
+        if !matches!(
+            left.as_ref(),
+            Expr::Int(_) | Expr::Bool(_) | Expr::Variable(_)
+        ) {
+            return false;
+        }
+        if !matches!(right.as_ref(), Expr::Unary(_, _) | Expr::Binary(_, _, _)) {
+            return false;
+        }
+        let mut mutated = std::collections::BTreeSet::new();
+        Self::loop_mutations(body, &mut mutated);
+        self.scalar_invariant_expr(right, &mutated)
+    }
 }
 
+// Visit calls in AST source order; addresses are lookup keys, never ordering keys.
+fn visit_calls<'a>(body: &'a Block, visit: &mut impl FnMut(&'a Expr, &'a str)) {
+    fn expr<'a>(value: &'a Expr, visit: &mut impl FnMut(&'a Expr, &'a str)) {
+        match value {
+            Expr::Call(name, args) => {
+                visit(value, name);
+                for arg in args {
+                    expr(arg, visit);
+                }
+            }
+            Expr::Unary(_, inner)
+            | Expr::Try(inner)
+            | Expr::ByteLen(inner)
+            | Expr::CharLen(inner)
+            | Expr::Index(_, inner) => expr(inner, visit),
+            Expr::Binary(_, a, b) | Expr::StringEqual(a, b) => {
+                expr(a, visit);
+                expr(b, visit);
+            }
+            Expr::Catch(inner, _, body) => {
+                expr(inner, visit);
+                visit_calls(body, visit);
+            }
+            Expr::Record(_, fields) => {
+                for (_, value) in fields {
+                    expr(value, visit);
+                }
+            }
+            Expr::Array(values) | Expr::Format(values) => {
+                for value in values {
+                    expr(value, visit);
+                }
+            }
+            _ => {}
+        }
+    }
+    for (instruction, _) in body {
+        match instruction {
+            Instruction::Let(_, _, _, value)
+            | Instruction::Assign(_, value)
+            | Instruction::AssignField(_, _, value)
+            | Instruction::Print(value)
+            | Instruction::Call(value)
+            | Instruction::Fail(value)
+            | Instruction::Return(Some(value)) => expr(value, visit),
+            Instruction::AssignIndex(_, index, value) => {
+                expr(index, visit);
+                expr(value, visit);
+            }
+            Instruction::If(condition, yes, no) => {
+                expr(condition, visit);
+                visit_calls(yes, visit);
+                visit_calls(no, visit);
+            }
+            Instruction::While(condition, body) => {
+                expr(condition, visit);
+                visit_calls(body, visit);
+            }
+            _ => {}
+        }
+    }
+}
+struct Specialization {
+    name: String,
+    symbol: String,
+    inputs: Vec<ranges::Interval>,
+}
+struct FunctionPlan {
+    proofs: ranges::Proofs,
+    targets: BTreeMap<usize, String>,
+}
+fn specialization_plan(
+    module: &Module,
+    unit: &str,
+    symbols: &BTreeMap<String, String>,
+) -> (BTreeMap<String, FunctionPlan>, Vec<Specialization>) {
+    let graph: BTreeMap<String, std::collections::BTreeSet<String>> = module
+        .functions
+        .iter()
+        .map(|(name, function)| {
+            let mut edges = std::collections::BTreeSet::new();
+            visit_calls(&function.body, &mut |_, name| {
+                edges.insert(name.to_owned());
+            });
+            (name.clone(), edges)
+        })
+        .collect();
+    fn reaches(
+        graph: &BTreeMap<String, std::collections::BTreeSet<String>>,
+        current: &str,
+        goal: &str,
+        seen: &mut std::collections::BTreeSet<String>,
+    ) -> bool {
+        if !seen.insert(current.to_owned()) {
+            return false;
+        }
+        graph.get(current).is_some_and(|edges| {
+            edges
+                .iter()
+                .any(|next| next == goal || reaches(graph, next, goal, seen))
+        })
+    }
+    let cyclic: std::collections::BTreeSet<_> = graph
+        .keys()
+        .filter(|name| reaches(&graph, name, name, &mut Default::default()))
+        .cloned()
+        .collect();
+    let mut plans = BTreeMap::new();
+    let mut versions: Vec<Specialization> = Vec::new();
+    for (name, function) in &module.functions {
+        if name.split_once(':').unwrap().0 != unit {
+            continue;
+        }
+        let proofs = ranges::analyze(function);
+        let mut targets = BTreeMap::new();
+        visit_calls(&function.body, &mut |expr, callee| {
+            let target = &module.functions[callee];
+            if callee.split_once(':').unwrap().0 != unit
+                || cyclic.contains(callee)
+                || target.result != Type::Int
+                || target.error.is_some()
+                || !target.params.iter().all(|(_, ty)| *ty == Type::Int)
+            {
+                return;
+            }
+            let Some(inputs) = proofs.call_inputs(expr) else {
+                return;
+            };
+            if inputs.len() != target.params.len()
+                || inputs.iter().all(|input| *input == ranges::Interval::TOP)
+            {
+                return;
+            }
+            let symbol = if let Some(version) = versions
+                .iter()
+                .find(|version| version.name == callee && version.inputs == inputs)
+            {
+                version.symbol.clone()
+            } else {
+                let count = versions
+                    .iter()
+                    .filter(|version| version.name == callee)
+                    .count();
+                if count >= 8 || versions.len() >= 64 {
+                    return;
+                }
+                let symbol = format!("{}_spec{count}", symbols[callee]);
+                versions.push(Specialization {
+                    name: callee.to_owned(),
+                    symbol: symbol.clone(),
+                    inputs: inputs.to_vec(),
+                });
+                symbol
+            };
+            targets.insert(expr as *const Expr as usize, symbol);
+        });
+        plans.insert(name.clone(), FunctionPlan { proofs, targets });
+    }
+    (plans, versions)
+}
 pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
     let symbols: BTreeMap<_, _> = module
         .functions
@@ -707,6 +1011,7 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
             )
         })
         .collect();
+    let (plans, specializations) = specialization_plan(module, unit, &symbols);
     let signature = |name: &str| {
         let function = &module.functions[name];
         let params = function
@@ -759,7 +1064,7 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
                 calls(inner, needed, records);
                 body_calls(block, needed, records);
             }
-            Expr::Array(values) => {
+            Expr::Array(values) | Expr::Format(values) => {
                 for value in values {
                     calls(value, needed, records);
                 }
@@ -782,10 +1087,13 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
                 Instruction::Let(_, _, _, expr)
                 | Instruction::Assign(_, expr)
                 | Instruction::AssignField(_, _, expr)
-                | Instruction::AssignIndex(_, _, expr)
                 | Instruction::Print(expr)
                 | Instruction::Call(expr)
                 | Instruction::Fail(expr) => calls(expr, needed, records),
+                Instruction::AssignIndex(_, index, value) => {
+                    calls(index, needed, records);
+                    calls(value, needed, records);
+                }
                 Instruction::Return(Some(expr)) => calls(expr, needed, records),
                 Instruction::If(expr, yes, no) => {
                     calls(expr, needed, records);
@@ -892,17 +1200,43 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
     for name in &needed {
         source.push_str(&format!("{};\n", signature(name)));
     }
-    for (name, function) in &module.functions {
-        if name.split_once(':').unwrap().0 != unit {
-            continue;
-        }
-        source.push_str(&format!("{} {{\n", signature(name)));
+    for version in &specializations {
+        source.push_str(&format!(
+            "static {};\n",
+            signature(&version.name).replacen(&symbols[&version.name], &version.symbol, 1)
+        ));
+    }
+    let generic = plans.into_iter().map(|(name, plan)| (name, None, plan));
+    let specialized = specializations.into_iter().map(|version| {
+        let proofs = ranges::analyze_with_ranges(&module.functions[&version.name], &version.inputs);
+        (
+            version.name,
+            Some(version.symbol),
+            FunctionPlan {
+                proofs,
+                targets: BTreeMap::new(),
+            },
+        )
+    });
+    for (name, symbol, plan) in generic.chain(specialized) {
+        let function = &module.functions[&name];
+        let declaration = if let Some(symbol) = symbol {
+            format!(
+                "static {}",
+                signature(&name).replacen(&symbols[&name], &symbol, 1)
+            )
+        } else {
+            signature(&name)
+        };
+        source.push_str(&format!("{declaration} {{\n"));
         let mut g = Generator {
             module,
             symbols: &symbols,
             locals: BTreeMap::new(),
             owners: Vec::new(),
             loops: Vec::new(),
+            proofs: plan.proofs,
+            call_targets: plan.targets,
             code: String::new(),
             next: 0,
             result: function.result,
@@ -941,8 +1275,15 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
     source
 }
 
+fn uses_msvc(tool: &str) -> bool {
+    cfg!(windows)
+        && Path::new(tool)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("bat"))
+}
+
 pub fn tool() -> Result<(String, String)> {
-    if cfg!(windows) {
+    if cfg!(windows) && std::env::var_os("CC").is_none() {
         let root = std::env::var_os("ProgramFiles(x86)").ok_or("missing ProgramFiles(x86)")?;
         let output =
             Command::new(Path::new(&root).join("Microsoft Visual Studio/Installer/vswhere.exe"))
@@ -1108,10 +1449,10 @@ fn msvc_tool(environment: &BTreeMap<String, String>, name: &str) -> Result<std::
 
 // ponytail: 只有产物字节真变才升版本（会让缓存整体失效）；改了编译/链接命令行但字节不变时，
 // 先用旧缓存跑一次构建、确认仍是 OBJECT HIT 再决定不升。
-pub const OPTIONS: &str = "c11-O2-MT-Brepro-pathmap-objects-v4";
+pub const OPTIONS: &str = "c11-O2-unroll-MT-Brepro-pathmap-objects-gnu-windows-v6";
 pub fn compile(tool: &str, dir: &Path, source: &str) -> Result<Vec<u8>> {
     std::fs::write(dir.join("program.c"), source).map_err(|e| e.to_string())?;
-    let output = if cfg!(windows) {
+    let output = if uses_msvc(tool) {
         let environment = msvc_environment(tool)?;
         let mapped = std::fs::canonicalize(dir)
             .map_err(|e| e.to_string())?
@@ -1147,6 +1488,7 @@ pub fn compile(tool: &str, dir: &Path, source: &str) -> Result<Vec<u8>> {
             .args([
                 "-std=c11",
                 "-O2",
+                "-funroll-loops",
                 map.as_str(),
                 "-c",
                 "program.c",
@@ -1175,7 +1517,7 @@ pub fn link(tool: &str, dir: &Path, objects: &[Vec<u8>]) -> Result<Vec<u8>> {
         std::fs::write(dir.join(&name), bytes).map_err(|e| e.to_string())?;
         names.push(name);
     }
-    let output = if cfg!(windows) {
+    let output = if uses_msvc(tool) {
         let environment = msvc_environment(tool)?;
         Command::new(msvc_tool(&environment, "link.exe")?)
             .current_dir(dir)
@@ -1205,6 +1547,139 @@ pub fn link(tool: &str, dir: &Path, objects: &[Vec<u8>]) -> Result<Vec<u8>> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn interval_proofs_select_raw_arithmetic_and_array_accesses() {
+        let mut module = crate::compiler::parse(
+            "fn main() {\nlet mut a = [0, 0, 0, 0]\nlet mut i = 0\nwhile i < 4 {\na[i] = i * 2\nprintln(a[i])\ni = i + 1\n}\n}",
+        )
+        .unwrap();
+        let function = module.functions.remove("main").unwrap();
+        module.functions.insert("case:main".into(), function);
+        crate::compiler::check(&module, "case:main").unwrap();
+        let source = generate(&module, "case:main", "case");
+        let body = source
+            .split_once("void f636173653a6d61696e(void) {\n")
+            .unwrap()
+            .1;
+        assert!(!body.contains("checked_index("), "{body}");
+        assert!(!body.contains("add("), "{body}");
+        assert!(!body.contains("mul("), "{body}");
+        assert!(body.contains(" * "), "{body}");
+        assert!(body.contains(" + "), "{body}");
+    }
+
+    fn scalar_module(source: &str) -> Module {
+        fn qualify(expr: &mut Expr) {
+            match expr {
+                Expr::Call(name, args) => {
+                    *name = format!("case:{name}");
+                    for arg in args {
+                        qualify(arg);
+                    }
+                }
+                Expr::Unary(_, inner) | Expr::Try(inner) | Expr::Index(_, inner) => qualify(inner),
+                Expr::Binary(_, a, b) => {
+                    qualify(a);
+                    qualify(b);
+                }
+                _ => {}
+            }
+        }
+        fn body(block: &mut Block) {
+            for (instruction, _) in block {
+                match instruction {
+                    Instruction::Let(_, _, _, value)
+                    | Instruction::Assign(_, value)
+                    | Instruction::Print(value)
+                    | Instruction::Call(value)
+                    | Instruction::Return(Some(value)) => qualify(value),
+                    Instruction::If(value, yes, no) => {
+                        qualify(value);
+                        body(yes);
+                        body(no);
+                    }
+                    Instruction::While(value, nested) => {
+                        qualify(value);
+                        body(nested);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let mut module = crate::compiler::parse(source).unwrap();
+        module.functions = module
+            .functions
+            .into_iter()
+            .map(|(name, mut function)| {
+                body(&mut function.body);
+                (format!("case:{name}"), function)
+            })
+            .collect();
+        crate::compiler::check(&module, "case:main").unwrap();
+        module
+    }
+    #[test]
+    fn bounded_scalar_specialization_keeps_generic_checks_and_deterministic_output() {
+        let module = scalar_module("fn accum(seed: i64) -> i64 {\nlet mut acc = seed\nlet mut i = 0\nwhile i < 512 {\nacc = (acc * 31 + i) % 1000003\ni = i + 1\n}\nacc\n}\nfn main() {\nlet mut seed = 0\nwhile seed < 8 {\nprintln(accum(seed))\nseed = seed + 1\n}\n}");
+        let source = generate(&module, "case:main", "case");
+        assert_eq!(source, generate(&module.clone(), "case:main", "case"));
+        let symbol = "f636173653a616363756d";
+        let generic = source
+            .split_once(&format!("int64_t {symbol}(int64_t p0) {{\n"))
+            .unwrap()
+            .1
+            .split_once("}\nvoid")
+            .unwrap()
+            .0;
+        assert!(generic.contains("mul("), "{generic}");
+        let specialized = source
+            .split_once(&format!("static int64_t {symbol}_spec0(int64_t p0) {{\n"))
+            .unwrap()
+            .1;
+        assert!(!specialized.contains("mul("), "{specialized}");
+        assert!(!specialized.contains("add("), "{specialized}");
+        assert!(specialized.contains(" * ") && specialized.contains(" + "));
+    }
+    #[test]
+    fn bounded_arithmetic_sum_specialization_proves_entire_512_iteration_body() {
+        let module = scalar_module("fn sum(seed: i64) -> i64 {\nlet mut total = 0\nlet mut i = 0\nwhile i < 512 {\ntotal = total + (i + seed + 3) * (i * 5 - seed + 7)\ni = i + 1\n}\nreturn total\n}\nfn main() {\nlet mut r = 0\nwhile r < 8 {\nprintln(sum(r % 8))\nr = r + 1\n}\n}");
+        let source = generate(&module, "case:main", "case");
+        let specialized = source
+            .split_once("static int64_t f636173653a73756d_spec0(int64_t p0) {\n")
+            .unwrap()
+            .1;
+        assert!(!specialized.contains("add("), "{specialized}");
+        assert!(!specialized.contains("sub("), "{specialized}");
+        assert!(!specialized.contains("mul("), "{specialized}");
+        assert!(specialized.contains(" * "));
+    }
+    #[test]
+    fn recursive_callees_and_unknown_inputs_remain_generic() {
+        let module = scalar_module("fn a(n: i64) -> i64 {\nif n < 1 { return n }\nb(n - 1)\n}\nfn b(n: i64) -> i64 { a(n) }\nfn unknown() -> i64 { 2 }\nfn add(n: i64) -> i64 { n + 1 }\nfn main() {\nprintln(a(2))\nprintln(add(unknown()))\n}");
+        assert!(!generate(&module, "case:main", "case").contains("_spec"));
+    }
+    #[test]
+    fn specialization_caps_reuse_and_nested_calls_stay_generic() {
+        let calls = (0..12)
+            .map(|i| format!("println(add({i}))\n"))
+            .collect::<String>();
+        let module = scalar_module(&format!("fn inner(n: i64) -> i64 {{ n + 1 }}\nfn add(n: i64) -> i64 {{ inner(n) }}\nfn main() {{\n{calls}println(add(0))\n}}"));
+        let symbols = module
+            .functions
+            .keys()
+            .map(|name| (name.clone(), name.clone()))
+            .collect();
+        let (_, versions) = specialization_plan(&module, "case", &symbols);
+        assert_eq!(versions.len(), 8);
+        assert!(versions.iter().all(|version| version.name == "case:add"));
+        let source = generate(&module, "case:main", "case");
+        let special = source
+            .split_once("static int64_t f636173653a616464_spec0(int64_t p0) {\n")
+            .unwrap()
+            .1;
+        assert!(special.contains("f636173653a696e6e6572("));
+        assert!(!special.contains("f636173653a696e6e6572_spec"));
+    }
     #[test]
     fn environment_takes_ascii_values_only() {
         let text = "Include=C:\\MSVC\\include\r\nLiB=D:\\lib\r\n=TEMP=C:\\tmp\r\n\

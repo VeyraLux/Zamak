@@ -66,6 +66,44 @@ fn fixture(root: &Path) {
 }
 
 #[test]
+fn bounded_call_changes_invalidate_only_their_native_unit() {
+    let workspace = Workspace(std::env::temp_dir().join(format!(
+        "zam-range-cache-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    )));
+    let root = workspace.0.join("project");
+    let cache = workspace.0.join("cache");
+    fixture(&root);
+    let source = |seed| {
+        format!(
+            "use greet\nfn twice(x: i64) -> i64 {{ return x * 2 }}\nfn main() {{\ngreet.hello()\nprintln(twice({seed}))\n}}\n"
+        )
+    };
+    fs::write(root.join("src/main.zm"), source(7)).unwrap();
+    let cold = progress(&invoke(&root, &cache, "build"));
+    assert_eq!(cold.matches("OBJECT MISS").count(), 3);
+    assert!(cold.contains("LINK MISS"));
+    let warm = progress(&invoke(&root, &cache, "build"));
+    assert_eq!(warm.matches("OBJECT HIT").count(), 3);
+    assert!(warm.contains("LINK HIT"));
+    assert_eq!(successful(invoke(&root, &cache, "run")), "hello\n14\n");
+
+    fs::write(root.join("src/main.zm"), source(9)).unwrap();
+    let changed = progress(&invoke(&root, &cache, "build"));
+    assert_eq!(changed.matches("OBJECT MISS").count(), 1);
+    assert_eq!(changed.matches("OBJECT HIT").count(), 2);
+    assert!(changed.contains("LINK MISS"));
+    assert_eq!(successful(invoke(&root, &cache, "run")), "hello\n18\n");
+    let changed_warm = progress(&invoke(&root, &cache, "build"));
+    assert_eq!(changed_warm.matches("OBJECT HIT").count(), 3);
+    assert!(changed_warm.contains("LINK HIT"));
+}
+
+#[test]
 fn project_cache_execution_and_failures() {
     let workspace = Workspace(std::env::temp_dir().join(format!(
             "zam-test-{}-{}",

@@ -1,6 +1,106 @@
 use std::{fs, process::Command};
 
 #[test]
+fn constant_divisors_preserve_signed_arithmetic() {
+    let root = std::env::temp_dir().join(format!("zam-constant-divisors-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let file = root.join("main.zm");
+    let divisors = [1_i64, 2, 3, -2, -3, i64::MIN, i64::MAX];
+    let numerators = [
+        i64::MIN,
+        i64::MIN + 1,
+        -7,
+        -1,
+        0,
+        1,
+        7,
+        i64::MAX - 1,
+        i64::MAX,
+    ];
+    let mut source = String::new();
+    for (index, divisor) in divisors.iter().enumerate() {
+        source.push_str(&format!(
+            "fn quotient{index}(value: i64) -> i64 {{ value / {divisor} }}\nfn remainder{index}(value: i64) -> i64 {{ value % {divisor} }}\n"
+        ));
+    }
+    source.push_str("fn probe() -> i64 {\nprintln(99)\nreturn -7\n}\nfn main() {\n");
+    let mut expected = String::new();
+    for (index, divisor) in divisors.iter().enumerate() {
+        for numerator in numerators {
+            source.push_str(&format!(
+                "println(quotient{index}({numerator}))\nprintln(remainder{index}({numerator}))\n"
+            ));
+            expected.push_str(&format!(
+                "{}\n{}\n",
+                numerator.checked_div(*divisor).unwrap(),
+                numerator.checked_rem(*divisor).unwrap()
+            ));
+        }
+    }
+    source.push_str("println(probe() / 2)\nprintln(probe() % -3)\n}\n");
+    expected.push_str("99\n-3\n99\n-1\n");
+    fs::write(&file, source).unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_zam"))
+        .arg("run")
+        .arg(&file)
+        .env("ZAMAK_CACHE_DIR", root.join("cache"))
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&result.stdout), expected);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn variable_divisors_preserve_width_and_sign_boundaries() {
+    let root = std::env::temp_dir().join(format!("zam-variable-divisors-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let file = root.join("main.zm");
+    let values = [
+        i64::MIN,
+        -4294967296,
+        -7,
+        -1,
+        0,
+        1,
+        3,
+        2147483648,
+        4294967295,
+        4294967296,
+        i64::MAX,
+    ];
+    let mut source = String::from("fn q(a: i64, b: i64) -> i64 { a / b }\nfn r(a: i64, b: i64) -> i64 { a % b }\nfn main() {\n");
+    let mut expected = String::new();
+    for a in values {
+        for b in values {
+            if let (Some(q), Some(r)) = (a.checked_div(b), a.checked_rem(b)) {
+                source.push_str(&format!("println(q({a}, {b}))\nprintln(r({a}, {b}))\n"));
+                expected.push_str(&format!("{q}\n{r}\n"));
+            }
+        }
+    }
+    source.push_str("}\n");
+    fs::write(&file, source).unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_zam"))
+        .arg("run")
+        .arg(&file)
+        .env("ZAMAK_CACHE_DIR", root.join("cache"))
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&result.stdout), expected);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn scalar_values_and_checked_arithmetic() {
     let root = std::env::temp_dir().join(format!("zam-values-{}", std::process::id()));
     fs::create_dir_all(&root).unwrap();
@@ -47,13 +147,30 @@ fn scalar_values_and_checked_arithmetic() {
         fs::write(&file, source).unwrap();
         assert!(!invoke("check").status.success(), "accepted {source}");
     }
+    fs::write(
+        &file,
+        "fn sum(a: i64, b: i64) -> i64 { a + b }\nfn main() {\nprintln(sum(9223372036854775807, 0))\nprintln(sum(-9223372036854775808, 0))\nprintln(sum(9223372036854775807, -1))\nprintln(sum(-9223372036854775808, 1))\nprintln(sum(9223372036854775807, -9223372036854775808))\nprintln(sum(-1, 1))\n}\n",
+    )
+    .unwrap();
+    let result = invoke("run");
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "9223372036854775807\n-9223372036854775808\n9223372036854775806\n-9223372036854775807\n-1\n0\n");
     for expression in [
         "9223372036854775807 + 1",
+        "-9223372036854775808 + -1",
+        "-1 + -9223372036854775808",
+        "1 + 9223372036854775807",
         "-9223372036854775808 - 1",
         "9223372036854775807 * 2",
         "-9223372036854775808 * -1",
         "1 / 0",
+        "1 % 0",
         "-9223372036854775808 / -1",
+        "-9223372036854775808 % -1",
         "-(-9223372036854775808)",
     ] {
         fs::write(&file, format!("fn main() {{ println({expression}) }}")).unwrap();
