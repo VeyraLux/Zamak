@@ -193,5 +193,23 @@
       { "find": "greeting.nope()", "replace": "greeting.hello()" }
     ],
     "expected_output": "hello from zamak\n"
+  },
+  {
+    "id": "missing-import",
+    "source": "fn main() {\n    let s = \"hi\"\n    println(string.byte_len(&s))\n}\n",
+    "expected_code": "ZM203",
+    "patches": [
+      { "find": "fn main() {", "replace": "use std/string\n\nfn main() {" }
+    ],
+    "expected_output": "2\n"
+  },
+  {
+    "id": "duplicate-function",
+    "source": "fn foo() -> i64 {\n    return 1\n}\n\nfn foo() -> i64 {\n    return 2\n}\n\nfn main() {\n    println(foo())\n}\n",
+    "expected_code": "ZM204",
+    "patches": [
+      { "find": "fn foo() -> i64 {\n    return 2\n}\n\n", "replace": "" }
+    ],
+    "expected_output": "1\n"
   }
 ]

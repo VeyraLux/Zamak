@@ -316,11 +316,26 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
         || message.contains("unknown function ")
         || message.contains("unknown struct")
         || message.contains("unknown type name")
+        || message.contains("reserved type name")
     {
         (
             "ZM201",
             "name",
             Some("check the name, declaration, and module import"),
+        )
+    } else if message.contains("ambiguous or missing import for ")
+        || message.contains(" requires use std/")
+    {
+        (
+            "ZM203",
+            "name",
+            Some("add the matching `use std/<namespace>` import at the top of the file"),
+        )
+    } else if message.starts_with("duplicate ") {
+        (
+            "ZM204",
+            "name",
+            Some("remove or rename the duplicate declaration"),
         )
     } else if message.starts_with("cannot assign immutable value ") {
         (
@@ -457,6 +472,13 @@ mod tests {
             ("unknown struct Point", "ZM201"),
             ("unknown type name Thing", "ZM201"),
             ("unknown field z", "ZM202"),
+            (
+                "main: ambiguous or missing import for string.byte_len",
+                "ZM203",
+            ),
+            ("string.byte_len requires use std/string", "ZM203"),
+            ("duplicate function foo", "ZM204"),
+            ("reserved type name Thing", "ZM201"),
             ("cannot assign immutable value count", "ZM302"),
             ("unsupported type f64", "ZM900"),
             ("i64 literal overflow", "ZM600"),
