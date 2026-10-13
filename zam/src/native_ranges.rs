@@ -131,6 +131,12 @@ fn join(a: State, b: State) -> State {
         }
     }
 }
+#[derive(Clone, Copy)]
+enum Head<'a> {
+    Condition(&'a Expr),
+    // `for name in start..end`: the immutable counter and its whole range.
+    Range(&'a str, Interval),
+}
 #[derive(Default)]
 struct Flow {
     normal: State,
@@ -413,7 +419,30 @@ impl Analysis {
                 return a.merge(b);
             }
             Instruction::While(condition, body) => {
-                return self.loop_flow(condition, body, env, collect)
+                return self.loop_flow(Head::Condition(condition), body, env, collect)
+            }
+            Instruction::For(name, start, end, body) => {
+                let first = self.expr(start, &env, collect);
+                let bound = self.expr(end, &env, collect);
+                // The counter lies in [start, end - 1]; an empty interval means zero trips.
+                if first.lo > bound.hi - 1 {
+                    return Flow {
+                        normal: Some(env),
+                        ..Flow::default()
+                    };
+                }
+                if first.lo == first.hi && bound.lo == bound.hi {
+                    if let Some(flow) =
+                        self.finite_range(name, first.lo, bound.lo, body, &env, collect)
+                    {
+                        return flow;
+                    }
+                }
+                let counter = Interval {
+                    lo: first.lo,
+                    hi: bound.hi - 1,
+                };
+                return self.loop_flow(Head::Range(name, counter), body, env, collect);
             }
         }
         Flow {
@@ -423,12 +452,26 @@ impl Analysis {
     }
     fn loop_step(
         &mut self,
-        condition: &Expr,
+        head: Head,
         body: &Block,
         header: &Env,
         collect: bool,
     ) -> (State, Flow) {
-        let (inside, outside) = self.condition(condition, header.clone(), collect);
+        let (inside, outside) = match head {
+            Head::Condition(condition) => self.condition(condition, header.clone(), collect),
+            Head::Range(name, counter) => {
+                // The checker keeps the counter immutable, so every trip sees the full range.
+                let mut inside = header.clone();
+                inside.insert(
+                    name.to_owned(),
+                    Fact {
+                        value: counter,
+                        length: None,
+                    },
+                );
+                (Some(inside), Some(header.clone()))
+            }
+        };
         (
             outside,
             inside.map_or_else(Flow::default, |env| self.block(body, env, collect)),
@@ -472,20 +515,69 @@ impl Analysis {
             ..Flow::default()
         })
     }
-    fn loop_flow(&mut self, condition: &Expr, body: &Block, entry: Env, collect: bool) -> Flow {
+    /// Constant `for` bounds: visit each trip with the exact counter, like `finite_loop`
+    /// does for recognized `while` counters. The counter cannot change inside the body.
+    fn finite_range(
+        &mut self,
+        name: &str,
+        first: i128,
+        end: i128,
+        body: &Block,
+        entry: &Env,
+        collect: bool,
+    ) -> Option<Flow> {
+        let cost = body_cost(body, &mut BTreeMap::new())?;
+        if cost * (end - first + 1) > FINITE_TRANSFER_BUDGET {
+            return None;
+        }
+        let mut header = Some(entry.clone());
+        let mut exits = None;
+        let mut returns = None;
+        for value in first..end {
+            let Some(mut env) = header.take() else {
+                break;
+            };
+            env.insert(
+                name.to_owned(),
+                Fact {
+                    value: Interval {
+                        lo: value,
+                        hi: value,
+                    },
+                    length: None,
+                },
+            );
+            let flow = self.block(body, env, collect);
+            exits = join(exits, flow.breaks);
+            returns = join(returns, flow.returns);
+            header = join(flow.normal, flow.continues);
+        }
+        let mut normal = join(exits, header);
+        for env in [&mut normal, &mut returns].into_iter().flatten() {
+            env.remove(name);
+        }
+        Some(Flow {
+            normal,
+            returns,
+            ..Flow::default()
+        })
+    }
+    fn loop_flow(&mut self, head: Head, body: &Block, entry: Env, collect: bool) -> Flow {
         // Speculative visits must never leak proofs into a failed finite analysis.
-        if let Some(iterations) = finite_iterations(condition, body, &entry) {
-            let mut provisional = self.clone();
-            if let Some(flow) =
-                provisional.finite_loop(condition, body, &entry, iterations, collect)
-            {
-                *self = provisional;
-                return flow;
+        if let Head::Condition(condition) = head {
+            if let Some(iterations) = finite_iterations(condition, body, &entry) {
+                let mut provisional = self.clone();
+                if let Some(flow) =
+                    provisional.finite_loop(condition, body, &entry, iterations, collect)
+                {
+                    *self = provisional;
+                    return flow;
+                }
             }
         }
         let mut header = entry.clone();
         for iteration in 0..8 {
-            let (_, flow) = self.loop_step(condition, body, &header, false);
+            let (_, flow) = self.loop_step(head, body, &header, false);
             let next = join(Some(entry.clone()), join(flow.normal, flow.continues)).unwrap();
             if contained(&header, &next) {
                 break;
@@ -502,11 +594,11 @@ impl Analysis {
             }
         }
         // Verify inductiveness independently of convergence/iteration limits.
-        let (_, check) = self.loop_step(condition, body, &header, false);
+        let (_, check) = self.loop_step(head, body, &header, false);
         let next = join(Some(entry.clone()), join(check.normal, check.continues)).unwrap();
         if !contained(&header, &next) {
             forget_mutations(body, &mut header);
-            let (_, check) = self.loop_step(condition, body, &header, false);
+            let (_, check) = self.loop_step(head, body, &header, false);
             let next = join(Some(entry), join(check.normal, check.continues)).unwrap();
             if !contained(&header, &next) {
                 // Unsupported mutation patterns must never authorize narrow facts.
@@ -515,7 +607,7 @@ impl Analysis {
                 }
             }
         }
-        let (outside, flow) = self.loop_step(condition, body, &header, collect);
+        let (outside, flow) = self.loop_step(head, body, &header, collect);
         Flow {
             normal: join(outside, flow.breaks),
             returns: flow.returns,
@@ -574,7 +666,9 @@ fn expression_cost(expr: &Expr) -> Option<i128> {
 fn body_cost(block: &Block, writes: &mut BTreeMap<String, usize>) -> Option<i128> {
     block.iter().try_fold(0, |cost, (instruction, _)| {
         let next = match instruction {
-            Instruction::Continue | Instruction::While(_, _) => return None,
+            Instruction::Continue | Instruction::While(_, _) | Instruction::For(_, _, _, _) => {
+                return None
+            }
             Instruction::Let(_, _, _, expr)
             | Instruction::Print(expr)
             | Instruction::Call(expr)
@@ -660,7 +754,9 @@ fn forget_mutations(block: &Block, env: &mut Env) {
                 forget_mutations(a, env);
                 forget_mutations(b, env);
             }
-            Instruction::While(_, body) => forget_mutations(body, env),
+            Instruction::While(_, body) | Instruction::For(_, _, _, body) => {
+                forget_mutations(body, env)
+            }
             _ => {}
         }
     }
@@ -804,6 +900,43 @@ mod tests {
         let range = inputs.call_inputs(call).unwrap()[0];
         assert_eq!(range.hi, MAX);
         assert!(range.lo < MAX);
+    }
+    #[test]
+    fn for_ranges_bound_the_counter_but_not_outer_accumulators() {
+        fn body(f: &Function, index: usize) -> &Block {
+            let Instruction::For(_, _, _, body) = &f.body[index].0 else {
+                panic!()
+            };
+            body
+        }
+        fn printed(body: &Block, index: usize) -> &Expr {
+            let Instruction::Print(expr) = &body[index].0 else {
+                panic!()
+            };
+            expr
+        }
+        fn assigned(body: &Block, index: usize) -> &Expr {
+            let Instruction::Assign(_, expr) = &body[index].0 else {
+                panic!()
+            };
+            expr
+        }
+        let module = crate::compiler::parse("fn main(n: i64) {\nlet a = [3, 1, 4]\nlet mut total = 0\nfor i in 0..3 {\nprintln(a[i])\ntotal = total + i\n}\nfor j in 0..n {\nprintln(a[j])\nprintln(j + 1)\ntotal = total + j\n}\nfor k in 9223372036854775806..9223372036854775807 {\nprintln(k + 1)\nprintln(k + 2)\n}\nfor m in -3..n {\nprintln(a[m])\n}\n}").unwrap();
+        let f = &module.functions["main"];
+        let proofs = analyze(f);
+        // Constant bounds are visited trip by trip: indexing and the accumulator are exact.
+        assert!(proofs.index(printed(body(f, 2), 0)));
+        assert!(proofs.arithmetic(assigned(body(f, 2), 1)));
+        // An unknown bound still caps the counter at i64::MAX - 1, but not indexing
+        // or an accumulator that grows across trips.
+        assert!(!proofs.index(printed(body(f, 3), 0)));
+        assert!(proofs.arithmetic(printed(body(f, 3), 1)));
+        assert!(!proofs.arithmetic(assigned(body(f, 3), 2)));
+        // The end is exclusive: k + 1 reaches i64::MAX exactly, k + 2 overflows.
+        assert!(proofs.arithmetic(printed(body(f, 4), 0)));
+        assert!(!proofs.arithmetic(printed(body(f, 4), 1)));
+        // A negative start rules out the index proof.
+        assert!(!proofs.index(printed(body(f, 5), 0)));
     }
     #[test]
     fn malformed_seed_inputs_fail_closed() {

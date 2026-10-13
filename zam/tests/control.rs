@@ -1,4 +1,67 @@
+mod common;
+
+use common::Case;
 use std::{fs, process::Command};
+
+#[test]
+fn for_ranges_run_once_per_counter_and_reject_misuse() {
+    let case = Case::new("control", "for");
+    let result = case.run(include_str!("../../examples/control/loops.zm"));
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&result.stdout).replace("\r\n", "\n"),
+        "45\n2310\n6\n-2\n-1\n0\n12\n13\nrow 1\n21\n23\nrow 2\n31\n32\nrow 3\n9223372036854775805\n9223372036854775806\n"
+    );
+    // Start before end, each evaluated once; owned values in the body are freed per trip,
+    // including on continue, and a returning body leaves the loop early.
+    let result = case.run("fn lo() -> i64 {\nprintln(\"lo\")\nreturn 0\n}\nfn hi() -> i64 {\nprintln(\"hi\")\nreturn 3\n}\nfn first(limit: i64) -> i64 {\nfor i in 0..limit {\nif i * i > 5 {\nreturn i\n}\n}\nreturn -1\n}\nfn main() {\nfor i in lo()..hi() {\nlet line = \"trip {i}\"\nif i == 1 {\ncontinue\n}\nprintln(line)\n}\nprintln(first(10))\nprintln(first(2))\n}\n");
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&result.stdout).replace("\r\n", "\n"),
+        "lo\nhi\ntrip 0\ntrip 2\n3\n-1\n"
+    );
+    for (source, error) in [
+        (
+            "fn main() {\nfor i in 0..3 {\ni = 1\n}\n}",
+            "cannot assign immutable value i",
+        ),
+        (
+            "fn main() {\nlet i = 0\nfor i in 0..3 {}\n}",
+            "duplicate binding i",
+        ),
+        (
+            "fn main() {\nfor i in 0..3 {}\nprintln(i)\n}",
+            "unknown variable i",
+        ),
+        ("fn main() {\nfor i in 0..\"x\" {}\n}", "type mismatch"),
+        ("fn main() {\nfor i 0..3 {}\n}", "expected `in`"),
+        ("fn main() {\nfor i in 3 {}\n}", "expected `..`"),
+        (
+            "fn main() {\nlet s = \"x\"\nfor i in 0..3 {\nlet t = s\n}\n}",
+            "loop moves",
+        ),
+        (
+            "fn main() {\nlet s = \"x\"\nfor i in 0..3 {\nlet t = s\nbreak\n}\n}",
+            "loop jump moves",
+        ),
+    ] {
+        let result = case.run(source);
+        assert!(!result.status.success(), "accepted {source}");
+        assert!(
+            String::from_utf8_lossy(&result.stderr).contains(error),
+            "{source}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+}
 
 #[test]
 fn control_flow_and_path_ownership() {

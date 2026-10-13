@@ -11,7 +11,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-20");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-21");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -409,6 +409,12 @@ impl Project {
                 Instruction::While(condition, nested) => {
                     self.resolve_body(module, nested)?;
                     Some(condition)
+                }
+                Instruction::For(_, start, end, nested) => {
+                    self.resolve_expr(module, start)
+                        .map_err(|error| self.located(module, position, error))?;
+                    self.resolve_body(module, nested)?;
+                    Some(end)
                 }
                 Instruction::Break | Instruction::Continue => None,
             };

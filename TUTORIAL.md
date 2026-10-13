@@ -182,12 +182,39 @@ fn main() {
 4
 ```
 
+按次数循环用 `for`：
+
+```zamak
+fn main() {
+    let mut total = 0
+    for i in 1..5 {
+        total = total + i
+    }
+    println(total)
+
+    let scores = [90, 72, 85]
+    for i in 0..3 {
+        println(scores[i])
+    }
+}
+```
+
+```text
+10
+90
+72
+85
+```
+
 要点：
 
-- Zamak 支持 `while`，尚不支持 `for`；遍历数组时需要显式维护下标。
+- `for i in start..end` 遍历左闭右开区间：`1..5` 依次得到 1、2、3、4，不含 5；`start` 不小于 `end` 时一次也不执行。
+- `start` 和 `end` 在进入循环前各求值一次，循环体里修改相关变量不会改变循环次数。
+- 循环变量 `i` 是只读的 `i64`，只在循环体内可见；不能与已有变量同名。
+- 目前 `for` 只能遍历整数区间，不能直接遍历数组；按下标遍历数组写 `for i in 0..长度`。
+- `while` 适合按条件结束的循环，条件必须是 `bool`。
 - 尚不支持 `+=` 等复合赋值，递增应写为 `i = i + 1`。
-- `continue` 跳过本次循环剩下的部分，`break` 直接结束循环。
-- 循环条件必须是 `bool`。
+- `continue` 跳过本次循环剩下的部分，`break` 直接结束循环；两者在 `while` 和 `for` 中都可用，只影响最内层循环。
 
 ## 第 6 节：函数
 
@@ -568,7 +595,7 @@ zam 0.1.0
 
 Zamak 0.1.0 的支持范围有限。编写程序时需注意以下限制：
 
-- 尚不支持 `for`、`switch`/`match`、枚举、泛型、闭包和 trait/接口。
+- 尚不支持 `switch`/`match`、枚举、泛型、闭包和 trait/接口；`for` 只支持整数区间。
 - 尚不提供包管理器、交互式执行环境（REPL）、文档生成工具或重构工具。
 - 标准库只有 `std/string` 的 `byte_len`/`char_len`/`equal`，`std/io` 与 `std/fmt` 的 `println`。
 - 错误类型只能是 `string`，没有错误堆栈。
