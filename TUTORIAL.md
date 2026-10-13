@@ -285,9 +285,9 @@ true
 - 标准库 `std/string` 提供三个函数：`string.byte_len(&s)` 返回 UTF-8 字节数，`string.char_len(&s)` 返回 Unicode 码点数，`string.equal(&a, &b)` 判断内容是否相等。本例的 `你好，Zamak！` 占 17 字节，包含 9 个码点。
 - Unicode 码点不等同于用户看到的一个字符（字素簇）。组合附加符号或由多个码点组成的 emoji 可能显示为一个字符，`char_len` 仍逐个码点计数。常见汉字在 UTF-8 中通常占 3 字节，因此字节数与码点数不同。
 
-## 第 8 节：数组与列表
+## 第 8 节：数组、列表与字典
 
-Zamak 有两种数组：长度固定的定长数组 `[i64; N]`，以及可以增减元素的列表 `[T]`。
+Zamak 有两种数组：长度固定的定长数组 `[i64; N]`，以及可以增减元素的列表 `[T]`。按键存取数据用字典 `{K: V}`，见本节最后。
 
 定长数组：
 
@@ -380,7 +380,52 @@ apple
 - 字符串元素不能用 `xs[i]` 直接取出（那会把字符串移出列表）。传给函数时借用 `&xs[i]`，需要一份独立的字符串时用 `string.copy(&xs[i])`。
 - `for x in &xs` 依次访问每个元素：整数和布尔元素按值得到，字符串元素以只读借用得到。循环体内不能修改、移动或独占借用这个列表；需要边遍历边修改时，用 `for i in 0..xs.len()` 按下标处理。
 - 函数参数写 `&[T]`（只读）或 `&mut [T]`（可修改），调用时传 `&xs` 或 `&mut xs`；参数写 `[T]` 表示把列表整个移交给函数。
+- `xs.swap(i, j)` 原地交换两个元素，排序字符串列表时用它，不用复制字符串。
 - 方法只能用在变量或字段上，例如 `bag.items.push(x)`；暂不支持链式写法 `f().len()`，先用 `let` 绑定。
+
+字典按键存取值，下面统计每种颜色出现的次数：
+
+```zamak
+use std/string
+
+fn main() {
+    let text = "red blue red green blue red"
+    let words = string.words(&text)
+    let mut counts: {string: i64} = {}
+    for word in &words {
+        counts[word] = counts.get(word, 0) + 1
+    }
+    for color in &counts {
+        let n = counts[color]
+        println("{color}: {n}")
+    }
+    println(counts.contains("red"))
+    counts.remove("blue")
+    println(counts.len())
+
+    let ages = {"amy": 30, "bob": 25}
+    println(ages["amy"])
+}
+```
+
+```text
+red: 3
+blue: 2
+green: 1
+true
+2
+30
+```
+
+要点：
+
+- 类型写成 `{键类型: 值类型}`。键可以是 `i64` 或 `string`，值可以是 `i64`、`bool` 或 `string`。
+- 字面量写成 `{"amy": 30, "bob": 25}`，条目之间用逗号，可以分行写。空字典必须标注类型：`let mut m: {string: i64} = {}`。
+- `m[k]` 读取，键不存在时程序终止（`zam: key not found`）；不确定键是否存在时用 `m.get(k, 默认值)` 或先 `m.contains(k)`。
+- `m[k] = v` 插入或替换；`m.remove(k)` 删除并返回是否删到了；`m.len()` 返回条目数；`m.keys()` 返回键的列表。
+- 字符串键按只读借用传入：变量写 `m[&name]`，字面量直接写 `m["red"]`，`for` 循环得到的键直接写 `m[k]`。新键插入时字典会复制一份。
+- `for k in &m` 按插入顺序遍历键，所以输出顺序是确定的。循环体内不能修改这个字典。
+- 字符串值不能用 `m[k]` 取出，借用 `&m[k]`，或用 `m.get(k, "")` 得到一份副本。
 
 ## 第 9 节：结构体
 
@@ -772,6 +817,9 @@ zam 0.1.0
 | `an empty list literal needs a type annotation` | `let xs = []` 没写类型 | 写成 `let mut xs: [i64] = []` |
 | `cannot move a string out of xs[..]` | 用 `xs[i]` 取字符串元素 | 借用 `&xs[i]`，或 `string.copy(&xs[i])` |
 | `xs is borrowed by an enclosing for loop` | 在 `for x in &xs` 里修改或移动了 `xs` | 改用 `for i in 0..xs.len()` 按下标处理 |
+| `zam: key not found` | `m[k]` 读取了不存在的键 | 用 `m.get(k, 默认值)`，或先 `m.contains(k)` |
+| `an empty map literal needs a type annotation` | `let m = {}` 没写类型 | 写成 `let mut m: {string: i64} = {}` |
+| `expected explicit borrow of k` | 字符串键用的是 owned 变量 `m[k]` | 写成 `m[&k]` |
 
 ## 第 16 节：支持范围与限制
 
@@ -781,7 +829,7 @@ Zamak 0.1.0 的支持范围有限。编写程序时需注意以下限制：
 - 尚不提供包管理器、交互式执行环境（REPL）、文档生成工具或重构工具。
 - 标准库包括 `std/string`（`byte_len`、`char_len`、`equal`、`parse_i64`、`trim`、`byte_at`、`slice`、`find`、`copy`、`split`、`words`、`lines`、`join`）、`std/io`（`println`、`read_line`、`read_all`）、`std/fmt`（`println`）、`std/fs`（`read`、`write`）和 `std/env`（`arg_count`、`arg`、`args`），没有目录遍历、网络和时间函数。
 - 错误类型只能是 `string`，没有错误堆栈。
-- 定长数组仅支持 `i64` 局部值；列表 `[T]` 的元素只能是 `i64`、`bool` 或 `string`，还没有结构体元素、嵌套列表和字典。方法不能链式调用。
+- 定长数组仅支持 `i64` 局部值；列表 `[T]` 的元素与字典 `{K: V}` 的值只能是 `i64`、`bool` 或 `string`，字典键只能是 `i64` 或 `string`，还没有结构体元素和嵌套容器。方法不能链式调用。
 - 所有权检查覆盖 `string` 和结构体；尚不支持线程、`unsafe` 和外部函数接口（FFI）。
 - 编辑器支持为 VS Code 语法高亮扩展（`editors/vscode/`），没有语言服务器、补全和调试器。
 - 本教程采用源码安装；安装步骤和平台工具链要求见 [安装说明](PREVIEW.md)。

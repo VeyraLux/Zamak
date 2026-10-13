@@ -1,5 +1,6 @@
 use crate::compiler::{
-    field_path, record_id, record_order, Block, Elem, Expr, Instruction, Module, Type,
+    field_path, method_signature, record_id, record_order, Block, Elem, Expr, Instruction, Module,
+    Type,
 };
 use crate::project::Result;
 use std::collections::BTreeMap;
@@ -525,6 +526,30 @@ struct Generator<'a> {
     // 当前函数的签名：`?` 提前返回时要构造同样形状的结果结构体。
     result: Type,
     error: Option<Type>,
+    // 函数体里出现过的列表与字典类型，用来决定发射哪些容器辅助函数。
+    containers: Containers,
+}
+/// 用到的容器：`(元素, None)` 是列表，`(键, Some(值))` 是字典。
+type Containers = std::collections::BTreeSet<(Elem, Option<Elem>)>;
+fn note(set: &mut Containers, ty: Type) {
+    match ty.container() {
+        Some(Type::List(elem)) => {
+            set.insert((elem, None));
+        }
+        // 字典的 keys() 返回键的列表，所以键类型的列表一并生成。
+        Some(Type::Map(key, value)) => {
+            set.insert((key, None));
+            set.insert((key, Some(value)));
+        }
+        _ => {}
+    }
+}
+fn elem_of(ty: Type) -> Elem {
+    match ty {
+        Type::Int => Elem::Int,
+        Type::Bool => Elem::Bool,
+        _ => Elem::Str,
+    }
 }
 // 失败函数的结果结构体：ok=1 时 value 有效，ok=0 时 error 有效。
 fn fallible_name(ty: Type) -> String {
@@ -536,8 +561,12 @@ fn fallible_ok(ty: Type) -> String {
 fn fallible_err(ty: Type) -> String {
     format!("{}_err", fallible_name(ty))
 }
+/// 结构体、列表与字典：有按类型生成的 `drop`/`take`，移走时不能当字符串处理。
+fn aggregate(ty: Type) -> bool {
+    matches!(ty, Type::Record(_) | Type::List(_) | Type::Map(_, _))
+}
 fn drop_fn(ty: Type) -> String {
-    if matches!(ty, Type::Record(_) | Type::List(_)) {
+    if aggregate(ty) {
         format!("drop{}", ctype(ty))
     } else {
         "drop".into()
@@ -545,14 +574,121 @@ fn drop_fn(ty: Type) -> String {
 }
 /// 移走 owned 值的 C 函数：字符串用运行时的 `take`，结构体与列表各有按类型生成的版本。
 fn take_fn(ty: Type) -> String {
-    if matches!(ty, Type::Record(_) | Type::List(_)) {
+    if aggregate(ty) {
         format!("take{}", ctype(ty))
     } else {
         "take".into()
     }
 }
 fn owned(ty: Type) -> bool {
-    matches!(ty, Type::Owned | Type::Record(_) | Type::List(_))
+    ty == Type::Owned || aggregate(ty)
+}
+fn elem_suffix(elem: Elem) -> char {
+    match elem {
+        Elem::Int => 'i',
+        Elem::Bool => 'b',
+        Elem::Str => 's',
+    }
+}
+fn map_name(key: Elem, value: Elem) -> String {
+    format!("M{}{}", elem_suffix(key), elem_suffix(value))
+}
+const MAP_PRELUDE: &str = r#"static void map_missing(void) { fputs("zam: key not found\n", stderr); exit(1); }
+static uint64_t zam_hash_int(int64_t key) { uint64_t x = (uint64_t)key; x ^= x >> 33; x *= 0xff51afd7ed558ccdULL; x ^= x >> 33; x *= 0xc4ceb9fe1a85ec53ULL; x ^= x >> 33; return x; }
+static uint64_t zam_hash_str(S *key) { uint64_t h = 1469598103934665603ULL; size_t i; for (i = 0; i < key->len; i++) { h ^= key->data[i]; h *= 1099511628211ULL; } return h; }
+"#;
+// 插入顺序表 + 开放寻址下标表：遍历按插入顺序，删除留墓碑，下标表装载率不超过 1/2，
+// 重建时先压掉已删除的项。
+const MAP_TEMPLATE: &str = r#"typedef struct { $KT key; $VT value; uint64_t hash; int live; } E$M;
+typedef struct { E$M *entries; size_t len, cap, count; int64_t *slots; size_t nslots; } $M;
+static void drop$M($M *m) { size_t i; for (i = 0; i < m->len; i++) { E$M *e = &m->entries[i]; if (e->live) { $DROPKEY $DROPVAL } } free(m->entries); free(m->slots); memset(m, 0, sizeof(*m)); }
+static $M take$M($M *m) { $M v = *m; memset(m, 0, sizeof(*m)); return v; }
+static int64_t len$M($M *m) { return (int64_t)m->count; }
+static int64_t find$M($M *m, $KP, uint64_t h) {
+    size_t i; int64_t at;
+    if (!m->nslots) return -1;
+    i = (size_t)h & (m->nslots - 1);
+    while ((at = m->slots[i]) >= 0) {
+        E$M *e = &m->entries[at];
+        if (e->live && e->hash == h && $EQ) return at;
+        i = (i + 1) & (m->nslots - 1);
+    }
+    return -1;
+}
+static void place$M($M *m, size_t at) {
+    size_t i = (size_t)m->entries[at].hash & (m->nslots - 1);
+    while (m->slots[i] >= 0) i = (i + 1) & (m->nslots - 1);
+    m->slots[i] = (int64_t)at;
+}
+static void rehash$M($M *m) {
+    size_t i, j = 0, n = 16;
+    for (i = 0; i < m->len; i++) if (m->entries[i].live) m->entries[j++] = m->entries[i];
+    m->len = j;
+    while (n / 4 < j + 1) { if (n > SIZE_MAX / 2 / sizeof(int64_t)) list_alloc_failed(); n *= 2; }
+    free(m->slots);
+    m->slots = (int64_t*)malloc(n * sizeof(int64_t));
+    if (!m->slots) list_alloc_failed();
+    for (i = 0; i < n; i++) m->slots[i] = -1;
+    m->nslots = n;
+    for (i = 0; i < m->len; i++) place$M(m, i);
+}
+static void set$M($M *m, $KP, $VT v) {
+    uint64_t h = $HASH;
+    int64_t at = find$M(m, k, h);
+    E$M *e;
+    if (at >= 0) { e = &m->entries[at]; $DROPVAL e->value = v; return; }
+    if ((m->len + 1) * 2 > m->nslots) rehash$M(m);
+    if (m->len == m->cap) {
+        size_t cap = m->cap ? m->cap * 2 : 8;
+        E$M *p;
+        if (cap > SIZE_MAX / sizeof(E$M)) list_alloc_failed();
+        p = (E$M*)realloc(m->entries, cap * sizeof(E$M));
+        if (!p) list_alloc_failed();
+        m->entries = p; m->cap = cap;
+    }
+    e = &m->entries[m->len];
+    e->key = $STORE; e->value = v; e->hash = h; e->live = 1;
+    place$M(m, m->len);
+    m->len++; m->count++;
+}
+static $VT *at$M($M *m, $KP) { int64_t at = find$M(m, k, $HASH); if (at < 0) map_missing(); return &m->entries[at].value; }
+static int has$M($M *m, $KP) { return find$M(m, k, $HASH) >= 0; }
+static $VT getor$M($M *m, $KP, $VT d) { int64_t at = find$M(m, k, $HASH); if (at < 0) return d; $DROPDEF return $VALOUT; }
+static int del$M($M *m, $KP) { int64_t at = find$M(m, k, $HASH); E$M *e; if (at < 0) return 0; e = &m->entries[at]; $DROPKEY $DROPVAL e->live = 0; m->count--; return 1; }
+static $L keys$M($M *m) { $L out = {0}; size_t i; for (i = 0; i < m->len; i++) { E$M *e = &m->entries[i]; if (e->live) push$L(&out, $KEYOUT); } return out; }
+"#;
+fn map_helpers(key: Elem, value: Elem) -> String {
+    let text = key == Elem::Str;
+    let text_value = value == Elem::Str;
+    let pick = |yes: &'static str, no: &'static str, flag: bool| if flag { yes } else { no };
+    let value_type = ctype(value.ty());
+    let name = map_name(key, value);
+    [
+        ("$DROPKEY", pick("drop(&e->key);", "", text)),
+        ("$DROPVAL", pick("drop(&e->value);", "", text_value)),
+        ("$DROPDEF", pick("drop(&d);", "", text_value)),
+        ("$KEYOUT", pick("copy(&e->key)", "e->key", text)),
+        (
+            "$VALOUT",
+            pick(
+                "copy(&m->entries[at].value)",
+                "m->entries[at].value",
+                text_value,
+            ),
+        ),
+        ("$STORE", pick("copy(k)", "k", text)),
+        ("$HASH", pick("zam_hash_str(k)", "zam_hash_int(k)", text)),
+        ("$EQ", pick("string_equal(&e->key, k)", "e->key == k", text)),
+        ("$KP", pick("S *k", "int64_t k", text)),
+        ("$KT", pick("S", "int64_t", text)),
+        ("$VT", value_type.as_str()),
+        ("$L", list_suffix(key)),
+        ("$M", name.as_str()),
+    ]
+    .iter()
+    .fold(MAP_TEMPLATE.to_owned(), |text, (from, to)| {
+        text.replace(from, to)
+    })
 }
 fn list_suffix(elem: Elem) -> &'static str {
     match elem {
@@ -592,6 +728,7 @@ static void push{l}({l} *l, {t} v) {{
 }}
 static {t} *at{l}({l} *l, int64_t i) {{ if (i < 0 || (uint64_t)i >= l->len) list_bounds(); return &l->data[i]; }}
 static {t} pop{l}({l} *l) {{ if (!l->len) list_empty(); return l->data[--l->len]; }}
+static void swap{l}({l} *l, int64_t i, int64_t j) {{ {t} tmp; if (i < 0 || j < 0 || (uint64_t)i >= l->len || (uint64_t)j >= l->len) list_bounds(); tmp = l->data[i]; l->data[i] = l->data[j]; l->data[j] = tmp; }}
 "
     )
 }
@@ -600,6 +737,8 @@ fn ctype(ty: Type) -> String {
         Type::Record(id) => return format!("R{id}"),
         Type::List(elem) => return list_suffix(elem).into(),
         Type::ListRef(elem, _) => return format!("{}*", list_suffix(elem)),
+        Type::Map(key, value) => return map_name(key, value),
+        Type::MapRef(key, value, _) => return format!("{}*", map_name(key, value)),
         Type::Owned => "S",
         Type::Shared | Type::Mutable => "S*",
         Type::Int => "int64_t",
@@ -623,8 +762,13 @@ impl Generator<'_> {
             Expr::Index(local, _) => match self.place_ty(local) {
                 Type::ArrayInt(_) => Type::Int,
                 Type::List(elem) | Type::ListRef(elem, _) => elem.ty(),
+                Type::Map(_, value) | Type::MapRef(_, value, _) => value.ty(),
                 _ => unreachable!(),
             },
+            Expr::MapLit(entries) => {
+                let (key, value) = entries.first().expect("checked non-empty map literal");
+                Type::Map(elem_of(self.ty(key)), elem_of(self.ty(value)))
+            }
             Expr::BorrowIndex(_, _, mutable) => {
                 if *mutable {
                     Type::Mutable
@@ -633,14 +777,9 @@ impl Generator<'_> {
                 }
             }
             Expr::Method(path, method, _) => {
-                let (Type::List(elem) | Type::ListRef(elem, _)) = self.place_ty(path) else {
-                    unreachable!("checked list receiver")
-                };
-                match method.as_str() {
-                    "len" => Type::Int,
-                    "pop" => elem.ty(),
-                    _ => Type::Unit,
-                }
+                method_signature(self.place_ty(path), method)
+                    .expect("checked method")
+                    .2
             }
             Expr::Bool(_) | Expr::StringEqual(_, _) => Type::Bool,
             Expr::Text(_) | Expr::Format(_) => Type::Owned,
@@ -672,6 +811,7 @@ impl Generator<'_> {
         }
     }
     fn scalar(&mut self, value: &str, ty: Type) -> String {
+        note(&mut self.containers, ty);
         let name = format!("v{}", self.next);
         self.next += 1;
         self.code
@@ -715,7 +855,30 @@ impl Generator<'_> {
         match expr {
             Expr::Variable(name) | Expr::Borrow(name, _) => self.pointer(name),
             Expr::BorrowIndex(_, _, _) => self.expr(expr),
+            // 字面量与插值借给 `&string` 参数：先生成临时字符串，作用域结束时释放。
+            Expr::Text(_) | Expr::Format(_) => {
+                let value = self.expr(expr);
+                format!("&{value}")
+            }
             _ => unreachable!("checked borrow"),
+        }
+    }
+    /// 按形参类型传值：owned 移交，标量按值，借用传指针。
+    fn argument(&mut self, arg: &Expr, ty: Type) -> String {
+        if owned(ty) {
+            let value = self.expr_as(arg, ty);
+            self.moved(&value, ty)
+        } else if matches!(ty, Type::Int | Type::Bool) {
+            self.expr(arg)
+        } else {
+            self.borrowed(arg)
+        }
+    }
+    /// 容器下标：列表是 i64，字典是键（字符串键传指针）。
+    fn key(&mut self, index: &Expr, container: Type) -> String {
+        match container {
+            Type::Map(Elem::Str, _) => self.borrowed(index),
+            _ => self.expr(index),
         }
     }
     /// 按目标类型生成值：列表字面量只有知道目标类型才能和定长数组区分开。
@@ -733,6 +896,19 @@ impl Generator<'_> {
                     };
                     self.code
                         .push_str(&format!("push{}(&{local}, {value});\n", list_suffix(elem)));
+                }
+                local
+            }
+            (Expr::MapLit(entries), Type::Map(key, value)) => {
+                let local = self.scalar("{0}", ty);
+                self.owners.push((local.clone(), ty));
+                for (k, v) in entries {
+                    let k = self.expr(k);
+                    let k = if key == Elem::Str { format!("&{k}") } else { k };
+                    let v = self.expr(v);
+                    let v = self.moved(&v, value.ty());
+                    self.code
+                        .push_str(&format!("set{}(&{local}, {k}, {v});\n", ctype(ty)));
                 }
                 local
             }
@@ -788,9 +964,7 @@ impl Generator<'_> {
                 local
             }
             Expr::Field(local, field) => self.scalar(&self.field(local, field), self.ty(expr)),
-            Expr::Variable(name)
-                if matches!(self.locals[name].1, Type::Record(_) | Type::List(_)) =>
-            {
+            Expr::Variable(name) if aggregate(self.locals[name].1) => {
                 let ty = self.locals[name].1;
                 let local = self.scalar(&format!("take{}({})", ctype(ty), self.pointer(name)), ty);
                 self.owners.push((local.clone(), ty));
@@ -822,27 +996,21 @@ impl Generator<'_> {
                 }
                 name
             }
-            Expr::Index(local, index)
-                if matches!(self.place_ty(local), Type::List(_) | Type::ListRef(_, _)) =>
-            {
-                let (Type::List(elem) | Type::ListRef(elem, _)) = self.place_ty(local) else {
-                    unreachable!()
-                };
-                let index = self.expr(index);
+            Expr::Index(local, index) if self.place_ty(local).container().is_some() => {
+                let container = self.place_ty(local).container().expect("guarded");
+                let key = self.key(index, container);
                 let pointer = self.pointer(local);
                 self.scalar(
-                    &format!("*at{}({pointer}, {index})", list_suffix(elem)),
-                    elem.ty(),
+                    &format!("*at{}({pointer}, {key})", ctype(container)),
+                    self.ty(expr),
                 )
             }
             Expr::BorrowIndex(path, index, mutable) => {
-                let (Type::List(elem) | Type::ListRef(elem, _)) = self.place_ty(path) else {
-                    unreachable!("checked list borrow")
-                };
-                let index = self.expr(index);
+                let container = self.place_ty(path).container().expect("checked borrow");
+                let key = self.key(index, container);
                 let pointer = self.pointer(path);
                 self.scalar(
-                    &format!("at{}({pointer}, {index})", list_suffix(elem)),
+                    &format!("at{}({pointer}, {key})", ctype(container)),
                     if *mutable {
                         Type::Mutable
                     } else {
@@ -851,25 +1019,28 @@ impl Generator<'_> {
                 )
             }
             Expr::Method(path, method, args) => {
-                let (Type::List(elem) | Type::ListRef(elem, _)) = self.place_ty(path) else {
-                    unreachable!("checked list receiver")
-                };
-                let l = list_suffix(elem);
+                let receiver = self.place_ty(path);
+                let (_, params, result) =
+                    method_signature(receiver, method).expect("checked method");
                 // 参数先求值，再取接收者指针（与检查器的借用顺序一致）。
-                let values: Vec<_> = args.iter().map(|arg| self.expr(arg)).collect();
-                let pointer = self.pointer(path);
-                match method.as_str() {
-                    "len" => self.scalar(&format!("len{l}({pointer})"), Type::Int),
-                    "push" => {
-                        let value = self.moved(&values[0], elem.ty());
-                        self.code
-                            .push_str(&format!("push{l}({pointer}, {value});\n"));
-                        String::new()
-                    }
-                    "pop" if elem == Elem::Str => self.temporary(&format!("pop{l}({pointer})")),
-                    "pop" => self.scalar(&format!("pop{l}({pointer})"), elem.ty()),
-                    _ => unreachable!("checked list method"),
+                let mut values = Vec::new();
+                for (arg, ty) in args.iter().zip(&params) {
+                    values.push(self.argument(arg, *ty));
                 }
+                values.insert(0, self.pointer(path));
+                let name = match method.as_str() {
+                    "contains" => "has",
+                    "get" => "getor",
+                    "remove" => "del",
+                    other => other,
+                };
+                let container = receiver.container().expect("checked method");
+                let call = format!("{name}{}({})", ctype(container), values.join(", "));
+                self.call_value(&call, result)
+            }
+            Expr::MapLit(_) => {
+                let ty = self.ty(expr);
+                self.expr_as(expr, ty)
             }
             Expr::Index(local, index) => {
                 let index = self.expr(index);
@@ -1067,7 +1238,7 @@ impl Generator<'_> {
         if result == Type::Unit {
             return String::new();
         }
-        if matches!(result, Type::Record(_) | Type::List(_)) {
+        if aggregate(result) {
             let value = self.scalar(&format!("{}(&{temp}.value)", take_fn(result)), result);
             self.owners.push((value.clone(), result));
             value
@@ -1082,14 +1253,7 @@ impl Generator<'_> {
         let types: Vec<_> = function.params.iter().map(|(_, ty)| *ty).collect();
         let mut values = Vec::new();
         for (arg, ty) in args.iter().zip(types) {
-            values.push(if owned(ty) {
-                let value = self.expr_as(arg, ty);
-                self.moved(&value, ty)
-            } else if matches!(ty, Type::Int | Type::Bool) {
-                self.expr(arg)
-            } else {
-                self.borrowed(arg)
-            });
+            values.push(self.argument(arg, ty));
         }
         format!(
             "{}({})",
@@ -1102,7 +1266,7 @@ impl Generator<'_> {
             self.temporary(call)
         } else if result != Type::Unit {
             let value = self.scalar(call, result);
-            if matches!(result, Type::Record(_) | Type::List(_)) {
+            if owned(result) {
                 self.owners.push((value.clone(), result));
             }
             value
@@ -1180,26 +1344,37 @@ impl Generator<'_> {
                     self.locals.insert(name.clone(), (value, ty));
                 }
                 Instruction::Each(name, path, nested) => {
-                    let (Type::List(elem) | Type::ListRef(elem, _)) = self.place_ty(path) else {
-                        unreachable!("checked list loop")
+                    let container = self.place_ty(path).container().expect("checked loop");
+                    let borrowed = match container {
+                        Type::List(elem) => Type::ListRef(elem, false),
+                        Type::Map(key, value) => Type::MapRef(key, value, false),
+                        _ => unreachable!(),
                     };
-                    // 循环体不能修改列表（检查器冻结了根绑定），长度与数据指针整轮不变。
-                    let list = self.scalar(&self.pointer(path), Type::ListRef(elem, false));
+                    // 循环体不能修改被遍历的容器（检查器冻结了根绑定），长度与存储整轮不变。
+                    let handle = self.scalar(&self.pointer(path), borrowed);
                     let index = format!("v{}", self.next);
                     self.next += 1;
                     self.code.push_str(&format!(
-                        "for (size_t {index} = 0; {index} < {list}->len; {index}++) {{\n"
+                        "for (size_t {index} = 0; {index} < {handle}->len; {index}++) {{\n"
                     ));
+                    // 列表取元素；字典按插入顺序取键，跳过已删除的项。
+                    let (elem, access) = match container {
+                        Type::List(elem) => (elem, format!("{handle}->data[{index}]")),
+                        Type::Map(key, _) => {
+                            self.code.push_str(&format!(
+                                "if (!{handle}->entries[{index}].live) continue;\n"
+                            ));
+                            (key, format!("{handle}->entries[{index}].key"))
+                        }
+                        _ => unreachable!(),
+                    };
                     let item = if elem == Elem::Str {
                         (
-                            self.scalar(&format!("&{list}->data[{index}]"), Type::Shared),
+                            self.scalar(&format!("&{access}"), Type::Shared),
                             Type::Shared,
                         )
                     } else {
-                        (
-                            self.scalar(&format!("{list}->data[{index}]"), elem.ty()),
-                            elem.ty(),
-                        )
+                        (self.scalar(&access, elem.ty()), elem.ty())
                     };
                     self.locals.insert(name.clone(), item);
                     self.loops.push(self.owners.len());
@@ -1209,19 +1384,23 @@ impl Generator<'_> {
                     self.code.push_str("}\n");
                 }
                 Instruction::AssignIndex(local, index, expr)
-                    if matches!(self.place_ty(local), Type::List(_) | Type::ListRef(_, _)) =>
+                    if self.place_ty(local).container().is_some() =>
                 {
-                    let (Type::List(elem) | Type::ListRef(elem, _)) = self.place_ty(local) else {
-                        unreachable!()
-                    };
-                    let index = self.expr(index);
+                    let container = self.place_ty(local).container().expect("guarded");
+                    let key = self.key(index, container);
                     let value = self.expr(expr);
                     let pointer = self.pointer(local);
-                    let slot = format!("at{}({pointer}, {index})", list_suffix(elem));
-                    self.code.push_str(&if elem == Elem::Str {
-                        format!("{{ S *slot = {slot}; drop(slot); *slot = take(&{value}); }}\n")
-                    } else {
-                        format!("*{slot} = {value};\n")
+                    let c = ctype(container);
+                    self.code.push_str(&match container {
+                        Type::List(Elem::Str) => format!(
+                            "{{ S *slot = at{c}({pointer}, {key}); drop(slot); *slot = take(&{value}); }}\n"
+                        ),
+                        Type::List(_) => format!("*at{c}({pointer}, {key}) = {value};\n"),
+                        Type::Map(_, elem) => format!(
+                            "set{c}({pointer}, {key}, {});\n",
+                            self.moved(&value, elem.ty())
+                        ),
+                        _ => unreachable!(),
                     });
                 }
                 Instruction::AssignIndex(local, index, expr) => {
@@ -1257,10 +1436,11 @@ impl Generator<'_> {
                 }
                 Instruction::Assign(name, expr) => {
                     // 通过 `&mut` 参数赋值时，写的是被借用的那个值。
-                    let ty = match self.locals[name].1 {
-                        Type::Mutable => Type::Owned,
-                        Type::ListRef(elem, _) => Type::List(elem),
-                        ty => ty,
+                    let local_ty = self.locals[name].1;
+                    let ty = if local_ty.is_reference() {
+                        local_ty.borrowable().expect("reference type").0
+                    } else {
+                        local_ty
                     };
                     let value = self.expr_as(expr, ty);
                     if matches!(ty, Type::Int | Type::Bool) {
@@ -1464,6 +1644,12 @@ fn visit_exprs<'a>(body: &'a Block, visit: &mut impl FnMut(&'a Expr)) {
                     expr(value, visit);
                 }
             }
+            Expr::MapLit(entries) => {
+                for (key, value) in entries {
+                    expr(key, visit);
+                    expr(value, visit);
+                }
+            }
             _ => {}
         }
     }
@@ -1495,21 +1681,6 @@ fn visit_exprs<'a>(body: &'a Block, visit: &mut impl FnMut(&'a Expr)) {
                 visit_exprs(body, visit);
             }
             Instruction::Each(_, _, body) => visit_exprs(body, visit),
-            _ => {}
-        }
-    }
-}
-fn visit_instructions<'a>(body: &'a Block, visit: &mut impl FnMut(&'a Instruction)) {
-    for (instruction, _) in body {
-        visit(instruction);
-        match instruction {
-            Instruction::If(_, yes, no) => {
-                visit_instructions(yes, visit);
-                visit_instructions(no, visit);
-            }
-            Instruction::While(_, nested)
-            | Instruction::For(_, _, _, nested)
-            | Instruction::Each(_, _, nested) => visit_instructions(nested, visit),
             _ => {}
         }
     }
@@ -1699,47 +1870,100 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
         }
     }
     let records = record_order(module, &records).expect("checked struct layouts");
-    // 用到的列表元素类型：来自签名、结构体字段与局部类型标注（列表值只可能从这几处来）。
-    let mut lists = std::collections::BTreeSet::new();
-    let mut note = |ty: Type| {
-        if let Type::List(elem) | Type::ListRef(elem, _) = ty {
-            lists.insert(elem);
-        }
-    };
+    // 列表与字典的 C 辅助按用到的类型生成：签名、结构体字段，以及函数体里出现过的每个值。
+    let mut containers = Containers::new();
     for name in &needed {
         let function = &module.functions[name];
-        function.params.iter().for_each(|(_, ty)| note(*ty));
-        note(function.result);
+        for (_, ty) in &function.params {
+            note(&mut containers, *ty);
+        }
+        note(&mut containers, function.result);
     }
     for name in &records {
-        module.structs[name]
-            .fields
-            .iter()
-            .for_each(|(_, ty)| note(*ty));
-    }
-    for (name, function) in &module.functions {
-        if name.split_once(':').unwrap().0 != unit {
-            continue;
+        for (_, ty) in &module.structs[name].fields {
+            note(&mut containers, *ty);
         }
-        let mut blocks = vec![&function.body];
-        visit_exprs(&function.body, &mut |expr| {
-            if let Expr::Catch(_, _, block) = expr {
-                blocks.push(block);
+    }
+    let specialized_decls: String = specializations
+        .iter()
+        .map(|version| {
+            format!(
+                "static {};\n",
+                signature(&version.name).replacen(&symbols[&version.name], &version.symbol, 1)
+            )
+        })
+        .collect();
+    // 先生成函数体并收集其中的容器类型，再按依赖顺序拼装：容器、结构体、结果结构体、声明、函数体。
+    let mut bodies = String::new();
+    let generic = plans.into_iter().map(|(name, plan)| (name, None, plan));
+    let specialized = specializations.into_iter().map(|version| {
+        let proofs = ranges::analyze_with_ranges(&module.functions[&version.name], &version.inputs);
+        (
+            version.name,
+            Some(version.symbol),
+            FunctionPlan {
+                proofs,
+                targets: BTreeMap::new(),
+            },
+        )
+    });
+    for (name, symbol, plan) in generic.chain(specialized) {
+        let function = &module.functions[&name];
+        let declaration = if let Some(symbol) = symbol {
+            format!(
+                "static {}",
+                signature(&name).replacen(&symbols[&name], &symbol, 1)
+            )
+        } else {
+            signature(&name)
+        };
+        bodies.push_str(&format!("{declaration} {{\n"));
+        let mut g = Generator {
+            module,
+            symbols: &symbols,
+            locals: BTreeMap::new(),
+            owners: Vec::new(),
+            loops: Vec::new(),
+            proofs: plan.proofs,
+            call_targets: plan.targets,
+            code: String::new(),
+            next: 0,
+            result: function.result,
+            error: function.error,
+            containers: Containers::new(),
+        };
+        for (i, (param, ty)) in function.params.iter().enumerate() {
+            let local = format!("p{i}");
+            if owned(*ty) {
+                g.owners.push((local.clone(), *ty));
             }
-        });
-        for block in blocks {
-            visit_instructions(block, &mut |instruction| {
-                if let Instruction::Let(_, _, Some(ty), _) = instruction {
-                    note(*ty);
-                }
-            });
+            g.locals.insert(param.clone(), (local, *ty));
         }
+        let returned = g.block(&function.body, function.result);
+        g.cleanup();
+        bodies.push_str(&g.code);
+        if function.error.is_some() && !returned && function.result == Type::Unit {
+            // 失败函数返回 Unit 时也要显式给出成功值。
+            bodies.push_str(&format!("return {}();\n", fallible_ok(Type::Unit)));
+        }
+        bodies.push_str("}\n");
+        containers.extend(g.containers);
     }
-    if !lists.is_empty() {
+    if !containers.is_empty() {
         source.push_str(LIST_PRELUDE);
     }
-    for elem in lists {
-        source.push_str(&list_helpers(elem));
+    if containers.iter().any(|(_, value)| value.is_some()) {
+        source.push_str(MAP_PRELUDE);
+    }
+    for (elem, value) in &containers {
+        if value.is_none() {
+            source.push_str(&list_helpers(*elem));
+        }
+    }
+    for (key, value) in &containers {
+        if let Some(value) = value {
+            source.push_str(&map_helpers(*key, *value));
+        }
     }
     for name in records {
         let structure = &module.structs[&name];
@@ -1817,64 +2041,8 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
             source.push_str(&format!("{};\n", signature(name)));
         }
     }
-    for version in &specializations {
-        source.push_str(&format!(
-            "static {};\n",
-            signature(&version.name).replacen(&symbols[&version.name], &version.symbol, 1)
-        ));
-    }
-    let generic = plans.into_iter().map(|(name, plan)| (name, None, plan));
-    let specialized = specializations.into_iter().map(|version| {
-        let proofs = ranges::analyze_with_ranges(&module.functions[&version.name], &version.inputs);
-        (
-            version.name,
-            Some(version.symbol),
-            FunctionPlan {
-                proofs,
-                targets: BTreeMap::new(),
-            },
-        )
-    });
-    for (name, symbol, plan) in generic.chain(specialized) {
-        let function = &module.functions[&name];
-        let declaration = if let Some(symbol) = symbol {
-            format!(
-                "static {}",
-                signature(&name).replacen(&symbols[&name], &symbol, 1)
-            )
-        } else {
-            signature(&name)
-        };
-        source.push_str(&format!("{declaration} {{\n"));
-        let mut g = Generator {
-            module,
-            symbols: &symbols,
-            locals: BTreeMap::new(),
-            owners: Vec::new(),
-            loops: Vec::new(),
-            proofs: plan.proofs,
-            call_targets: plan.targets,
-            code: String::new(),
-            next: 0,
-            result: function.result,
-            error: function.error,
-        };
-        for (i, (param, ty)) in function.params.iter().enumerate() {
-            let local = format!("p{i}");
-            if owned(*ty) {
-                g.owners.push((local.clone(), *ty));
-            }
-            g.locals.insert(param.clone(), (local, *ty));
-        }
-        let returned = g.block(&function.body, function.result);
-        g.cleanup();
-        source.push_str(&g.code);
-        if function.error.is_some() && !returned && function.result == Type::Unit {
-            // 失败函数返回 Unit 时也要显式给出成功值。
-            source.push_str(&format!("return {}();\n", fallible_ok(Type::Unit)));
-        }
-        source.push_str("}\n");
-    }
+    source.push_str(&specialized_decls);
+    source.push_str(&bodies);
     if entry.split_once(':').unwrap().0 == unit {
         // argv 留给 std/env（Unix）；Windows 下 std/env 改读 GetCommandLineW 以拿到 UTF-8。
         source.push_str("int zam_argc;\nchar **zam_argv;\n");

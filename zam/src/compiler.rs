@@ -22,6 +22,53 @@ pub enum Type {
     // 可增长数组 `[T]`（owned）与它的调用帧借用 `&[T]` / `&mut [T]`。
     List(Elem),
     ListRef(Elem, bool),
+    // 字典 `{K: V}`（owned）与它的调用帧借用；键只能是 i64 或 string。
+    Map(Elem, Elem),
+    MapRef(Elem, Elem, bool),
+}
+impl Type {
+    /// `[T]`、`{K: V}` 或它们的借用 → 背后的 owned 容器类型。
+    pub fn container(self) -> Option<Type> {
+        match self {
+            Type::List(elem) | Type::ListRef(elem, _) => Some(Type::List(elem)),
+            Type::Map(key, value) | Type::MapRef(key, value, _) => Some(Type::Map(key, value)),
+            _ => None,
+        }
+    }
+    pub fn is_reference(self) -> bool {
+        matches!(
+            self,
+            Type::Shared | Type::Mutable | Type::ListRef(_, _) | Type::MapRef(_, _, _)
+        )
+    }
+    /// 可被借用的值：（被借用的 owned 类型，本身已是借用时是否可写）。标量与结构体不可借用。
+    pub fn borrowable(self) -> Option<(Type, Option<bool>)> {
+        match self {
+            Type::Owned => Some((Type::Owned, None)),
+            Type::Shared => Some((Type::Owned, Some(false))),
+            Type::Mutable => Some((Type::Owned, Some(true))),
+            Type::List(elem) => Some((Type::List(elem), None)),
+            Type::ListRef(elem, mutable) => Some((Type::List(elem), Some(mutable))),
+            Type::Map(key, value) => Some((Type::Map(key, value), None)),
+            Type::MapRef(key, value, mutable) => Some((Type::Map(key, value), Some(mutable))),
+            _ => None,
+        }
+    }
+}
+
+/// 容器方法的签名：(是否独占借用接收者, 参数类型, 结果类型)。检查器与代码生成共用。
+pub fn method_signature(receiver: Type, method: &str) -> Option<(bool, Vec<Type>, Type)> {
+    Some(match (receiver.container()?, method) {
+        (_, "len") => (false, Vec::new(), Type::Int),
+        (Type::List(elem), "push") => (true, vec![elem.ty()], Type::Unit),
+        (Type::List(elem), "pop") => (true, Vec::new(), elem.ty()),
+        (Type::List(_), "swap") => (true, vec![Type::Int, Type::Int], Type::Unit),
+        (Type::Map(key, _), "contains") => (false, vec![key.key_arg()], Type::Bool),
+        (Type::Map(key, value), "get") => (false, vec![key.key_arg(), value.ty()], value.ty()),
+        (Type::Map(key, _), "remove") => (true, vec![key.key_arg()], Type::Bool),
+        (Type::Map(key, _), "keys") => (false, Vec::new(), Type::List(key)),
+        _ => return None,
+    })
 }
 
 /// `[T]` 的元素类型；v1 只支持标量与字符串，结构体元素等结构体借用落地后再加。
@@ -37,6 +84,14 @@ impl Elem {
             Elem::Int => Type::Int,
             Elem::Bool => Type::Bool,
             Elem::Str => Type::Owned,
+        }
+    }
+    /// 字典键作为参数时的类型：字符串键只读借用，整数键按值。
+    pub fn key_arg(self) -> Type {
+        if self == Elem::Str {
+            Type::Shared
+        } else {
+            self.ty()
         }
     }
 }
@@ -65,6 +120,8 @@ pub enum Expr {
     BorrowIndex(String, Box<Expr>, bool),
     // `xs.push(v)`：接收者是局部变量或字段路径，由模块解析把非导入别名的 `a.b(...)` 改写而来。
     Method(String, String, Vec<Expr>),
+    // `{k: v, ...}` 字典字面量；空字典需要类型标注。
+    MapLit(Vec<(Expr, Expr)>),
 }
 
 #[derive(Clone, Debug)]
@@ -363,6 +420,27 @@ impl Parser {
         } else {
             Type::Owned
         };
+        if self.peek() == Some(&Token::Symbol('{')) {
+            self.take();
+            let key = match self.word()?.as_str() {
+                "i64" => Elem::Int,
+                "string" => Elem::Str,
+                _ => return Err("unsupported map key type; expected i64 or string keys".into()),
+            };
+            self.expect(':')?;
+            let value = match self.word()?.as_str() {
+                "i64" => Elem::Int,
+                "bool" => Elem::Bool,
+                "string" => Elem::Str,
+                _ => return Err("unsupported map value type; expected i64, bool or string".into()),
+            };
+            self.expect('}')?;
+            return Ok(match ty {
+                Type::Owned => Type::Map(key, value),
+                Type::Shared => Type::MapRef(key, value, false),
+                _ => Type::MapRef(key, value, true),
+            });
+        }
         if self.peek() == Some(&Token::Symbol('[')) {
             self.take();
             let element = self.word()?;
@@ -496,6 +574,24 @@ impl Parser {
         if let Some(Token::Text(text)) = self.peek().cloned() {
             self.take();
             return literal(&text);
+        }
+        if self.symbol('{') {
+            // 字典字面量：`{k: v, k2: v2}`，条目之间用逗号，可以分行写。
+            let mut entries = Vec::new();
+            self.newlines();
+            while !self.symbol('}') {
+                let key = self.expr()?;
+                self.expect(':')?;
+                let value = self.expr()?;
+                entries.push((key, value));
+                self.newlines();
+                if self.symbol('}') {
+                    break;
+                }
+                self.expect(',')?;
+                self.newlines();
+            }
+            return Ok(Expr::MapLit(entries));
         }
         if self.symbol('[') {
             let mut values = Vec::new();
@@ -665,9 +761,7 @@ impl Parser {
                 } else {
                     None
                 };
-                if annotation.is_some_and(|ty| {
-                    matches!(ty, Type::Shared | Type::Mutable | Type::ListRef(_, _))
-                }) {
+                if annotation.is_some_and(Type::is_reference) {
                     return Err("borrow escape: references cannot be stored in locals".into());
                 }
                 self.expect('=')?;
@@ -868,7 +962,7 @@ pub fn parse(source: &str) -> Result<Module, String> {
                     }
                     p.expect(':')?;
                     let ty = p.ty()?;
-                    if matches!(ty, Type::Shared | Type::Mutable | Type::ListRef(_, _)) {
+                    if ty.is_reference() {
                         return Err("borrow escape: structs cannot store references".into());
                     }
                     if matches!(ty, Type::ArrayInt(_)) {
@@ -920,7 +1014,7 @@ pub fn parse(source: &str) -> Result<Module, String> {
                     (Type::Unit, Some(error))
                 } else {
                     let ty = p.ty()?;
-                    if matches!(ty, Type::Shared | Type::Mutable | Type::ListRef(_, _)) {
+                    if ty.is_reference() {
                         return Err("borrow escape: functions cannot return references".into());
                     }
                     if matches!(ty, Type::ArrayInt(_)) {
@@ -973,7 +1067,7 @@ pub fn encode(module: &Module) -> Vec<u8> {
         .map(|(name, structure)| (name, structure.public, &structure.fields))
         .collect();
     format!(
-        "ZAM-IR-15\n{declarations:?}\n{:?}\n{:?}\n{:?}\n",
+        "ZAM-IR-16\n{declarations:?}\n{:?}\n{:?}\n{:?}\n",
         module.type_names, module.imports, module.functions
     )
     .into_bytes()
@@ -1048,19 +1142,17 @@ impl Checker<'_> {
         };
         Ok((root.to_owned(), ty))
     }
-    /// 把路径当列表借用一次：检查可变性、冻结与已有借用，返回元素类型。不记录借用，
-    /// 调用方按需要把根写进 `loans`。
-    fn list_place(
+    /// 把路径当容器借用一次：检查可变性、冻结与已有借用，返回背后的 owned 容器类型
+    /// （`[T]` 或 `{K: V}`）。不记录借用，调用方按需要把根写进 `loans`。
+    fn container(
         &self,
         path: &str,
         mutable: bool,
         loans: &BTreeMap<String, Type>,
-    ) -> Result<Elem, String> {
+    ) -> Result<Type, String> {
         let (root, ty) = self.place(path)?;
-        let (elem, by_ref) = match ty {
-            Type::List(elem) => (elem, None),
-            Type::ListRef(elem, mutable) => (elem, Some(mutable)),
-            _ => return Err(format!("type mismatch: {path} is not a list")),
+        let (Some(base), Some((_, by_ref))) = (ty.container(), ty.borrowable()) else {
+            return Err(format!("type mismatch: {path} is not a list or map"));
         };
         if mutable {
             if !by_ref.unwrap_or(self.locals[&root].mutable) {
@@ -1074,28 +1166,36 @@ impl Checker<'_> {
         {
             return Err(format!("borrow conflict: {path}"));
         }
-        Ok(elem)
+        Ok(base)
     }
-    /// 列表方法的签名：(元素类型, 是否独占借用接收者, 参数类型, 结果类型)。
+    /// 容器下标的（键类型, 元素类型）：列表用 i64 下标，字典用键。
+    fn subscript(container: Type) -> (Type, Elem) {
+        match container {
+            Type::List(elem) => (Type::Int, elem),
+            Type::Map(key, value) => (key.key_arg(), value),
+            _ => unreachable!("container type"),
+        }
+    }
     fn method(&self, path: &str, method: &str) -> Result<(bool, Vec<Type>, Type), String> {
         let root = path.split('.').next().unwrap_or(path);
         if !self.locals.contains_key(root) {
             return Err(format!("ambiguous or missing import for {path}.{method}"));
         }
-        let (Type::List(elem) | Type::ListRef(elem, _)) = self.place(path)?.1 else {
-            let message = "methods are only available on lists";
+        let ty = self.place(path)?.1;
+        let Some(container) = ty.container() else {
+            let message = "methods are only available on lists and maps";
             return Err(format!(
                 "type mismatch: {path} has no method {method}; {message}"
             ));
         };
-        match method {
-            "len" => Ok((false, Vec::new(), Type::Int)),
-            "push" => Ok((true, vec![elem.ty()], Type::Unit)),
-            "pop" => Ok((true, Vec::new(), elem.ty())),
-            _ => Err(format!(
-                "unknown function {path}.{method}: lists support len, push and pop"
-            )),
-        }
+        method_signature(ty, method).ok_or_else(|| {
+            let supported = if matches!(container, Type::List(_)) {
+                "lists support len, push, pop and swap"
+            } else {
+                "maps support len, contains, get, remove and keys"
+            };
+            format!("unknown function {path}.{method}: {supported}")
+        })
     }
     fn binding(&self, name: &str) -> Result<&Binding, String> {
         let binding = self
@@ -1126,8 +1226,24 @@ impl Checker<'_> {
             Expr::Index(local, _) => match self.place(local)?.1 {
                 Type::ArrayInt(_) => Ok(Type::Int),
                 Type::List(elem) | Type::ListRef(elem, _) => Ok(elem.ty()),
-                _ => Err("index requires an array or list".into()),
+                Type::Map(_, value) | Type::MapRef(_, value, _) => Ok(value.ty()),
+                _ => Err("index requires an array, list or map".into()),
             },
+            Expr::MapLit(entries) => {
+                let Some((key, value)) = entries.first() else {
+                    return Err("type mismatch: an empty map literal needs a type annotation, such as let m: {string: i64} = {}".into());
+                };
+                let elem = |ty| match ty {
+                    Type::Int => Some(Elem::Int),
+                    Type::Bool => Some(Elem::Bool),
+                    Type::Owned | Type::Shared | Type::Mutable => Some(Elem::Str),
+                    _ => None,
+                };
+                match (elem(self.ty(key)?), elem(self.ty(value)?)) {
+                    (Some(key @ (Elem::Int | Elem::Str)), Some(value)) => Ok(Type::Map(key, value)),
+                    _ => Err("unsupported map literal; keys are i64 or string, values are i64, bool or string".into()),
+                }
+            }
             Expr::BorrowIndex(_, _, mutable) => Ok(if *mutable {
                 Type::Mutable
             } else {
@@ -1195,6 +1311,17 @@ impl Checker<'_> {
                 }
                 Ok(())
             }
+            Expr::MapLit(entries) => {
+                let Type::Map(key, value) = expected else {
+                    return Err("type mismatch: unexpected map literal".into());
+                };
+                // 字面量里的键和值都移入字典。
+                for (k, v) in entries {
+                    self.expr(k, key.ty(), loans)?;
+                    self.expr(v, value.ty(), loans)?;
+                }
+                Ok(())
+            }
             Expr::Array(values) if matches!(expected, Type::List(_)) => {
                 let Type::List(elem) = expected else {
                     unreachable!()
@@ -1213,19 +1340,17 @@ impl Checker<'_> {
                 }
                 Ok(())
             }
-            Expr::Index(local, index)
-                if matches!(self.place(local)?.1, Type::List(_) | Type::ListRef(_, _)) =>
-            {
-                let elem = self.list_place(local, false, loans)?;
+            Expr::Index(local, index) if self.place(local)?.1.container().is_some() => {
+                let (key, elem) = Self::subscript(self.container(local, false, loans)?);
                 if elem == Elem::Str {
                     return Err(format!(
-                        "cannot move a string out of {local}[..]; borrow it with &{local}[i] or iterate with for x in &{local}"
+                        "cannot move a string out of {local}[..]; borrow it with &{local}[..] or copy it with string.copy(&{local}[..])"
                     ));
                 }
                 if elem.ty() != expected {
-                    return Err("type mismatch: list element type differs".into());
+                    return Err("type mismatch: element type differs".into());
                 }
-                self.expr(index, Type::Int, loans)
+                self.expr(index, key, loans)
             }
             Expr::Index(local, index) => {
                 if expected != Type::Int {
@@ -1246,7 +1371,10 @@ impl Checker<'_> {
                 if self.ty(expr)? != expected {
                     return Err("field type mismatch".into());
                 }
-                if matches!(expected, Type::Owned | Type::Record(_) | Type::List(_)) {
+                if matches!(
+                    expected,
+                    Type::Owned | Type::Record(_) | Type::List(_) | Type::Map(_, _)
+                ) {
                     return Err("owned field moves are not supported; move the whole struct".into());
                 }
                 Ok(())
@@ -1265,13 +1393,13 @@ impl Checker<'_> {
                 self.locals.get_mut(name).unwrap().live = false;
                 Ok(())
             }
-            Expr::Variable(name) if matches!(expected, Type::List(_)) => {
+            Expr::Variable(name) if matches!(expected, Type::List(_) | Type::Map(_, _)) => {
                 let ty = self.binding(name)?.ty;
-                if matches!(ty, Type::ListRef(_, _)) {
+                if ty.is_reference() {
                     return Err(format!("cannot move borrowed value {name}"));
                 }
                 if ty != expected {
-                    return Err("type mismatch: list element types differ".into());
+                    return Err("type mismatch: container element types differ".into());
                 }
                 if loans.contains_key(name) {
                     return Err(format!(
@@ -1315,6 +1443,10 @@ impl Checker<'_> {
                 Ok(())
             }
             Expr::Text(_) if expected == Type::Owned => Ok(()),
+            // 字面量与插值可以直接传给 `&string` 参数：借用一个只活到语句结束的临时字符串。
+            Expr::Text(_) | Expr::Format(_) if expected == Type::Shared => {
+                self.expr(expr, Type::Owned, loans)
+            }
             Expr::Int(_) if expected == Type::Int => Ok(()),
             Expr::Bool(_) if expected == Type::Bool => Ok(()),
             Expr::Variable(name) if matches!(expected, Type::Int | Type::Bool) => {
@@ -1369,25 +1501,16 @@ impl Checker<'_> {
                 self.locals.get_mut(name).unwrap().live = false;
                 Ok(())
             }
-            Expr::Variable(name) | Expr::Borrow(name, _)
-                if matches!(expected, Type::Shared | Type::Mutable | Type::ListRef(_, _)) =>
-            {
-                // 借用的目标：`&string` 借字符串，`&[T]` 借同元素类型的列表。
-                let (want, want_mutable) = match expected {
-                    Type::Shared => (Type::Owned, false),
-                    Type::Mutable => (Type::Owned, true),
-                    Type::ListRef(elem, mutable) => (Type::List(elem), mutable),
-                    _ => unreachable!("guarded borrow type"),
+            Expr::Variable(name) | Expr::Borrow(name, _) if expected.is_reference() => {
+                // 借用的目标：`&string` 借字符串，`&[T]`、`&{K: V}` 借同类型的容器。
+                let (want, Some(want_mutable)) = expected.borrowable().expect("reference type")
+                else {
+                    unreachable!("reference types are borrows")
                 };
                 let (root, ty) = self.place(name)?;
                 // 位置本身已是借用（参数、for 循环变量）时，记下它是否允许修改。
-                let (base, by_ref) = match ty {
-                    Type::Owned => (Type::Owned, None),
-                    Type::Shared => (Type::Owned, Some(false)),
-                    Type::Mutable => (Type::Owned, Some(true)),
-                    Type::List(elem) => (Type::List(elem), None),
-                    Type::ListRef(elem, mutable) => (Type::List(elem), Some(mutable)),
-                    _ => return Err("scalar references are not supported".into()),
+                let Some((base, by_ref)) = ty.borrowable() else {
+                    return Err("scalar references are not supported".into());
                 };
                 if base != want {
                     return Err(format!("borrow type mismatch for {name}"));
@@ -1430,10 +1553,11 @@ impl Checker<'_> {
                 if (expected == Type::Mutable) != *mutable {
                     return Err(format!("borrow type mismatch for {path}[..]"));
                 }
-                self.expr(index, Type::Int, loans)?;
-                if self.list_place(path, *mutable, loans)? != Elem::Str {
+                let (key, elem) = Self::subscript(self.container(path, *mutable, loans)?);
+                if elem != Elem::Str {
                     return Err("scalar references are not supported".into());
                 }
+                self.expr(index, key, loans)?;
                 let root = path.split('.').next().unwrap_or(path).to_owned();
                 loans.insert(root, expected);
                 Ok(())
@@ -1451,7 +1575,7 @@ impl Checker<'_> {
                 for (arg, ty) in args.iter().zip(&params) {
                     self.expr(arg, *ty, &mut frame)?;
                 }
-                self.list_place(path, mutable, loans)?;
+                self.container(path, mutable, loans)?;
                 Ok(())
             }
             Expr::Call(name, args) => {
@@ -1595,7 +1719,11 @@ impl Checker<'_> {
                     returned = false;
                 }
                 Instruction::Each(local, path, nested) => {
-                    let elem = self.list_place(path, false, &loans)?;
+                    // 列表遍历元素，字典遍历键（插入顺序）。
+                    let elem = match self.container(path, false, &loans)? {
+                        Type::List(elem) | Type::Map(elem, _) => elem,
+                        _ => unreachable!("container type"),
+                    };
                     if self.locals.contains_key(local) {
                         return Err(format!("duplicate binding {local}"));
                     }
@@ -1690,10 +1818,7 @@ impl Checker<'_> {
                         Some(ty) => *ty,
                         None => self.ty(expr)?,
                     };
-                    if matches!(
-                        ty,
-                        Type::Shared | Type::Mutable | Type::ListRef(_, _) | Type::Unit
-                    ) {
+                    if ty.is_reference() || ty == Type::Unit {
                         return Err("borrow escape: locals require an owned value".into());
                     }
                     self.expr(expr, ty, &mut loans)?;
@@ -1707,10 +1832,12 @@ impl Checker<'_> {
                     );
                 }
                 Instruction::AssignIndex(local, index, expr)
-                    if matches!(self.place(local)?.1, Type::List(_) | Type::ListRef(_, _)) =>
+                    if self.place(local)?.1.container().is_some() =>
                 {
-                    self.expr(index, Type::Int, &mut loans)?;
-                    let elem = self.list_place(local, true, &loans)?;
+                    let container = self.place(local)?.1.container().expect("guarded");
+                    let (key, elem) = Self::subscript(container);
+                    self.expr(index, key, &mut loans)?;
+                    self.container(local, true, &loans)?;
                     self.expr(expr, elem.ty(), &mut loans)?;
                     self.place(local)?;
                 }
@@ -1744,15 +1871,17 @@ impl Checker<'_> {
                         .locals
                         .get(local)
                         .ok_or_else(|| format!("unknown variable {local}"))?;
+                    let by_ref = binding.ty.is_reference();
                     if !(binding.mutable
-                        || matches!(binding.ty, Type::Mutable | Type::ListRef(_, true)))
+                        || binding.ty.borrowable().is_some_and(|b| b.1 == Some(true)))
                     {
                         return Err(format!("cannot assign immutable value {local}"));
                     }
-                    let ty = match binding.ty {
-                        Type::Mutable => Type::Owned,
-                        Type::ListRef(elem, true) => Type::List(elem),
-                        ty => ty,
+                    // 通过 `&mut` 参数赋值时写的是被借用的值。
+                    let ty = if by_ref {
+                        binding.ty.borrowable().expect("reference type").0
+                    } else {
+                        binding.ty
                     };
                     self.thawed(local)?;
                     if matches!(ty, Type::ArrayInt(_)) {
@@ -1762,15 +1891,11 @@ impl Checker<'_> {
                     self.locals.get_mut(local).unwrap().live = true;
                 }
                 Instruction::Print(expr) => {
-                    if matches!(
-                        self.ty(expr)?,
-                        Type::Unit
-                            | Type::Record(_)
-                            | Type::ArrayInt(_)
-                            | Type::List(_)
-                            | Type::ListRef(_, _)
-                    ) {
-                        return Err("cannot print void, struct, array or list".into());
+                    let ty = self.ty(expr)?;
+                    if matches!(ty, Type::Unit | Type::Record(_) | Type::ArrayInt(_))
+                        || ty.container().is_some()
+                    {
+                        return Err("cannot print void, struct, array, list or map".into());
                     }
                     if let Expr::Variable(local) = expr {
                         self.binding(local)?;
