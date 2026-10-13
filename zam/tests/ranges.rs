@@ -1,38 +1,10 @@
-use std::{
-    fs,
-    path::PathBuf,
-    process::{Command, Output},
-};
+mod common;
 
-struct Case {
-    root: PathBuf,
-}
-impl Case {
-    fn new(name: &str) -> Self {
-        let root = std::env::temp_dir().join(format!("zam-ranges-{name}-{}", std::process::id()));
-        fs::create_dir_all(&root).unwrap();
-        Self { root }
-    }
-    fn run(&self, source: &str) -> Output {
-        let file = self.root.join("main.zm");
-        fs::write(&file, source).unwrap();
-        Command::new(env!("CARGO_BIN_EXE_zam"))
-            .arg("run")
-            .arg(file)
-            .env("ZAMAK_CACHE_DIR", self.root.join("cache"))
-            .output()
-            .unwrap()
-    }
-}
-impl Drop for Case {
-    fn drop(&mut self) {
-        fs::remove_dir_all(&self.root).unwrap();
-    }
-}
+use common::Case;
 
 #[test]
 fn bounded_loops_short_circuit_and_scope_keep_results() {
-    let case = Case::new("bounded");
+    let case = Case::new("ranges", "bounded");
     let result = case.run(
         r#"
 fn probe(n: i64) -> i64 {
@@ -83,7 +55,7 @@ fn main() {
 
 #[test]
 fn loop_backedges_and_unknown_parameters_preserve_errors() {
-    let case = Case::new("checked");
+    let case = Case::new("ranges", "checked");
     for source in [
         "fn add(n: i64) -> i64 { n + 1 }\nfn main() { println(add(9223372036854775807)) }",
         "fn main() {\nlet mut n = 9223372036854775806\nwhile n > 0 {\nn = n + 1\n}\n}",
@@ -114,7 +86,7 @@ fn loop_backedges_and_unknown_parameters_preserve_errors() {
 
 #[test]
 fn catch_handler_assignments_do_not_reach_success_path() {
-    let case = Case::new("catch");
+    let case = Case::new("ranges", "catch");
     let result = case.run(
         r#"
 fn value(failed: bool) -> i64!string {
@@ -145,7 +117,7 @@ fn main() {
 
 #[test]
 fn finite_loop_boundaries_and_remainder_keep_checked_errors() {
-    let case = Case::new("finite-errors");
+    let case = Case::new("ranges", "finite-errors");
     for source in [
         // The final counter step still overflows at an inclusive maximum bound.
         "fn main() {\nlet mut i = 9223372036854775806\nwhile i <= 9223372036854775807 {\ni = i + 1\n}\n}",
@@ -171,7 +143,7 @@ fn finite_loop_boundaries_and_remainder_keep_checked_errors() {
 
 #[test]
 fn finite_recurrence_unknown_bound_breaks_and_returns_keep_results() {
-    let case = Case::new("finite-results");
+    let case = Case::new("ranges", "finite-results");
     let result = case.run(
         r#"
 fn sequence(seed: i64) -> i64 {

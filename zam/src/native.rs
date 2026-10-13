@@ -834,12 +834,12 @@ impl Generator<'_> {
     }
 }
 
-// Visit calls in AST source order; addresses are lookup keys, never ordering keys.
-fn visit_calls<'a>(body: &'a Block, visit: &mut impl FnMut(&'a Expr, &'a str)) {
-    fn expr<'a>(value: &'a Expr, visit: &mut impl FnMut(&'a Expr, &'a str)) {
+// Visit every expression in AST source order; callers select the nodes they need.
+fn visit_exprs<'a>(body: &'a Block, visit: &mut impl FnMut(&'a Expr)) {
+    fn expr<'a>(value: &'a Expr, visit: &mut impl FnMut(&'a Expr)) {
+        visit(value);
         match value {
-            Expr::Call(name, args) => {
-                visit(value, name);
+            Expr::Call(_, args) | Expr::Array(args) | Expr::Format(args) => {
                 for arg in args {
                     expr(arg, visit);
                 }
@@ -855,15 +855,10 @@ fn visit_calls<'a>(body: &'a Block, visit: &mut impl FnMut(&'a Expr, &'a str)) {
             }
             Expr::Catch(inner, _, body) => {
                 expr(inner, visit);
-                visit_calls(body, visit);
+                visit_exprs(body, visit);
             }
             Expr::Record(_, fields) => {
                 for (_, value) in fields {
-                    expr(value, visit);
-                }
-            }
-            Expr::Array(values) | Expr::Format(values) => {
-                for value in values {
                     expr(value, visit);
                 }
             }
@@ -885,12 +880,12 @@ fn visit_calls<'a>(body: &'a Block, visit: &mut impl FnMut(&'a Expr, &'a str)) {
             }
             Instruction::If(condition, yes, no) => {
                 expr(condition, visit);
-                visit_calls(yes, visit);
-                visit_calls(no, visit);
+                visit_exprs(yes, visit);
+                visit_exprs(no, visit);
             }
             Instruction::While(condition, body) => {
                 expr(condition, visit);
-                visit_calls(body, visit);
+                visit_exprs(body, visit);
             }
             _ => {}
         }
@@ -915,8 +910,10 @@ fn specialization_plan(
         .iter()
         .map(|(name, function)| {
             let mut edges = std::collections::BTreeSet::new();
-            visit_calls(&function.body, &mut |_, name| {
-                edges.insert(name.to_owned());
+            visit_exprs(&function.body, &mut |expr| {
+                if let Expr::Call(name, _) = expr {
+                    edges.insert(name.to_owned());
+                }
             });
             (name.clone(), edges)
         })
@@ -949,7 +946,10 @@ fn specialization_plan(
         }
         let proofs = ranges::analyze(function);
         let mut targets = BTreeMap::new();
-        visit_calls(&function.body, &mut |expr, callee| {
+        visit_exprs(&function.body, &mut |expr| {
+            let Expr::Call(callee, _) = expr else {
+                return;
+            };
             let target = &module.functions[callee];
             if callee.split_once(':').unwrap().0 != unit
                 || cyclic.contains(callee)
@@ -969,13 +969,13 @@ fn specialization_plan(
             }
             let symbol = if let Some(version) = versions
                 .iter()
-                .find(|version| version.name == callee && version.inputs == inputs)
+                .find(|version| version.name == *callee && version.inputs == inputs)
             {
                 version.symbol.clone()
             } else {
                 let count = versions
                     .iter()
-                    .filter(|version| version.name == callee)
+                    .filter(|version| version.name == *callee)
                     .count();
                 if count >= 8 || versions.len() >= 64 {
                     return;
@@ -1038,80 +1038,18 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
     let mut source = RUNTIME.to_owned();
     let mut records = std::collections::BTreeSet::new();
     let mut needed = std::collections::BTreeSet::new();
-    fn calls(
-        expr: &Expr,
-        needed: &mut std::collections::BTreeSet<String>,
-        records: &mut std::collections::BTreeSet<String>,
-    ) {
-        match expr {
-            Expr::Call(name, args) => {
-                needed.insert(name.clone());
-                for arg in args {
-                    calls(arg, needed, records);
-                }
-            }
-            Expr::Record(name, fields) => {
-                records.insert(name.clone());
-                for (_, value) in fields {
-                    calls(value, needed, records);
-                }
-            }
-            Expr::Unary(_, value) | Expr::ByteLen(value) | Expr::CharLen(value) => {
-                calls(value, needed, records)
-            }
-            Expr::Try(inner) => calls(inner, needed, records),
-            Expr::Catch(inner, _, block) => {
-                calls(inner, needed, records);
-                body_calls(block, needed, records);
-            }
-            Expr::Array(values) | Expr::Format(values) => {
-                for value in values {
-                    calls(value, needed, records);
-                }
-            }
-            Expr::Index(_, index) => calls(index, needed, records),
-            Expr::Binary(_, left, right) | Expr::StringEqual(left, right) => {
-                calls(left, needed, records);
-                calls(right, needed, records);
-            }
-            _ => {}
-        }
-    }
-    fn body_calls(
-        body: &Block,
-        needed: &mut std::collections::BTreeSet<String>,
-        records: &mut std::collections::BTreeSet<String>,
-    ) {
-        for (instruction, _) in body {
-            match instruction {
-                Instruction::Let(_, _, _, expr)
-                | Instruction::Assign(_, expr)
-                | Instruction::AssignField(_, _, expr)
-                | Instruction::Print(expr)
-                | Instruction::Call(expr)
-                | Instruction::Fail(expr) => calls(expr, needed, records),
-                Instruction::AssignIndex(_, index, value) => {
-                    calls(index, needed, records);
-                    calls(value, needed, records);
-                }
-                Instruction::Return(Some(expr)) => calls(expr, needed, records),
-                Instruction::If(expr, yes, no) => {
-                    calls(expr, needed, records);
-                    body_calls(yes, needed, records);
-                    body_calls(no, needed, records);
-                }
-                Instruction::While(expr, body) => {
-                    calls(expr, needed, records);
-                    body_calls(body, needed, records);
-                }
-                Instruction::Return(None) | Instruction::Break | Instruction::Continue => {}
-            }
-        }
-    }
     for (name, function) in &module.functions {
         if name.split_once(':').unwrap().0 == unit {
             needed.insert(name.clone());
-            body_calls(&function.body, &mut needed, &mut records);
+            visit_exprs(&function.body, &mut |expr| match expr {
+                Expr::Call(name, _) => {
+                    needed.insert(name.clone());
+                }
+                Expr::Record(name, _) => {
+                    records.insert(name.clone());
+                }
+                _ => {}
+            });
         }
     }
     if entry.split_once(':').unwrap().0 == unit {

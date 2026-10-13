@@ -1388,9 +1388,6 @@ impl Checker<'_> {
                         self.binding(local.split('.').next().unwrap())?;
                     } else {
                         let ty = self.ty(expr)?;
-                        if matches!(ty, Type::Unit | Type::Record(_) | Type::ArrayInt(_)) {
-                            return Err("cannot print void, struct or array".into());
-                        }
                         self.expr(expr, ty, &mut loans)?;
                     }
                 }

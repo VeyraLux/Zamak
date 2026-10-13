@@ -6,7 +6,7 @@ param(
     [string]$OutDir = ""
 )
 $ErrorActionPreference = 'Stop'
-if ($Modules -lt 1) { throw 'Modules must be at least 1.' }
+if ($Modules -lt 2) { throw 'Modules must be at least 2 (the signature-edit scenario uses m2).' }
 if ($Repetitions -lt 1) { throw 'Repetitions must be at least 1.' }
 if ($Warmup -lt 0) { throw 'Warmup must be at least 0.' }
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -62,6 +62,21 @@ function Invoke-Zam([string]$workDir, [string]$cacheDir, [string[]]$arguments, [
     }
 }
 
+function Test-BuildArtifact($build, [string]$project, [long]$expected, [string]$tag) {
+    if ($build.Output.Count -ne 1) { throw "$tag must report exactly one OUTPUT artifact" }
+    $artifact = Join-Path $project ($build.Output[0].Substring(7).Trim())
+    if (-not (Test-Path $artifact -PathType Leaf)) { throw "$tag artifact missing: $artifact" }
+    $out = Join-Path $capture "$tag-run.out.txt"
+    $err = Join-Path $capture "$tag-run.err.txt"
+    & $artifact 1> $out 2> $err
+    $code = $LASTEXITCODE
+    $stdout = ([string](Get-Content $out -Raw)).Replace("`r`n", "`n")
+    if ($code -ne 0 -or $stdout -cne "$expected`n" -or -not [string]::IsNullOrWhiteSpace([string](Get-Content $err -Raw))) {
+        throw "$tag artifact output or exit status failed validation"
+    }
+    return $artifact
+}
+
 function Get-DirectoryBytes([string]$path) {
     if (-not (Test-Path $path)) { return 0 }
     return (Get-ChildItem $path -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
@@ -98,11 +113,18 @@ for ($rep = 1; $rep -le $Repetitions; $rep++) {
         throw "cold build expected $($Modules + 1) misses, saw $($cold.ObjectMiss) misses / $($cold.ObjectHit) hits"
     }
 
+    if ($cold.LinkMiss -ne 1 -or $cold.LinkHit -ne 0) { throw 'cold build expected one LINK MISS' }
+    $expected = [long]$Modules * ($Modules + 1) / 2
+    $artifactPath = Test-BuildArtifact $cold $project $expected "rep$rep-cold"
+
     $warm = Invoke-Zam $project $cacheDir @('build', '.') "rep$rep-warm"
     if ($warm.ExitCode -ne 0) { throw "warm build failed in repetition $rep" }
     if ($warm.ObjectHit -ne ($Modules + 1) -or $warm.ObjectMiss -ne 0) {
         throw "warm build expected $($Modules + 1) hits, saw $($warm.ObjectHit) hits / $($warm.ObjectMiss) misses"
     }
+
+    if ($warm.LinkHit -ne 1 -or $warm.LinkMiss -ne 0) { throw 'warm build expected one LINK HIT' }
+    $null = Test-BuildArtifact $warm $project $expected "rep$rep-warm"
 
     $check = Invoke-Zam $project $cacheDir @('check', '.') "rep$rep-check"
     if ($check.ExitCode -ne 0) { throw "check failed in repetition $rep" }
@@ -111,7 +133,9 @@ for ($rep = 1; $rep -le $Repetitions; $rep++) {
     Set-Content -Path (Join-Path $project 'src\m1.zm') -Value "pub fn value() -> i64 {`n    return 2`n}`n" -NoNewline
     $leaf = Invoke-Zam $project $cacheDir @('build', '.') "rep$rep-leaf"
     if ($leaf.ExitCode -ne 0) { throw "leaf edit build failed in repetition $rep" }
-    if ($leaf.ObjectMiss -ne 1) { throw "leaf edit expected 1 miss, saw $($leaf.ObjectMiss)" }
+    if ($leaf.ObjectMiss -ne 1 -or $leaf.ObjectHit -ne $Modules) { throw 'leaf edit expected 1 object miss and all remaining hits' }
+    if ($leaf.LinkMiss -ne 1 -or $leaf.LinkHit -ne 0) { throw 'leaf edit expected one LINK MISS' }
+    $null = Test-BuildArtifact $leaf $project ($expected + 1) "rep$rep-leaf"
 
     # 接口编辑：重命名 m2 的导出函数并同步调用方，应重编 m2 与 main。
     Set-Content -Path (Join-Path $project 'src\m2.zm') -Value "pub fn value2() -> i64 {`n    return 2`n}`n" -NoNewline
@@ -119,13 +143,9 @@ for ($rep = 1; $rep -le $Repetitions; $rep++) {
     Set-Content -Path $mainPath -Value ((Get-Content $mainPath -Raw).Replace('m2.value()', 'm2.value2()')) -NoNewline
     $signature = Invoke-Zam $project $cacheDir @('build', '.') "rep$rep-signature"
     if ($signature.ExitCode -ne 0) { throw "signature edit build failed in repetition $rep" }
-    if ($signature.ObjectMiss -ne 2) { throw "signature edit expected 2 misses, saw $($signature.ObjectMiss)" }
-
-    $artifactPath = $null
-    if ($cold.Output) {
-        $relative = ($cold.Output.Substring(7).Trim()) -replace '^\.\\', '' -replace '^\./', ''
-        $artifactPath = Join-Path $project $relative
-    }
+    if ($signature.ObjectMiss -ne 2 -or $signature.ObjectHit -ne ($Modules - 1)) { throw 'signature edit expected 2 object misses and all remaining hits' }
+    if ($signature.LinkMiss -ne 1 -or $signature.LinkHit -ne 0) { throw 'signature edit expected one LINK MISS' }
+    $null = Test-BuildArtifact $signature $project ($expected + 1) "rep$rep-signature"
     $runs += [pscustomobject]@{
         repetition = $rep
         cold_build_ms = $cold.Ms
@@ -137,6 +157,11 @@ for ($rep = 1; $rep -le $Repetitions; $rep++) {
         warm_object_hits = $warm.ObjectHit
         leaf_object_misses = $leaf.ObjectMiss
         signature_object_misses = $signature.ObjectMiss
+        cold_link_misses = $cold.LinkMiss
+        warm_link_hits = $warm.LinkHit
+        leaf_link_misses = $leaf.LinkMiss
+        signature_link_misses = $signature.LinkMiss
+        execution_validation_pass = $true
         artifact = $artifactPath
         artifact_bytes = if ($artifactPath -and (Test-Path $artifactPath)) { (Get-Item $artifactPath).Length } else { $null }
         cache_bytes = Get-DirectoryBytes $cacheDir

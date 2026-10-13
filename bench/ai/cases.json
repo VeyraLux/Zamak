@@ -171,6 +171,7 @@
     "expected_output": "hello from zamak\nmain done\n"
   },
   {
+    "expected_location": { "file": "src/main.zm", "line": 5, "column": 5 },
     "id": "multi-module-borrow",
     "files": [
       { "path": "main.zm", "source": "use greeting\n\nfn main() {\n    let message: string = \"hi\"\n    greeting.show(message)\n}\n" },
@@ -198,10 +199,53 @@
     "id": "missing-import",
     "source": "fn main() {\n    let s = \"hi\"\n    println(string.byte_len(&s))\n}\n",
     "expected_code": "ZM203",
+    "expected_location": { "file": "main.zm", "line": 3, "column": 5 },
     "patches": [
       { "find": "fn main() {", "replace": "use std/string\n\nfn main() {" }
     ],
     "expected_output": "2\n"
+  },
+  {
+    "id": "catch-missing-import",
+    "source": "fn load() -> i64!string {\n    fail \"nope\"\n}\nfn main() {\n    let value = load() catch e {\n        println(missing.call())\n        return\n    }\n    println(value)\n}\n",
+    "expected_code": "ZM203",
+    "expected_location": { "file": "main.zm", "line": 6, "column": 9 },
+    "patches": [{ "find": "missing.call()", "replace": "7" }],
+    "expected_output": "7\n"
+  },
+  {
+    "id": "multi-module-nested-catch",
+    "files": [
+      { "path": "main.zm", "source": "use handler\nfn main() {\n    handler.run()\n}\n" },
+      { "path": "handler.zm", "source": "fn load() -> i64!string {\n    fail \"nope\"\n}\npub fn run() {\n    let value = load() catch e {\n        let inner = load() catch nested {\n            println(missing.call())\n            return\n        }\n        return\n    }\n    println(value)\n}\n" }
+    ],
+    "expected_code": "ZM203",
+    "expected_location": { "file": "src/handler.zm", "line": 7, "column": 13 },
+    "patches": [{ "find": "missing.call()", "replace": "7" }],
+    "expected_output": "7\n"
+  },
+  {
+    "id": "multi-module-struct-import",
+    "files": [
+      { "path": "main.zm", "source": "fn main() {\n    let point = shapes.Point { x: 1 }\n    println(point.x)\n}\n" },
+      { "path": "shapes.zm", "source": "pub struct Point {\n    x: i64\n}\n" }
+    ],
+    "expected_code": "ZM203",
+    "expected_location": { "file": "src/main.zm", "line": 2, "column": 5 },
+    "patches": [{ "find": "fn main() {", "replace": "use shapes\nfn main() {" }],
+    "expected_output": "1\n"
+  },
+  {
+    "id": "multi-module-ambiguous-import",
+    "files": [
+      { "path": "main.zm", "source": "use one/foo\nuse two/foo\n\nfn main() {\n    println(foo.hello())\n}\n" },
+      { "path": "one/foo.zm", "source": "pub fn hello() -> i64 {\n    return 1\n}\n" },
+      { "path": "two/foo.zm", "source": "pub fn hello() -> i64 {\n    return 2\n}\n" }
+    ],
+    "expected_code": "ZM203",
+    "expected_location": { "file": "src/main.zm", "line": 5, "column": 5 },
+    "patches": [{ "find": "use two/foo\n", "replace": "" }],
+    "expected_output": "1\n"
   },
   {
     "id": "duplicate-function",

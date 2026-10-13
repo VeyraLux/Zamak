@@ -1,39 +1,10 @@
-use std::{
-    fs,
-    path::PathBuf,
-    process::{Command, Output},
-};
+mod common;
 
-struct Case {
-    root: PathBuf,
-}
-impl Case {
-    fn new(name: &str) -> Self {
-        let root =
-            std::env::temp_dir().join(format!("zam-specializations-{name}-{}", std::process::id()));
-        fs::create_dir_all(&root).unwrap();
-        Self { root }
-    }
-    fn run(&self, source: &str) -> Output {
-        let file = self.root.join("main.zm");
-        fs::write(&file, source).unwrap();
-        Command::new(env!("CARGO_BIN_EXE_zam"))
-            .arg("run")
-            .arg(file)
-            .env("ZAMAK_CACHE_DIR", self.root.join("cache"))
-            .output()
-            .unwrap()
-    }
-}
-impl Drop for Case {
-    fn drop(&mut self) {
-        fs::remove_dir_all(&self.root).unwrap();
-    }
-}
+use common::Case;
 
 #[test]
 fn repeated_call_site_joins_all_visits_before_removing_checks() {
-    let case = Case::new("joined-overflow");
+    let case = Case::new("specializations", "joined-overflow");
     let result = case.run("fn add(n: i64) -> i64 { n + 1 }\nfn main() {\nlet mut n = 0\nlet mut i = 0\nwhile i < 2 {\nprintln(add(n))\nn = 9223372036854775807\ni = i + 1\n}\n}");
     assert!(!result.status.success());
     assert!(
@@ -46,7 +17,7 @@ fn repeated_call_site_joins_all_visits_before_removing_checks() {
 
 #[test]
 fn negative_modulus_and_nested_generic_fallback_keep_behavior() {
-    let case = Case::new("negative-unknown");
+    let case = Case::new("specializations", "negative-unknown");
     let result = case.run("fn rem(n: i64) -> i64 { (n * 31 + 1) % 7 }\nfn unknown() -> i64 { -5 }\nfn nested(n: i64) -> i64 { rem(n) }\nfn main() {\nprintln(rem(-5))\nprintln(rem(unknown()))\nprintln(nested(-5))\n}");
     assert!(
         result.status.success(),
@@ -71,7 +42,7 @@ fn negative_modulus_and_nested_generic_fallback_keep_behavior() {
 
 #[test]
 fn specialized_call_evaluates_arguments_in_original_order() {
-    let case = Case::new("argument-order");
+    let case = Case::new("specializations", "argument-order");
     let result = case.run("fn first() -> i64 {\nprintln(1)\n3\n}\nfn second() -> i64 {\nprintln(2)\n4\n}\nfn sum(a: i64, b: i64, seed: i64) -> i64 { a + b + seed }\nfn main() { println(sum(first(), second(), 0)) }");
     assert!(
         result.status.success(),
@@ -83,7 +54,7 @@ fn specialized_call_evaluates_arguments_in_original_order() {
 
 #[test]
 fn bounded_accumulator_and_recursive_generic_calls_keep_results() {
-    let case = Case::new("accumulator");
+    let case = Case::new("specializations", "accumulator");
     let result = case.run("fn accum(seed: i64) -> i64 {\nlet mut acc = seed\nlet mut i = 0\nwhile i < 512 {\nacc = (acc * 31 + i) % 1000003\ni = i + 1\n}\nacc\n}\nfn recurse(n: i64) -> i64 {\nif n < 1 { return 0 }\n1 + recurse(n - 1)\n}\nfn main() {\nlet mut seed = 0\nwhile seed < 8 {\nprintln(accum(seed))\nseed = seed + 1\n}\nprintln(recurse(4))\n}");
     assert!(
         result.status.success(),
