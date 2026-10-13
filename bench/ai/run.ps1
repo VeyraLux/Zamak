@@ -73,6 +73,15 @@ function Parse-JsonResult($capture, [string]$command, [bool]$expectSuccess) {
     }
 }
 
+function Test-ExpectedLocation($parsed, $expected, [string]$dir) {
+    if ($null -eq $expected) { return $true }
+    $diagnostics = @($parsed.Json.diagnostics)
+    if ($null -eq $parsed.Json -or $diagnostics.Count -ne 1) { return $false }
+    $diagnostic = $diagnostics[0]
+    $file = Join-Path $dir ([string]$expected.file)
+    return $diagnostic.file -eq $file -and $diagnostic.line -eq $expected.line -and $diagnostic.column -eq $expected.column
+}
+
 function Get-OutputPath([string]$stderr) {
     $line = @($stderr -split "`r?`n" | Where-Object { $_ -like 'OUTPUT *' } | Select-Object -Last 1)
     if ($line.Count -eq 0) { return $null }
@@ -136,11 +145,15 @@ foreach ($case in $cases) {
     $path = if ($projectMode) { $dir } else { Join-Path $dir 'main.zm' }
     $first = Invoke-ProcessCapture $zam @('check', '--json', $path) $root $dir
     $firstParsed = Parse-JsonResult $first 'check' ([bool]$true)
+    $locationSamples = @(Test-ExpectedLocation $firstParsed $case.expected_location $dir)
     $latencies = @($first.Ms)
     for ($i = 1; $i -lt $LatencyRepeats; $i++) {
         $sample = Invoke-ProcessCapture $zam @('check', '--json', $path) $root $dir
+        $sampleParsed = Parse-JsonResult $sample 'check' ([bool]$true)
+        $locationSamples += Test-ExpectedLocation $sampleParsed $case.expected_location $dir
         $latencies += $sample.Ms
     }
+    $locationMatch = @($locationSamples | Where-Object { -not $_ }).Count -eq 0
     $rounds = 0
     $warmSamples = @($latencies | Select-Object -Skip 1 | Sort-Object)
     $warmMedian = $null
@@ -192,7 +205,7 @@ foreach ($case in $cases) {
     elseif ($diagnosticCount -gt 0) { $codeMatch = ($diagnostics[0].code -eq $case.expected_code) }
     else { $codeMatch = $false }
     $recordValidationPass = $firstParsed.JsonShapePass -and $firstParsed.ExitConsistent -and $firstParsed.StderrFailurePass -and
-        ($diagnosticCount -eq 0 -or $diagnostics[0].code -eq $case.expected_code) -and
+        $codeMatch -and $locationMatch -and
         ((@($case.patches).Count -eq 0 -and ($unsupportedRejected -or $executionPass)) -or (@($case.patches).Count -gt 0 -and $solved -and $executionPass))
     $records += [pscustomobject]@{
         id = $case.id
@@ -200,6 +213,11 @@ foreach ($case in $cases) {
         first_code = $firstCode
         code_match = $codeMatch
         expected_code = $case.expected_code
+        expected_location = $case.expected_location
+        first_location = if ($diagnosticCount -gt 0) { [pscustomobject]@{ file = $diagnostics[0].file; line = $diagnostics[0].line; column = $diagnostics[0].column } } else { $null }
+        location_checked = $null -ne $case.expected_location
+        location_match = $locationMatch
+        location_samples_pass = @($locationSamples)
         repair_rounds = $rounds
         solved = $solved
         unsupported_expected = $unsupportedExpected
@@ -251,6 +269,8 @@ $report = [pscustomobject]@{
     solved_rate = [math]::Round((($records | Where-Object solved).Count / $records.Count), 3)
     code_match_rate = [math]::Round((($records | Where-Object code_match).Count / $records.Count), 3)
     execution_rate = [math]::Round((($records | Where-Object execution_pass).Count / [math]::Max(1, @($records | Where-Object solved).Count)), 3)
+    location_checked_count = @($records | Where-Object location_checked).Count
+    location_match_rate = if (@($records | Where-Object location_checked).Count -gt 0) { [math]::Round((@($records | Where-Object { $_.location_checked -and $_.location_match }).Count / @($records | Where-Object location_checked).Count), 3) } else { $null }
     validation_rate = [math]::Round((($records | Where-Object validation_pass).Count / $records.Count), 3)
 }
 $reportPath = Join-Path $outDir 'report.json'

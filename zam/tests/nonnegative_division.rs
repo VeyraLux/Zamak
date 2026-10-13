@@ -1,41 +1,10 @@
-use std::{
-    fs,
-    path::PathBuf,
-    process::{Command, Output},
-};
+mod common;
 
-struct Case {
-    root: PathBuf,
-}
-impl Case {
-    fn new(name: &str) -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "zam-nonnegative-division-{name}-{}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&root).unwrap();
-        Self { root }
-    }
-    fn run(&self, source: &str) -> Output {
-        let file = self.root.join("main.zm");
-        fs::write(&file, source).unwrap();
-        Command::new(env!("CARGO_BIN_EXE_zam"))
-            .arg("run")
-            .arg(file)
-            .env("ZAMAK_CACHE_DIR", self.root.join("cache"))
-            .output()
-            .unwrap()
-    }
-}
-impl Drop for Case {
-    fn drop(&mut self) {
-        fs::remove_dir_all(&self.root).unwrap();
-    }
-}
+use common::Case;
 
 #[test]
 fn positive_variable_boundaries_match_checked_signed_arithmetic() {
-    let case = Case::new("boundaries");
+    let case = Case::new("nonnegative-division", "boundaries");
     let mut source = String::from("fn main() {\n");
     let mut expected = String::new();
     for (i, (n, d)) in [
@@ -73,7 +42,7 @@ fn positive_variable_boundaries_match_checked_signed_arithmetic() {
 
 #[test]
 fn negative_and_repeated_sign_changes_keep_signed_semantics() {
-    let case = Case::new("signed");
+    let case = Case::new("nonnegative-division", "signed");
     let result = case.run("fn quotient(n: i64, d: i64) -> i64 { n / d }\nfn remainder(n: i64, d: i64) -> i64 { n % d }\nfn unknown() -> i64 { -9 }\nfn main() {\nprintln(quotient(unknown(), 4))\nprintln(remainder(unknown(), 4))\nprintln(quotient(9, -4))\nprintln(remainder(9, -4))\nlet mut n = 9\nlet mut i = 0\nwhile i < 2 {\nprintln(n / 4)\nprintln(n % 4)\nn = -9\ni = i + 1\n}\n}");
     assert!(
         result.status.success(),
@@ -88,7 +57,7 @@ fn negative_and_repeated_sign_changes_keep_signed_semantics() {
 
 #[test]
 fn zero_and_signed_overflow_keep_arithmetic_errors() {
-    let case = Case::new("errors");
+    let case = Case::new("nonnegative-division", "errors");
     for op in ["/", "%"] {
         for (n, d) in [(1, 0), (i64::MIN, -1)] {
             let source = format!("fn main() {{\nlet n = {n}\nlet d = {d}\nprintln(n {op} d)\n}}");
@@ -105,7 +74,7 @@ fn zero_and_signed_overflow_keep_arithmetic_errors() {
 
 #[test]
 fn operand_order_and_successful_result_facts_keep_operand_errors() {
-    let case = Case::new("operand-order");
+    let case = Case::new("nonnegative-division", "operand-order");
     for (op, answer) in [("/", "2"), ("%", "1")] {
         let source = format!("fn first() -> i64 {{\nprintln(1)\n9\n}}\nfn second() -> i64 {{\nprintln(2)\n4\n}}\nfn main() {{ println(first() {op} second()) }}");
         let result = case.run(&source);
@@ -135,7 +104,7 @@ fn operand_order_and_successful_result_facts_keep_operand_errors() {
 
 #[test]
 fn specialized_nonnegative_recurrence_keeps_exact_results() {
-    let case = Case::new("recurrence");
+    let case = Case::new("nonnegative-division", "recurrence");
     let result = case.run("fn accum(seed: i64) -> i64 {\nlet mut acc = seed\nlet mut i = 0\nwhile i < 512 {\nacc = (acc * 31 + i) % 1000003\ni = i + 1\n}\nacc\n}\nfn main() {\nlet mut seed = 0\nwhile seed < 8 {\nprintln(accum(seed))\nseed = seed + 1\n}\n}");
     assert!(
         result.status.success(),
