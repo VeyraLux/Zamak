@@ -275,6 +275,21 @@ impl Analysis {
                 }
                 Interval::TOP
             }
+            Expr::Method(_, method, values) => {
+                for value in values {
+                    self.expr(value, env, collect);
+                }
+                // A list length is a size_t that fits i64; it says nothing about indices.
+                if method == "len" {
+                    Interval { lo: 0, hi: MAX }
+                } else {
+                    Interval::TOP
+                }
+            }
+            Expr::BorrowIndex(_, index, _) => {
+                self.expr(index, env, collect);
+                Interval::TOP
+            }
             Expr::Field(_, _) | Expr::Text(_) | Expr::Borrow(_, _) | Expr::Bool(_) => Interval::TOP,
         }
     }
@@ -357,7 +372,7 @@ impl Analysis {
                 let value = self.expr(expr, &env, collect);
                 let length = match (ty, expr) {
                     (Some(Type::ArrayInt(length)), _) => Some(*length),
-                    (_, Expr::Array(values)) => Some(values.len()),
+                    (None, Expr::Array(values)) => Some(values.len()),
                     (_, Expr::Variable(name)) => env.get(name).and_then(|f| f.length),
                     _ => None,
                 };
@@ -420,6 +435,10 @@ impl Analysis {
             }
             Instruction::While(condition, body) => {
                 return self.loop_flow(Head::Condition(condition), body, env, collect)
+            }
+            Instruction::Each(name, _, body) => {
+                // Elements are opaque here; the loop may run any number of times.
+                return self.loop_flow(Head::Range(name, Interval::TOP), body, env, collect);
             }
             Instruction::For(name, start, end, body) => {
                 let first = self.expr(start, &env, collect);
@@ -648,14 +667,18 @@ fn expression_cost(expr: &Expr) -> Option<i128> {
         | Expr::Try(inner)
         | Expr::ByteLen(inner)
         | Expr::CharLen(inner)
-        | Expr::Index(_, inner) => expression_cost(inner)?,
+        | Expr::Index(_, inner)
+        | Expr::BorrowIndex(_, inner, _) => expression_cost(inner)?,
         Expr::Binary(_, a, b) | Expr::StringEqual(a, b) => {
             expression_cost(a)? + expression_cost(b)?
         }
         Expr::Record(_, fields) => fields
             .iter()
             .try_fold(0, |cost, (_, value)| Some(cost + expression_cost(value)?))?,
-        Expr::Call(_, values) | Expr::Array(values) | Expr::Format(values) => values
+        Expr::Call(_, values)
+        | Expr::Method(_, _, values)
+        | Expr::Array(values)
+        | Expr::Format(values) => values
             .iter()
             .try_fold(0, |cost, value| Some(cost + expression_cost(value)?))?,
         _ => 0,
@@ -666,9 +689,10 @@ fn expression_cost(expr: &Expr) -> Option<i128> {
 fn body_cost(block: &Block, writes: &mut BTreeMap<String, usize>) -> Option<i128> {
     block.iter().try_fold(0, |cost, (instruction, _)| {
         let next = match instruction {
-            Instruction::Continue | Instruction::While(_, _) | Instruction::For(_, _, _, _) => {
-                return None
-            }
+            Instruction::Continue
+            | Instruction::While(_, _)
+            | Instruction::For(_, _, _, _)
+            | Instruction::Each(_, _, _) => return None,
             Instruction::Let(_, _, _, expr)
             | Instruction::Print(expr)
             | Instruction::Call(expr)
@@ -754,9 +778,9 @@ fn forget_mutations(block: &Block, env: &mut Env) {
                 forget_mutations(a, env);
                 forget_mutations(b, env);
             }
-            Instruction::While(_, body) | Instruction::For(_, _, _, body) => {
-                forget_mutations(body, env)
-            }
+            Instruction::While(_, body)
+            | Instruction::For(_, _, _, body)
+            | Instruction::Each(_, _, body) => forget_mutations(body, env),
             _ => {}
         }
     }

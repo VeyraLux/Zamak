@@ -51,11 +51,12 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 
 ## 语法速览（动手前先看 `examples/`）
 
-- 函数：`fn f(a: i64, s: &string) -> i64 { ... }`；最后一个值表达式即返回值，也可写 `return`；跨模块可见要写 `pub fn`。
+- 函数：`fn f(a: i64, s: &string) -> i64 { ... }`；函数尾部的值表达式即返回值（函数体最后一条，或尾部 if/else 分支的最后一条），也可写 `return`；**循环体和非尾部分支末尾的调用只求值、不返回**；跨模块可见要写 `pub fn`。
 - 绑定：`let x = 1`、`let mut x = 1`、`let mut x: i64 = 1`。**不支持遮蔽**（同一作用域重名报错）；块内变量不能逃出块。
-- 类型：`i64`、`bool`、`string`、命名结构体、`[i64; N]`（长度 1–1024，只能是局部值）。
-- 结构体：`struct P { name: string` 换行 `age: i64 }`（每行一个字段，无逗号）；字面量 `P { name: "a" age: 3 }`（**字段之间没有逗号**）；字段读写 `p.name`、连续 `a.b.c`；支持整体移动、整体重新赋值、可变字段赋值；字符串字段自动释放。
-- 控制：`if`/`else`/`else if`、`while`、`for i in start..end`、`break`、`continue`；条件必须是 `bool`。`for` 只遍历整数区间（左闭右开，`start`/`end` 进入循环前各求值一次，循环变量只读且不能与已有变量同名），**不能直接遍历数组**，按下标写 `for i in 0..N`。
+- 类型：`i64`、`bool`、`string`、命名结构体、`[i64; N]`（定长，长度 1–1024，只能是局部值）、`[T]`（可增长列表，`T` 只能是 `i64`/`bool`/`string`，可作局部、参数、返回值、结构体字段）。
+- 列表：空列表**必须标注类型** `let mut xs: [i64] = []`（不带标注的 `[1, 2]` 是定长数组）；`xs.len()`、`xs.push(v)`（字符串移入）、`xs.pop()`；`xs[i]` 读写（越界或空 `pop` 终止程序）；字符串元素**不能** `xs[i]` 取出，借用 `&xs[i]` 或 `string.copy(&xs[i])`；`for x in &xs` 遍历（字符串元素是只读借用），循环体内不能修改/移动 `xs`，要改就用 `for i in 0..xs.len()`；参数 `&[T]` / `&mut [T]`，传 `&xs` / `&mut xs`；方法接收者只能是变量或字段路径，**不能链式调用** `f().len()`。
+- 结构体：`struct P { name: string` 换行 `age: i64 }`（每行一个字段，无逗号）；字面量 `P { name: "a" age: 3 }`（**字段之间没有逗号**，可写一行也可分行）；字段读写 `p.name`、连续 `a.b.c`；支持整体移动、整体重新赋值、可变字段赋值；字符串字段自动释放。
+- 控制：`if`/`else`/`else if`、`while`、`for i in start..end`、`break`、`continue`；条件必须是 `bool`。`for` 只遍历整数区间（左闭右开，`start`/`end` 进入循环前各求值一次，循环变量只读且不能与已有变量同名）；`for x in &list` 遍历列表；定长数组按下标写 `for i in 0..N`。
 - 表达式：`+ - * / %`、`== != < <= > >=`、`&&`、`||`、前缀 `!expr`、一元 `-expr`、括号；整数可用数字之间的单个 `_`（`1_000_000`）。溢出/除零在运行时返回错误。
 - 字符串：UTF-8，转义 `\n \r \t \" \\`，插值 `"{name}"` / `"{p.name}"`（只读不移动，插值后变量仍可用），字面大括号写 `{{` / `}}`。
 - 注释：`//` 与 `#`；**没有块注释**。
@@ -63,14 +64,14 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 - 所有权：字符串赋值/传参是**移动**，移动后再用报错；借用只能作为参数（`&s`、`&mut s`），调用返回即结束；共享借用可多个，可变借用必须独占且要求可变所有者；借用参数不能移动、返回或存进局部变量。整数/布尔是拷贝。
 - 错误值：签名 `fn load(p: &string) -> i64!string`（成功 T / 失败 E）或 `-> !string`（只失败）；`fail "msg"` 产生错误并立即返回；`let v = load(&p)?` 失败时向调用方传播（当前函数签名必须带相同的 `!E`）；`load(&p) catch e { ... }` 就地处理（**不传播**，错误值只在块内可见，**块必须在所有路径 `return`**）；`fn main() -> !string` 允许，未捕获错误写 stderr 并以退出码 1 结束。当前只支持 `E = string`。
 - 标准库（字符串参数一律写借用 `&s`，字面量要先 `let` 成变量才能借用）：
-  - `std/string`：`byte_len(&s) -> i64`、`char_len(&s) -> i64`（按 UTF-8 码点）、`equal(&a, &b) -> bool`、`parse_i64(&s) -> i64!string`（严格十进制，可带 `+`/`-`，不允许空白）、`trim(&s) -> string`、`find(&s, &needle) -> i64`（字节位置，找不到 -1）、`byte_at(&s, i) -> i64`、`slice(&s, start, end) -> string`（字节区间，越界或切在多字节字符中间会**终止程序**，与数组越界一样）。
+  - `std/string`：`byte_len(&s) -> i64`、`char_len(&s) -> i64`（按 UTF-8 码点）、`equal(&a, &b) -> bool`、`parse_i64(&s) -> i64!string`（严格十进制，可带 `+`/`-`，不允许空白）、`trim(&s) -> string`、`find(&s, &needle) -> i64`（字节位置，找不到 -1）、`byte_at(&s, i) -> i64`、`slice(&s, start, end) -> string`（字节区间，越界或切在多字节字符中间会**终止程序**，与数组越界一样）、`copy(&s) -> string`、`split(&s, &sep) -> [string]`（保留空段）、`words(&s) -> [string]`、`lines(&s) -> [string]`（去 `\r`，末尾换行不产生空行）、`join(&list, &sep) -> string`。
   - `std/io`：`read_line(&mut line) -> bool!string`（去掉行尾 `\n`/`\r\n`，结束时返回 false；典型写法 `let mut line = ""` + `while io.read_line(&mut line)? { ... }`）、`read_all() -> string!string`。
   - `std/fs`：`read(&path) -> string!string`、`write(&path, &text) -> !string`（覆盖写）。
-  - `std/env`：`arg_count() -> i64`、`arg(i) -> string!string`（不含程序名，从 0 开始）。
+  - `std/env`：`arg_count() -> i64`、`arg(i) -> string!string`（不含程序名，从 0 开始）、`args() -> [string]`。
   - `println` / `io.println` / `fmt.println` 打印字符串、整数或布尔值。
   - 可失败函数用 `?` 时当前函数要带 `!string`，所以读写文件的 `main` 一般写成 `fn main() -> !string`；`fs.write(&p, &t)?` 可以单独成一条语句。
-  - 标准库实现：`zam/src/native.rs` 的 `BUILTINS` 表（签名 + C 函数体，`p0`/`p1`… 是参数）和 `STD_PRELUDE`（共用 C 辅助）；`project.rs` 把 `std/*` 调用解析成 `std/<模块>:<函数>`，检查器按普通函数签名检查。新增函数只需在表里加一项，再升 `native-c-N`。
-- **尚未实现，不要写**：泛型、闭包、枚举、`match`、遍历集合的 `for x in arr`、浮点、动态数组、元组/映射、目录遍历、追加写文件、网络、时间、stderr 打印、包管理器、调试器、REPL、文档生成、线程、unsafe/FFI、块注释、`string` 以外的错误类型、整体结构体借用、单独移出 owned 字段。
+  - 标准库实现：`zam/src/native.rs` 的 `BUILTINS` 表（签名 + C 函数体，`p0`/`p1`… 是参数）和 `STD_PRELUDE`（共用 C 辅助）；`project.rs` 把 `std/*` 调用解析成 `std/<模块>:<函数>`，检查器按普通函数签名检查。新增函数只需在表里加一项，再升 `native-c-N`。列表的 C 侧是每种元素一组 `Li`/`Lb`/`Ls` 结构与 `push/pop/at/len/drop/take` 函数（`list_helpers`），按用到的元素类型发射。
+- **尚未实现，不要写**：泛型、闭包、枚举、`match`、字典/映射、结构体元素的列表、嵌套列表、方法链式调用、`for x in &mut xs`、浮点、元组、目录遍历、追加写文件、网络、时间、stderr 打印、包管理器、调试器、REPL、文档生成、线程、unsafe/FFI、块注释、`string` 以外的错误类型、整体结构体借用、单独移出 owned 字段。
 
 ## 常见诊断（照文本改代码）
 
@@ -80,12 +81,14 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 - `catch block for f must return a value` → catch 代码块要在所有路径上 `return`。
 - `only string error types are supported for now` → 错误类型只能是 `string`。
 - 移动后使用、借用冲突/逃逸、不可变赋值、重复/缺失字段等都在 `zam check` 阶段报错。
-- 运行时（stderr，退出码 1）：`cannot open <path>`、`invalid integer: <text>`、`argument index out of range` 是错误值，可 `catch`；`zam: string index out of bounds`、`zam: array index out of bounds`、`zam: integer arithmetic error` 是直接终止。
+- `an empty list literal needs a type annotation` → 给 `[]` 加类型；`cannot move a string out of xs[..]` → 用 `&xs[i]` 或 `string.copy`；`xs is borrowed by an enclosing for loop` → 循环里改了正在遍历的列表。
+- 运行时（stderr，退出码 1）：`zam: list index out of bounds`、`zam: pop from empty list` 直接终止；`cannot open <path>`、`invalid integer: <text>`、`argument index out of range` 是错误值，可 `catch`；`zam: string index out of bounds`、`zam: array index out of bounds`、`zam: integer arithmetic error` 是直接终止。
 - 诊断格式：`zam: <文件>: line N, column M: <模块>:<函数>: <信息>`；词法/语法错误带行列（列从 1 开始、按 Unicode 字符计数），语义错误取语句起点。
 
 ## 修改 Zamak 编译器本身
 
-1. 验收（工作目录 `zam/`）：`cargo test --locked`（17 个集成套件，Windows 冷跑约 30 秒；MSVC 环境捕获会缓存在临时目录，首次多付约 4 秒）、`cargo clippy --all-targets --locked -- -D warnings`、`cargo fmt --check`；改完源码要在**仓库根目录**重新 `cargo install --path zam --locked` 才能用新的 `zam`。CI（`.github/workflows/ci.yml`）在 `ubuntu-latest`/`windows-latest`/`macos-latest` 三个平台跑同样三项；AI 评测（`bench/ai/run.ps1`）和构建体积测量（`tools/measure-build.ps1`）只在 Windows 上用 pwsh 跑。
+1. 验收（工作目录 `zam/`）：`cargo test --locked`（20 个集成套件，Windows 冷跑约 30 秒；MSVC 环境捕获会缓存在临时目录，首次多付约 4 秒）、`cargo clippy --all-targets --locked -- -D warnings`、`cargo fmt --check`；改完源码要在**仓库根目录**重新 `cargo install --path zam --locked` 才能用新的 `zam`。CI（`.github/workflows/ci.yml`）在 `ubuntu-latest`/`windows-latest`/`macos-latest` 三个平台跑同样三项；AI 评测（`bench/ai/run.ps1`）和构建体积测量（`tools/measure-build.ps1`）只在 Windows 上用 pwsh 跑。**格式以 CI 的最新稳定版 rustfmt 为准**：本机 Windows 的 Rust 是 1.96，WSL 是 1.99，两者对长 `match` 臂的排版不同，本机 `cargo fmt` 通过不代表 CI 通过；`tools/wsl-verify.sh` 的 `FMT_OK` 才算数。遇到两版排版不一致的代码，改写成两版结果相同的形式（例如 `let ... else`）。
+   - 版本号：IR 编码（`Module`/`Function`/`Expr`/`Instruction` 的 Debug 输出）一变就要升 `native-c-N`，否则同一个缓存键会撞上旧内容，报 `corrupt cache entry ...zmo`（这是缓存在拦截，不是坏了）。
 2. 新增语言构造时按惯例升版本标记：`zam/src/compiler.rs` 的 encode 头 `ZAM-IR-N` 与 `zam/src/project.rs` 的 `VERSION`（`native-c-M`）。两者都参与缓存键，只作失效标记——缓存命中时按字节全等校验，没有 decode，旧产物只会报错不会静默错译；同时更新 `README.md` 里的 IR 号。
 3. C 后端源码按 UTF-8 写出，MSVC `cl` 默认按本地代码页（936）读取，会吞掉中文注释后的下一行 → 编译命令行必须保留 `/utf-8`。`zam/src/native.rs` 的 `OPTIONS`（`-vN`）是 MSVC 与 GNU 两套命令行**共用**的一个版本标记，改动任一边（`compile`/`link` 里的 `/O2 /MT ...` 或 `-std=c11 -O2 -funroll-loops ...`）都要考虑升它——但只在**产物字节真的变了**时升版：若只是改了调用方式（例如从 `cmd /c call vcvars64.bat && cl` 改成直接调 `cl.exe`），先用旧缓存验证仍全部 `OBJECT HIT`/`LINK HIT` 再决定不升，避免无谓的缓存失效。
 4. 跨平台约束：

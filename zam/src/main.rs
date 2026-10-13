@@ -126,7 +126,7 @@ fn new_project(directory: &Path, ai_template: bool) -> project::Result<()> {
     if ai_template {
         files.push((
             directory.join("AI.md"),
-            "# AI 工作循环\n\n1. 运行 `zam check --json <project>`。\n2. 根据 `file`、`line`、`column`、`function`、`code`、`category` 和 `suggestion` 定位最小修复。\n3. 修改后运行 `zam fmt <project>`，再重新检查。\n4. 通过后运行 `zam build <project>` 和 `zam run <project>`。\n\n每次 `check --json` 只返回第一个诊断，修好一条后再检查。保持每次修改小而明确。当前版本暂不支持浮点数、网络 I/O、动态数组、泛型、枚举、闭包、线程和 FFI；文件、标准输入与命令行参数见 `std/fs`、`std/io`、`std/env`。\n".to_string(),
+            "# AI 工作循环\n\n1. 运行 `zam check --json <project>`。\n2. 根据 `file`、`line`、`column`、`function`、`code`、`category` 和 `suggestion` 定位最小修复。\n3. 修改后运行 `zam fmt <project>`，再重新检查。\n4. 通过后运行 `zam build <project>` 和 `zam run <project>`。\n\n每次 `check --json` 只返回第一个诊断，修好一条后再检查。保持每次修改小而明确。当前版本暂不支持浮点数、字典、网络 I/O、泛型、枚举、闭包、线程和 FFI；可增长列表写作 `[i64]`/`[bool]`/`[string]`（空列表要标注类型），文件、标准输入与命令行参数见 `std/fs`、`std/io`、`std/env`。\n".to_string(),
         ));
         files.push((
             directory.join("README.md"),

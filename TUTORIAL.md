@@ -285,7 +285,11 @@ true
 - 标准库 `std/string` 提供三个函数：`string.byte_len(&s)` 返回 UTF-8 字节数，`string.char_len(&s)` 返回 Unicode 码点数，`string.equal(&a, &b)` 判断内容是否相等。本例的 `你好，Zamak！` 占 17 字节，包含 9 个码点。
 - Unicode 码点不等同于用户看到的一个字符（字素簇）。组合附加符号或由多个码点组成的 emoji 可能显示为一个字符，`char_len` 仍逐个码点计数。常见汉字在 UTF-8 中通常占 3 字节，因此字节数与码点数不同。
 
-## 第 8 节：数组
+## 第 8 节：数组与列表
+
+Zamak 有两种数组：长度固定的定长数组 `[i64; N]`，以及可以增减元素的列表 `[T]`。
+
+定长数组：
 
 ```zamak
 fn main() {
@@ -309,8 +313,74 @@ fn main() {
 
 - 类型写成 `[i64; 3]`（元素类型 + 分号 + 长度），长度必须在 1 到 1024 之间。
 - 下标从 0 开始，范围为 `0` 到 `长度 - 1`。运行时会检查边界；越界访问会报错并退出。
-- 当前数组元素类型仅支持 `i64`，数组只能作为局部值，不能用于函数参数、返回值或结构体字段。
-- 遍历用 `while` 加下标变量。
+- 定长数组元素类型仅支持 `i64`，只能作为局部值，不能用于函数参数、返回值或结构体字段；这些场合使用列表。
+
+列表 `[T]` 的元素可以是 `i64`、`bool` 或 `string`，可以作为局部变量、函数参数、返回值和结构体字段：
+
+```zamak
+fn average(scores: &[i64]) -> i64 {
+    let mut sum = 0
+    for score in &scores {
+        sum = sum + score
+    }
+    sum / scores.len()
+}
+
+fn main() {
+    let mut scores: [i64] = [90, 72]
+    scores.push(85)
+    scores[1] = 75
+    println(scores.len())
+    println(average(&scores))
+    let last = scores.pop()
+    println(last)
+}
+```
+
+```text
+3
+83
+85
+```
+
+字符串列表：
+
+```zamak
+use std/string
+
+fn main() {
+    let line = "apple banana  cherry"
+    let mut words = string.words(&line)
+    words.push("date")
+    for word in &words {
+        let size = string.char_len(word)
+        println("{word}: {size}")
+    }
+    let first = string.copy(&words[0])
+    let sep = ", "
+    println(string.join(&words, &sep))
+    println(first)
+}
+```
+
+```text
+apple: 5
+banana: 6
+cherry: 6
+date: 4
+apple, banana, cherry, date
+apple
+```
+
+要点：
+
+- 空列表必须标注类型：`let mut xs: [i64] = []`。不写标注的 `[1, 2]` 仍然是定长数组。
+- `xs.len()` 返回元素个数；`xs.push(v)` 追加到末尾，字符串会移动进列表；`xs.pop()` 移除并返回最后一个元素。修改列表需要 `let mut`。
+- `xs[i]` 读写元素，下标越界时程序终止（`zam: list index out of bounds`）；`pop` 空列表同样终止。
+- 字符串元素不能用 `xs[i]` 直接取出（那会把字符串移出列表）。传给函数时借用 `&xs[i]`，需要一份独立的字符串时用 `string.copy(&xs[i])`。
+- `for x in &xs` 依次访问每个元素：整数和布尔元素按值得到，字符串元素以只读借用得到。循环体内不能修改、移动或独占借用这个列表；需要边遍历边修改时，用 `for i in 0..xs.len()` 按下标处理。
+- 函数参数写 `&[T]`（只读）或 `&mut [T]`（可修改），调用时传 `&xs` 或 `&mut xs`；参数写 `[T]` 表示把列表整个移交给函数。
+- 方法只能用在变量或字段上，例如 `bag.items.push(x)`；暂不支持链式写法 `f().len()`，先用 `let` 绑定。
 
 ## 第 9 节：结构体
 
@@ -619,6 +689,12 @@ lang -> Zamak
 | `string.byte_at(&s, i) -> i64` | 第 `i` 个字节（0–255）；越界时程序终止 |
 | `string.slice(&s, start, end) -> string` | 复制字节区间 `[start, end)`；越界或切在多字节字符中间时程序终止 |
 | `string.find(&s, &needle) -> i64` | 第一次出现的字节位置；找不到返回 -1，空 `needle` 返回 0 |
+| `string.copy(&s) -> string` | 复制出一份独立的字符串 |
+| `string.split(&s, &sep) -> [string]` | 按分隔符切分，保留空段；空分隔符时整串作为唯一一项 |
+| `string.words(&s) -> [string]` | 按空白切分，跳过连续空白 |
+| `string.lines(&s) -> [string]` | 按行切分，去掉行尾 `\r`，末尾换行不产生空行 |
+| `string.join(&list, &sep) -> string` | 用分隔符连接字符串列表 |
+| `env.args() -> [string]` | 全部程序参数，不含程序名 |
 
 要点：
 
@@ -692,6 +768,10 @@ zam 0.1.0
 | `invalid integer: <text>` | `string.parse_i64` 的输入不是十进制整数 | 先用 `string.trim` 去掉空白，再解析 |
 | `argument index out of range` | `env.arg(i)` 的 `i` 超出参数个数 | 先用 `env.arg_count()` 检查 |
 | `zam: string index out of bounds` | `byte_at`/`slice` 越界，或切在多字节字符中间 | 用 `string.byte_len`、`string.find` 先确定范围 |
+| `zam: list index out of bounds` / `zam: pop from empty list` | 列表下标越界，或对空列表 `pop` | 先用 `xs.len()` 检查 |
+| `an empty list literal needs a type annotation` | `let xs = []` 没写类型 | 写成 `let mut xs: [i64] = []` |
+| `cannot move a string out of xs[..]` | 用 `xs[i]` 取字符串元素 | 借用 `&xs[i]`，或 `string.copy(&xs[i])` |
+| `xs is borrowed by an enclosing for loop` | 在 `for x in &xs` 里修改或移动了 `xs` | 改用 `for i in 0..xs.len()` 按下标处理 |
 
 ## 第 16 节：支持范围与限制
 
@@ -699,9 +779,9 @@ Zamak 0.1.0 的支持范围有限。编写程序时需注意以下限制：
 
 - 尚不支持 `switch`/`match`、枚举、泛型、闭包和 trait/接口；`for` 只支持整数区间。
 - 尚不提供包管理器、交互式执行环境（REPL）、文档生成工具或重构工具。
-- 标准库包括 `std/string`（`byte_len`、`char_len`、`equal`、`parse_i64`、`trim`、`byte_at`、`slice`、`find`）、`std/io`（`println`、`read_line`、`read_all`）、`std/fmt`（`println`）、`std/fs`（`read`、`write`）和 `std/env`（`arg_count`、`arg`），没有目录遍历、网络和时间函数。
+- 标准库包括 `std/string`（`byte_len`、`char_len`、`equal`、`parse_i64`、`trim`、`byte_at`、`slice`、`find`、`copy`、`split`、`words`、`lines`、`join`）、`std/io`（`println`、`read_line`、`read_all`）、`std/fmt`（`println`）、`std/fs`（`read`、`write`）和 `std/env`（`arg_count`、`arg`、`args`），没有目录遍历、网络和时间函数。
 - 错误类型只能是 `string`，没有错误堆栈。
-- 数组仅支持固定长度的 `i64` 局部值，不能用于函数参数、返回值或结构体字段；尚不支持切片和动态数组。
+- 定长数组仅支持 `i64` 局部值；列表 `[T]` 的元素只能是 `i64`、`bool` 或 `string`，还没有结构体元素、嵌套列表和字典。方法不能链式调用。
 - 所有权检查覆盖 `string` 和结构体；尚不支持线程、`unsafe` 和外部函数接口（FFI）。
 - 编辑器支持为 VS Code 语法高亮扩展（`editors/vscode/`），没有语言服务器、补全和调试器。
 - 本教程采用源码安装；安装步骤和平台工具链要求见 [安装说明](PREVIEW.md)。

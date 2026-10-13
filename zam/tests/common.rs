@@ -15,6 +15,12 @@ impl Case {
         Self { root }
     }
 
+    /// 用例目录下的路径；不是每个引入本模块的测试都用到它。
+    #[allow(dead_code)]
+    pub fn path(&self, name: &str) -> PathBuf {
+        self.root.join(name)
+    }
+
     pub fn run(&self, source: &str) -> Output {
         let file = self.root.join("main.zm");
         fs::write(&file, source).unwrap();
