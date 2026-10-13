@@ -31,14 +31,14 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 
 - `CC` 必须是单个 GNU 风格的编译器程序：不能带参数、不能是 MSVC `cl`；在 Windows 上也不能是 `.bat`（`.bat` 会被当成 MSVC 的 vcvars 脚本）。要加 sanitizer 之类的参数，就写一个包装脚本再把 `CC` 指过去（Unix）。
 - 缓存键包含 `OS` 与 `ARCH`，同一缓存目录被多个平台共用时不会混用产物。
-- **本机 Linux 验证**：WSL 发行版 `Ubuntu`（24.04，默认用户 root）已装 gcc 13.3、clang 18.1、Rust 1.99（含 clippy/rustfmt）。不要直接在 `/mnt/e/...` 上跑：Windows 检出是 CRLF（与 CI 的 LF 不同），而且会和 Windows 共用 `zam/target`。做法是 clone 到 WSL 自己的文件系统，未提交的改动由 Windows 侧 `git diff --output` 导出后再 apply（不要用 shell 重定向，pwsh 可能改编码）。在仓库根目录用 pwsh 执行：
+- **本机 Linux 验证**：WSL 发行版 `Ubuntu`（24.04，默认用户 root）已装 gcc 13.3、clang 18.1、Rust 1.99（含 clippy/rustfmt）。不要直接在 `/mnt/e/...` 上跑：Windows 检出是 CRLF（与 CI 的 LF 不同），而且会和 Windows 共用 `zam/target`。`tools/wsl-verify.sh` 把仓库 clone 到 WSL 自己的文件系统，套上 Windows 侧用 `git diff --output` 导出的未提交补丁（不要用 shell 重定向，pwsh 可能改编码），依次跑 fmt、gcc 与 `CC=clang` 两套全量测试、clippy，再用 ASan/UBSan/LeakSanitizer 跑 `SANITIZE_FILES` 里的示例（正常路径，参数是一个存在的文件、stdin 是几行整数）和 `SANITIZE_FAILING` 里的示例（参数指向不存在的文件，覆盖错误冒出 `main` 的路径）。在仓库根目录用 pwsh 执行：
 
   ```powershell
   git diff HEAD --output=zam/target/wsl.patch
-  wsl -d Ubuntu -u root -- bash -c '. ~/.cargo/env; set -e; export CARGO_TARGET_DIR=~/zam-target; rm -rf ~/zamak; git clone -q /mnt/e/CODE/Zamak ~/zamak; cd ~/zamak; if [ -s /mnt/e/CODE/Zamak/zam/target/wsl.patch ]; then git apply /mnt/e/CODE/Zamak/zam/target/wsl.patch; fi; cargo fmt --manifest-path zam/Cargo.toml -- --check; cargo test --manifest-path zam/Cargo.toml --locked; cargo clippy --manifest-path zam/Cargo.toml --all-targets --locked -- -D warnings'
+  wsl -d Ubuntu -u root -- env SANITIZE_FILES="examples/io/wc.zm examples/control/loops.zm" SANITIZE_FAILING="examples/io/wc.zm" bash tools/wsl-verify.sh
   ```
 
-  要测 clang 后端，就把 `cargo test` 改成 `CC=clang cargo test`（测试进程会继承 `CC`）。2026-10-13 实测：gcc 与 clang 两种后端都是 77 个测试全部通过，fmt 与 clippy 也通过。新增的未跟踪文件不会进 `git diff HEAD`，先 `git add -N <文件>` 再导出。
+  每行输出 `passed=N failed=0`、`CLIPPY_OK`、`... sanitizer_reports=0` 才算通过。新增的未跟踪文件不会进 `git diff HEAD`，先 `git add -N <文件>` 再导出。`.sh` 由 `.gitattributes` 固定为 LF，否则 Windows 检出的 CRLF 会让 bash 报 `$'\r'`。
 - 给用户的命令按对方的 shell 写，环境变量写法不同：
 
 | 操作 | pwsh（Windows 默认） | bash / zsh（Linux、macOS） |
