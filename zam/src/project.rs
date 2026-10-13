@@ -346,6 +346,14 @@ impl Project {
     /// 模块解析期错误此前不带位置，AI 只能从 message 里抠模块名。指令级位置已经在
     /// `Block` 里，这里直接复用；粒度与类型检查器一致（都指向语句起始），不假装更精确。
     fn located(&self, module: &str, position: (usize, usize), error: String) -> String {
+        // catch 内部的语句已定位，外层表达式不能覆盖更精确的位置。
+        if self
+            .modules
+            .get(module)
+            .is_some_and(|input| error.starts_with(&format!("{}: line ", input.path.display())))
+        {
+            return error;
+        }
         self.with_module_path(
             module,
             format!("line {}, column {}: {error}", position.0, position.1),

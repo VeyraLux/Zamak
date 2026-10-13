@@ -324,12 +324,14 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
             Some("check the name, declaration, and module import"),
         )
     } else if message.contains("ambiguous or missing import for ")
+        || message.contains("missing or ambiguous struct import")
+        || message.contains("ambiguous string import")
         || message.contains(" requires use std/")
     {
         (
             "ZM203",
             "name",
-            Some("add the matching `use std/<namespace>` import at the top of the file"),
+            Some("check the matching `use` import; add it if missing or disambiguate modules with the same alias"),
         )
     } else if message.starts_with("duplicate ") {
         (
@@ -477,6 +479,8 @@ mod tests {
                 "ZM203",
             ),
             ("string.byte_len requires use std/string", "ZM203"),
+            ("missing or ambiguous struct import", "ZM203"),
+            ("ambiguous string import", "ZM203"),
             ("duplicate function foo", "ZM204"),
             ("reserved type name Thing", "ZM201"),
             ("cannot assign immutable value count", "ZM302"),

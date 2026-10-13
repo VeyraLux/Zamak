@@ -260,6 +260,11 @@ const REAL_SOURCE_CODES: &[(&str, &str, &str)] = &[
     ),
     ("fn main() {\nprintln(@)\n}\n", "ZM100", "syntax"),
     (
+        "fn main() {\n    let point = shapes.Point { x: 1 }\n}\n",
+        "ZM203",
+        "name",
+    ),
+    (
         "fn main() {\n    let s = \"hi\"\n    println(string.byte_len(&s))\n}\n",
         "ZM203",
         "name",
@@ -395,6 +400,96 @@ fn module_resolution_errors_include_location() {
             "\"category\":\"name\"".to_string(),
         ] {
             assert!(stdout.contains(&field), "{field} missing from {stdout}");
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn ambiguous_imports_are_classified_as_name_diagnostics() {
+    let root = std::env::temp_dir().join(format!("zam-ambiguous-import-{}", std::process::id()));
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("zam.toml"),
+        "[project]\nname = \"probe\"\nentry = \"src/main.zm\"\nmodules = \"src\"\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("main.zm"),
+        "use one/foo\nuse two/foo\n\nfn main() {\n    println(foo.hello())\n}\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join("src").join("one")).unwrap();
+    fs::create_dir_all(root.join("src").join("two")).unwrap();
+    fs::write(
+        root.join("src").join("one").join("foo.zm"),
+        "pub fn hello() -> i64 {\n    return 1\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("two").join("foo.zm"),
+        "pub fn hello() -> i64 {\n    return 2\n}\n",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_zam"))
+        .args(["check", "--json"])
+        .arg(&root)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!output.status.success(), "{stdout}");
+    assert!(stdout.contains("\"code\":\"ZM203\""), "{stdout}");
+    assert!(stdout.contains("\"category\":\"name\""), "{stdout}");
+    assert!(
+        stdout.contains("check the matching `use` import"),
+        "{stdout}"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn catch_resolution_errors_keep_inner_location() {
+    let root = std::env::temp_dir().join(format!("zam-catch-location-{}", std::process::id()));
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("zam.toml"),
+        "[project]\nname = \"probe\"\nentry = \"src/main.zm\"\nmodules = \"src\"\n",
+    )
+    .unwrap();
+    let file = root.join("main.zm");
+    let module = root.join("src").join("main.zm");
+    for (handler, line, column) in [
+        ("        println(missing.call())\n        return\n", 6, 9),
+        (
+            "        let inner = load() catch nested {\n            println(missing.call())\n            return\n        }\n        return\n",
+            7,
+            13,
+        ),
+    ] {
+        let source = format!(
+            "fn load() -> i64!string {{\n    fail \"nope\"\n}}\nfn main() {{\n    let value = load() catch e {{\n{handler}    }}\n    println(value)\n}}\n"
+        );
+        fs::write(&file, &source).unwrap();
+        fs::write(&module, &source).unwrap();
+        for (input, reported) in [(&file, &file), (&root, &module)] {
+            let output = Command::new(env!("CARGO_BIN_EXE_zam"))
+                .args(["check", "--json"])
+                .arg(input)
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(!output.status.success(), "{stdout}");
+            assert_eq!(stdout.lines().count(), 1, "{stdout}");
+            let escaped = reported.display().to_string().replace('\\', "\\\\");
+            for field in [
+                format!("\"file\":\"{escaped}\""),
+                format!("\"line\":{line},"),
+                format!("\"column\":{column},"),
+                "\"code\":\"ZM203\"".to_string(),
+                "\"message\":\"main: ambiguous or missing import for missing.call\"".to_string(),
+            ] {
+                assert!(stdout.contains(&field), "{field} missing from {stdout}");
+            }
         }
     }
     fs::remove_dir_all(root).unwrap();
