@@ -249,6 +249,16 @@ fn json_codes_classify_real_sources() {
             "ZM509",
             "error_handling",
         ),
+        (
+            "fn main() {\n    println(\"hi\");\n}\n",
+            "ZM110",
+            "syntax",
+        ),
+        (
+            "fn foo() -> i64 {\n    return 1\n}\n\nfn foo() -> i64 {\n    return 2\n}\n\nfn main() {\n    println(foo())\n}\n",
+            "ZM204",
+            "name",
+        ),
     ] {
         fs::write(&path, source).unwrap();
         let output = Command::new(env!("CARGO_BIN_EXE_zam"))
