@@ -9,7 +9,9 @@
 
 ## 诊断契约
 
-`check --json` 和 `build --json` 的 `diagnostics` 保留人类可读的 `message`，并提供稳定的 `code`、`category`、`file`、`line`、`column`、`function` 与可选 `suggestion`。AI 工具应优先依赖 `code` 和位置，不要用完整 message 做唯一分支条件。`zam/tests/diagnostics.rs` 用真实源码逐个断言这里的 code、category 和非空 suggestion，避免分类只在单元测试里成立。
+`check --json` 和 `build --json` 的 `diagnostics` 保留人类可读的 `message`，并提供稳定的 `code`、`category`、`file`、`line`、`column`、`function` 与可选 `suggestion`。AI 工具应优先依赖 `code` 和位置，不要用完整 message 做唯一分支条件。`zam/tests/diagnostics.rs` 用真实源码逐个断言这里的 code、category 和非空 suggestion（`ZM999` 没有可操作建议，是唯一的例外），避免分类只在单元测试里成立。
+
+`check --json` 与 `build --json` 各输出一行 JSON，形状固定为 `{"command":...,"ok":...,"diagnostics":[...]}`：`ok` 是布尔值，`diagnostics` 是数组。当前实现遇到第一个错误就返回，所以数组最多只有一项——AI 应把它当作修一条再检查的循环，而不是一次列出全部错误。`file`、`line`、`column`、`function`、`suggestion` 都可能是 `null`（整项目级的导入错误没有行列位置，`ZM999` 没有建议）。失败时进程退出码为 1，人类可读的一行仍写到 stderr，stdout 保持是合法 JSON。
 
 常见代码包括：
 
