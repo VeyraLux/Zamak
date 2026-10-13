@@ -301,3 +301,44 @@ fn build_json_keeps_progress_off_stdout() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("OUTPUT "));
     fs::remove_dir_all(root).unwrap();
 }
+
+/// 模块解析期的错误（例如缺少 `use std/string`）过去只有 message，`file`/`line`/`column`
+/// 全为 null，AI 修复循环只能靠正则抠模块名。位置取自 `Block` 里已有的指令位置，粒度与
+/// 类型检查器一致（指向语句起始）；项目模式下 `file` 也从项目目录收紧到出错的那个模块。
+#[test]
+fn module_resolution_errors_include_location() {
+    let source = "fn main() {\n    let s = \"hi\"\n    println(string.byte_len(&s))\n}\n";
+    let root = std::env::temp_dir().join(format!("zam-module-location-{}", std::process::id()));
+    fs::create_dir_all(root.join("src")).unwrap();
+    let file = root.join("main.zm");
+    let module = root.join("src").join("main.zm");
+    fs::write(&file, source).unwrap();
+    fs::write(&module, source).unwrap();
+    fs::write(
+        root.join("zam.toml"),
+        "[project]\nname = \"probe\"\nentry = \"src/main.zm\"\nmodules = \"src\"\n",
+    )
+    .unwrap();
+
+    for (input, reported) in [(&file, &file), (&root, &module)] {
+        let output = Command::new(env!("CARGO_BIN_EXE_zam"))
+            .args(["check", "--json"])
+            .arg(input)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        assert!(!output.status.success(), "{stdout}");
+        assert_eq!(stdout.lines().count(), 1, "{stdout}");
+        let escaped = reported.display().to_string().replace('\\', "\\\\");
+        for field in [
+            format!("\"file\":\"{escaped}\""),
+            "\"line\":3".to_string(),
+            "\"column\":5".to_string(),
+            "\"code\":\"ZM203\"".to_string(),
+            "\"category\":\"name\"".to_string(),
+        ] {
+            assert!(stdout.contains(&field), "{field} missing from {stdout}");
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}
