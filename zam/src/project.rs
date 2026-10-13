@@ -7,6 +7,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
@@ -549,11 +550,16 @@ impl Project {
     }
 
     pub fn build(&self, cache: &Path) -> Result<PathBuf> {
+        let build_started = Instant::now();
+        let check_started = Instant::now();
         self.check()?;
+        let check_ms = check_started.elapsed().as_secs_f64() * 1000.0;
+        let key_started = Instant::now();
         let mut keys = BTreeMap::new();
         for id in self.modules.keys() {
             self.key(id, &mut keys, &mut BTreeSet::new())?;
         }
+        let key_ms = key_started.elapsed().as_secs_f64() * 1000.0;
         let linked = self.linked()?;
         for (id, input) in &self.modules {
             let bytes = compiler::encode(&input.module);
@@ -578,6 +584,7 @@ impl Project {
                 keys[id]
             );
         }
+        let object_prepare_started = Instant::now();
         let (tool, identity) = native::tool()?;
         let entry = format!("{}:main", self.entry);
         // ponytail: 两段式。先把所有模块并行「生成 C + 查缓存」（每模块 3–8ms，忽略不计），
@@ -589,7 +596,9 @@ impl Project {
         let jobs = jobs();
         let mut slots: Vec<Option<(String, Vec<u8>)>> = Vec::with_capacity(self.modules.len());
         let mut misses: Vec<(usize, String, String)> = Vec::new();
+        let mut object_ms = 0.0;
         for chunk in self.modules.keys().collect::<Vec<_>>().chunks(jobs) {
+            let object_started = Instant::now();
             let results = std::thread::scope(|scope| {
                 let handles: Vec<_> = chunk
                     .iter()
@@ -624,6 +633,7 @@ impl Project {
                     })
                     .collect::<Vec<Result<(String, String, Option<Vec<u8>>)>>>()
             });
+            object_ms += object_started.elapsed().as_secs_f64() * 1000.0;
             for result in results {
                 let (key, source, bytes) = result?;
                 let slot = slots.len();
@@ -672,6 +682,7 @@ impl Project {
                 slots[slot] = Some((key, bytes));
             }
         }
+        let object_prepare_ms = object_prepare_started.elapsed().as_secs_f64() * 1000.0;
         let mut objects = Vec::with_capacity(slots.len());
         let mut object_keys = Vec::with_capacity(slots.len());
         for slot in slots {
@@ -685,10 +696,16 @@ impl Project {
             identity.as_bytes(),
             native::OPTIONS.as_bytes(),
         ]);
+        let link_started = Instant::now();
         let (bytes, hit) = native_cached(cache, &app_key, "exe", |scratch| {
             native::link(&tool, scratch, &objects)
         })?;
+        let link_ms = link_started.elapsed().as_secs_f64() * 1000.0;
         eprintln!("LINK {} {:.12}", if hit { "HIT" } else { "MISS" }, app_key);
+        eprintln!(
+            "TIMING check_ms={check_ms:.3} key_ms={key_ms:.3} object_ms={object_ms:.3} object_prepare_ms={object_prepare_ms:.3} link_ms={link_ms:.3} total_ms={:.3}",
+            build_started.elapsed().as_secs_f64() * 1000.0
+        );
         let suffix = if cfg!(windows) { ".exe" } else { "" };
         let artifact = self
             .root
@@ -706,7 +723,7 @@ impl Project {
     }
 }
 
-/// 并行编译的并发度：默认取可用核数，内存封顶 4；`ZAMAK_JOBS=1` 可关掉并行。
+/// 并行编译的并发度：默认取可用核数，内存封顶 8；`ZAMAK_JOBS=1` 可关掉并行。
 fn jobs() -> usize {
     env::var("ZAMAK_JOBS")
         .ok()
@@ -715,7 +732,7 @@ fn jobs() -> usize {
         .unwrap_or_else(|| {
             std::thread::available_parallelism()
                 .map_or(1, std::num::NonZeroUsize::get)
-                .min(4)
+                .min(8)
         })
 }
 

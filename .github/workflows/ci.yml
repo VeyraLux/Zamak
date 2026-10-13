@@ -40,5 +40,14 @@ jobs:
         run: cargo build --manifest-path zam/Cargo.toml --locked
       - name: 离线 AI 闭环评测
         run: pwsh -File bench/ai/run.ps1 -ZamPath zam/target/debug/zam.exe -LatencyRepeats 3
+      - name: 检查 AI 评测门槛
+        shell: pwsh
+        run: |
+          $report = Get-ChildItem results/ai-bench-*/report.json | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($null -eq $report) { throw 'AI benchmark report not found' }
+          $data = Get-Content $report.FullName -Raw | ConvertFrom-Json
+          if ($data.validation_rate -lt 1) { throw "AI benchmark validation rate is $($data.validation_rate)" }
+          if ($data.location_checked_count -lt 1 -or $data.location_match_rate -lt 1) { throw 'AI benchmark location coverage is incomplete' }
+          if ($data.code_match_rate -lt 1) { throw "AI benchmark code match rate is $($data.code_match_rate)" }
       - name: 构建与体积测量
         run: pwsh -File tools/measure-build.ps1 -ZamPath zam/target/debug/zam.exe -Modules 4 -Repetitions 1
