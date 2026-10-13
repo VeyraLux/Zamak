@@ -163,103 +163,113 @@ fn json_diagnostics_are_one_line_and_structured() {
 
 /// 每段都是真实源码：必须被 `check` 拒绝，并归到表里那一个诊断码。
 /// 只断言单元测试里造出来的字符串不够——`classify` 匹配的是前端真实文案。
+/// 这张表同时是码表契约的底稿：`documented_codes_are_all_covered_by_real_sources`
+/// 要求它与 `docs/AI_WORKFLOW.md` 列出的码逐个对应。
+const REAL_SOURCE_CODES: &[(&str, &str, &str)] = &[
+    (
+        "fn main() {\n    let x: i64 = \"s\"\n}\n",
+        "ZM200",
+        "type",
+    ),
+    ("fn main() {\n    println(nope)\n}\n", "ZM201", "name"),
+    ("fn main() {\n    nope()\n}\n", "ZM201", "name"),
+    (
+        "struct Point {\n    x: i64\n    y: i64\n}\nfn main() {\n    let p = Point {\n        x: 1\n        y: 2\n    }\n    println(p.z)\n}\n",
+        "ZM202",
+        "name",
+    ),
+    (
+        "fn main() {\n    let a = \"x\"\n    let b = a\n    println(a)\n}\n",
+        "ZM301",
+        "ownership",
+    ),
+    (
+        "fn main() {\n    let x = 1\n    x = 2\n}\n",
+        "ZM302",
+        "ownership",
+    ),
+    (
+        "fn f(a: &string, b: string) -> i64 {\n    return 1\n}\nfn main() {\n    let s = \"x\"\n    f(&s, s)\n}\n",
+        "ZM421",
+        "ownership",
+    ),
+    (
+        "fn main() {\n    let s = \"x\"\n    let r = &s\n}\n",
+        "ZM422",
+        "ownership",
+    ),
+    (
+        "fn f(a: &mut string) -> i64 {\n    return 1\n}\nfn main() {\n    let mut s = \"x\"\n    f(&s)\n}\n",
+        "ZM423",
+        "ownership",
+    ),
+    (
+        "fn f(a: &mut string) -> i64 {\n    return 1\n}\nfn main() {\n    let s = \"x\"\n    f(&mut s)\n}\n",
+        "ZM424",
+        "ownership",
+    ),
+    (
+        "fn f(a: &mut string) -> i64 {\n    return 1\n}\nfn main() {\n    let s = \"x\"\n    f(s)\n}\n",
+        "ZM425",
+        "ownership",
+    ),
+    (
+        "fn f() -> string {}\nfn main() {}\n",
+        "ZM510",
+        "control_flow",
+    ),
+    (
+        "fn main() {\n    let x: f64 = 1\n}\n",
+        "ZM900",
+        "unsupported",
+    ),
+    (
+        "fn main() {\n    println(\"a\\qb\")\n}\n",
+        "ZM101",
+        "syntax",
+    ),
+    (
+        "fn main() {\n    let x = 9223372036854775808\n    println(x)\n}\n",
+        "ZM600",
+        "arithmetic",
+    ),
+    (
+        "fn main() {\n    let a = [1, 2, 3]\n    println(a[5])\n}\n",
+        "ZM406",
+        "bounds",
+    ),
+    (
+        "fn load(p: &string) -> i64!string {\n    return 1\n}\nfn main() {\n    let v = load(\"a\")\n    println(v)\n}\n",
+        "ZM500",
+        "error_handling",
+    ),
+    (
+        "fn f() -> i64!i64 {\n    return 1\n}\nfn main() {\n    println(1)\n}\n",
+        "ZM509",
+        "error_handling",
+    ),
+    (
+        "fn main() {\n    println(\"hi\");\n}\n",
+        "ZM110",
+        "syntax",
+    ),
+    (
+        "fn foo() -> i64 {\n    return 1\n}\n\nfn foo() -> i64 {\n    return 2\n}\n\nfn main() {\n    println(foo())\n}\n",
+        "ZM204",
+        "name",
+    ),
+    ("fn main() {\nprintln(@)\n}\n", "ZM100", "syntax"),
+    (
+        "fn main() {\n    let s = \"hi\"\n    println(string.byte_len(&s))\n}\n",
+        "ZM203",
+        "name",
+    ),
+];
+
 #[test]
 fn json_codes_classify_real_sources() {
     let path = std::env::temp_dir().join(format!("zam-classify-{}.zm", std::process::id()));
-    for (source, code, category) in [
-        (
-            "fn main() {\n    let x: i64 = \"s\"\n}\n",
-            "ZM200",
-            "type",
-        ),
-        ("fn main() {\n    println(nope)\n}\n", "ZM201", "name"),
-        ("fn main() {\n    nope()\n}\n", "ZM201", "name"),
-        (
-            "struct Point {\n    x: i64\n    y: i64\n}\nfn main() {\n    let p = Point {\n        x: 1\n        y: 2\n    }\n    println(p.z)\n}\n",
-            "ZM202",
-            "name",
-        ),
-        (
-            "fn main() {\n    let a = \"x\"\n    let b = a\n    println(a)\n}\n",
-            "ZM301",
-            "ownership",
-        ),
-        (
-            "fn main() {\n    let x = 1\n    x = 2\n}\n",
-            "ZM302",
-            "ownership",
-        ),
-        (
-            "fn f(a: &string, b: string) -> i64 {\n    return 1\n}\nfn main() {\n    let s = \"x\"\n    f(&s, s)\n}\n",
-            "ZM421",
-            "ownership",
-        ),
-        (
-            "fn main() {\n    let s = \"x\"\n    let r = &s\n}\n",
-            "ZM422",
-            "ownership",
-        ),
-        (
-            "fn f(a: &mut string) -> i64 {\n    return 1\n}\nfn main() {\n    let mut s = \"x\"\n    f(&s)\n}\n",
-            "ZM423",
-            "ownership",
-        ),
-        (
-            "fn f(a: &mut string) -> i64 {\n    return 1\n}\nfn main() {\n    let s = \"x\"\n    f(&mut s)\n}\n",
-            "ZM424",
-            "ownership",
-        ),
-        (
-            "fn f(a: &mut string) -> i64 {\n    return 1\n}\nfn main() {\n    let s = \"x\"\n    f(s)\n}\n",
-            "ZM425",
-            "ownership",
-        ),
-        (
-            "fn f() -> string {}\nfn main() {}\n",
-            "ZM510",
-            "control_flow",
-        ),
-        (
-            "fn main() {\n    let x: f64 = 1\n}\n",
-            "ZM900",
-            "unsupported",
-        ),
-        (
-            "fn main() {\n    println(\"a\\qb\")\n}\n",
-            "ZM101",
-            "syntax",
-        ),
-        (
-            "fn main() {\n    let x = 9223372036854775808\n    println(x)\n}\n",
-            "ZM600",
-            "arithmetic",
-        ),
-        (
-            "fn main() {\n    let a = [1, 2, 3]\n    println(a[5])\n}\n",
-            "ZM406",
-            "bounds",
-        ),
-        (
-            "fn load(p: &string) -> i64!string {\n    return 1\n}\nfn main() {\n    let v = load(\"a\")\n    println(v)\n}\n",
-            "ZM500",
-            "error_handling",
-        ),
-        (
-            "fn f() -> i64!i64 {\n    return 1\n}\nfn main() {\n    println(1)\n}\n",
-            "ZM509",
-            "error_handling",
-        ),
-        (
-            "fn main() {\n    println(\"hi\");\n}\n",
-            "ZM110",
-            "syntax",
-        ),
-        (
-            "fn foo() -> i64 {\n    return 1\n}\n\nfn foo() -> i64 {\n    return 2\n}\n\nfn main() {\n    println(foo())\n}\n",
-            "ZM204",
-            "name",
-        ),
-    ] {
+    for &(source, code, category) in REAL_SOURCE_CODES {
         fs::write(&path, source).unwrap();
         let output = Command::new(env!("CARGO_BIN_EXE_zam"))
             .args(["check", "--json"])
@@ -274,7 +284,10 @@ fn json_codes_classify_real_sources() {
             format!("\"category\":\"{category}\""),
             "\"suggestion\":\"".to_string(),
         ] {
-            assert!(stdout.contains(&field), "{source}: {field} missing from {stdout}");
+            assert!(
+                stdout.contains(&field),
+                "{source}: {field} missing from {stdout}"
+            );
         }
         assert!(
             !stdout.contains("\"suggestion\":null"),
@@ -282,6 +295,40 @@ fn json_codes_classify_real_sources() {
         );
     }
     fs::remove_file(path).unwrap();
+}
+
+/// `docs/AI_WORKFLOW.md` 的码表是给 AI 工具看的对外契约：列出的每个码都要有真实源码
+/// 断言，反过来也不许断言了却没写进文档的码。任一侧单独更新，AI 循环就会照过期契约走。
+#[test]
+fn documented_codes_are_all_covered_by_real_sources() {
+    // 兜底分类没有稳定的可复现源文；文档本身要求 AI 保留完整 message 并提交最小复现。
+    const WITHOUT_REPRODUCIBLE_SOURCE: &[&str] = &["ZM999"];
+    let mut documented: Vec<&str> = include_str!("../../docs/AI_WORKFLOW.md")
+        .lines()
+        .filter_map(|line| line.strip_prefix("- `"))
+        .filter_map(|rest| rest.split('`').next())
+        .filter(|code| !WITHOUT_REPRODUCIBLE_SOURCE.contains(code))
+        .collect();
+    // 同一个码可以有多段源码（ZM201 就分了变量与函数两种），所以比的是去重后的集合。
+    let mut asserted: Vec<&str> = REAL_SOURCE_CODES.iter().map(|(_, code, _)| *code).collect();
+    documented.sort_unstable();
+    documented.dedup();
+    asserted.sort_unstable();
+    asserted.dedup();
+    let only_documented: Vec<&str> = documented
+        .iter()
+        .copied()
+        .filter(|code| !asserted.contains(code))
+        .collect();
+    let only_asserted: Vec<&str> = asserted
+        .iter()
+        .copied()
+        .filter(|code| !documented.contains(code))
+        .collect();
+    assert!(
+        only_documented.is_empty() && only_asserted.is_empty(),
+        "文档码表与真实源码断言不一致：只有文档 {only_documented:?}，只有断言 {only_asserted:?}"
+    );
 }
 
 #[test]
