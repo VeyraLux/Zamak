@@ -1,0 +1,2 @@
+# Windows 检出（core.autocrlf=true）会把 .sh 转成 CRLF，WSL/Unix 的 bash 读到 \r 会报错。
+*.sh text eol=lf
