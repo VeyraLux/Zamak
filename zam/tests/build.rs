@@ -325,3 +325,50 @@ fn project_cache_execution_and_failures() {
     .unwrap();
     assert!(!invoke(&malformed, &cache, "run").status.success());
 }
+
+/// 缓存目录经过联接/符号链接（CI 的 8.3 短名 `RUNNER~1`、macOS 的 /var → /private/var 同理）时，
+/// 编译器看到的工作目录写法与规范路径不同；路径映射若失配，随机临时目录名会漏进目标文件。
+/// 两份独立缓存各自编译同一源码，同一个键的目标文件必须逐字节相同。
+#[test]
+fn object_bytes_ignore_linked_cache_paths() {
+    let root = std::env::temp_dir().join(format!("zam-linked-{}", std::process::id()));
+    let real = root.join("real");
+    let linked = root.join("linked");
+    fs::create_dir_all(&real).unwrap();
+    let workspace = Workspace(root.clone());
+    #[cfg(windows)]
+    assert!(Command::new("cmd")
+        .args(["/d", "/c", "mklink", "/J"])
+        .arg(&linked)
+        .arg(&real)
+        .output()
+        .unwrap()
+        .status
+        .success());
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&real, &linked).unwrap();
+    let source = root.join("main.zm");
+    fs::write(&source, "fn main() {\nprintln(\"linked\")\n}\n").unwrap();
+    let mut objects = Vec::new();
+    for name in ["first", "second"] {
+        let cache = linked.join(name);
+        progress(&invoke(&source, &cache, "build"));
+        let mut entries: Vec<_> = fs::read_dir(&cache)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "obj"))
+            .collect();
+        assert_eq!(entries.len(), 1, "{entries:?}");
+        let object = entries.pop().unwrap();
+        objects.push((
+            object.file_name().unwrap().to_owned(),
+            fs::read(&object).unwrap(),
+        ));
+    }
+    assert_eq!(objects[0].0, objects[1].0);
+    assert!(
+        objects[0].1 == objects[1].1,
+        "object bytes depend on the scratch path"
+    );
+    drop(workspace);
+}

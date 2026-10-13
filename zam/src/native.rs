@@ -1743,19 +1743,22 @@ fn msvc_tool(environment: &BTreeMap<String, String>, name: &str) -> Result<std::
 pub const OPTIONS: &str = "c11-O2-unroll-MT-Brepro-pathmap-objects-gnu-windows-v6";
 pub fn compile(tool: &str, dir: &Path, source: &str) -> Result<Vec<u8>> {
     std::fs::write(dir.join("program.c"), source).map_err(|e| e.to_string())?;
+    // 编译器记录的是工作目录的写法；临时目录经过 8.3 短名（CI 的 `RUNNER~1`）、联接或
+    // 符号链接（macOS 的 /var → /private/var）时，它和规范路径不同，路径映射就会失配，
+    // 随机的临时目录名漏进目标文件，破坏「同键 ⇒ 同字节」。统一用规范路径做工作目录与映射源。
+    let mapped = std::fs::canonicalize(dir)
+        .map_err(|e| e.to_string())?
+        .to_string_lossy()
+        .trim_start_matches(r"\\?\")
+        .to_owned();
     let output = if uses_msvc(tool) {
         let environment = msvc_environment(tool)?;
-        let mapped = std::fs::canonicalize(dir)
-            .map_err(|e| e.to_string())?
-            .to_string_lossy()
-            .trim_start_matches(r"\\?\")
-            .to_owned();
         if mapped.contains(['"', '%', '\r', '\n']) {
             return Err("unsupported native cache path".into());
         }
         // ponytail: 源码按 UTF-8 写出，cl 默认按本地代码页(如 936)读取会吞掉中文注释后的下一行；/utf-8 固定两端编码。
         Command::new(msvc_tool(&environment, "cl.exe")?)
-            .current_dir(dir)
+            .current_dir(&mapped)
             .envs(&environment)
             .args([
                 "/nologo",
@@ -1773,9 +1776,9 @@ pub fn compile(tool: &str, dir: &Path, source: &str) -> Result<Vec<u8>> {
         // ponytail: `-g`（用户经 CC 传入）会把编译目录写进 DWARF，同一个缓存键在不同临时目录
         // 就会编出不同字节，破坏「同键 ⇒ 同字节」并让并发构建报 corrupt cache entry。
         // 把临时目录前缀映射掉即可，与 Windows 的 /d2pathmap 对应。
-        let map = format!("-ffile-prefix-map={}=.", dir.display());
+        let map = format!("-ffile-prefix-map={mapped}=.");
         Command::new(tool)
-            .current_dir(dir)
+            .current_dir(&mapped)
             .args([
                 "-std=c11",
                 "-O2",
