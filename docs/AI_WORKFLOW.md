@@ -11,7 +11,7 @@
 
 `check --json` 和 `build --json` 的 `diagnostics` 保留人类可读的 `message`，并提供稳定的 `code`、`category`、`file`、`line`、`column`、`function` 与可选 `suggestion`。AI 工具应优先依赖 `code` 和位置，不要用完整 message 做唯一分支条件。`zam/tests/diagnostics.rs` 用真实源码逐个断言这里的 code、category 和非空 suggestion（`ZM999` 没有可操作建议，是唯一的例外），避免分类只在单元测试里成立。
 
-`check --json` 与 `build --json` 各输出一行 JSON，形状固定为 `{"command":...,"ok":...,"diagnostics":[...]}`：`ok` 是布尔值，`diagnostics` 是数组。当前实现遇到第一个错误就返回，所以数组最多只有一项——AI 应把它当作修一条再检查的循环，而不是一次列出全部错误。`file`、`line`、`column`、`function`、`suggestion` 都可能是 `null`（整项目级的导入错误没有行列位置，`ZM999` 没有建议）。失败时进程退出码为 1，人类可读的一行仍写到 stderr，stdout 保持是合法 JSON。
+`check --json` 与 `build --json` 各输出一行 JSON，形状固定为 `{"command":...,"ok":...,"diagnostics":[...]}`：`ok` 是布尔值，`diagnostics` 是数组。当前实现遇到第一个错误就返回，所以数组最多只有一项——AI 应把它当作修一条再检查的循环，而不是一次列出全部错误。`file`、`line`、`column`、`function`、`suggestion` 都可能是 `null`（部分整项目级工具错误仍没有行列位置，`ZM999` 没有建议；可定位的导入错误会保留源位置）。失败时进程退出码为 1，人类可读的一行仍写到 stderr，stdout 保持是合法 JSON。
 
 常见代码包括：
 
@@ -21,7 +21,7 @@
 - `ZM200`：类型不匹配；
 - `ZM201`：名称未定义（变量、函数、结构体或类型名）；
 - `ZM202`：结构体字段未定义；
-- `ZM203`：缺少标准库导入（`use std/<namespace>`）；
+- `ZM203`：调用或结构体的导入缺失、导入别名歧义（包括标准库与自定义模块）；检查对应 `use`，缺失则添加，同名别名冲突则消除歧义；
 - `ZM204`：重复声明（导入、字段、函数或初始化项）；
 - `ZM301`：移动后使用；
 - `ZM302`：修改不可变绑定；
