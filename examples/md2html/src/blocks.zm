@@ -12,7 +12,7 @@ pub fn render(text: &string) -> string {
     let mut open = 0
     for line in &lines {
         if open == 3 {
-            if starts(line, "```") {
+            if string.starts_with(line, "```") {
                 let body = string.join(&code, "\n")
                 out.push("<pre><code>{body}</code></pre>")
                 code = []
@@ -29,7 +29,7 @@ pub fn render(text: &string) -> string {
             open = 0
             continue
         }
-        if starts(&trimmed, "```") {
+        if string.starts_with(&trimmed, "```") {
             close_paragraph(&mut para, &mut out)
             close_block(open, &mut out)
             open = 3
@@ -52,7 +52,7 @@ pub fn render(text: &string) -> string {
             out.push("<hr>")
             continue
         }
-        let bullet = starts(&trimmed, "- ") || starts(&trimmed, "* ")
+        let bullet = string.starts_with(&trimmed, "- ") || string.starts_with(&trimmed, "* ")
         let number = ordered_marker(&trimmed)
         if bullet || number > 0 {
             close_paragraph(&mut para, &mut out)
@@ -76,7 +76,7 @@ pub fn render(text: &string) -> string {
             out.push("<li>{body}</li>")
             continue
         }
-        if starts(&trimmed, "> ") {
+        if string.starts_with(&trimmed, "> ") {
             close_paragraph(&mut para, &mut out)
             if open != 4 {
                 close_block(open, &mut out)
@@ -122,18 +122,14 @@ fn close_block(open: i64, out: &mut [string]) {
     }
 }
 
-fn starts(text: &string, prefix: &string) -> bool {
-    string.find(text, prefix) == 0
-}
-
 // `# 标题` 到 `###### 标题`：返回井号个数，不是标题返回 0。
 fn heading_level(text: &string) -> i64 {
     let size = string.byte_len(text)
     let mut level = 0
-    while level < size && level < 6 && string.byte_at(text, level) == 35 {
+    while level < size && level < 6 && string.byte_at(text, level) == '#' {
         level = level + 1
     }
-    if level > 0 && level < size && string.byte_at(text, level) == 32 {
+    if level > 0 && level < size && string.byte_at(text, level) == ' ' {
         return level
     }
     0
@@ -143,10 +139,10 @@ fn heading_level(text: &string) -> i64 {
 fn ordered_marker(text: &string) -> i64 {
     let size = string.byte_len(text)
     let mut i = 0
-    while i < size && string.byte_at(text, i) >= 48 && string.byte_at(text, i) <= 57 {
+    while i < size && string.byte_at(text, i) >= '0' && string.byte_at(text, i) <= '9' {
         i = i + 1
     }
-    if i > 0 && i + 1 < size && string.byte_at(text, i) == 46 && string.byte_at(text, i + 1) == 32 {
+    if i > 0 && i + 1 < size && string.byte_at(text, i) == '.' && string.byte_at(text, i + 1) == ' ' {
         return i + 2
     }
     0

@@ -60,13 +60,14 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 - 结构体：`struct P { name: string` 换行 `age: i64 }`（每行一个字段，无逗号）；字面量 `P { name: "a" age: 3 }`（**字段之间没有逗号**，可写一行也可分行）；字段读写 `p.name`、连续 `a.b.c`；支持整体移动、整体重新赋值、可变字段赋值；字符串字段自动释放。
 - 控制：`if`/`else`/`else if`、`while`、`for i in start..end`、`break`、`continue`；条件必须是 `bool`。`for` 只遍历整数区间（左闭右开，`start`/`end` 进入循环前各求值一次，循环变量只读且不能与已有变量同名）；`for x in &list` 遍历列表；定长数组按下标写 `for i in 0..N`。
 - 表达式：`+ - * / %`、`== != < <= > >=`、`&&`、`||`、前缀 `!expr`、一元 `-expr`、括号；整数可用数字之间的单个 `_`（`1_000_000`）。溢出/除零在运行时返回错误。
+- 字符字面量 `'a'`、`'#'`、`'\n'`、`'\''`：值是 Unicode 码点（`i64`），与 `string.byte_at` 比较只用 ASCII 字符。
 - 字符串：UTF-8，转义 `\n \r \t \" \\`，插值 `"{name}"` / `"{p.name}"`（只读不移动，插值后变量仍可用），字面大括号写 `{{` / `}}`。
 - 注释：`//` 与 `#`；**没有块注释**。
 - 模块：`use greeting`（同目录 `greeting.zm`，只能调用其 `pub fn`）、`use std/string`、`use std/io`、`use std/fmt`、`use std/fs`、`use std/env`；调用 `greeting.hello()`、`io.println("x")`；`println(...)` 无需导入。
 - 所有权：字符串赋值/传参是**移动**，移动后再用报错；借用只能作为参数（`&s`、`&mut s`），调用返回即结束；共享借用可多个，可变借用必须独占且要求可变所有者；借用参数不能移动、返回或存进局部变量。整数/布尔是拷贝。
 - 错误值：签名 `fn load(p: &string) -> i64!string`（成功 T / 失败 E）或 `-> !string`（只失败）；`fail "msg"` 产生错误并立即返回；`let v = load(&p)?` 失败时向调用方传播（当前函数签名必须带相同的 `!E`）；`load(&p) catch e { ... }` 就地处理（**不传播**，错误值只在块内可见，**块必须在所有路径 `return`**）；`fn main() -> !string` 允许，未捕获错误写 stderr 并以退出码 1 结束。当前只支持 `E = string`。
 - 标准库（`&string` 参数传 `&name`、已是借用的变量，或直接写字符串字面量/插值 `"x"`、`"{n}"`；owned 变量必须加 `&`）：
-  - `std/string`：`byte_len(&s) -> i64`、`char_len(&s) -> i64`（按 UTF-8 码点）、`equal(&a, &b) -> bool`、`parse_i64(&s) -> i64!string`（严格十进制，可带 `+`/`-`，不允许空白）、`trim(&s) -> string`、`find(&s, &needle) -> i64`（字节位置，找不到 -1）、`byte_at(&s, i) -> i64`、`slice(&s, start, end) -> string`（字节区间，越界或切在多字节字符中间会**终止程序**，与数组越界一样）、`copy(&s) -> string`、`split(&s, &sep) -> [string]`（保留空段）、`words(&s) -> [string]`、`lines(&s) -> [string]`（去 `\r`，末尾换行不产生空行）、`join(&list, &sep) -> string`。
+  - `std/string`：`byte_len(&s) -> i64`、`char_len(&s) -> i64`（按 UTF-8 码点）、`equal(&a, &b) -> bool`、`parse_i64(&s) -> i64!string`（严格十进制，可带 `+`/`-`，不允许空白）、`trim(&s) -> string`、`find(&s, &needle) -> i64`（字节位置，找不到 -1）、`byte_at(&s, i) -> i64`、`slice(&s, start, end) -> string`（字节区间，越界或切在多字节字符中间会**终止程序**，与数组越界一样）、`find_from(&s, &needle, start) -> i64`、`starts_with`/`ends_with`/`contains(&s, &p) -> bool`、`replace(&s, &from, &to) -> string`、`lower`/`upper(&s) -> string`（仅 ASCII）、`copy(&s) -> string`、`split(&s, &sep) -> [string]`（保留空段）、`words(&s) -> [string]`、`lines(&s) -> [string]`（去 `\r`，末尾换行不产生空行）、`join(&list, &sep) -> string`。
   - `std/io`：`read_line(&mut line) -> bool!string`（去掉行尾 `\n`/`\r\n`，结束时返回 false；典型写法 `let mut line = ""` + `while io.read_line(&mut line)? { ... }`）、`read_all() -> string!string`。
   - `std/fs`：`read(&path) -> string!string`、`write(&path, &text) -> !string`（覆盖写）。
   - `std/env`：`arg_count() -> i64`、`arg(i) -> string!string`（不含程序名，从 0 开始）、`args() -> [string]`。

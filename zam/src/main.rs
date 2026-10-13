@@ -242,7 +242,9 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
             "syntax",
             Some("remove or replace the unsupported character"),
         )
-    } else if message.contains("unsupported string escape") {
+    } else if message.contains("unsupported string escape")
+        || message.contains("unsupported character escape")
+    {
         (
             "ZM101",
             "syntax",
@@ -371,7 +373,10 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
             "unsupported",
             Some("use a construct listed as supported in `zam --help` or the tutorial"),
         )
-    } else if message.starts_with("expected") || message.contains("unterminated") {
+    } else if message.starts_with("expected")
+        || message.contains("unterminated")
+        || message.contains("character literal")
+    {
         (
             "ZM110",
             "syntax",

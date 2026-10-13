@@ -114,7 +114,7 @@ fn main() -> !string {
 - Control flow: `if`/`else if`/`else`, `while`, `for i in 0..n`, `for x in &list`, `for k in &map` (insertion order), `break`, `continue`.
 - Errors: `T!string` and `!string` signatures, `fail`, `?` to propagate, `catch e { ... }` to handle in place.
 - Modules: one file per module, `use name` and `pub fn`/`pub struct`.
-- Standard library: `std/io` (stdin, `println`), `std/fs` (read and write whole files), `std/env` (arguments), and `std/string` (length, compare, parse, trim, find, slice, split, words, lines, join).
+- Standard library: `std/io` (stdin, `println`), `std/fs` (read and write whole files), `std/env` (arguments), and `std/string` (length, compare, parse, trim, find, replace, case conversion, slice, split, words, lines, join). Character literals such as `'#'` are `i64` code points.
 
 The [tutorial](TUTORIAL.md) (Chinese) walks through every feature with runnable examples. For a larger program, [examples/md2html](examples/md2html) is a four-module Markdown-to-HTML converter (about 290 lines) covering headings, lists, quotes, fenced code, inline formatting, links, and HTML escaping:
 

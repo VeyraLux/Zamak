@@ -18,16 +18,16 @@ pub fn escape(text: &string) -> string {
 }
 
 fn entity_of(byte: i64) -> string {
-    if byte == 38 {
+    if byte == '&' {
         return "&amp;"
     }
-    if byte == 60 {
+    if byte == '<' {
         return "&lt;"
     }
-    if byte == 62 {
+    if byte == '>' {
         return "&gt;"
     }
-    if byte == 34 {
+    if byte == '"' {
         return "&quot;"
     }
     ""
