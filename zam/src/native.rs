@@ -2070,77 +2070,123 @@ fn uses_msvc(tool: &str) -> bool {
 }
 
 pub fn tool() -> Result<(String, String)> {
-    if cfg!(windows) && std::env::var_os("CC").is_none() {
-        let root = std::env::var_os("ProgramFiles(x86)").ok_or("missing ProgramFiles(x86)")?;
-        let output =
-            Command::new(Path::new(&root).join("Microsoft Visual Studio/Installer/vswhere.exe"))
-                .args([
-                    "-latest",
-                    "-products",
-                    "*",
-                    "-requires",
-                    "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
-                    "-property",
-                    "installationPath",
-                ])
-                .output()
-                .map_err(|e| format!("MSVC discovery failed: {e}"))?;
-        let installation = String::from_utf8(output.stdout)
-            .map_err(|e| e.to_string())?
-            .trim()
-            .to_owned();
-        let setup = Path::new(&installation).join("VC/Auxiliary/Build/vcvars64.bat");
-        if !output.status.success() || !setup.is_file() {
-            return Err("install MSVC C++ build tools for native builds".into());
-        }
-        let setup = setup.to_string_lossy().into_owned();
-        if setup.contains(['"', '%', '\r', '\n']) {
-            return Err("unsupported MSVC setup path".into());
-        }
-        let tools = std::fs::read_to_string(
-            Path::new(&installation)
-                .join("VC/Auxiliary/Build/Microsoft.VCToolsVersion.default.txt"),
-        )
-        .map_err(|e| format!("MSVC default version unavailable: {e}"))?;
-        let tools = tools.trim();
-        if tools.is_empty() || !tools.chars().all(|c| c.is_ascii_digit() || c == '.') {
-            return Err("invalid MSVC default version".into());
-        }
-        let compiler = Path::new(&installation)
-            .join("VC/Tools/MSVC")
-            .join(tools)
-            .join("bin/Hostx64/x64/cl.exe");
-        let version = Command::new(compiler)
-            .arg("/Bv")
-            .output()
-            .map_err(|e| format!("MSVC version query failed: {e}"))?;
-        let identity = format!(
-            "{}{}",
-            String::from_utf8_lossy(&version.stdout),
-            String::from_utf8_lossy(&version.stderr)
-        );
-        // /Bv without an input reports versions then exits 2 (D8003).
-        if !matches!(version.status.code(), Some(0 | 2))
-            || !identity.contains("cl.exe:")
-            || !identity.contains("c2.dll:")
-        {
-            return Err(format!("MSVC version query failed:\n{identity}"));
-        }
-        Ok((setup, identity))
-    } else {
-        let compiler = std::env::var("CC").unwrap_or_else(|_| "cc".into());
-        let output = Command::new(&compiler)
-            .arg("--version")
-            .output()
-            .map_err(|e| format!("C compiler unavailable: {e}"))?;
-        if !output.status.success() {
-            return Err("C compiler version query failed".into());
-        }
-        Ok((
-            compiler,
-            String::from_utf8_lossy(&output.stdout).into_owned(),
-        ))
+    select(
+        std::env::var("CC").ok().as_deref(),
+        cfg!(windows),
+        msvc,
+        gnu,
+    )
+}
+
+/// 选 C 工具链：显式 `CC` 优先；Windows 默认 MSVC，找不到时依次试 PATH 上的 gcc、clang；
+/// 其他平台依次试 cc、clang、gcc。都找不到时给出能照做的安装提示。
+fn select(
+    cc: Option<&str>,
+    windows: bool,
+    msvc: impl FnOnce() -> Result<(String, String)>,
+    gnu: impl Fn(&str) -> Result<(String, String)>,
+) -> Result<(String, String)> {
+    if let Some(compiler) = cc {
+        return gnu(compiler);
     }
+    let mut missing = None;
+    if windows {
+        match msvc() {
+            Ok(found) => return Ok(found),
+            Err(error) => missing = Some(error),
+        }
+    }
+    let fallbacks: &[&str] = if windows {
+        &["gcc", "clang"]
+    } else {
+        &["cc", "clang", "gcc"]
+    };
+    for compiler in fallbacks {
+        if let Ok(found) = gnu(compiler) {
+            return Ok(found);
+        }
+    }
+    let tried = fallbacks.join(", ");
+    Err(match missing {
+        Some(error) => format!(
+            "no C compiler found: MSVC is unavailable ({error}) and none of {tried} is on PATH; install Visual Studio Build Tools with the \"Desktop development with C++\" workload, or MinGW-w64 gcc, or set CC to a GNU-style compiler"
+        ),
+        None => format!(
+            "no C compiler found: none of {tried} is on PATH; install one (build-essential on Debian/Ubuntu, xcode-select --install on macOS) or set CC"
+        ),
+    })
+}
+
+fn msvc() -> Result<(String, String)> {
+    let root = std::env::var_os("ProgramFiles(x86)").ok_or("missing ProgramFiles(x86)")?;
+    let output =
+        Command::new(Path::new(&root).join("Microsoft Visual Studio/Installer/vswhere.exe"))
+            .args([
+                "-latest",
+                "-products",
+                "*",
+                "-requires",
+                "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                "-property",
+                "installationPath",
+            ])
+            .output()
+            .map_err(|e| format!("MSVC discovery failed: {e}"))?;
+    let installation = String::from_utf8(output.stdout)
+        .map_err(|e| e.to_string())?
+        .trim()
+        .to_owned();
+    let setup = Path::new(&installation).join("VC/Auxiliary/Build/vcvars64.bat");
+    if !output.status.success() || !setup.is_file() {
+        return Err("install MSVC C++ build tools for native builds".into());
+    }
+    let setup = setup.to_string_lossy().into_owned();
+    if setup.contains(['"', '%', '\r', '\n']) {
+        return Err("unsupported MSVC setup path".into());
+    }
+    let tools = std::fs::read_to_string(
+        Path::new(&installation).join("VC/Auxiliary/Build/Microsoft.VCToolsVersion.default.txt"),
+    )
+    .map_err(|e| format!("MSVC default version unavailable: {e}"))?;
+    let tools = tools.trim();
+    if tools.is_empty() || !tools.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        return Err("invalid MSVC default version".into());
+    }
+    let compiler = Path::new(&installation)
+        .join("VC/Tools/MSVC")
+        .join(tools)
+        .join("bin/Hostx64/x64/cl.exe");
+    let version = Command::new(compiler)
+        .arg("/Bv")
+        .output()
+        .map_err(|e| format!("MSVC version query failed: {e}"))?;
+    let identity = format!(
+        "{}{}",
+        String::from_utf8_lossy(&version.stdout),
+        String::from_utf8_lossy(&version.stderr)
+    );
+    // /Bv without an input reports versions then exits 2 (D8003).
+    if !matches!(version.status.code(), Some(0 | 2))
+        || !identity.contains("cl.exe:")
+        || !identity.contains("c2.dll:")
+    {
+        return Err(format!("MSVC version query failed:\n{identity}"));
+    }
+    Ok((setup, identity))
+}
+
+fn gnu(compiler: &str) -> Result<(String, String)> {
+    let output = Command::new(compiler)
+        .arg("--version")
+        .output()
+        .map_err(|e| format!("C compiler unavailable: {e}"))?;
+    if !output.status.success() {
+        return Err("C compiler version query failed".into());
+    }
+    Ok((
+        compiler.to_owned(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+    ))
 }
 
 /// MSVC 环境装载一次就够：`vcvars64.bat` 每次执行约 4 秒（它派发一批子脚本与注册表查询），
@@ -2336,6 +2382,48 @@ pub fn link(tool: &str, dir: &Path, objects: &[Vec<u8>]) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn toolchain_selection_prefers_cc_then_msvc_then_path_fallbacks() {
+        let found = |name: &str| Ok((name.to_owned(), format!("{name} 1.0")));
+        let missing = |_: &str| Err::<(String, String), String>("not found".into());
+        let only = |wanted: &'static str| {
+            move |name: &str| {
+                if name == wanted {
+                    found(name)
+                } else {
+                    missing(name)
+                }
+            }
+        };
+        let no_msvc = || Err("install MSVC C++ build tools for native builds".to_owned());
+        // 显式 CC 总是优先，即使 MSVC 可用。
+        assert_eq!(
+            select(Some("clang"), true, || found("vcvars64.bat"), found)
+                .unwrap()
+                .0,
+            "clang"
+        );
+        assert_eq!(
+            select(None, true, || found("vcvars64.bat"), found)
+                .unwrap()
+                .0,
+            "vcvars64.bat"
+        );
+        // Windows 缺 MSVC：先 gcc，再 clang。
+        assert_eq!(select(None, true, no_msvc, found).unwrap().0, "gcc");
+        assert_eq!(
+            select(None, true, no_msvc, only("clang")).unwrap().0,
+            "clang"
+        );
+        // 其他平台：cc、clang、gcc。
+        assert_eq!(select(None, false, no_msvc, found).unwrap().0, "cc");
+        assert_eq!(select(None, false, no_msvc, only("gcc")).unwrap().0, "gcc");
+        let error = select(None, true, no_msvc, missing).unwrap_err();
+        assert!(error.contains("Visual Studio Build Tools") && error.contains("gcc, clang"));
+        let error = select(None, false, no_msvc, missing).unwrap_err();
+        assert!(error.contains("xcode-select --install") && error.contains("cc, clang, gcc"));
+    }
 
     #[test]
     fn interval_proofs_select_raw_arithmetic_and_array_accesses() {

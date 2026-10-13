@@ -4,7 +4,7 @@
 
 ## 安装与工具链
 
-Windows x64：解压预览包，将其中 `bin` 目录加入 PATH。编译 Zamak 源码还需要 Visual Studio Build Tools，安装「使用 C++ 的桌面开发」和 Windows SDK；编译器通过 `vswhere` 查找 MSVC。也可安装 MinGW GCC 并设置 `CC=gcc`，使用 GNU 原生后端；`CC` 是单个编译器程序，不接受附加参数、MSVC `cl` 或 Windows `.bat` 包装脚本。不需要 Rust。仅运行已生成的程序不需要 Zamak 或 C 编译器。
+Windows x64：解压预览包，将其中 `bin` 目录加入 PATH。编译 Zamak 源码还需要一个 C 编译器：Visual Studio Build Tools（安装「使用 C++ 的桌面开发」和 Windows SDK，通过 `vswhere` 查找），或者 PATH 上的 MinGW-w64 `gcc`。没有 Visual Studio 时会自动改用 `gcc`，再试 `clang`；也可以用 `CC` 显式指定。`CC` 是单个编译器程序，不接受附加参数、MSVC `cl` 或 Windows `.bat` 包装脚本。不需要 Rust。仅运行已生成的程序不需要 Zamak 或 C 编译器。
 
 Linux/macOS：从源码安装需要 Rust stable 和系统 `cc`：
 
