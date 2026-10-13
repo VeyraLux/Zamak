@@ -312,10 +312,13 @@ impl Project {
             }
             for (name, function) in &input.module.functions {
                 let mut function = function.clone();
+                let position = function.position;
                 for (_, ty) in &mut function.params {
-                    self.resolve_type(id, ty)?;
+                    self.resolve_type(id, ty)
+                        .map_err(|error| self.located(id, position, error))?;
                 }
-                self.resolve_type(id, &mut function.result)?;
+                self.resolve_type(id, &mut function.result)
+                    .map_err(|error| self.located(id, position, error))?;
                 self.resolve_body(id, &mut function.body)?;
                 linked.functions.insert(format!("{id}:{name}"), function);
             }
@@ -339,10 +342,26 @@ impl Project {
         Ok(())
     }
 
+    /// 模块解析期错误此前不带位置，AI 只能从 message 里抠模块名。指令级位置已经在
+    /// `Block` 里，这里直接复用；粒度与类型检查器一致（都指向语句起始），不假装更精确。
+    fn located(&self, module: &str, position: (usize, usize), error: String) -> String {
+        match self.modules.get(module) {
+            Some(input) => format!(
+                "{}: line {}, column {}: {error}",
+                input.path.display(),
+                position.0,
+                position.1
+            ),
+            None => error,
+        }
+    }
+
     fn resolve_body(&self, module: &str, body: &mut Block) -> Result<()> {
-        for (instruction, _) in body {
+        for (instruction, position) in body {
+            let position = *position;
             if let Instruction::Let(_, _, Some(ty), _) = instruction {
-                self.resolve_type(module, ty)?;
+                self.resolve_type(module, ty)
+                    .map_err(|error| self.located(module, position, error))?;
             }
             let expr = match instruction {
                 Instruction::Let(_, _, _, expr)
@@ -365,7 +384,8 @@ impl Project {
                 Instruction::Break | Instruction::Continue => None,
             };
             if let Some(expr) = expr {
-                self.resolve_expr(module, expr)?;
+                self.resolve_expr(module, expr)
+                    .map_err(|error| self.located(module, position, error))?;
             }
         }
         Ok(())
