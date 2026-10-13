@@ -531,15 +531,113 @@ hello from zamak
 - 文件后缀统一是 `.zm`；入口必须是 `.zm`（否则报 `entry must be a .zm file`）。
 - 对于单文件程序，`zam check`/`build`/`run`/`fmt` 也接受单个 `.zm` 文件。
 
-## 第 13 节：命令行工具
+## 第 13 节：文件、标准输入与命令行参数
+
+读取命令行参数指定的文件，统计后写出报告：
+
+```zamak
+use std/env
+use std/fs
+use std/string
+
+fn main() -> !string {
+    if env.arg_count() < 1 {
+        fail "usage: zam run main.zm -- <file>"
+    }
+    let path = env.arg(0)?
+    let text = fs.read(&path)?
+    let bytes = string.byte_len(&text)
+    let chars = string.char_len(&text)
+    let report = "{path}: {bytes} bytes, {chars} chars"
+    println(report)
+    let target = "report.txt"
+    fs.write(&target, &report)?
+}
+```
+
+`笔记.txt` 的内容是 `name=扎马克` 时，执行 `zam run main.zm -- 笔记.txt` 输出下面一行，并把同样的内容写进 `report.txt`：
+
+```text
+笔记.txt: 14 bytes, 8 chars
+```
+
+不传参数时程序以 `fail` 结束，stderr 输出 `usage: zam run main.zm -- <file>`，退出码为 1。
+
+逐行读取标准输入并求和：
+
+```zamak
+use std/io
+use std/string
+
+fn main() -> !string {
+    let mut line = ""
+    let mut total = 0
+    while io.read_line(&mut line)? {
+        let text = string.trim(&line)
+        if string.byte_len(&text) > 0 {
+            total = total + string.parse_i64(&text)?
+        }
+    }
+    println(total)
+}
+```
+
+在 pwsh 中执行 `"10`n20`n`n-5" | zam run main.zm`，输出 `25`。
+
+拆分 `key=value`：
+
+```zamak
+use std/string
+
+fn main() {
+    let entry = "  lang=Zamak  "
+    let text = string.trim(&entry)
+    let separator = "="
+    let at = string.find(&text, &separator)
+    let key = string.slice(&text, 0, at)
+    let value = string.slice(&text, at + 1, string.byte_len(&text))
+    println("{key} -> {value}")
+    println(string.byte_at(&text, 0))
+}
+```
+
+```text
+lang -> Zamak
+108
+```
+
+| 函数 | 说明 |
+| --- | --- |
+| `env.arg_count() -> i64` | 程序参数个数，不含程序名 |
+| `env.arg(i) -> string!string` | 第 `i` 个参数，从 0 开始；越界返回错误 |
+| `fs.read(&path) -> string!string` | 读取整个文件；打不开或读取失败返回错误 |
+| `fs.write(&path, &text) -> !string` | 创建或覆盖文件并写入全部内容 |
+| `io.read_line(&mut line) -> bool!string` | 读一行到 `line`，去掉行尾的 `\n` 或 `\r\n`；输入结束时返回 `false` 并把 `line` 置空 |
+| `io.read_all() -> string!string` | 读取全部标准输入 |
+| `string.parse_i64(&s) -> i64!string` | 解析十进制整数，可带 `+`/`-`；含空白或超出 `i64` 范围时返回错误 |
+| `string.trim(&s) -> string` | 去掉首尾的空格、制表符和换行，返回新字符串 |
+| `string.byte_at(&s, i) -> i64` | 第 `i` 个字节（0–255）；越界时程序终止 |
+| `string.slice(&s, start, end) -> string` | 复制字节区间 `[start, end)`；越界或切在多字节字符中间时程序终止 |
+| `string.find(&s, &needle) -> i64` | 第一次出现的字节位置；找不到返回 -1，空 `needle` 返回 0 |
+
+要点：
+
+- 使用前分别导入 `use std/env`、`use std/fs`、`use std/io`、`use std/string`。
+- `zam run` 把 `--` 之后的内容原样传给程序；直接运行构建产物时照常传参。
+- 路径和参数按 UTF-8 处理，Windows 上可以直接使用中文路径和中文参数。
+- 标准输入按字节读取。管道和文件重定向按原样传入字节；Windows 控制台里手动输入的文字使用控制台代码页，中文输入建议改用管道或文件。
+- 字符串位置都以字节计。`slice` 与数组下标一样在越界时终止程序；需要先判断的场景，先用 `string.byte_len` 或 `string.find` 检查范围。
+- 目前没有目录遍历、追加写入、网络和时间函数。
+
+## 第 14 节：命令行工具
 
 ```text
 zam 0.1.0
   zam check [project|file]
   zam build [project|file]
   zam fmt [project|file]
-  zam run [project|file|artifact]
-  zam new <directory>
+  zam run [project|file|artifact] [-- args...]
+  zam new <directory> [--template ai]
   zam check --json [project|file]
   zam build --json [project|file]
   zam demo
@@ -548,7 +646,7 @@ zam 0.1.0
 
 - `zam check`：只做词法、语法、类型与所有权检查，不生成机器码，因此不需要 C 编译器，适合在修改源码后快速验证。成功打印 `CHECK OK main`。
 - `zam build`：生成可执行文件，路径以 `OUTPUT <path>` 写到 stderr，可以直接运行。
-- `zam run`：先构建再运行，程序输出就是它的 stdout。
+- `zam run`：先构建再运行，程序输出就是它的 stdout；`--` 之后的参数原样传给程序，例如 `zam run main.zm -- 笔记.txt`。
 - `zam fmt`：就地整理缩进（4 个空格）、去行尾空白、结尾留一个换行，保留原来的 CRLF/LF。只调整空白，不重建词法单元，因此保留注释和字符串内容；语法有错的代码会被拒绝而不会被改写。修改过的文件通过 `FORMAT <path>` 写入 stderr。它不调整行内空格或自动折行。
 - `zam new <directory>`：生成最小项目骨架（第 1 节）。目录名必须是合法标识符，已存在的目录会被拒绝，不会覆盖任何文件。
 - `zam demo`：运行内置的双目录缓存演示，展示相同源码的缓存复用。
@@ -561,7 +659,7 @@ zam 0.1.0
 - 环境变量 `ZAMAK_CACHE_DIR` 可以改缓存目录。
 - 出错时退出码非 0，错误写 stderr。
 
-## 第 14 节：常见错误与解决办法
+## 第 15 节：常见错误与解决办法
 
 诊断的格式是：
 
@@ -590,14 +688,18 @@ zam 0.1.0
 | `project name must be an identifier` | `zam new` 的目录名不是合法标识符 | 使用合法标识符，例如 `hello_app`；不要使用连字符或以数字开头 |
 | `<dir>: already exists` | 目标目录已存在 | 使用尚不存在的目标目录 |
 | `zam: program failed: exit code: 1` | 未处理的错误传播到 `main` | 检查错误信息和输入；需要处理时在调用处使用 `catch` |
+| `cannot open <path>` | `fs.read`/`fs.write` 打不开文件 | 检查路径是否存在、是否是目录、是否有权限 |
+| `invalid integer: <text>` | `string.parse_i64` 的输入不是十进制整数 | 先用 `string.trim` 去掉空白，再解析 |
+| `argument index out of range` | `env.arg(i)` 的 `i` 超出参数个数 | 先用 `env.arg_count()` 检查 |
+| `zam: string index out of bounds` | `byte_at`/`slice` 越界，或切在多字节字符中间 | 用 `string.byte_len`、`string.find` 先确定范围 |
 
-## 第 15 节：支持范围与限制
+## 第 16 节：支持范围与限制
 
 Zamak 0.1.0 的支持范围有限。编写程序时需注意以下限制：
 
 - 尚不支持 `switch`/`match`、枚举、泛型、闭包和 trait/接口；`for` 只支持整数区间。
 - 尚不提供包管理器、交互式执行环境（REPL）、文档生成工具或重构工具。
-- 标准库只有 `std/string` 的 `byte_len`/`char_len`/`equal`，`std/io` 与 `std/fmt` 的 `println`。
+- 标准库包括 `std/string`（`byte_len`、`char_len`、`equal`、`parse_i64`、`trim`、`byte_at`、`slice`、`find`）、`std/io`（`println`、`read_line`、`read_all`）、`std/fmt`（`println`）、`std/fs`（`read`、`write`）和 `std/env`（`arg_count`、`arg`），没有目录遍历、网络和时间函数。
 - 错误类型只能是 `string`，没有错误堆栈。
 - 数组仅支持固定长度的 `i64` 局部值，不能用于函数参数、返回值或结构体字段；尚不支持切片和动态数组。
 - 所有权检查覆盖 `string` 和结构体；尚不支持线程、`unsafe` 和外部函数接口（FFI）。

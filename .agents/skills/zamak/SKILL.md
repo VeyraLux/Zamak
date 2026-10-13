@@ -9,7 +9,7 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 
 ## 命令
 
-- `zam check [project|file]`、`zam build ...`、`zam run ...`、`zam fmt ...`、`zam new <directory>`、`zam demo`；无路径参数时用当前目录；源码后缀统一 `.zm`，可直接对单个源码文件操作；`run` 也能直接执行已构建的产物。
+- `zam check [project|file]`、`zam build ...`、`zam run ...`、`zam fmt ...`、`zam new <directory>`、`zam demo`；无路径参数时用当前目录；源码后缀统一 `.zm`，可直接对单个源码文件操作；`run` 也能直接执行已构建的产物；`zam run <file> -- a b` 把 `--` 之后的参数原样交给程序（只有 `run` 接受 `--`）。
 - `zam new <directory>` 生成最小骨架（`zam.toml` + 问候用的 `src/main.zm` + 忽略 `build/` 的 `.gitignore`），列出文件到 stderr，stdout 保持空；目录已存在就报错且不覆盖，目录名必须是合法标识符（写进 `zam.toml` 的 `name`）。
 - `zam fmt` 只规范化空白：按大括号深度把每行缩进改成 4 空格的倍数、去行尾空白、结尾留一个换行、保留原换行风格（CRLF 仍是 CRLF）。它不重建 token，所以注释和字符串内容不会丢；改过的文件路径以 `FORMAT <path>` 打到 stderr，已规范的文件不重写。语法坏掉的代码先被拒绝（走 `check` 同一套解析）。不做行内空格重排与折行。
 - `zam --version` / `--help`；缓存目录默认是用户主目录下的 `.zam/cache`，可用环境变量 `ZAMAK_CACHE_DIR` 覆盖。`check` 在任何平台都不需要 C 编译器。
@@ -59,11 +59,18 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 - 表达式：`+ - * / %`、`== != < <= > >=`、`&&`、`||`、前缀 `!expr`、一元 `-expr`、括号；整数可用数字之间的单个 `_`（`1_000_000`）。溢出/除零在运行时返回错误。
 - 字符串：UTF-8，转义 `\n \r \t \" \\`，插值 `"{name}"` / `"{p.name}"`（只读不移动，插值后变量仍可用），字面大括号写 `{{` / `}}`。
 - 注释：`//` 与 `#`；**没有块注释**。
-- 模块：`use greeting`（同目录 `greeting.zm`，只能调用其 `pub fn`）、`use std/string`、`use std/io`、`use std/fmt`；调用 `greeting.hello()`、`io.println("x")`；`println(...)` 无需导入。
+- 模块：`use greeting`（同目录 `greeting.zm`，只能调用其 `pub fn`）、`use std/string`、`use std/io`、`use std/fmt`、`use std/fs`、`use std/env`；调用 `greeting.hello()`、`io.println("x")`；`println(...)` 无需导入。
 - 所有权：字符串赋值/传参是**移动**，移动后再用报错；借用只能作为参数（`&s`、`&mut s`），调用返回即结束；共享借用可多个，可变借用必须独占且要求可变所有者；借用参数不能移动、返回或存进局部变量。整数/布尔是拷贝。
 - 错误值：签名 `fn load(p: &string) -> i64!string`（成功 T / 失败 E）或 `-> !string`（只失败）；`fail "msg"` 产生错误并立即返回；`let v = load(&p)?` 失败时向调用方传播（当前函数签名必须带相同的 `!E`）；`load(&p) catch e { ... }` 就地处理（**不传播**，错误值只在块内可见，**块必须在所有路径 `return`**）；`fn main() -> !string` 允许，未捕获错误写 stderr 并以退出码 1 结束。当前只支持 `E = string`。
-- 标准库：`string.byte_len(&s) -> i64`、`string.char_len(&s) -> i64`（按 UTF-8 码点）、`string.equal(&a, &b) -> bool`；`println` / `io.println` / `fmt.println` 打印字符串、整数或布尔值。
-- **尚未实现，不要写**：泛型、闭包、枚举、`match`、遍历集合的 `for x in arr`、浮点、动态数组、元组/映射、包管理器、调试器、REPL、文档生成、线程、unsafe/FFI、块注释、`string` 以外的错误类型、整体结构体借用、单独移出 owned 字段。
+- 标准库（字符串参数一律写借用 `&s`，字面量要先 `let` 成变量才能借用）：
+  - `std/string`：`byte_len(&s) -> i64`、`char_len(&s) -> i64`（按 UTF-8 码点）、`equal(&a, &b) -> bool`、`parse_i64(&s) -> i64!string`（严格十进制，可带 `+`/`-`，不允许空白）、`trim(&s) -> string`、`find(&s, &needle) -> i64`（字节位置，找不到 -1）、`byte_at(&s, i) -> i64`、`slice(&s, start, end) -> string`（字节区间，越界或切在多字节字符中间会**终止程序**，与数组越界一样）。
+  - `std/io`：`read_line(&mut line) -> bool!string`（去掉行尾 `\n`/`\r\n`，结束时返回 false；典型写法 `let mut line = ""` + `while io.read_line(&mut line)? { ... }`）、`read_all() -> string!string`。
+  - `std/fs`：`read(&path) -> string!string`、`write(&path, &text) -> !string`（覆盖写）。
+  - `std/env`：`arg_count() -> i64`、`arg(i) -> string!string`（不含程序名，从 0 开始）。
+  - `println` / `io.println` / `fmt.println` 打印字符串、整数或布尔值。
+  - 可失败函数用 `?` 时当前函数要带 `!string`，所以读写文件的 `main` 一般写成 `fn main() -> !string`；`fs.write(&p, &t)?` 可以单独成一条语句。
+  - 标准库实现：`zam/src/native.rs` 的 `BUILTINS` 表（签名 + C 函数体，`p0`/`p1`… 是参数）和 `STD_PRELUDE`（共用 C 辅助）；`project.rs` 把 `std/*` 调用解析成 `std/<模块>:<函数>`，检查器按普通函数签名检查。新增函数只需在表里加一项，再升 `native-c-N`。
+- **尚未实现，不要写**：泛型、闭包、枚举、`match`、遍历集合的 `for x in arr`、浮点、动态数组、元组/映射、目录遍历、追加写文件、网络、时间、stderr 打印、包管理器、调试器、REPL、文档生成、线程、unsafe/FFI、块注释、`string` 以外的错误类型、整体结构体借用、单独移出 owned 字段。
 
 ## 常见诊断（照文本改代码）
 
@@ -73,6 +80,7 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 - `catch block for f must return a value` → catch 代码块要在所有路径上 `return`。
 - `only string error types are supported for now` → 错误类型只能是 `string`。
 - 移动后使用、借用冲突/逃逸、不可变赋值、重复/缺失字段等都在 `zam check` 阶段报错。
+- 运行时（stderr，退出码 1）：`cannot open <path>`、`invalid integer: <text>`、`argument index out of range` 是错误值，可 `catch`；`zam: string index out of bounds`、`zam: array index out of bounds`、`zam: integer arithmetic error` 是直接终止。
 - 诊断格式：`zam: <文件>: line N, column M: <模块>:<函数>: <信息>`；词法/语法错误带行列（列从 1 开始、按 Unicode 字符计数），语义错误取语句起点。
 
 ## 修改 Zamak 编译器本身

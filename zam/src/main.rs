@@ -5,7 +5,23 @@ mod project;
 use std::path::Path;
 
 fn execute() -> project::Result<()> {
-    let raw_args: Vec<String> = std::env::args().skip(1).collect();
+    // `zam run <path> -- a b` 把 `--` 之后的参数原样交给程序，不参与 zam 自己的参数解析。
+    let mut raw_args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    let program_args = match raw_args.iter().position(|arg| arg == "--") {
+        Some(index) => {
+            let rest = raw_args.split_off(index + 1);
+            raw_args.pop();
+            Some(rest)
+        }
+        None => None,
+    };
+    let raw_args: Vec<String> = raw_args
+        .into_iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    if program_args.is_some() && raw_args.first().map(String::as_str) != Some("run") {
+        return Err("usage: only zam run accepts program arguments after --".into());
+    }
     let json_count = raw_args
         .iter()
         .filter(|arg| arg.as_str() == "--json")
@@ -74,11 +90,11 @@ fn execute() -> project::Result<()> {
             let source = input.extension().is_some_and(|ext| ext == "zm");
             let artifact = if input.is_file() && !source { input.into() }
                 else { project::Project::load(input)?.build(&project::cache_dir())? };
-            project::run_artifact(&artifact)?;
+            project::run_artifact(&artifact, &program_args.unwrap_or_default())?;
         }
         Some("demo") if args.len() == 1 => demo()?,
         Some("--version") | Some("-V") => println!("{}", env!("CARGO_PKG_VERSION")),
-        None | Some("--help") | Some("-h") => println!("zam {}\n  zam check [project|file]\n  zam build [project|file]\n  zam fmt [project|file]\n  zam run [project|file|artifact]\n  zam new <directory> [--template ai]\n  zam check --json [project|file]\n  zam build --json [project|file]\n  zam demo\n  zam --version", env!("CARGO_PKG_VERSION")),
+        None | Some("--help") | Some("-h") => println!("zam {}\n  zam check [project|file]\n  zam build [project|file]\n  zam fmt [project|file]\n  zam run [project|file|artifact] [-- args...]\n  zam new <directory> [--template ai]\n  zam check --json [project|file]\n  zam build --json [project|file]\n  zam demo\n  zam --version", env!("CARGO_PKG_VERSION")),
         _ => return Err("usage: zam <check|build|run|fmt|new> [project|file]".into()),
     }
     Ok(())
@@ -110,7 +126,7 @@ fn new_project(directory: &Path, ai_template: bool) -> project::Result<()> {
     if ai_template {
         files.push((
             directory.join("AI.md"),
-            "# AI 工作循环\n\n1. 运行 `zam check --json <project>`。\n2. 根据 `file`、`line`、`column`、`function`、`code`、`category` 和 `suggestion` 定位最小修复。\n3. 修改后运行 `zam fmt <project>`，再重新检查。\n4. 通过后运行 `zam build <project>` 和 `zam run <project>`。\n\n每次 `check --json` 只返回第一个诊断，修好一条后再检查。保持每次修改小而明确。当前版本暂不支持浮点数、文件/网络 I/O、泛型、枚举、闭包、线程和 FFI。\n".to_string(),
+            "# AI 工作循环\n\n1. 运行 `zam check --json <project>`。\n2. 根据 `file`、`line`、`column`、`function`、`code`、`category` 和 `suggestion` 定位最小修复。\n3. 修改后运行 `zam fmt <project>`，再重新检查。\n4. 通过后运行 `zam build <project>` 和 `zam run <project>`。\n\n每次 `check --json` 只返回第一个诊断，修好一条后再检查。保持每次修改小而明确。当前版本暂不支持浮点数、网络 I/O、动态数组、泛型、枚举、闭包、线程和 FFI；文件、标准输入与命令行参数见 `std/fs`、`std/io`、`std/env`。\n".to_string(),
         ));
         files.push((
             directory.join("README.md"),

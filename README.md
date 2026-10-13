@@ -23,11 +23,11 @@ Zamak 是为频繁构建、多 worktree 协作设计的语言原型。当前 `za
 | 组件 | 当前能力 |
 | --- | --- |
 | 命令行 | `check`、`build`、`run`、`fmt`、`new`、`demo`；检查与构建支持 JSON 诊断 |
-| 标准库 | UTF-8 字节长度、码点数量、字符串比较，以及 `println` |
+| 标准库 | 文件读写、标准输入、命令行参数、整数解析，字符串的长度、比较、裁剪、查找与切片，以及 `println` |
 | 错误处理 | `T!string`、`fail`、`?` 传播、`catch` 处理 |
 | 编辑器 | VS Code 语法高亮、括号与引号配对 |
 
-尚未支持浮点数、动态数组、文件或网络 I/O、泛型、枚举与 `match`、闭包、线程及 FFI。包管理器、语言服务器、REPL 和文档生成工具尚未提供。安装方式见 [预览版说明](PREVIEW.md)。
+尚未支持浮点数、动态数组、网络 I/O、目录遍历、泛型、枚举与 `match`、闭包、线程及 FFI。包管理器、语言服务器、REPL 和文档生成工具尚未提供。安装方式见 [预览版说明](PREVIEW.md)。
 
 ## 快速运行
 
@@ -106,6 +106,7 @@ fn main() {
 - 本地/导入函数调用、嵌套调用、`return`；最后一个值表达式可作为返回值。
 - `println(expr)` 打印字符串、整数或布尔值；打印变量时不移动变量。导入 `std/io` 或 `std/fmt` 后可使用相应的命名空间。
 - 导入 `std/string` 后可用 `string.byte_len(&text) -> i64` 查询 UTF-8 字节数，`string.char_len(&text) -> i64` 按 UTF-8 码点计数（一个汉字算一个字符，续字节不计）；`string.equal(&a, &b) -> bool` 按字节比较内容，支持重复共享借用，不移动字符串；共享借用参数可直接转传。当前要求共享借用，不接受字面量、owned 参数或可变借用。示例：`zam run examples/values/strings.zm`。
+- 文件、标准输入与命令行参数：`fs.read(&path) -> string!string`、`fs.write(&path, &text) -> !string`；`io.read_line(&mut line) -> bool!string`（去掉行尾 `\n`/`\r\n`，输入结束返回 `false`）、`io.read_all() -> string!string`；`env.arg_count() -> i64`、`env.arg(i) -> string!string`（不含程序名，`zam run <file> -- a b` 把 `--` 之后的参数传给程序）。字符串补充 `string.parse_i64(&s) -> i64!string`、`string.trim(&s) -> string`、`string.find(&s, &needle) -> i64`（找不到为 -1）、`string.byte_at(&s, i) -> i64` 与 `string.slice(&s, start, end) -> string`；后两者按字节计位置，越界或切在多字节字符中间时与数组越界一样终止程序。路径与参数按 UTF-8 处理，Windows 通过 `_wfopen` 与 `GetCommandLineW` 支持中文路径和参数。这些函数参与正常的类型、借用与错误值检查，C 实现只发射到用到它们的目标文件里。示例：`examples/io/wc.zm`（行、词、字节计数）、`examples/io/sum.zm`（逐行求和）、`examples/io/notes.zm`（写入、读回并拆分 `key=value`）。
 - 字符串支持 UTF-8，以及 `\n`、`\r`、`\t`、`\"` 和 `\\` 转义。
 - 字符串字面量支持插值：`"{name}"` 拼接当前作用域里的变量或字段（`{person.name}`），支持 `string`、`&string`、`&mut string`、`i64`、`bool`。插值只读取不移动，也不修改借用内容，插值后原变量仍可使用；字面大括号写作 `{{` 和 `}}`。花括号内目前只支持变量与字段路径，暂不支持调用、字面量和显式借用表达式。示例：`zam run examples/values/format.zm`。
 - `if condition { ... } else { ... }`、`while condition { ... }`，条件必须是 `bool`；`for name in start..end { ... }` 遍历左闭右开的整数区间，`start` 与 `end` 进入循环前按顺序各求值一次，循环变量是只读 `i64`、只在循环体内可见（`zam run examples/control/loops.zm`）；支持 `&&`/`||` 短路求值。块内变量不能逃出块；支持 `else if` 链，复用嵌套分支的返回与所有权路径合并。支持 `break`/`continue`，跳转后同一代码块中的语句不可达，嵌套循环只影响当前循环；暂不支持遮蔽仍在作用域内的绑定。
@@ -133,7 +134,7 @@ fn main() {
 
 ## 缓存行为
 
-缓存默认放在用户目录 `.zam/cache`，可用 `ZAMAK_CACHE_DIR` 指定。模块键包含源码字节、依赖名称与递归依赖哈希、Zamak 编译器/IR 版本（当前 IR-13）、操作系统和架构，不含项目绝对路径。相同源码从不同目录构建共享模块产物。
+缓存默认放在用户目录 `.zam/cache`，可用 `ZAMAK_CACHE_DIR` 指定。模块键包含源码字节、依赖名称与递归依赖哈希、Zamak 编译器/IR 版本（当前 IR-14）、操作系统和架构，不含项目绝对路径。相同源码从不同目录构建共享模块产物。
 
 修改依赖会使该模块和其传递依赖方失效，独立模块继续命中缓存。当前仍对全部源码执行解析和检查，并比较缓存产物内容；缓存验证以正确性为优先，尚未实现只读接口的语义增量分析。
 

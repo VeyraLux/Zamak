@@ -1,0 +1,37 @@
+use std/env
+use std/fs
+use std/io
+use std/string
+
+// 统计行数、单词数和字节数：给了参数就读文件，否则读标准输入。
+// 用法：zam run examples/io/wc.zm -- <文件>
+fn count(text: &string) {
+    let mut lines = 0
+    let mut words = 0
+    let mut inside = false
+    let size = string.byte_len(text)
+    for i in 0..size {
+        let byte = string.byte_at(text, i)
+        if byte == 10 {
+            lines = lines + 1
+        }
+        if byte == 32 || byte == 9 || byte == 10 || byte == 13 {
+            inside = false
+        } else if !inside {
+            inside = true
+            words = words + 1
+        }
+    }
+    println("{lines} {words} {size}")
+}
+
+fn main() -> !string {
+    if env.arg_count() > 0 {
+        let path = env.arg(0)?
+        let text = fs.read(&path)?
+        count(&text)
+    } else {
+        let text = io.read_all()?
+        count(&text)
+    }
+}
