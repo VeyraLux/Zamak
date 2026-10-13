@@ -82,11 +82,7 @@ fn every_tutorial_snippet_checks() {
 #[test]
 fn english_readme_examples_run() {
     // Windows 检出可能是 CRLF，先统一换行再切代码块。
-    let document = include_str!("../../README.en.md").replace(
-        "
-", "
-",
-    );
+    let document = include_str!("../../README.en.md").replace("\r\n", "\n");
     let blocks: Vec<&str> = document
         .split("```zamak\n")
         .skip(1)
