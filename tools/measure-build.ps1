@@ -13,6 +13,7 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $zam = (Resolve-Path (Join-Path $root $ZamPath)).Path
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 if ([string]::IsNullOrWhiteSpace($OutDir)) { $OutDir = Join-Path $root "results\build-measure-$stamp" }
+$OutDir = [System.IO.Path]::GetFullPath($OutDir, $root)
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 
 # 生成固定形状的多模块工程：main 调用 m1..mN 的 pub fn，编辑任一模块只应重编该模块。
@@ -59,7 +60,18 @@ function Invoke-Zam([string]$workDir, [string]$cacheDir, [string[]]$arguments, [
         LinkMiss = @($stderr -split "`r?`n" | Where-Object { $_ -like 'LINK MISS *' }).Count
         LinkHit = @($stderr -split "`r?`n" | Where-Object { $_ -like 'LINK HIT *' }).Count
         Output = @($stderr -split "`r?`n" | Where-Object { $_ -like 'OUTPUT *' } | Select-Object -Last 1)
+        Timing = @($stderr -split "`r?`n" | Where-Object { $_ -like 'TIMING *' } | Select-Object -Last 1)
     }
+}
+
+function Get-Timing($build) {
+    $line = @($build.Timing | Select-Object -Last 1)
+    if (-not $line) { return $null }
+    $values = [ordered]@{}
+    foreach ($match in [regex]::Matches($line, '(\w+_ms)=([0-9.]+)')) {
+        $values[$match.Groups[1].Value] = [double]$match.Groups[2].Value
+    }
+    return [pscustomobject]$values
 }
 
 function Test-BuildArtifact($build, [string]$project, [long]$expected, [string]$tag) {
@@ -161,6 +173,11 @@ for ($rep = 1; $rep -le $Repetitions; $rep++) {
         warm_link_hits = $warm.LinkHit
         leaf_link_misses = $leaf.LinkMiss
         signature_link_misses = $signature.LinkMiss
+        cold_timing = Get-Timing $cold
+        warm_timing = Get-Timing $warm
+        check_timing = Get-Timing $check
+        leaf_timing = Get-Timing $leaf
+        signature_timing = Get-Timing $signature
         execution_validation_pass = $true
         artifact = $artifactPath
         artifact_bytes = if ($artifactPath -and (Test-Path $artifactPath)) { (Get-Item $artifactPath).Length } else { $null }
@@ -194,6 +211,14 @@ $report = [pscustomobject]@{
         check_ms = Get-Median ($runs.check_ms)
         artifact_bytes = Get-Median ($runs.artifact_bytes)
         cache_bytes = Get-Median ($runs.cache_bytes)
+        cold_check_ms = Get-Median ($runs.cold_timing.check_ms)
+        cold_key_ms = Get-Median ($runs.cold_timing.key_ms)
+        cold_object_ms = Get-Median ($runs.cold_timing.object_ms)
+        cold_link_ms = Get-Median ($runs.cold_timing.link_ms)
+        warm_object_ms = Get-Median ($runs.warm_timing.object_ms)
+        warm_link_ms = Get-Median ($runs.warm_timing.link_ms)
+        leaf_object_ms = Get-Median ($runs.leaf_timing.object_ms)
+        signature_object_ms = Get-Median ($runs.signature_timing.object_ms)
     }
     runs = $runs
 }
