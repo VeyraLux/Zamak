@@ -1,0 +1,48 @@
+use std/env
+use std/fs
+use std/io
+use std/string
+
+// 统计词频，按次数从高到低输出前 N 个；次数相同的按首次出现的先后。
+// 用法：zam run examples/collections/wordfreq.zm -- <文件> [N]，不给文件就读标准输入。
+fn main() -> !string {
+    let args = env.args()
+    let mut text = ""
+    if args.len() > 0 {
+        text = fs.read(&args[0])?
+    } else {
+        text = io.read_all()?
+    }
+    let mut limit = 10
+    if args.len() > 1 {
+        limit = string.parse_i64(&args[1])?
+    }
+
+    let mut counts: {string: i64} = {}
+    let words = string.words(&text)
+    for word in &words {
+        counts[word] = counts.get(word, 0) + 1
+    }
+
+    // 稳定的插入排序：只交换列表里的位置，不复制字符串。
+    let mut order = counts.keys()
+    for i in 1..order.len() {
+        let mut j = i
+        while j > 0 && counts[&order[j - 1]] < counts[&order[j]] {
+            order.swap(j - 1, j)
+            j = j - 1
+        }
+    }
+
+    let unique = counts.len()
+    println("{unique} distinct words")
+    let mut shown = 0
+    for word in &order {
+        if shown >= limit {
+            break
+        }
+        let n = counts[word]
+        println("{n} {word}")
+        shown = shown + 1
+    }
+}

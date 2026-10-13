@@ -11,7 +11,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-23");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-24");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -555,6 +555,12 @@ impl Project {
                 }
             }
             Expr::BorrowIndex(_, index, _) => self.resolve_expr(module, locals, index)?,
+            Expr::MapLit(entries) => {
+                for (key, value) in entries {
+                    self.resolve_expr(module, locals, key)?;
+                    self.resolve_expr(module, locals, value)?;
+                }
+            }
             Expr::Unary(_, value)
             | Expr::ByteLen(value)
             | Expr::CharLen(value)
@@ -855,6 +861,10 @@ fn declared(body: &Block, names: &mut BTreeSet<String>) {
             | Expr::Array(values)
             | Expr::Format(values) => values.iter().for_each(|value| expr(value, names)),
             Expr::Record(_, fields) => fields.iter().for_each(|(_, value)| expr(value, names)),
+            Expr::MapLit(entries) => entries.iter().for_each(|(key, value)| {
+                expr(key, names);
+                expr(value, names);
+            }),
             Expr::Unary(_, inner)
             | Expr::Try(inner)
             | Expr::ByteLen(inner)

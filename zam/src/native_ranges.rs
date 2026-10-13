@@ -290,6 +290,13 @@ impl Analysis {
                 self.expr(index, env, collect);
                 Interval::TOP
             }
+            Expr::MapLit(entries) => {
+                for (key, value) in entries {
+                    self.expr(key, env, collect);
+                    self.expr(value, env, collect);
+                }
+                Interval::TOP
+            }
             Expr::Field(_, _) | Expr::Text(_) | Expr::Borrow(_, _) | Expr::Bool(_) => Interval::TOP,
         }
     }
@@ -675,6 +682,9 @@ fn expression_cost(expr: &Expr) -> Option<i128> {
         Expr::Record(_, fields) => fields
             .iter()
             .try_fold(0, |cost, (_, value)| Some(cost + expression_cost(value)?))?,
+        Expr::MapLit(entries) => entries.iter().try_fold(0, |cost, (key, value)| {
+            Some(cost + expression_cost(key)? + expression_cost(value)?)
+        })?,
         Expr::Call(_, values)
         | Expr::Method(_, _, values)
         | Expr::Array(values)

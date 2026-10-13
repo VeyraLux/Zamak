@@ -23,12 +23,12 @@ Zamak 是为频繁构建、多 worktree 协作设计的语言原型。当前 `za
 | 组件 | 当前能力 |
 | --- | --- |
 | 命令行 | `check`、`build`、`run`、`fmt`、`new`、`demo`；检查与构建支持 JSON 诊断 |
-| 集合 | 定长 `[i64; N]` 与可增长列表 `[i64]`、`[bool]`、`[string]` |
+| 集合 | 定长 `[i64; N]`、可增长列表 `[i64]`/`[bool]`/`[string]`、字典 `{K: V}`（键为 `i64` 或 `string`） |
 | 标准库 | 文件读写、标准输入、命令行参数、整数解析，字符串的长度、比较、裁剪、查找、切片、切分与连接，以及 `println` |
 | 错误处理 | `T!string`、`fail`、`?` 传播、`catch` 处理 |
 | 编辑器 | VS Code 语法高亮、括号与引号配对 |
 
-尚未支持浮点数、字典、结构体元素的列表、网络 I/O、目录遍历、泛型、枚举与 `match`、闭包、线程及 FFI。包管理器、语言服务器、REPL 和文档生成工具尚未提供。安装方式见 [预览版说明](PREVIEW.md)。
+尚未支持浮点数、结构体元素的列表与字典、网络 I/O、目录遍历、泛型、枚举与 `match`、闭包、线程及 FFI。包管理器、语言服务器、REPL 和文档生成工具尚未提供。安装方式见 [预览版说明](PREVIEW.md)。
 
 ## 快速运行
 
@@ -106,9 +106,10 @@ fn main() {
 - 十进制整数允许在数字之间使用单个 `_` 分隔符（如 `1_000_000`），首尾或连续分隔符会报错。整数算术 `+ - * / %`、比较 `== != < <= > >=`、布尔相等比较、单目 `- !` 和括号。表达式与参数从左到右求值；溢出、除零及 `i64::MIN / -1` 在运行时返回错误。
 - 本地/导入函数调用、嵌套调用、`return`；函数尾部的值表达式可作为返回值：函数体的最后一条，以及处在尾部的 `if`/`else` 分支的最后一条。循环体和非尾部分支末尾的调用只求值，不会让函数返回。
 - `println(expr)` 打印字符串、整数或布尔值；打印变量时不移动变量。导入 `std/io` 或 `std/fmt` 后可使用相应的命名空间。
-- 导入 `std/string` 后可用 `string.byte_len(&text) -> i64` 查询 UTF-8 字节数，`string.char_len(&text) -> i64` 按 UTF-8 码点计数（一个汉字算一个字符，续字节不计）；`string.equal(&a, &b) -> bool` 按字节比较内容，支持重复共享借用，不移动字符串；共享借用参数可直接转传。当前要求共享借用，不接受字面量、owned 参数或可变借用。示例：`zam run examples/values/strings.zm`。
+- 导入 `std/string` 后可用 `string.byte_len(&text) -> i64` 查询 UTF-8 字节数，`string.char_len(&text) -> i64` 按 UTF-8 码点计数（一个汉字算一个字符，续字节不计）；`string.equal(&a, &b) -> bool` 按字节比较内容，支持重复共享借用，不移动字符串；共享借用参数可直接转传。`&string` 参数接受共享借用，也接受字符串字面量与插值（借用一个只活到语句结束的临时字符串，例如 `string.split(&csv, ",")`）；不接受 owned 变量（要写 `&name`）或可变借用。示例：`zam run examples/values/strings.zm`。
 - 文件、标准输入与命令行参数：`fs.read(&path) -> string!string`、`fs.write(&path, &text) -> !string`；`io.read_line(&mut line) -> bool!string`（去掉行尾 `\n`/`\r\n`，输入结束返回 `false`）、`io.read_all() -> string!string`；`env.arg_count() -> i64`、`env.arg(i) -> string!string`（不含程序名，`zam run <file> -- a b` 把 `--` 之后的参数传给程序）。字符串补充 `string.parse_i64(&s) -> i64!string`、`string.trim(&s) -> string`、`string.find(&s, &needle) -> i64`（找不到为 -1）、`string.byte_at(&s, i) -> i64` 与 `string.slice(&s, start, end) -> string`；后两者按字节计位置，越界或切在多字节字符中间时与数组越界一样终止程序。路径与参数按 UTF-8 处理，Windows 通过 `_wfopen` 与 `GetCommandLineW` 支持中文路径和参数。这些函数参与正常的类型、借用与错误值检查，C 实现只发射到用到它们的目标文件里。示例：`examples/io/wc.zm`（行、词、字节计数）、`examples/io/sum.zm`（逐行求和）、`examples/io/notes.zm`（写入、读回并拆分 `key=value`）。
-- 可增长列表 `[T]`，元素为 `i64`、`bool` 或 `string`，可作局部变量、参数（`[T]` 移交所有权，`&[T]` / `&mut [T]` 调用帧借用）、返回值和结构体字段。空列表需类型标注（`let mut xs: [i64] = []`），不带标注的 `[1, 2]` 仍是定长数组。方法 `xs.len()`、`xs.push(v)`（字符串移入列表）、`xs.pop()`；`xs[i]` 读写元素，越界或空列表 `pop` 时终止程序。字符串元素不能经 `xs[i]` 移出，只能借用 `&xs[i]` 或 `string.copy(&xs[i])` 复制。`for x in &xs` 遍历：整数与布尔按值，字符串为只读借用；循环期间列表被冻结，不能修改、移动或独占借用。方法接收者只能是变量或字段路径（`bag.items.push(x)`），不支持链式调用；`a.b(...)` 中 `a` 是当前函数声明过的局部名时才是方法调用，否则按模块调用解析。配套标准库：`string.split/words/lines` 返回 `[string]`，`string.join(&list, &sep)`，`string.copy(&s)`，`env.args()`。C 侧每种元素类型生成一组 `L*` 结构与函数，只发射到用到它的目标文件。示例：`examples/collections/stats.zm`（读入整数、排序、统计）、`examples/collections/tac.zm`（倒序输出并找最长单词）。
+- 可增长列表 `[T]`，元素为 `i64`、`bool` 或 `string`，可作局部变量、参数（`[T]` 移交所有权，`&[T]` / `&mut [T]` 调用帧借用）、返回值和结构体字段。空列表需类型标注（`let mut xs: [i64] = []`），不带标注的 `[1, 2]` 仍是定长数组。方法 `xs.len()`、`xs.push(v)`（字符串移入列表）、`xs.pop()`；`xs[i]` 读写元素，越界或空列表 `pop` 时终止程序。字符串元素不能经 `xs[i]` 移出，只能借用 `&xs[i]` 或 `string.copy(&xs[i])` 复制。`for x in &xs` 遍历：整数与布尔按值，字符串为只读借用；循环期间列表被冻结，不能修改、移动或独占借用。方法接收者只能是变量或字段路径（`bag.items.push(x)`），不支持链式调用；`a.b(...)` 中 `a` 是当前函数声明过的局部名时才是方法调用，否则按模块调用解析。配套标准库：`string.split/words/lines` 返回 `[string]`，`string.join(&list, &sep)`，`string.copy(&s)`，`env.args()`。C 侧每种元素类型生成一组 `L*` 结构与函数，只发射到用到它的目标文件。示例：`examples/collections/stats.zm`（读入整数、排序、统计）、`examples/collections/tac.zm`（倒序输出并找最长单词）。`xs.swap(i, j)` 原地交换两个元素，字符串列表靠它排序而不复制字符串。
+- 字典 `{K: V}`：键为 `i64` 或 `string`，值为 `i64`、`bool` 或 `string`；可作局部、参数（`{K: V}` 移交，`&{K: V}` / `&mut {K: V}` 借用）、返回值和结构体字段。字面量 `{"amy": 30, "bob": 25}`（逗号分隔，可分行），空字典需类型标注 `let mut m: {string: i64} = {}`。`m[k]` 读取（键不存在时终止程序，`zam: key not found`），`m[k] = v` 插入或替换；字符串键以只读借用传入（`m[&name]`、`m["a"]`，或遍历得到的键 `m[k]`），新键插入时复制一份。方法 `len()`、`contains(k)`、`get(k, default)`（不存在时返回 `default`；字符串值返回副本）、`remove(k) -> bool`、`keys() -> [K]`。`for k in &m` 按插入顺序遍历键，期间字典被冻结。字符串值不能经 `m[k]` 移出，借用 `&m[k]` 或用 `get`。实现是插入顺序表加开放寻址下标表：遍历顺序确定、与哈希无关；删除留墓碑，重建下标表时压实。哈希不带随机种子，不适合直接处理不可信输入的大规模键集合。示例：`examples/collections/wordfreq.zm`（词频统计，按次数稳定排序）。
 - 字符串支持 UTF-8，以及 `\n`、`\r`、`\t`、`\"` 和 `\\` 转义。
 - 字符串字面量支持插值：`"{name}"` 拼接当前作用域里的变量或字段（`{person.name}`），支持 `string`、`&string`、`&mut string`、`i64`、`bool`。插值只读取不移动，也不修改借用内容，插值后原变量仍可使用；字面大括号写作 `{{` 和 `}}`。花括号内目前只支持变量与字段路径，暂不支持调用、字面量和显式借用表达式。示例：`zam run examples/values/format.zm`。
 - `if condition { ... } else { ... }`、`while condition { ... }`，条件必须是 `bool`；`for name in start..end { ... }` 遍历左闭右开的整数区间，`start` 与 `end` 进入循环前按顺序各求值一次，循环变量是只读 `i64`、只在循环体内可见（`zam run examples/control/loops.zm`）；支持 `&&`/`||` 短路求值。块内变量不能逃出块；支持 `else if` 链，复用嵌套分支的返回与所有权路径合并。支持 `break`/`continue`，跳转后同一代码块中的语句不可达，嵌套循环只影响当前循环；暂不支持遮蔽仍在作用域内的绑定。
@@ -136,7 +137,7 @@ fn main() {
 
 ## 缓存行为
 
-缓存默认放在用户目录 `.zam/cache`，可用 `ZAMAK_CACHE_DIR` 指定。模块键包含源码字节、依赖名称与递归依赖哈希、Zamak 编译器/IR 版本（当前 IR-15）、操作系统和架构，不含项目绝对路径。相同源码从不同目录构建共享模块产物。
+缓存默认放在用户目录 `.zam/cache`，可用 `ZAMAK_CACHE_DIR` 指定。模块键包含源码字节、依赖名称与递归依赖哈希、Zamak 编译器/IR 版本（当前 IR-16）、操作系统和架构，不含项目绝对路径。相同源码从不同目录构建共享模块产物。
 
 修改依赖会使该模块和其传递依赖方失效，独立模块继续命中缓存。当前仍对全部源码执行解析和检查，并比较缓存产物内容；缓存验证以正确性为优先，尚未实现只读接口的语义增量分析。
 
