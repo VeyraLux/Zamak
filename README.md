@@ -167,3 +167,7 @@ pwsh -File tools/measure-build.ps1 -ZamPath .\zam\target\debug\zam.exe -Modules 
 集成测试覆盖原生执行、模块与缓存、并发发布、所有权与借用、错误处理、源码诊断，以及新建项目与格式化。测试同时包含成功路径和应被拒绝的输入。教程代码块会自动执行编译检查；常见算法案例另有原生运行与完整输出断言。测试方法与性能结论见 [案例验证](docs/VALIDATION.md)，开发规范见 [贡献指南](CONTRIBUTING.md)。
 
 当前实现只是语言草案的一部分，多数功能还未实现；已在文档中标注的能力之外，语法与库都可能变化。
+
+## 许可证
+
+本项目按 [MIT](LICENSE-MIT) 或 [Apache-2.0](LICENSE-APACHE) 双许可发布，使用者可任选其一。除非另有声明，你提交的贡献同样按这两种许可证发布。
