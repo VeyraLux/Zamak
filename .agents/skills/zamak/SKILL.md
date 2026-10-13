@@ -5,17 +5,49 @@ description: 编写、运行、调试 Zamak（.zm）程序，或修改 Zamak 编
 
 # Zamak
 
-Zamak 是静态类型、编译到原生可执行文件的小语言，仓库位置以当前工作目录为准（本环境为 `E:\CODE\Zamak`）。`zam` 就是它自己的编译器：Rust 前端（`zam/src/compiler.rs` 词法/语法/检查）→ C11 后端（`zam/src/native.rs`）→ MSVC `cl`（Windows）或 `cc`（Unix）。生成的产物不需要安装 Zamak 或 Rust。
+Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Windows x64、Linux、macOS 三个平台，仓库位置以当前工作目录为准（本环境为 `E:\CODE\Zamak`）。`zam` 就是它自己的编译器：Rust 前端（`zam/src/compiler.rs` 词法/语法/检查）→ C11 后端（`zam/src/native.rs`）→ Windows 默认 MSVC `cl`，Linux/macOS 用 `cc`（细节见「平台差异」）。生成的产物不需要安装 Zamak 或 Rust。
 
 ## 命令
 
 - `zam check [project|file]`、`zam build ...`、`zam run ...`、`zam fmt ...`、`zam new <directory>`、`zam demo`；无路径参数时用当前目录；源码后缀统一 `.zm`，可直接对单个源码文件操作；`run` 也能直接执行已构建的产物。
 - `zam new <directory>` 生成最小骨架（`zam.toml` + 问候用的 `src/main.zm` + 忽略 `build/` 的 `.gitignore`），列出文件到 stderr，stdout 保持空；目录已存在就报错且不覆盖，目录名必须是合法标识符（写进 `zam.toml` 的 `name`）。
 - `zam fmt` 只规范化空白：按大括号深度把每行缩进改成 4 空格的倍数、去行尾空白、结尾留一个换行、保留原换行风格（CRLF 仍是 CRLF）。它不重建 token，所以注释和字符串内容不会丢；改过的文件路径以 `FORMAT <path>` 打到 stderr，已规范的文件不重写。语法坏掉的代码先被拒绝（走 `check` 同一套解析）。不做行内空格重排与折行。
-- `zam --version` / `--help`；缓存目录默认 `~/.zam/cache`，可用环境变量 `ZAMAK_CACHE_DIR` 覆盖。`check` 不需要 C 编译器。
-- C 编译按模块并行，默认并发度为 `min(可用核数, 4)`（封顶是为了守住「构建峰值 <200MB」的设计判据），可用 `ZAMAK_JOBS=1` 关掉或设更大值。并行时 `OBJECT ...` 进度行的顺序不确定，解析进度请按行前缀匹配而不要依赖顺序。
-- `zam check --json` / `zam build --json` 在 stdout 输出一行机器可读诊断：`{"command","ok","diagnostics":[{file,line,column,function,message}]}`（无法定位的字段为 `null`），失败时 stderr 仍有一行人类可读信息；其他子命令不接受 `--json`。
-- 构建进度（`CACHE`/`OBJECT`/`LINK`/`OUTPUT`）与错误都写 **stderr**，stdout 只有程序输出或 `--json` 的那一行；`build` 的 `OUTPUT <path>`（Windows 为 `build/<name>-<hash>.exe`）现在也在 stderr。命令失败返回非零码。
+- `zam --version` / `--help`；缓存目录默认是用户主目录下的 `.zam/cache`，可用环境变量 `ZAMAK_CACHE_DIR` 覆盖。`check` 在任何平台都不需要 C 编译器。
+- C 编译按模块并行，只有缓存 MISS 的模块进编译队列，默认并发度为 `min(可用核数, 8)`，可用环境变量 `ZAMAK_JOBS` 调整（设 `1` 即串行）。并行时 `OBJECT ...` 进度行的顺序不确定，解析进度请按行前缀匹配而不要依赖顺序。
+- `zam check --json` / `zam build --json` 在 stdout 输出一行机器可读诊断：`{"command","ok","diagnostics":[{file,line,column,function,code,category,message,suggestion}]}`。`code`（如 `ZM100`）与 `category` 是稳定机器字段，分支判断只依赖它们；`message` 是人类可读文本，`suggestion` 在有修复路径时给出（`ZM999` 无建议，值为 `null`）；`file`/`line`/`column`/`function` 无法定位时为 `null`。**当前遇到第一个错误即返回，`diagnostics` 最多一项，修好一条再检查。** 失败时 stderr 仍有一行人类可读信息、退出码非零；其他子命令不接受 `--json`。
+- 构建进度（`CACHE`/`OBJECT`/`LINK`/`TIMING`/`OUTPUT`）与错误都写 **stderr**，stdout 只有程序输出或 `--json` 的那一行；`TIMING` 一行给出 `check_ms`/`key_ms`/`object_ms`/`object_prepare_ms`/`link_ms`/`total_ms`；`OUTPUT <path>` 的产物名按平台不同（见下表）。命令失败返回非零码。
+
+## 平台差异（Windows / Linux / macOS）
+
+| | Windows x64 | Linux | macOS |
+|---|---|---|---|
+| 默认 C 工具链 | MSVC：`vswhere` 找带 `VC.Tools.x86.x64` 组件的 VS / Build Tools，直接调 `Hostx64\x64` 下的 `cl.exe`/`link.exe` | `cc`（gcc 或 clang，例如装 `build-essential`） | `cc`（Xcode Command Line Tools 的 Apple clang，`xcode-select --install`） |
+| 换编译器 | 设 `CC=gcc`（MinGW）改走 GNU 后端 | 设 `CC=clang` 等 | 同 Linux |
+| 产物 | `build/<name>-<hash>.exe` | `build/<name>-<hash>`，无后缀，权限 0755 | 同 Linux |
+| 同键同字节 | `.obj` + `/Brepro` + `/d2pathmap` | `.o` + `-ffile-prefix-map=<临时目录>=.` | 同 Linux |
+| 缓存目录 | `%USERPROFILE%\.zam\cache` | `$HOME/.zam/cache` | 同 Linux |
+| 额外缓存 | MSVC 环境一次性捕获到 `%TEMP%\zam-msvc-<hash>.txt`，按 `vcvars64.bat` 的大小和修改时间失效 | 无 | 无 |
+| 验证 | 本机 + CI `windows-latest` | 本机 WSL2（见下）+ CI `ubuntu-latest` | 只有 CI `macos-latest`，本机无法验证 |
+
+- `CC` 必须是单个 GNU 风格的编译器程序：不能带参数、不能是 MSVC `cl`；在 Windows 上也不能是 `.bat`（`.bat` 会被当成 MSVC 的 vcvars 脚本）。要加 sanitizer 之类的参数，就写一个包装脚本再把 `CC` 指过去（Unix）。
+- 缓存键包含 `OS` 与 `ARCH`，同一缓存目录被多个平台共用时不会混用产物。
+- **本机 Linux 验证**：WSL 发行版 `Ubuntu`（24.04，默认用户 root）已装 gcc 13.3、clang 18.1、Rust 1.99（含 clippy/rustfmt）。不要直接在 `/mnt/e/...` 上跑：Windows 检出是 CRLF（与 CI 的 LF 不同），而且会和 Windows 共用 `zam/target`。做法是 clone 到 WSL 自己的文件系统，未提交的改动由 Windows 侧 `git diff --output` 导出后再 apply（不要用 shell 重定向，pwsh 可能改编码）。在仓库根目录用 pwsh 执行：
+
+  ```powershell
+  git diff HEAD --output=zam/target/wsl.patch
+  wsl -d Ubuntu -u root -- bash -c '. ~/.cargo/env; set -e; export CARGO_TARGET_DIR=~/zam-target; rm -rf ~/zamak; git clone -q /mnt/e/CODE/Zamak ~/zamak; cd ~/zamak; if [ -s /mnt/e/CODE/Zamak/zam/target/wsl.patch ]; then git apply /mnt/e/CODE/Zamak/zam/target/wsl.patch; fi; cargo fmt --manifest-path zam/Cargo.toml -- --check; cargo test --manifest-path zam/Cargo.toml --locked; cargo clippy --manifest-path zam/Cargo.toml --all-targets --locked -- -D warnings'
+  ```
+
+  要测 clang 后端，就把 `cargo test` 改成 `CC=clang cargo test`（测试进程会继承 `CC`）。2026-10-13 实测：gcc 与 clang 两种后端都是 77 个测试全部通过，fmt 与 clippy 也通过。新增的未跟踪文件不会进 `git diff HEAD`，先 `git add -N <文件>` 再导出。
+- 给用户的命令按对方的 shell 写，环境变量写法不同：
+
+| 操作 | pwsh（Windows 默认） | bash / zsh（Linux、macOS） |
+|---|---|---|
+| 单次设变量 | `$env:ZAMAK_JOBS='1'; zam build` | `ZAMAK_JOBS=1 zam build` |
+| 换编译器 | `$env:CC='gcc'; zam build` | `CC=clang zam build` |
+| 取消变量 | `Remove-Item Env:ZAMAK_JOBS` | `unset ZAMAK_JOBS` |
+
+  注意 pwsh 的 `$env:X=...` 会留在当前会话里，后续命令都受影响，用完要取消；bash 的前缀写法只作用于这一条命令。
 
 ## 语法速览（动手前先看 `examples/`）
 
@@ -24,7 +56,7 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，仓库位�
 - 类型：`i64`、`bool`、`string`、命名结构体、`[i64; N]`（长度 1–1024，只能是局部值）。
 - 结构体：`struct P { name: string` 换行 `age: i64 }`（每行一个字段，无逗号）；字面量 `P { name: "a" age: 3 }`（**字段之间没有逗号**）；字段读写 `p.name`、连续 `a.b.c`；支持整体移动、整体重新赋值、可变字段赋值；字符串字段自动释放。
 - 控制：`if`/`else`/`else if`、`while`、`break`、`continue`；条件必须是 `bool`。**没有 `for`**。
-- 表达式：`+ - * / %`、`== != < <= > >=`、`&& || !`、一元 `-`、括号；整数可用数字之间的单个 `_`（`1_000_000`）。溢出/除零在运行时返回错误。
+- 表达式：`+ - * / %`、`== != < <= > >=`、`&&`、`||`、前缀 `!expr`、一元 `-expr`、括号；整数可用数字之间的单个 `_`（`1_000_000`）。溢出/除零在运行时返回错误。
 - 字符串：UTF-8，转义 `\n \r \t \" \\`，插值 `"{name}"` / `"{p.name}"`（只读不移动，插值后变量仍可用），字面大括号写 `{{` / `}}`。
 - 注释：`//` 与 `#`；**没有块注释**。
 - 模块：`use greeting`（同目录 `greeting.zm`，只能调用其 `pub fn`）、`use std/string`、`use std/io`、`use std/fmt`；调用 `greeting.hello()`、`io.println("x")`；`println(...)` 无需导入。
@@ -45,13 +77,18 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，仓库位�
 
 ## 修改 Zamak 编译器本身
 
-1. 验收（工作目录 `zam/`）：`cargo test --locked`（12 个集成套件，冷跑约 30 秒；MSVC 环境捕获会缓存在临时目录，首次多付约 4 秒）、`cargo clippy --all-targets --locked -- -D warnings`、`cargo fmt --check`；改完源码要重新 `cargo install --path zam --locked` 才能用新的 `zam`。
+1. 验收（工作目录 `zam/`）：`cargo test --locked`（17 个集成套件，Windows 冷跑约 30 秒；MSVC 环境捕获会缓存在临时目录，首次多付约 4 秒）、`cargo clippy --all-targets --locked -- -D warnings`、`cargo fmt --check`；改完源码要在**仓库根目录**重新 `cargo install --path zam --locked` 才能用新的 `zam`。CI（`.github/workflows/ci.yml`）在 `ubuntu-latest`/`windows-latest`/`macos-latest` 三个平台跑同样三项；AI 评测（`bench/ai/run.ps1`）和构建体积测量（`tools/measure-build.ps1`）只在 Windows 上用 pwsh 跑。
 2. 新增语言构造时按惯例升版本标记：`zam/src/compiler.rs` 的 encode 头 `ZAM-IR-N` 与 `zam/src/project.rs` 的 `VERSION`（`native-c-M`）。两者都参与缓存键，只作失效标记——缓存命中时按字节全等校验，没有 decode，旧产物只会报错不会静默错译；同时更新 `README.md` 里的 IR 号。
-3. C 后端源码按 UTF-8 写出，MSVC `cl` 默认按本地代码页（936）读取，会吞掉中文注释后的下一行 → 编译命令行必须保留 `/utf-8`；改动编译命令行要同步 `zam/src/native.rs` 的 `OPTIONS`（`-vN`）——但只在**产物字节真的变了**时升版：若只是改了调用方式（例如从 `cmd /c call vcvars64.bat && cl` 改成直接调 `cl.exe`），先用旧缓存验证仍全部 `OBJECT HIT`/`LINK HIT` 再决定不升，避免无谓的缓存失效。
-4. 示例放 `examples/<主题>/*.zm`（多模块项目为 `<主题>/src/main.zm` + `zam.toml`），并在 `zam/tests/<主题>.rs` 里用 `include_str!` 引用示例做正例与反例，真正运行产物并断言 stdout/stderr/退出码。
-5. 文档边界：`README.md` 会入库；`SYNTAX.md`、`ROADMAP.md`、`DESIGN.md`、`NAMING.md`、`MIGRATION.md` 被 `.gitignore` 忽略，只在本地维护。二者都要同步（README 如实标注缺口，ROADMAP 记进度）。
-6. 提交：分支 `main`，信息用 `<type>:中文描述`（feat/fix/test/docs/chore），按主题分批，必要时 `git push origin main`。
-7. 编辑器/AI 生态：`editors/vscode/` 是纯 TextMate 语法扩展（零运行时依赖），改动关键字、符号或类型时要同步 `editors/vscode/syntaxes/zamak.tmLanguage.json` 与 `language-configuration.json`。
+3. C 后端源码按 UTF-8 写出，MSVC `cl` 默认按本地代码页（936）读取，会吞掉中文注释后的下一行 → 编译命令行必须保留 `/utf-8`。`zam/src/native.rs` 的 `OPTIONS`（`-vN`）是 MSVC 与 GNU 两套命令行**共用**的一个版本标记，改动任一边（`compile`/`link` 里的 `/O2 /MT ...` 或 `-std=c11 -O2 -funroll-loops ...`）都要考虑升它——但只在**产物字节真的变了**时升版：若只是改了调用方式（例如从 `cmd /c call vcvars64.bat && cl` 改成直接调 `cl.exe`），先用旧缓存验证仍全部 `OBJECT HIT`/`LINK HIT` 再决定不升，避免无谓的缓存失效。
+4. 跨平台约束：
+   - 平台分支只放在 `native.rs`（`tool`/`uses_msvc`/`compile`/`link`/MSVC 环境捕获）和 `project.rs`（`cache_dir`、产物 `.exe` 后缀与 Unix 0755 权限），用 `cfg!(windows)` / `#[cfg(unix)]`，不要在前端或检查器里分平台。
+   - 生成的 C 必须同时能被 MSVC 和 GCC/Clang 编译：GCC/Clang 专用写法（如 `__builtin_add_overflow`）放在 `#if defined(__GNUC__) || defined(__clang__)` 里并给 MSVC 留等价分支，见 `native.rs` 开头的运行时前导。
+   - 测试和示例不要写死 `.exe`、`\` 路径分隔符或 CRLF；产物路径从 stderr 的 `OUTPUT` 行取。Windows 检出可能把示例转成 CRLF（git `autocrlf`），断言输出时不要依赖源码的换行风格。
+   - macOS 本机无法验证，涉及 `cc` 命令行、链接或目标文件后缀的改动，提交前说明「macOS 待 CI 确认」，推送后看 GitHub Actions 结果。
+5. 示例放 `examples/<主题>/*.zm`（多模块项目为 `<主题>/src/main.zm` + `zam.toml`），并在 `zam/tests/<主题>.rs` 里用 `include_str!(...)` 引用示例做正例与反例，真正运行产物并断言 stdout/stderr/退出码。
+6. 文档边界：`README.md` 会入库；`SYNTAX.md`、`ROADMAP.md`、`DESIGN.md`、`NAMING.md`、`MIGRATION.md` 被 `.gitignore` 忽略，只在本地维护。二者都要同步（README 如实标注缺口，ROADMAP 记进度）。
+7. 提交：分支 `main`，信息用 `<type>:中文描述`（feat/fix/test/docs/chore），按主题分批，必要时 `git push origin main`。
+8. 编辑器/AI 生态：`editors/vscode/` 是纯 TextMate 语法扩展（零运行时依赖），改动关键字、符号或类型时要同步 `editors/vscode/syntaxes/zamak.tmLanguage.json` 与 `language-configuration.json`。
 
 ## 参考资料
 
