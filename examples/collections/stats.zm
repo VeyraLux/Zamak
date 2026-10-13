@@ -1,0 +1,48 @@
+use std/io
+use std/string
+
+// 从标准输入逐行读整数，放进可增长数组，排序后输出个数、最小、最大、中位数与总和。
+// 用法（pwsh）："5`n3`n9`n1" | zam run examples/collections/stats.zm
+fn sort(xs: &mut [i64]) {
+    // 插入排序：数组按下标读写，长度在循环外取一次。
+    let n = xs.len()
+    for i in 1..n {
+        let value = xs[i]
+        let mut j = i - 1
+        while j >= 0 && xs[j] > value {
+            xs[j + 1] = xs[j]
+            j = j - 1
+        }
+        xs[j + 1] = value
+    }
+}
+
+fn total(xs: &[i64]) -> i64 {
+    let mut sum = 0
+    for x in &xs {
+        sum = sum + x
+    }
+    sum
+}
+
+fn main() -> !string {
+    let mut numbers: [i64] = []
+    let mut line = ""
+    while io.read_line(&mut line)? {
+        let text = string.trim(&line)
+        if string.byte_len(&text) > 0 {
+            numbers.push(string.parse_i64(&text)?)
+        }
+    }
+    let count = numbers.len()
+    if count == 0 {
+        fail "no numbers on standard input"
+    }
+    sort(&mut numbers)
+    // 插值只接受变量与字段，下标和调用的结果先绑定再插值。
+    let min = numbers[0]
+    let max = numbers[count - 1]
+    let median = numbers[count / 2]
+    let sum = total(&numbers)
+    println("count={count} min={min} max={max} median={median} total={sum}")
+}

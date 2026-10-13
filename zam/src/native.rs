@@ -1,5 +1,5 @@
 use crate::compiler::{
-    field_path, record_id, record_order, Block, Expr, Instruction, Module, Type,
+    field_path, record_id, record_order, Block, Elem, Expr, Instruction, Module, Type,
 };
 use crate::project::Result;
 use std::collections::BTreeMap;
@@ -124,6 +124,7 @@ __declspec(dllimport) int __stdcall WideCharToMultiByte(unsigned int, unsigned l
 extern int zam_argc;
 extern char **zam_argv;
 static void zam_alloc_failed(void) { fputs("zam: allocation failed\n", stderr); exit(1); }
+static int zam_space(unsigned char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
 static void zam_string_bounds(void) { fputs("zam: string index out of bounds\n", stderr); exit(1); }
 static S zam_message(const char *text, S *detail) {
     S head = own((const unsigned char*)text, strlen(text));
@@ -347,6 +348,88 @@ return F_void_ok();"#,
 return F_S_ok(zam_arg(p0));"#,
     },
     Builtin {
+        name: "std/env:args",
+        params: &[],
+        result: Type::List(Elem::Str),
+        fallible: false,
+        body: r#"Ls out = {0}; int64_t i, n = zam_arg_count();
+for (i = 0; i < n; i++) pushLs(&out, zam_arg(i));
+return out;"#,
+    },
+    Builtin {
+        name: "std/string:copy",
+        params: &[Type::Shared],
+        result: Type::Owned,
+        fallible: false,
+        body: "return copy(p0);",
+    },
+    Builtin {
+        name: "std/string:split",
+        params: &[Type::Shared, Type::Shared],
+        result: Type::List(Elem::Str),
+        fallible: false,
+        body: r#"Ls out = {0}; size_t start = 0, i = 0;
+// 空分隔符不切分，整串作为唯一一项。
+if (!p1->len) { pushLs(&out, copy(p0)); return out; }
+while (i + p1->len <= p0->len) {
+    if (memcmp(p0->data + i, p1->data, p1->len) == 0) { pushLs(&out, own(p0->data + start, i - start)); i += p1->len; start = i; }
+    else i++;
+}
+pushLs(&out, own(p0->data + start, p0->len - start));
+return out;"#,
+    },
+    Builtin {
+        name: "std/string:words",
+        params: &[Type::Shared],
+        result: Type::List(Elem::Str),
+        fallible: false,
+        body: r#"Ls out = {0}; size_t i = 0, start;
+while (i < p0->len) {
+    while (i < p0->len && zam_space(p0->data[i])) i++;
+    if (i == p0->len) break;
+    start = i;
+    while (i < p0->len && !zam_space(p0->data[i])) i++;
+    pushLs(&out, own(p0->data + start, i - start));
+}
+return out;"#,
+    },
+    Builtin {
+        name: "std/string:lines",
+        params: &[Type::Shared],
+        result: Type::List(Elem::Str),
+        fallible: false,
+        body: r#"Ls out = {0}; size_t start = 0, i, end;
+for (i = 0; i <= p0->len; i++) {
+    if (i < p0->len && p0->data[i] != '\n') continue;
+    // 末尾换行之后不再产生一个空行。
+    if (i == p0->len && start == p0->len) break;
+    end = i;
+    if (end > start && p0->data[end - 1] == '\r') end--;
+    pushLs(&out, own(p0->data + start, end - start));
+    start = i + 1;
+}
+return out;"#,
+    },
+    Builtin {
+        name: "std/string:join",
+        params: &[Type::ListRef(Elem::Str, false), Type::Shared],
+        result: Type::Owned,
+        fallible: false,
+        body: r#"size_t n = 0, at = 0, i; unsigned char *p; S s;
+for (i = 0; i < p0->len; i++) {
+    if (n > SIZE_MAX - p0->data[i].len - p1->len) zam_alloc_failed();
+    n += p0->data[i].len + (i ? p1->len : 0);
+}
+p = (unsigned char*)malloc(n ? n : 1);
+if (!p) zam_alloc_failed();
+for (i = 0; i < p0->len; i++) {
+    if (i && p1->len) { memcpy(p + at, p1->data, p1->len); at += p1->len; }
+    if (p0->data[i].len) { memcpy(p + at, p0->data[i].data, p0->data[i].len); at += p0->data[i].len; }
+}
+s.data = p; s.len = n;
+return s;"#,
+    },
+    Builtin {
         name: "std/string:parse_i64",
         params: &[Type::Shared],
         result: Type::Int,
@@ -454,15 +537,69 @@ fn fallible_err(ty: Type) -> String {
     format!("{}_err", fallible_name(ty))
 }
 fn drop_fn(ty: Type) -> String {
-    if matches!(ty, Type::Record(_)) {
+    if matches!(ty, Type::Record(_) | Type::List(_)) {
         format!("drop{}", ctype(ty))
     } else {
         "drop".into()
     }
 }
+/// 移走 owned 值的 C 函数：字符串用运行时的 `take`，结构体与列表各有按类型生成的版本。
+fn take_fn(ty: Type) -> String {
+    if matches!(ty, Type::Record(_) | Type::List(_)) {
+        format!("take{}", ctype(ty))
+    } else {
+        "take".into()
+    }
+}
+fn owned(ty: Type) -> bool {
+    matches!(ty, Type::Owned | Type::Record(_) | Type::List(_))
+}
+fn list_suffix(elem: Elem) -> &'static str {
+    match elem {
+        Elem::Int => "Li",
+        Elem::Bool => "Lb",
+        Elem::Str => "Ls",
+    }
+}
+const LIST_PRELUDE: &str = r#"static void list_bounds(void) { fputs("zam: list index out of bounds\n", stderr); exit(1); }
+static void list_empty(void) { fputs("zam: pop from empty list\n", stderr); exit(1); }
+static void list_alloc_failed(void) { fputs("zam: allocation failed\n", stderr); exit(1); }
+"#;
+/// 某种元素的列表：结构体与它的释放、移走、长度、追加、按下标取地址、弹出。
+fn list_helpers(elem: Elem) -> String {
+    let l = list_suffix(elem);
+    let t = ctype(elem.ty());
+    let drop_items = if elem == Elem::Str {
+        "for (size_t i = 0; i < l->len; i++) drop(&l->data[i]); "
+    } else {
+        ""
+    };
+    format!(
+        "typedef struct {{ {t} *data; size_t len; size_t cap; }} {l};
+static void drop{l}({l} *l) {{ {drop_items}free(l->data); l->data = NULL; l->len = 0; l->cap = 0; }}
+static {l} take{l}({l} *l) {{ {l} v = *l; l->data = NULL; l->len = 0; l->cap = 0; return v; }}
+static int64_t len{l}({l} *l) {{ return (int64_t)l->len; }}
+static void push{l}({l} *l, {t} v) {{
+    if (l->len == l->cap) {{
+        size_t cap = l->cap ? l->cap * 2 : 4;
+        {t} *p;
+        if (cap > SIZE_MAX / sizeof({t})) list_alloc_failed();
+        p = ({t}*)realloc(l->data, cap * sizeof({t}));
+        if (!p) list_alloc_failed();
+        l->data = p; l->cap = cap;
+    }}
+    l->data[l->len++] = v;
+}}
+static {t} *at{l}({l} *l, int64_t i) {{ if (i < 0 || (uint64_t)i >= l->len) list_bounds(); return &l->data[i]; }}
+static {t} pop{l}({l} *l) {{ if (!l->len) list_empty(); return l->data[--l->len]; }}
+"
+    )
+}
 fn ctype(ty: Type) -> String {
     match ty {
         Type::Record(id) => return format!("R{id}"),
+        Type::List(elem) => return list_suffix(elem).into(),
+        Type::ListRef(elem, _) => return format!("{}*", list_suffix(elem)),
         Type::Owned => "S",
         Type::Shared | Type::Mutable => "S*",
         Type::Int => "int64_t",
@@ -483,10 +620,28 @@ impl Generator<'_> {
             }
             Expr::Int(_) | Expr::ByteLen(_) | Expr::CharLen(_) => Type::Int,
             Expr::Array(values) => Type::ArrayInt(values.len()),
-            Expr::Index(local, _) => match self.locals[local].1 {
+            Expr::Index(local, _) => match self.place_ty(local) {
                 Type::ArrayInt(_) => Type::Int,
+                Type::List(elem) | Type::ListRef(elem, _) => elem.ty(),
                 _ => unreachable!(),
             },
+            Expr::BorrowIndex(_, _, mutable) => {
+                if *mutable {
+                    Type::Mutable
+                } else {
+                    Type::Shared
+                }
+            }
+            Expr::Method(path, method, _) => {
+                let (Type::List(elem) | Type::ListRef(elem, _)) = self.place_ty(path) else {
+                    unreachable!("checked list receiver")
+                };
+                match method.as_str() {
+                    "len" => Type::Int,
+                    "pop" => elem.ty(),
+                    _ => Type::Unit,
+                }
+            }
             Expr::Bool(_) | Expr::StringEqual(_, _) => Type::Bool,
             Expr::Text(_) | Expr::Format(_) => Type::Owned,
             Expr::Variable(name) => self.locals[name].1,
@@ -545,12 +700,59 @@ impl Generator<'_> {
             _ => format!("from_bool({pointer})"),
         }
     }
+    fn place_ty(&self, path: &str) -> Type {
+        match path.split_once('.') {
+            Some((root, field)) => {
+                field_path(&self.module.structs, self.locals[root].1, field)
+                    .expect("checked field path")
+                    .1
+            }
+            None => self.locals[path].1,
+        }
+    }
+    /// 借用参数位置上的值：变量、显式借用或列表元素借用，结果都是指针。
+    fn borrowed(&mut self, expr: &Expr) -> String {
+        match expr {
+            Expr::Variable(name) | Expr::Borrow(name, _) => self.pointer(name),
+            Expr::BorrowIndex(_, _, _) => self.expr(expr),
+            _ => unreachable!("checked borrow"),
+        }
+    }
+    /// 按目标类型生成值：列表字面量只有知道目标类型才能和定长数组区分开。
+    fn expr_as(&mut self, expr: &Expr, ty: Type) -> String {
+        match (expr, ty) {
+            (Expr::Array(values), Type::List(elem)) => {
+                let local = self.scalar("{0}", ty);
+                self.owners.push((local.clone(), ty));
+                for value in values {
+                    let value = self.expr(value);
+                    let value = if elem == Elem::Str {
+                        format!("take(&{value})")
+                    } else {
+                        value
+                    };
+                    self.code
+                        .push_str(&format!("push{}(&{local}, {value});\n", list_suffix(elem)));
+                }
+                local
+            }
+            _ => self.expr(expr),
+        }
+    }
+    /// 把已生成的 owned 值移交出去（实参、字段、返回值）；标量原样返回。
+    fn moved(&self, value: &str, ty: Type) -> String {
+        if owned(ty) {
+            format!("{}(&{value})", take_fn(ty))
+        } else {
+            value.to_owned()
+        }
+    }
     fn pointer(&self, name: &str) -> String {
         if let Some((root, field)) = name.split_once('.') {
             return format!("&{}", self.field(root, field));
         }
         let (local, ty) = &self.locals[name];
-        if matches!(ty, Type::Owned | Type::Record(_)) {
+        if owned(*ty) {
             format!("&{local}")
         } else {
             local.clone()
@@ -571,57 +773,40 @@ impl Generator<'_> {
                 let ty = Type::Record(record_id(name));
                 let local = self.scalar("{0}", ty);
                 self.owners.push((local.clone(), ty));
-                let declaration = &self.module.structs[name];
+                let declaration = self.module.structs[name].clone();
                 for (field, expr) in fields {
                     let index = declaration
                         .fields
                         .iter()
                         .position(|(n, _)| n == field)
                         .unwrap();
-                    let ty = self.ty(expr);
-                    let value = self.expr(expr);
-                    self.code.push_str(&format!(
-                        "{local}.m{index} = {};\n",
-                        if let Type::Record(_) = ty {
-                            format!("take{}(&{value})", ctype(ty))
-                        } else if ty == Type::Owned {
-                            format!("take(&{value})")
-                        } else {
-                            value
-                        }
-                    ));
+                    let ty = declaration.fields[index].1;
+                    let value = self.expr_as(expr, ty);
+                    self.code
+                        .push_str(&format!("{local}.m{index} = {};\n", self.moved(&value, ty)));
                 }
                 local
             }
             Expr::Field(local, field) => self.scalar(&self.field(local, field), self.ty(expr)),
-            Expr::Variable(name) if matches!(self.locals[name].1, Type::Record(_)) => {
+            Expr::Variable(name)
+                if matches!(self.locals[name].1, Type::Record(_) | Type::List(_)) =>
+            {
                 let ty = self.locals[name].1;
                 let local = self.scalar(&format!("take{}({})", ctype(ty), self.pointer(name)), ty);
                 self.owners.push((local.clone(), ty));
                 local
             }
             Expr::StringEqual(left, right) => {
-                let pointer = |expr: &Expr| match expr {
-                    Expr::Variable(name) | Expr::Borrow(name, _) => self.pointer(name),
-                    _ => unreachable!("checked shared string"),
-                };
-                self.scalar(
-                    &format!("string_equal({}, {})", pointer(left), pointer(right)),
-                    Type::Bool,
-                )
+                let left = self.borrowed(left);
+                let right = self.borrowed(right);
+                self.scalar(&format!("string_equal({left}, {right})"), Type::Bool)
             }
             Expr::ByteLen(value) => {
-                let pointer = match value.as_ref() {
-                    Expr::Variable(name) | Expr::Borrow(name, _) => self.pointer(name),
-                    _ => unreachable!("checked shared string"),
-                };
+                let pointer = self.borrowed(value);
                 self.scalar(&format!("byte_len({pointer})"), Type::Int)
             }
             Expr::CharLen(value) => {
-                let pointer = match value.as_ref() {
-                    Expr::Variable(name) | Expr::Borrow(name, _) => self.pointer(name),
-                    _ => unreachable!("checked shared string"),
-                };
+                let pointer = self.borrowed(value);
                 self.scalar(&format!("char_len({pointer})"), Type::Int)
             }
             Expr::Array(values) => {
@@ -636,6 +821,55 @@ impl Generator<'_> {
                         .push_str(&format!("{name}[{index}] = {rendered};\n"));
                 }
                 name
+            }
+            Expr::Index(local, index)
+                if matches!(self.place_ty(local), Type::List(_) | Type::ListRef(_, _)) =>
+            {
+                let (Type::List(elem) | Type::ListRef(elem, _)) = self.place_ty(local) else {
+                    unreachable!()
+                };
+                let index = self.expr(index);
+                let pointer = self.pointer(local);
+                self.scalar(
+                    &format!("*at{}({pointer}, {index})", list_suffix(elem)),
+                    elem.ty(),
+                )
+            }
+            Expr::BorrowIndex(path, index, mutable) => {
+                let (Type::List(elem) | Type::ListRef(elem, _)) = self.place_ty(path) else {
+                    unreachable!("checked list borrow")
+                };
+                let index = self.expr(index);
+                let pointer = self.pointer(path);
+                self.scalar(
+                    &format!("at{}({pointer}, {index})", list_suffix(elem)),
+                    if *mutable {
+                        Type::Mutable
+                    } else {
+                        Type::Shared
+                    },
+                )
+            }
+            Expr::Method(path, method, args) => {
+                let (Type::List(elem) | Type::ListRef(elem, _)) = self.place_ty(path) else {
+                    unreachable!("checked list receiver")
+                };
+                let l = list_suffix(elem);
+                // 参数先求值，再取接收者指针（与检查器的借用顺序一致）。
+                let values: Vec<_> = args.iter().map(|arg| self.expr(arg)).collect();
+                let pointer = self.pointer(path);
+                match method.as_str() {
+                    "len" => self.scalar(&format!("len{l}({pointer})"), Type::Int),
+                    "push" => {
+                        let value = self.moved(&values[0], elem.ty());
+                        self.code
+                            .push_str(&format!("push{l}({pointer}, {value});\n"));
+                        String::new()
+                    }
+                    "pop" if elem == Elem::Str => self.temporary(&format!("pop{l}({pointer})")),
+                    "pop" => self.scalar(&format!("pop{l}({pointer})"), elem.ty()),
+                    _ => unreachable!("checked list method"),
+                }
             }
             Expr::Index(local, index) => {
                 let index = self.expr(index);
@@ -833,8 +1067,8 @@ impl Generator<'_> {
         if result == Type::Unit {
             return String::new();
         }
-        if matches!(result, Type::Record(_)) {
-            let value = self.scalar(&format!("take{}(&{temp}.value)", ctype(result)), result);
+        if matches!(result, Type::Record(_) | Type::List(_)) {
+            let value = self.scalar(&format!("{}(&{temp}.value)", take_fn(result)), result);
             self.owners.push((value.clone(), result));
             value
         } else if result == Type::Owned {
@@ -848,19 +1082,13 @@ impl Generator<'_> {
         let types: Vec<_> = function.params.iter().map(|(_, ty)| *ty).collect();
         let mut values = Vec::new();
         for (arg, ty) in args.iter().zip(types) {
-            values.push(if let Type::Record(_) = ty {
-                let value = self.expr(arg);
-                format!("take{}(&{value})", ctype(ty))
-            } else if ty == Type::Owned {
-                let value = self.expr(arg);
-                format!("take(&{value})")
+            values.push(if owned(ty) {
+                let value = self.expr_as(arg, ty);
+                self.moved(&value, ty)
             } else if matches!(ty, Type::Int | Type::Bool) {
                 self.expr(arg)
             } else {
-                match arg {
-                    Expr::Variable(local) | Expr::Borrow(local, _) => self.pointer(local),
-                    _ => unreachable!(),
-                }
+                self.borrowed(arg)
             });
         }
         format!(
@@ -874,7 +1102,7 @@ impl Generator<'_> {
             self.temporary(call)
         } else if result != Type::Unit {
             let value = self.scalar(call, result);
-            if matches!(result, Type::Record(_)) {
+            if matches!(result, Type::Record(_) | Type::List(_)) {
                 self.owners.push((value.clone(), result));
             }
             value
@@ -946,10 +1174,55 @@ impl Generator<'_> {
                     self.locals.remove(name);
                     self.code.push_str("}\n");
                 }
-                Instruction::Let(name, _, _, expr) => {
-                    let ty = self.ty(expr);
-                    let value = self.expr(expr);
+                Instruction::Let(name, _, annotation, expr) => {
+                    let ty = annotation.unwrap_or_else(|| self.ty(expr));
+                    let value = self.expr_as(expr, ty);
                     self.locals.insert(name.clone(), (value, ty));
+                }
+                Instruction::Each(name, path, nested) => {
+                    let (Type::List(elem) | Type::ListRef(elem, _)) = self.place_ty(path) else {
+                        unreachable!("checked list loop")
+                    };
+                    // 循环体不能修改列表（检查器冻结了根绑定），长度与数据指针整轮不变。
+                    let list = self.scalar(&self.pointer(path), Type::ListRef(elem, false));
+                    let index = format!("v{}", self.next);
+                    self.next += 1;
+                    self.code.push_str(&format!(
+                        "for (size_t {index} = 0; {index} < {list}->len; {index}++) {{\n"
+                    ));
+                    let item = if elem == Elem::Str {
+                        (
+                            self.scalar(&format!("&{list}->data[{index}]"), Type::Shared),
+                            Type::Shared,
+                        )
+                    } else {
+                        (
+                            self.scalar(&format!("{list}->data[{index}]"), elem.ty()),
+                            elem.ty(),
+                        )
+                    };
+                    self.locals.insert(name.clone(), item);
+                    self.loops.push(self.owners.len());
+                    self.block(nested, result_type);
+                    self.loops.pop();
+                    self.locals.remove(name);
+                    self.code.push_str("}\n");
+                }
+                Instruction::AssignIndex(local, index, expr)
+                    if matches!(self.place_ty(local), Type::List(_) | Type::ListRef(_, _)) =>
+                {
+                    let (Type::List(elem) | Type::ListRef(elem, _)) = self.place_ty(local) else {
+                        unreachable!()
+                    };
+                    let index = self.expr(index);
+                    let value = self.expr(expr);
+                    let pointer = self.pointer(local);
+                    let slot = format!("at{}({pointer}, {index})", list_suffix(elem));
+                    self.code.push_str(&if elem == Elem::Str {
+                        format!("{{ S *slot = {slot}; drop(slot); *slot = take(&{value}); }}\n")
+                    } else {
+                        format!("*{slot} = {value};\n")
+                    });
                 }
                 Instruction::AssignIndex(local, index, expr) => {
                     let index = self.expr(index);
@@ -967,41 +1240,39 @@ impl Generator<'_> {
                         .push_str(&format!("{}[{index}] = {value};\n", self.locals[local].0));
                 }
                 Instruction::AssignField(local, field, expr) => {
-                    let value = self.expr(expr);
+                    let ty = field_path(&self.module.structs, self.locals[local].1, field)
+                        .expect("checked field path")
+                        .1;
+                    let value = self.expr_as(expr, ty);
                     let target = self.field(local, field);
-                    let ty = self.ty(expr);
-                    if matches!(ty, Type::Record(_)) {
+                    if owned(ty) {
                         self.code.push_str(&format!(
-                            "{}(&{target}); {target} = take{}(&{value});\n",
+                            "{}(&{target}); {target} = {}(&{value});\n",
                             drop_fn(ty),
-                            ctype(ty)
+                            take_fn(ty)
                         ));
-                    } else if ty == Type::Owned {
-                        self.code
-                            .push_str(&format!("drop(&{target}); {target} = take(&{value});\n"));
                     } else {
                         self.code.push_str(&format!("{target} = {value};\n"));
                     }
                 }
                 Instruction::Assign(name, expr) => {
-                    let value = self.expr(expr);
-                    if matches!(self.locals[name].1, Type::Int | Type::Bool) {
+                    // 通过 `&mut` 参数赋值时，写的是被借用的那个值。
+                    let ty = match self.locals[name].1 {
+                        Type::Mutable => Type::Owned,
+                        Type::ListRef(elem, _) => Type::List(elem),
+                        ty => ty,
+                    };
+                    let value = self.expr_as(expr, ty);
+                    if matches!(ty, Type::Int | Type::Bool) {
                         self.code
                             .push_str(&format!("{} = {value};\n", self.locals[name].0));
                         continue;
                     }
-                    let ty = self.locals[name].1;
                     let pointer = self.pointer(name);
-                    if matches!(ty, Type::Record(_)) {
-                        self.code.push_str(&format!(
-                            "{}({pointer}); *({pointer}) = take{}(&{value});\n",
-                            drop_fn(ty),
-                            ctype(ty)
-                        ));
-                        continue;
-                    }
                     self.code.push_str(&format!(
-                        "drop({pointer});\n*({pointer}) = take(&{value});\n"
+                        "{}({pointer});\n*({pointer}) = {}(&{value});\n",
+                        drop_fn(ty),
+                        take_fn(ty)
                     ));
                 }
                 Instruction::Print(expr) => {
@@ -1017,6 +1288,7 @@ impl Generator<'_> {
                     }
                     let pointer = match expr {
                         Expr::Variable(name) | Expr::Borrow(name, _) => self.pointer(name),
+                        Expr::BorrowIndex(_, _, _) => self.expr(expr),
                         Expr::Field(local, field) => format!("&{}", self.field(local, field)),
                         _ => {
                             let value = self.expr(expr);
@@ -1040,19 +1312,12 @@ impl Generator<'_> {
                 }
                 Instruction::Return(expr) => {
                     if let Some(expr) = expr {
-                        let value = self.expr(expr);
-                        self.code
-                            .push_str(&if matches!(result_type, Type::Record(_)) {
-                                format!(
-                                    "{} result = take{}(&{value});\n",
-                                    ctype(result_type),
-                                    ctype(result_type)
-                                )
-                            } else if result_type == Type::Owned {
-                                format!("S result = take(&{value});\n")
-                            } else {
-                                format!("{} result = {value};\n", ctype(result_type))
-                            });
+                        let value = self.expr_as(expr, result_type);
+                        self.code.push_str(&format!(
+                            "{} result = {};\n",
+                            ctype(result_type),
+                            self.moved(&value, result_type)
+                        ));
                     }
                     self.cleanup();
                     if self.error.is_some() {
@@ -1137,9 +1402,9 @@ impl Generator<'_> {
                     Self::loop_mutations(yes, mutated);
                     Self::loop_mutations(no, mutated);
                 }
-                Instruction::While(_, nested) | Instruction::For(_, _, _, nested) => {
-                    Self::loop_mutations(nested, mutated)
-                }
+                Instruction::While(_, nested)
+                | Instruction::For(_, _, _, nested)
+                | Instruction::Each(_, _, nested) => Self::loop_mutations(nested, mutated),
                 _ => {}
             }
         }
@@ -1172,7 +1437,10 @@ fn visit_exprs<'a>(body: &'a Block, visit: &mut impl FnMut(&'a Expr)) {
     fn expr<'a>(value: &'a Expr, visit: &mut impl FnMut(&'a Expr)) {
         visit(value);
         match value {
-            Expr::Call(_, args) | Expr::Array(args) | Expr::Format(args) => {
+            Expr::Call(_, args)
+            | Expr::Method(_, _, args)
+            | Expr::Array(args)
+            | Expr::Format(args) => {
                 for arg in args {
                     expr(arg, visit);
                 }
@@ -1181,7 +1449,8 @@ fn visit_exprs<'a>(body: &'a Block, visit: &mut impl FnMut(&'a Expr)) {
             | Expr::Try(inner)
             | Expr::ByteLen(inner)
             | Expr::CharLen(inner)
-            | Expr::Index(_, inner) => expr(inner, visit),
+            | Expr::Index(_, inner)
+            | Expr::BorrowIndex(_, inner, _) => expr(inner, visit),
             Expr::Binary(_, a, b) | Expr::StringEqual(a, b) => {
                 expr(a, visit);
                 expr(b, visit);
@@ -1225,6 +1494,22 @@ fn visit_exprs<'a>(body: &'a Block, visit: &mut impl FnMut(&'a Expr)) {
                 expr(end, visit);
                 visit_exprs(body, visit);
             }
+            Instruction::Each(_, _, body) => visit_exprs(body, visit),
+            _ => {}
+        }
+    }
+}
+fn visit_instructions<'a>(body: &'a Block, visit: &mut impl FnMut(&'a Instruction)) {
+    for (instruction, _) in body {
+        visit(instruction);
+        match instruction {
+            Instruction::If(_, yes, no) => {
+                visit_instructions(yes, visit);
+                visit_instructions(no, visit);
+            }
+            Instruction::While(_, nested)
+            | Instruction::For(_, _, _, nested)
+            | Instruction::Each(_, _, nested) => visit_instructions(nested, visit),
             _ => {}
         }
     }
@@ -1413,7 +1698,50 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
             }
         }
     }
-    for name in record_order(module, &records).expect("checked struct layouts") {
+    let records = record_order(module, &records).expect("checked struct layouts");
+    // 用到的列表元素类型：来自签名、结构体字段与局部类型标注（列表值只可能从这几处来）。
+    let mut lists = std::collections::BTreeSet::new();
+    let mut note = |ty: Type| {
+        if let Type::List(elem) | Type::ListRef(elem, _) = ty {
+            lists.insert(elem);
+        }
+    };
+    for name in &needed {
+        let function = &module.functions[name];
+        function.params.iter().for_each(|(_, ty)| note(*ty));
+        note(function.result);
+    }
+    for name in &records {
+        module.structs[name]
+            .fields
+            .iter()
+            .for_each(|(_, ty)| note(*ty));
+    }
+    for (name, function) in &module.functions {
+        if name.split_once(':').unwrap().0 != unit {
+            continue;
+        }
+        let mut blocks = vec![&function.body];
+        visit_exprs(&function.body, &mut |expr| {
+            if let Expr::Catch(_, _, block) = expr {
+                blocks.push(block);
+            }
+        });
+        for block in blocks {
+            visit_instructions(block, &mut |instruction| {
+                if let Instruction::Let(_, _, Some(ty), _) = instruction {
+                    note(*ty);
+                }
+            });
+        }
+    }
+    if !lists.is_empty() {
+        source.push_str(LIST_PRELUDE);
+    }
+    for elem in lists {
+        source.push_str(&list_helpers(elem));
+    }
+    for name in records {
         let structure = &module.structs[&name];
         let id = record_id(&name);
         source.push_str(&format!(
@@ -1432,7 +1760,7 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
         ));
         source.push_str(&format!("static void dropR{id}(R{id} *p) {{"));
         for (i, (_, ty)) in structure.fields.iter().enumerate() {
-            if matches!(ty, Type::Owned | Type::Record(_)) {
+            if owned(*ty) {
                 source.push_str(&format!("{}(&p->m{i});", drop_fn(*ty)));
             }
         }
@@ -1533,7 +1861,7 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
         };
         for (i, (param, ty)) in function.params.iter().enumerate() {
             let local = format!("p{i}");
-            if matches!(ty, Type::Owned | Type::Record(_)) {
+            if owned(*ty) {
                 g.owners.push((local.clone(), *ty));
             }
             g.locals.insert(param.clone(), (local, *ty));

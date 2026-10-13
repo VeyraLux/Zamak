@@ -11,7 +11,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-22");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-23");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -331,7 +331,13 @@ impl Project {
                 }
                 self.resolve_type(id, &mut function.result)
                     .map_err(|error| self.located(id, position, error))?;
-                self.resolve_body(id, &mut function.body)?;
+                let mut locals: BTreeSet<String> = function
+                    .params
+                    .iter()
+                    .map(|(name, _)| name.clone())
+                    .collect();
+                declared(&function.body, &mut locals);
+                self.resolve_body(id, &locals, &mut function.body)?;
                 linked.functions.insert(format!("{id}:{name}"), function);
             }
         }
@@ -347,7 +353,7 @@ impl Project {
                 .get(id)
                 .ok_or("unknown type name")?;
             let mut constructor = Expr::Record(name.clone(), Vec::new());
-            self.resolve_expr(module, &mut constructor)?;
+            self.resolve_expr(module, &BTreeSet::new(), &mut constructor)?;
             if let Expr::Record(name, _) = constructor {
                 *ty = compiler::Type::Record(compiler::record_id(&name));
             }
@@ -396,7 +402,12 @@ impl Project {
         }
     }
 
-    fn resolve_body(&self, module: &str, body: &mut Block) -> Result<()> {
+    fn resolve_body(
+        &self,
+        module: &str,
+        locals: &BTreeSet<String>,
+        body: &mut Block,
+    ) -> Result<()> {
         for (instruction, position) in body {
             let position = *position;
             if let Instruction::Let(_, _, Some(ty), _) = instruction {
@@ -413,31 +424,35 @@ impl Project {
                 | Instruction::Fail(expr) => Some(expr),
                 Instruction::Return(expr) => expr.as_mut(),
                 Instruction::If(condition, yes, no) => {
-                    self.resolve_body(module, yes)?;
-                    self.resolve_body(module, no)?;
+                    self.resolve_body(module, locals, yes)?;
+                    self.resolve_body(module, locals, no)?;
                     Some(condition)
                 }
                 Instruction::While(condition, nested) => {
-                    self.resolve_body(module, nested)?;
+                    self.resolve_body(module, locals, nested)?;
                     Some(condition)
                 }
                 Instruction::For(_, start, end, nested) => {
-                    self.resolve_expr(module, start)
+                    self.resolve_expr(module, locals, start)
                         .map_err(|error| self.located(module, position, error))?;
-                    self.resolve_body(module, nested)?;
+                    self.resolve_body(module, locals, nested)?;
                     Some(end)
+                }
+                Instruction::Each(_, _, nested) => {
+                    self.resolve_body(module, locals, nested)?;
+                    None
                 }
                 Instruction::Break | Instruction::Continue => None,
             };
             if let Some(expr) = expr {
-                self.resolve_expr(module, expr)
+                self.resolve_expr(module, locals, expr)
                     .map_err(|error| self.located(module, position, error))?;
             }
         }
         Ok(())
     }
 
-    fn resolve_expr(&self, module: &str, expr: &mut Expr) -> Result<()> {
+    fn resolve_expr(&self, module: &str, locals: &BTreeSet<String>, expr: &mut Expr) -> Result<()> {
         match expr {
             Expr::Record(name, fields) => {
                 let (target, short) = if let Some((alias, short)) = name.split_once('.') {
@@ -464,7 +479,7 @@ impl Project {
                 }
                 *name = format!("{target}:{short}");
                 for (_, value) in fields {
-                    self.resolve_expr(module, value)?;
+                    self.resolve_expr(module, locals, value)?;
                 }
             }
             Expr::Call(name, args) => {
@@ -495,7 +510,7 @@ impl Project {
                         ));
                     }
                     for arg in args.iter_mut() {
-                        self.resolve_expr(module, arg)?;
+                        self.resolve_expr(module, locals, arg)?;
                     }
                     let left = Box::new(args.remove(0));
                     *expr = if equal {
@@ -507,28 +522,56 @@ impl Project {
                     };
                     return Ok(());
                 }
+                // `a.b(...)`：`a` 是本函数声明过的局部名（且不是导入别名）就是方法调用，交给检查器
+                // 按接收者类型处理；否则是模块调用，拼错的模块名照旧报缺少导入。
+                if let Some((receiver, method)) = name.rsplit_once('.') {
+                    let root = receiver.split('.').next().unwrap_or(receiver);
+                    let imported = self.modules[module]
+                        .module
+                        .imports
+                        .iter()
+                        .any(|path| path.rsplit('/').next() == Some(root));
+                    if locals.contains(root)
+                        && (receiver.contains('.')
+                            || !(imported
+                                || matches!(root, "io" | "fmt" | "string" | "fs" | "env")))
+                    {
+                        let mut args = std::mem::take(args);
+                        for arg in &mut args {
+                            self.resolve_expr(module, locals, arg)?;
+                        }
+                        *expr = Expr::Method(receiver.to_owned(), method.to_owned(), args);
+                        return Ok(());
+                    }
+                }
                 *name = self.resolve(module, name)?;
                 for arg in args {
-                    self.resolve_expr(module, arg)?;
+                    self.resolve_expr(module, locals, arg)?;
                 }
             }
+            Expr::Method(_, _, args) => {
+                for arg in args {
+                    self.resolve_expr(module, locals, arg)?;
+                }
+            }
+            Expr::BorrowIndex(_, index, _) => self.resolve_expr(module, locals, index)?,
             Expr::Unary(_, value)
             | Expr::ByteLen(value)
             | Expr::CharLen(value)
-            | Expr::Try(value) => self.resolve_expr(module, value)?,
+            | Expr::Try(value) => self.resolve_expr(module, locals, value)?,
             Expr::Catch(inner, _, block) => {
-                self.resolve_expr(module, inner)?;
-                self.resolve_body(module, block)?;
+                self.resolve_expr(module, locals, inner)?;
+                self.resolve_body(module, locals, block)?;
             }
             Expr::Array(values) => {
                 for value in values {
-                    self.resolve_expr(module, value)?;
+                    self.resolve_expr(module, locals, value)?;
                 }
             }
-            Expr::Index(_, index) => self.resolve_expr(module, index)?,
+            Expr::Index(_, index) => self.resolve_expr(module, locals, index)?,
             Expr::Binary(_, left, right) | Expr::StringEqual(left, right) => {
-                self.resolve_expr(module, left)?;
-                self.resolve_expr(module, right)?;
+                self.resolve_expr(module, locals, left)?;
+                self.resolve_expr(module, locals, right)?;
             }
             _ => {}
         }
@@ -795,6 +838,74 @@ fn native_cached(
     atomic_write(&checksum, hash(&[&bytes]).as_bytes())?;
     atomic_write(&path, &bytes)?;
     Ok((bytes, false))
+}
+
+/// 函数里声明过的所有局部名（`let`、循环变量、`catch` 绑定），不论作用域；方法调用的
+/// 接收者只能是其中之一，作用域与有效性由检查器负责。
+fn declared(body: &Block, names: &mut BTreeSet<String>) {
+    fn expr(value: &Expr, names: &mut BTreeSet<String>) {
+        match value {
+            Expr::Catch(inner, binding, block) => {
+                names.insert(binding.clone());
+                declared(block, names);
+                expr(inner, names);
+            }
+            Expr::Call(_, values)
+            | Expr::Method(_, _, values)
+            | Expr::Array(values)
+            | Expr::Format(values) => values.iter().for_each(|value| expr(value, names)),
+            Expr::Record(_, fields) => fields.iter().for_each(|(_, value)| expr(value, names)),
+            Expr::Unary(_, inner)
+            | Expr::Try(inner)
+            | Expr::ByteLen(inner)
+            | Expr::CharLen(inner)
+            | Expr::Index(_, inner)
+            | Expr::BorrowIndex(_, inner, _) => expr(inner, names),
+            Expr::Binary(_, left, right) | Expr::StringEqual(left, right) => {
+                expr(left, names);
+                expr(right, names);
+            }
+            _ => {}
+        }
+    }
+    for (instruction, _) in body {
+        match instruction {
+            Instruction::Let(name, _, _, value) => {
+                names.insert(name.clone());
+                expr(value, names);
+            }
+            Instruction::Assign(_, value)
+            | Instruction::AssignField(_, _, value)
+            | Instruction::Print(value)
+            | Instruction::Call(value)
+            | Instruction::Fail(value)
+            | Instruction::Return(Some(value)) => expr(value, names),
+            Instruction::AssignIndex(_, index, value) => {
+                expr(index, names);
+                expr(value, names);
+            }
+            Instruction::If(condition, yes, no) => {
+                expr(condition, names);
+                declared(yes, names);
+                declared(no, names);
+            }
+            Instruction::While(condition, nested) => {
+                expr(condition, names);
+                declared(nested, names);
+            }
+            Instruction::For(name, start, end, nested) => {
+                names.insert(name.clone());
+                expr(start, names);
+                expr(end, names);
+                declared(nested, names);
+            }
+            Instruction::Each(name, _, nested) => {
+                names.insert(name.clone());
+                declared(nested, names);
+            }
+            Instruction::Return(None) | Instruction::Break | Instruction::Continue => {}
+        }
+    }
 }
 
 pub fn run_artifact(path: &Path, args: &[std::ffi::OsString]) -> Result<()> {
