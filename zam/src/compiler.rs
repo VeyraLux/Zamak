@@ -2012,12 +2012,17 @@ pub fn record_order(module: &Module, roots: &BTreeSet<String>) -> Result<Vec<Str
     Ok(order)
 }
 
+/// 多条诊断放进同一个错误字符串时用的分隔符（ASCII 记录分隔符），由命令行拆开逐条输出。
+pub const DIAGNOSTIC_SEPARATOR: char = '\u{1e}';
+
+/// 逐个函数独立检查：每个出错的函数报它的第一条错误，互不影响；全部检查完再一起返回。
 pub fn check(module: &Module, entry: &str) -> Result<(), String> {
     record_order(module, &module.structs.keys().cloned().collect())?;
     let main = module.functions.get(entry).ok_or("missing main function")?;
     if !main.params.is_empty() || main.result != Type::Unit {
         return Err("main must have no parameters or return value".into());
     }
+    let mut errors = Vec::new();
     for (name, function) in &module.functions {
         if function.builtin {
             continue;
@@ -2058,12 +2063,16 @@ pub fn check(module: &Module, entry: &str) -> Result<(), String> {
             }
             Ok(())
         })();
-        result.map_err(|error: String| {
+        if let Err(error) = result {
             let (line, column) = checker.position;
-            format!("line {line}, column {column}: {name}: {error}")
-        })?;
+            errors.push(format!("line {line}, column {column}: {name}: {error}"));
+        }
     }
-    Ok(())
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join(&DIAGNOSTIC_SEPARATOR.to_string()))
+    }
 }
 
 #[cfg(test)]

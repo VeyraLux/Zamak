@@ -50,12 +50,20 @@ fn syntax_diagnostics_include_source_and_line() {
             .unwrap();
         let error = String::from_utf8_lossy(&output.stderr);
         assert!(!output.status.success());
-        assert!(error.contains(&path.display().to_string()), "{error}");
+        // 人类可读格式：`error[ZMxxx]: 信息`，下一行 `--> 文件:行:列`，有源码行时带下划线。
+        assert!(error.starts_with("error[ZM1"), "{error}");
         assert!(
-            error.contains(&format!("line {line}, column {column}:")),
+            error.contains(&format!(
+                "--> {}:{line}:{column}
+",
+                path.display()
+            )),
             "{error}"
         );
         assert!(error.contains(message), "{error}");
+        if source.lines().nth(line - 1).is_some() {
+            assert!(error.contains(" | ") && error.contains('^'), "{error}");
+        }
     }
     fs::remove_file(path).unwrap();
 }
@@ -92,11 +100,83 @@ fn semantic_diagnostics_include_line_and_column() {
         let error = String::from_utf8_lossy(&output.stderr);
         assert!(!output.status.success(), "accepted {source}");
         assert!(
-            error.contains(&format!("line {line}, column {column}:")),
+            error.contains(&format!("{}:{line}:{column}
+", path.display())),
             "{source}: {error}"
         );
+        let text = source.lines().nth(line - 1).unwrap();
+        assert!(error.contains(&format!("{line} | {text}
+")), "{source}: {error}");
         assert!(error.contains(message), "{source}: {error}");
     }
+    fs::remove_file(path).unwrap();
+}
+
+/// 类型检查逐个函数进行：每个出错的函数各报一条，人类可读输出与 JSON 都按位置排序。
+#[test]
+fn every_failing_function_reports_its_first_error() {
+    let path = std::env::temp_dir().join(format!("zam-multi-{}.zm", std::process::id()));
+    fs::write(
+        &path,
+        "fn later() {
+    let x: i64 = \"a\"
+}
+fn main() {
+    let a = \"x\"
+    let b = a
+    println(a)
+    println(a)
+}
+fn fine() {}
+",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_zam"))
+        .arg("check")
+        .arg(&path)
+        .output()
+        .unwrap();
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    let first = error
+        .find(
+            ":2:5
+",
+        )
+        .expect(&error);
+    let second = error
+        .find(
+            ":7:5
+",
+        )
+        .expect(&error);
+    assert!(first < second, "{error}");
+    assert!(
+        !error.contains(":8:5"),
+        "only the first error per function: {error}"
+    );
+    assert!(
+        error.contains(
+            "    println(a)
+  |     ^^^^^^^^^^
+"
+        ),
+        "{error}"
+    );
+    assert!(error.trim_end().ends_with("zam: 2 errors"), "{error}");
+    let output = Command::new(env!("CARGO_BIN_EXE_zam"))
+        .args(["check", "--json"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.lines().count(), 1, "{stdout}");
+    let codes: Vec<_> = stdout
+        .match_indices("\"code\":\"")
+        .map(|(at, _)| &stdout[at + 8..at + 13])
+        .collect();
+    assert_eq!(codes, ["ZM200", "ZM301"], "{stdout}");
+    assert!(stdout.find("\"line\":2,").unwrap() < stdout.find("\"line\":7,").unwrap());
     fs::remove_file(path).unwrap();
 }
 

@@ -303,8 +303,13 @@ impl Project {
         for id in self.modules.keys() {
             self.key(id, &mut keys, &mut BTreeSet::new())?;
         }
-        compiler::check(&self.linked()?, &format!("{}:main", self.entry))
-            .map_err(|error| self.located_function(error))
+        compiler::check(&self.linked()?, &format!("{}:main", self.entry)).map_err(|errors| {
+            errors
+                .split(compiler::DIAGNOSTIC_SEPARATOR)
+                .map(|error| self.located_function(error.to_owned()))
+                .collect::<Vec<_>>()
+                .join(&compiler::DIAGNOSTIC_SEPARATOR.to_string())
+        })
     }
 
     fn linked(&self) -> Result<Module> {

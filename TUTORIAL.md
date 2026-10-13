@@ -771,10 +771,10 @@ zam 0.1.0
 - `zam fmt`：就地整理缩进（4 个空格）、去行尾空白、结尾留一个换行，保留原来的 CRLF/LF。只调整空白，不重建词法单元，因此保留注释和字符串内容；语法有错的代码会被拒绝而不会被改写。修改过的文件通过 `FORMAT <path>` 写入 stderr。它不调整行内空格或自动折行。
 - `zam new <directory>`：生成最小项目骨架（第 1 节）。目录名必须是合法标识符，已存在的目录会被拒绝，不会覆盖任何文件。
 - `zam demo`：运行内置的双目录缓存演示，展示相同源码的缓存复用。
-- `zam check --json` / `zam build --json`：将结果以一行 JSON 写入 stdout，供编辑器或持续集成（CI）读取。其他子命令不接受 `--json`。诊断示例如下：
+- `zam check --json` / `zam build --json`：将结果以一行 JSON 写入 stdout，供编辑器、持续集成（CI）或 AI 工具读取。其他子命令不接受 `--json`。第 15 节示例对应的 JSON 如下：
 
 ```text
-{"command":"check","ok":false,"diagnostics":[{"file":".tmp-tut\\13_broken.zm","line":2,"column":1,"function":null,"message":"unterminated function block"}]}
+{"command":"check","ok":false,"diagnostics":[{"file":"main.zm","line":4,"column":5,"function":"main:main","code":"ZM301","category":"ownership","message":"use after move: name","suggestion":"borrow the value or move it only after the last use"}]}
 ```
 
 - 环境变量 `ZAMAK_CACHE_DIR` 可以改缓存目录。
@@ -782,13 +782,32 @@ zam 0.1.0
 
 ## 第 15 节：常见错误与解决办法
 
-诊断的格式是：
+下面的程序把 `name` 移给了 `other`，之后又使用它：
 
 ```text
-<文件>: line <行>, column <列>: <模块>:<函数>: <信息>
+fn main() {
+    let name = "Zamak"
+    let other = name
+    println(name)
+}
 ```
 
-命令行诊断通常以 `zam:` 开头；词法和语法错误不包含“模块:函数”部分。行、列号从 1 开始，列号按 Unicode 码点计数，制表符计为一个码点。
+`zam check main.zm` 的输出：
+
+```text
+error[ZM301]: use after move: name
+ --> main.zm:4:5
+  |
+4 |     println(name)
+  |     ^^^^^^^^^^^^^
+  = help: borrow the value or move it only after the last use
+```
+
+- 第一行是错误码和原因，`-->` 后面是 `文件:行:列`。行、列号从 1 开始，列号按 Unicode 码点计数。
+- 接着是出错的源码行。词法和语法错误只在出错的记号下划线；类型和所有权错误指向出错语句的开头，下划线划到行尾。
+- `= help` 给出修改方向。
+- 每个出错的函数各报一条错误，多条错误之间空一行，最后一行是 `zam: N errors`。同一个函数里后面的错误，要等前一条修好才会出现。
+- 没有位置的错误（例如找不到 `zam.toml`）仍是一行 `zam: <信息>`。
 
 | 报错信息 | 原因 | 处理方法 |
 | --- | --- | --- |

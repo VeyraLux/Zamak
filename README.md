@@ -61,7 +61,18 @@ hello from zamak
 
 `build` 在 stderr 输出 `OUTPUT <path>`，Windows 上是 `build/<name>-<hash>.exe`，Unix 上是同名的无后缀可执行文件，可以直接启动，也可用 `zam run <path>` 执行。产物不需要安装 Zamak 或 Rust；Windows 默认 MSVC 后端静态链接 C 运行库，其他 C 工具链的运行库依赖取决于其配置。命令失败返回非零退出码，错误写入 stderr。词法/语法错误包含源码文件、行号与列号；列号从 1 开始，按 Unicode 字符计数，制表符算一个字符，EOF 使用末尾位置。词法错误指向 token 起点，语法错误指向解析器发现错误的位置。语义错误包含行号、列号与所属函数，位置取当前语句的起点（`missing string return value` 取函数声明处）；因为一个模块对应一个文件，函数前面的模块名即可定位文件。没有路径参数时使用当前目录；源码后缀统一为 `.zm`；可以直接检查或构建单个源码文件。构建进度（`CACHE`/`OBJECT`/`LINK`/`OUTPUT`）和错误都写 stderr，stdout 只留程序输出。
 
-`zam check --json` 与 `zam build --json` 把结果写成一行 JSON 供编辑器、CI 和 AI 工具读取：`{"command":"check","ok":false,"diagnostics":[{"file":"…","line":3,"column":9,"function":"main:main","code":"ZM100","category":"syntax","message":"…","suggestion":"…"}]}`。`code` 和 `category` 是稳定机器字段，`message` 保持人类可读兼容；`suggestion` 在有明确修复路径时提供下一步。`function` 与位置在无法定位时为 `null`；失败时 stderr 仍保留一行人类可读信息，退出码与不带 `--json` 时一致。其他子命令不接受 `--json`。
+`zam check --json` 与 `zam build --json` 把结果写成一行 JSON 供编辑器、CI 和 AI 工具读取：`{"command":"check","ok":false,"diagnostics":[{"file":"…","line":3,"column":9,"function":"main:main","code":"ZM100","category":"syntax","message":"…","suggestion":"…"}]}`。`code` 和 `category` 是稳定机器字段，`message` 保持人类可读兼容；`suggestion` 在有明确修复路径时提供下一步。`function` 与位置在无法定位时为 `null`。词法、语法与模块解析错误只报第一条；类型与所有权检查逐个函数进行，每个出错的函数各报一条，`diagnostics` 按位置排序。失败时 stderr 仍有人类可读的诊断，退出码与不带 `--json` 时一致。其他子命令不接受 `--json`。
+
+不带 `--json` 时，有位置的诊断写成错误码、位置、源码行、下划线与修改建议（中文与制表符按显示宽度对齐）：
+
+```text
+error[ZM301]: use after move: name
+ --> src/main.zm:8:5
+  |
+8 |     println(name)
+  |     ^^^^^^^^^^^^^
+  = help: borrow the value or move it only after the last use
+```
 
 `zam new <directory>` 生成一个最小可运行的项目骨架；面向 AI 协作可使用 `zam new <directory> --template ai`，额外生成 `AI.md` 与 `README.md`，固定记录“check --json → 最小修复 → fmt → check → build → run”循环。`zam.toml`（`name`/`entry = "src/main.zm"`/`modules = "src"`）、打印一句问候的 `src/main.zm`，以及忽略 `build/` 的 `.gitignore`；创建的文件路径以 `NEW <path>` 写到 stderr，stdout 保持为空。生成的骨架可以直接 `zam run`，并已完成格式化。目标目录已存在就报错退出，不覆盖任何已有文件；目录名必须同时是合法标识符（它会写进 `zam.toml` 的 `name`）。
 

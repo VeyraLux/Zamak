@@ -14,7 +14,7 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 - `zam fmt` 只规范化空白：按大括号深度把每行缩进改成 4 空格的倍数、去行尾空白、结尾留一个换行、保留原换行风格（CRLF 仍是 CRLF）。它不重建 token，所以注释和字符串内容不会丢；改过的文件路径以 `FORMAT <path>` 打到 stderr，已规范的文件不重写。语法坏掉的代码先被拒绝（走 `check` 同一套解析）。不做行内空格重排与折行。
 - `zam --version` / `--help`；缓存目录默认是用户主目录下的 `.zam/cache`，可用环境变量 `ZAMAK_CACHE_DIR` 覆盖。`check` 在任何平台都不需要 C 编译器。
 - C 编译按模块并行，只有缓存 MISS 的模块进编译队列，默认并发度为 `min(可用核数, 8)`，可用环境变量 `ZAMAK_JOBS` 调整（设 `1` 即串行）。并行时 `OBJECT ...` 进度行的顺序不确定，解析进度请按行前缀匹配而不要依赖顺序。
-- `zam check --json` / `zam build --json` 在 stdout 输出一行机器可读诊断：`{"command","ok","diagnostics":[{file,line,column,function,code,category,message,suggestion}]}`。`code`（如 `ZM100`）与 `category` 是稳定机器字段，分支判断只依赖它们；`message` 是人类可读文本，`suggestion` 在有修复路径时给出（`ZM999` 无建议，值为 `null`）；`file`/`line`/`column`/`function` 无法定位时为 `null`。**当前遇到第一个错误即返回，`diagnostics` 最多一项，修好一条再检查。** 失败时 stderr 仍有一行人类可读信息、退出码非零；其他子命令不接受 `--json`。
+- `zam check --json` / `zam build --json` 在 stdout 输出一行机器可读诊断：`{"command","ok","diagnostics":[{file,line,column,function,code,category,message,suggestion}]}`。`code`（如 `ZM100`）与 `category` 是稳定机器字段，分支判断只依赖它们；`message` 是人类可读文本，`suggestion` 在有修复路径时给出（`ZM999` 无建议，值为 `null`）；`file`/`line`/`column`/`function` 无法定位时为 `null`。**词法/语法/模块解析错误只报第一条；之后类型与所有权检查逐个函数进行，每个出错的函数各报它的第一条，`diagnostics` 按文件、行、列排序，可能有多项。** 一轮可以修完各函数的问题再检查；同一函数里的后续错误要等前一条修好才出现。 失败时 stderr 仍有一行人类可读信息、退出码非零；其他子命令不接受 `--json`。
 - 构建进度（`CACHE`/`OBJECT`/`LINK`/`TIMING`/`OUTPUT`）与错误都写 **stderr**，stdout 只有程序输出或 `--json` 的那一行；`TIMING` 一行给出 `check_ms`/`key_ms`/`object_ms`/`object_prepare_ms`/`link_ms`/`total_ms`；`OUTPUT <path>` 的产物名按平台不同（见下表）。命令失败返回非零码。
 
 ## 平台差异（Windows / Linux / macOS）
@@ -84,7 +84,8 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 - 移动后使用、借用冲突/逃逸、不可变赋值、重复/缺失字段等都在 `zam check` 阶段报错。
 - `an empty list literal needs a type annotation` → 给 `[]` 加类型；`cannot move a string out of xs[..]` → 用 `&xs[i]` 或 `string.copy`；`xs is borrowed by an enclosing for loop` → 循环里改了正在遍历的列表或字典；`an empty map literal needs a type annotation` → 给 `{}` 加类型。
 - 运行时（stderr，退出码 1）：`zam: list index out of bounds`、`zam: pop from empty list`、`zam: key not found` 直接终止；`cannot open <path>`、`invalid integer: <text>`、`argument index out of range` 是错误值，可 `catch`；`zam: string index out of bounds`、`zam: array index out of bounds`、`zam: integer arithmetic error` 是直接终止。
-- 诊断格式：`zam: <文件>: line N, column M: <模块>:<函数>: <信息>`；词法/语法错误带行列（列从 1 开始、按 Unicode 字符计数），语义错误取语句起点。
+- 人类可读诊断（stderr）：`error[ZM301]: <信息>`，下一行 `--> <文件>:<行>:<列>`，然后是源码行和 `^` 下划线（词法/语法错误只划记号，语义错误从语句起点划到行尾；中文按 2 格对齐），最后 `= help: <建议>`；多条之间空一行，结尾 `zam: N errors`。没有位置的错误仍是一行 `zam: <信息>`。列从 1 开始、按 Unicode 字符计数。**程序化处理一律用 `--json`**，别解析这段文本。
+- 实现：编译器内部错误仍是字符串 `line L, column C: 模块:函数: 信息`，多条用 `compiler::DIAGNOSTIC_SEPARATOR`（`\u{1e}`）拼接；`main.rs` 的 `diagnostics()` 拆开排序，`diagnostic()` 反解字段，`render()`/`underline()` 渲染。
 
 ## 修改 Zamak 编译器本身
 
