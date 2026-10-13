@@ -1,0 +1,57 @@
+mod common;
+
+use common::Case;
+
+fn stdout(output: &std::process::Output) -> String {
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n")
+}
+
+#[test]
+fn character_literals_are_code_points() {
+    let case = Case::new("text", "chars");
+    let output = case.run("use std/string\nfn main() {\n    println('a')\n    println('{')\n    println('\\n')\n    println('\\'')\n    println('\\\\')\n    println('中')\n    let text = \"#title\"\n    println(string.byte_at(&text, 0) == '#')\n    let digit = '7' - '0'\n    println(digit)\n}\n");
+    assert_eq!(stdout(&output), "97\n123\n10\n39\n92\n20013\ntrue\n7\n");
+    for (source, message) in [
+        (
+            "fn main() {\n    println('ab')\n}\n",
+            "character literal must contain exactly one character",
+        ),
+        (
+            "fn main() {\n    println('')\n}\n",
+            "character literal must contain exactly one character",
+        ),
+        (
+            "fn main() {\n    println('\\q')\n}\n",
+            "unsupported character escape",
+        ),
+        (
+            "fn main() {\n    println('a\n}\n",
+            "character literal must contain exactly one character",
+        ),
+    ] {
+        let output = case.run(source);
+        assert!(!output.status.success(), "accepted {source}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(message), "{source}: {stderr}");
+    }
+}
+
+#[test]
+fn string_search_replace_and_case() {
+    let case = Case::new("text", "helpers");
+    let output = case.run(
+        "use std/string\nfn main() {\n    let s = \"a-b-a-b\"\n    println(string.find_from(&s, \"a\", 1))\n    println(string.find_from(&s, \"a\", 3))\n    println(string.find_from(&s, \"z\", 0))\n    println(string.find_from(&s, \"\", 7))\n    println(string.starts_with(&s, \"a-\"))\n    println(string.starts_with(&s, \"b\"))\n    println(string.ends_with(&s, \"-b\"))\n    println(string.ends_with(\"\", \"x\"))\n    println(string.contains(&s, \"b-a\"))\n    println(string.contains(&s, \"c\"))\n    println(string.replace(&s, \"-\", \" + \"))\n    println(string.replace(&s, \"a-b\", \"\"))\n    println(string.replace(&s, \"\", \"x\"))\n    println(string.replace(\"中中\", \"中\", \"文\"))\n    println(string.lower(\"Hello, 世界 ABC\"))\n    println(string.upper(\"Hello, 世界 abc\"))\n}\n",
+    );
+    assert_eq!(
+        stdout(&output),
+        "4\n4\n-1\n7\ntrue\nfalse\ntrue\nfalse\ntrue\nfalse\na + b + a + b\n-\na-b-a-b\n文文\nhello, 世界 abc\nHELLO, 世界 ABC\n"
+    );
+    let output = case.run("use std/string\nfn main() {\n    let s = \"ab\"\n    println(string.find_from(&s, \"a\", 3))\n}\n");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("zam: string index out of bounds"));
+}

@@ -233,6 +233,28 @@ fn lex(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), String> {
                     }
                     tokens.push(Token::Text(text));
                 }
+                // 字符字面量 `'a'`：值是该字符的 Unicode 码点（i64），ASCII 字符等于 byte_at 读到的字节。
+                '\'' => {
+                    let single = "character literal must contain exactly one character";
+                    let value = match chars.next().map(|(c, _)| c) {
+                        Some('\\') => match chars.next().map(|(c, _)| c) {
+                            Some('n') => '\n',
+                            Some('r') => '\r',
+                            Some('t') => '\t',
+                            Some('0') => '\0',
+                            Some('\\') => '\\',
+                            Some('\'') => '\'',
+                            Some('"') => '"',
+                            _ => return Err("unsupported character escape".into()),
+                        },
+                        Some('\'' | '\n' | '\r') | None => return Err(single.into()),
+                        Some(c) => c,
+                    };
+                    if chars.next().map(|(c, _)| c) != Some('\'') {
+                        return Err(single.into());
+                    }
+                    tokens.push(Token::Number(u32::from(value).to_string()));
+                }
                 c if c.is_ascii_alphabetic() || c == '_' => {
                     let mut word = String::from(c);
                     while chars

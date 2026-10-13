@@ -358,6 +358,76 @@ for (i = 0; i < n; i++) pushLs(&out, zam_arg(i));
 return out;"#,
     },
     Builtin {
+        name: "std/string:find_from",
+        params: &[Type::Shared, Type::Shared, Type::Int],
+        result: Type::Int,
+        fallible: false,
+        body: r#"size_t i;
+if (p2 < 0 || (uint64_t)p2 > p0->len) zam_string_bounds();
+if (!p1->len) return p2;
+if (p1->len > p0->len) return -1;
+for (i = (size_t)p2; i + p1->len <= p0->len; i++) if (memcmp(p0->data + i, p1->data, p1->len) == 0) return (int64_t)i;
+return -1;"#,
+    },
+    Builtin {
+        name: "std/string:starts_with",
+        params: &[Type::Shared, Type::Shared],
+        result: Type::Bool,
+        fallible: false,
+        body: "return !p1->len || (p1->len <= p0->len && memcmp(p0->data, p1->data, p1->len) == 0);",
+    },
+    Builtin {
+        name: "std/string:ends_with",
+        params: &[Type::Shared, Type::Shared],
+        result: Type::Bool,
+        fallible: false,
+        body: "return !p1->len || (p1->len <= p0->len && memcmp(p0->data + (p0->len - p1->len), p1->data, p1->len) == 0);",
+    },
+    Builtin {
+        name: "std/string:contains",
+        params: &[Type::Shared, Type::Shared],
+        result: Type::Bool,
+        fallible: false,
+        body: r#"size_t i;
+if (!p1->len) return 1;
+for (i = 0; i + p1->len <= p0->len; i++) if (memcmp(p0->data + i, p1->data, p1->len) == 0) return 1;
+return 0;"#,
+    },
+    Builtin {
+        name: "std/string:replace",
+        params: &[Type::Shared, Type::Shared, Type::Shared],
+        result: Type::Owned,
+        fallible: false,
+        body: r#"size_t i = 0, count = 0, n, at = 0; unsigned char *p; S s;
+if (!p1->len) return copy(p0);
+while (i + p1->len <= p0->len) { if (memcmp(p0->data + i, p1->data, p1->len) == 0) { count++; i += p1->len; } else i++; }
+if (p2->len > p1->len && count > (SIZE_MAX - p0->len) / (p2->len - p1->len)) zam_alloc_failed();
+n = p0->len - count * p1->len + count * p2->len;
+p = (unsigned char*)malloc(n ? n : 1);
+if (!p) zam_alloc_failed();
+i = 0;
+while (i < p0->len) {
+    if (i + p1->len <= p0->len && memcmp(p0->data + i, p1->data, p1->len) == 0) { if (p2->len) memcpy(p + at, p2->data, p2->len); at += p2->len; i += p1->len; }
+    else p[at++] = p0->data[i++];
+}
+s.data = p; s.len = n;
+return s;"#,
+    },
+    Builtin {
+        name: "std/string:lower",
+        params: &[Type::Shared],
+        result: Type::Owned,
+        fallible: false,
+        body: "S s = copy(p0); size_t i; for (i = 0; i < s.len; i++) if (s.data[i] >= 'A' && s.data[i] <= 'Z') s.data[i] += 32; return s;",
+    },
+    Builtin {
+        name: "std/string:upper",
+        params: &[Type::Shared],
+        result: Type::Owned,
+        fallible: false,
+        body: "S s = copy(p0); size_t i; for (i = 0; i < s.len; i++) if (s.data[i] >= 'a' && s.data[i] <= 'z') s.data[i] -= 32; return s;",
+    },
+    Builtin {
         name: "std/string:copy",
         params: &[Type::Shared],
         result: Type::Owned,

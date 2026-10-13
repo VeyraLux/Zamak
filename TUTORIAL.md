@@ -284,6 +284,7 @@ true
 - 字符串字面量必须写在一行内；字符串内容需要换行时，使用 `\n` 转义。
 - 标准库 `std/string` 提供三个函数：`string.byte_len(&s)` 返回 UTF-8 字节数，`string.char_len(&s)` 返回 Unicode 码点数，`string.equal(&a, &b)` 判断内容是否相等。本例的 `你好，Zamak！` 占 17 字节，包含 9 个码点。
 - Unicode 码点不等同于用户看到的一个字符（字素簇）。组合附加符号或由多个码点组成的 emoji 可能显示为一个字符，`char_len` 仍逐个码点计数。常见汉字在 UTF-8 中通常占 3 字节，因此字节数与码点数不同。
+- 字符字面量用单引号：`'a'`、`'#'`、`'\n'`、`'\''`，它的值是这个字符的 Unicode 码点，类型是 `i64`。和 `string.byte_at` 读到的字节比较时只用 ASCII 字符，例如 `string.byte_at(&s, 0) == '#'`；汉字的码点大于 255，不等于任何单个字节。
 
 ## 第 8 节：数组、列表与字典
 
@@ -734,6 +735,10 @@ lang -> Zamak
 | `string.byte_at(&s, i) -> i64` | 第 `i` 个字节（0–255）；越界时程序终止 |
 | `string.slice(&s, start, end) -> string` | 复制字节区间 `[start, end)`；越界或切在多字节字符中间时程序终止 |
 | `string.find(&s, &needle) -> i64` | 第一次出现的字节位置；找不到返回 -1，空 `needle` 返回 0 |
+| `string.find_from(&s, &needle, start) -> i64` | 从字节位置 `start` 开始查找；`start` 超出 `0..=byte_len` 时程序终止 |
+| `string.starts_with(&s, &p)` / `string.ends_with(&s, &p)` / `string.contains(&s, &p)` | 返回 `bool` |
+| `string.replace(&s, &from, &to) -> string` | 替换所有不重叠的出现；`from` 为空时原样复制 |
+| `string.lower(&s)` / `string.upper(&s) -> string` | 只转换 ASCII 字母，其他字符原样保留 |
 | `string.copy(&s) -> string` | 复制出一份独立的字符串 |
 | `string.split(&s, &sep) -> [string]` | 按分隔符切分，保留空段；空分隔符时整串作为唯一一项 |
 | `string.words(&s) -> [string]` | 按空白切分，跳过连续空白 |
@@ -844,12 +849,12 @@ error[ZM301]: use after move: name
 
 Zamak 0.1.0 的支持范围有限。编写程序时需注意以下限制：
 
-- 尚不支持 `switch`/`match`、枚举、泛型、闭包和 trait/接口；`for` 只支持整数区间。
+- 尚不支持 `switch`/`match`、枚举、泛型、闭包和 trait/接口；`for` 支持整数区间 `a..b` 以及遍历 `&列表`、`&字典`。
 - 尚不提供包管理器、交互式执行环境（REPL）、文档生成工具或重构工具。
-- 标准库包括 `std/string`（`byte_len`、`char_len`、`equal`、`parse_i64`、`trim`、`byte_at`、`slice`、`find`、`copy`、`split`、`words`、`lines`、`join`）、`std/io`（`println`、`read_line`、`read_all`）、`std/fmt`（`println`）、`std/fs`（`read`、`write`）和 `std/env`（`arg_count`、`arg`、`args`），没有目录遍历、网络和时间函数。
+- 标准库包括 `std/string`（`byte_len`、`char_len`、`equal`、`parse_i64`、`trim`、`byte_at`、`slice`、`find`、`find_from`、`starts_with`、`ends_with`、`contains`、`replace`、`lower`、`upper`、`copy`、`split`、`words`、`lines`、`join`）、`std/io`（`println`、`read_line`、`read_all`）、`std/fmt`（`println`）、`std/fs`（`read`、`write`）和 `std/env`（`arg_count`、`arg`、`args`），没有目录遍历、网络和时间函数。
 - 错误类型只能是 `string`，没有错误堆栈。
 - 定长数组仅支持 `i64` 局部值；列表 `[T]` 的元素与字典 `{K: V}` 的值只能是 `i64`、`bool` 或 `string`，字典键只能是 `i64` 或 `string`，还没有结构体元素和嵌套容器。方法不能链式调用。
-- 所有权检查覆盖 `string` 和结构体；尚不支持线程、`unsafe` 和外部函数接口（FFI）。
+- 所有权检查覆盖 `string`、结构体、列表和字典；尚不支持线程、`unsafe` 和外部函数接口（FFI）。
 - 编辑器支持为 VS Code 语法高亮扩展（`editors/vscode/`），没有语言服务器、补全和调试器。
 - 本教程采用源码安装；安装步骤和平台工具链要求见 [安装说明](PREVIEW.md)。
 

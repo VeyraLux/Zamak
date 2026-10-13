@@ -102,6 +102,10 @@
     "numbers": {
       "patterns": [
         {
+          "name": "constant.character.zamak",
+          "match": "'(?:\\\\[nrt0\\\\'\"]|[^'\\\\\\n])'"
+        },
+        {
           "name": "constant.numeric.zamak",
           "match": "\\b[0-9][0-9_]*\\b"
         }
