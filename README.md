@@ -78,7 +78,7 @@ error[ZM301]: use after move: name
 
 `zam fmt [project|file]` 就地整理源码格式：按大括号深度重排每行缩进（每次 4 个空格）、去掉行尾空白、结尾统一留一个换行，并保留原有的换行风格（CRLF 文件仍是 CRLF）。它只改空白、不重建 token，所以注释、字符串内容和行内空格原样保留，不会丢注释；改写过的文件路径以 `FORMAT <path>` 写到 stderr，已经规范的文件不重写也不报告。语法不成立的代码会先被拒绝（与 `check` 同一套解析），不会被改得更难读。当前不做行内空格重排和长行折行。
 
-Windows 默认使用 Visual Studio Build Tools 的「使用 C++ 的桌面开发」及 Windows SDK，编译器通过 `vswhere` 查找 x64 MSVC。也可设置 `CC=gcc`，显式使用已安装的 MinGW GCC；`CC` 必须指向采用 GNU 命令行的编译器程序，不接受附加参数或 MSVC `cl`。Unix 后端调用 `cc`，可通过 `CC` 指定编译器程序；已在 Ubuntu 26.04 + gcc 15.2，以及 WSL2 Ubuntu 24.04 + gcc 13.3 / clang 18.1 上实机验证构建、执行和全部集成回归；macOS 由 CI 验证。`check` 不需要 C 编译器。旧 `.zbc` 产物已不再支持，需要重新构建。
+C 工具链按这个顺序选择：设置了 `CC` 就用它；否则 Windows 先通过 `vswhere` 查找 Visual Studio Build Tools（「使用 C++ 的桌面开发」及 Windows SDK）里的 x64 MSVC，找不到时依次改用 PATH 上的 `gcc`（如 MinGW-w64）、`clang`；Linux 与 macOS 依次使用 `cc`、`clang`、`gcc`。都找不到时报错并说明该安装什么。`CC` 必须指向采用 GNU 命令行的编译器程序，不接受附加参数或 MSVC `cl`。已在 Ubuntu 26.04 + gcc 15.2，以及 WSL2 Ubuntu 24.04 + gcc 13.3 / clang 18.1 上实机验证构建、执行和全部集成回归；macOS 由 CI 验证。`check` 不需要 C 编译器。旧 `.zbc` 产物已不再支持，需要重新构建。
 
 ## 编辑器与 AI 工具
 

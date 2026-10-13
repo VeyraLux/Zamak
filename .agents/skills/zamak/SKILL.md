@@ -21,7 +21,7 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 
 | | Windows x64 | Linux | macOS |
 |---|---|---|---|
-| 默认 C 工具链 | MSVC：`vswhere` 找带 `VC.Tools.x86.x64` 组件的 VS / Build Tools，直接调 `Hostx64\x64` 下的 `cl.exe`/`link.exe` | `cc`（gcc 或 clang，例如装 `build-essential`） | `cc`（Xcode Command Line Tools 的 Apple clang，`xcode-select --install`） |
+| 默认 C 工具链 | MSVC：`vswhere` 找带 `VC.Tools.x86.x64` 组件的 VS / Build Tools，直接调 `Hostx64\x64` 下的 `cl.exe`/`link.exe`；找不到就依次用 PATH 上的 `gcc`、`clang`（本机有 MinGW gcc：`C:\ProgramData\mingw64\mingw64\bin`） | 依次 `cc`、`clang`、`gcc`（例如装 `build-essential`） | 同 Linux（Xcode Command Line Tools 的 Apple clang，`xcode-select --install`） |
 | 换编译器 | 设 `CC=gcc`（MinGW）改走 GNU 后端 | 设 `CC=clang` 等 | 同 Linux |
 | 产物 | `build/<name>-<hash>.exe` | `build/<name>-<hash>`，无后缀，权限 0755 | 同 Linux |
 | 同键同字节 | `.obj` + `/Brepro` + `/d2pathmap` | `.o` + `-ffile-prefix-map=<临时目录>=.` | 同 Linux |
@@ -31,6 +31,7 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 
 - `CC` 必须是单个 GNU 风格的编译器程序：不能带参数、不能是 MSVC `cl`；在 Windows 上也不能是 `.bat`（`.bat` 会被当成 MSVC 的 vcvars 脚本）。要加 sanitizer 之类的参数，就写一个包装脚本再把 `CC` 指过去（Unix）。
 - 缓存键包含 `OS` 与 `ARCH`，同一缓存目录被多个平台共用时不会混用产物。
+- 选择逻辑在 `native.rs` 的 `select()`（`CC` → Windows 的 `msvc()` → PATH 回退），单元测试 `toolchain_selection_prefers_cc_then_msvc_then_path_fallbacks` 覆盖顺序；本机模拟「没有 Visual Studio」：把环境变量 `ProgramFiles(x86)` 指向空目录（`tests/toolchain.rs` 就是这么做的）。
 - **本机 Linux 验证**：WSL 发行版 `Ubuntu`（24.04，默认用户 root）已装 gcc 13.3、clang 18.1、Rust 1.99（含 clippy/rustfmt）。不要直接在 `/mnt/e/...` 上跑：Windows 检出是 CRLF（与 CI 的 LF 不同），而且会和 Windows 共用 `zam/target`。`tools/wsl-verify.sh` 把仓库 clone 到 WSL 自己的文件系统，套上 Windows 侧用 `git diff --output` 导出的未提交补丁（不要用 shell 重定向，pwsh 可能改编码），依次跑 fmt、gcc 与 `CC=clang` 两套全量测试、clippy，再用 ASan/UBSan/LeakSanitizer 跑 `SANITIZE_FILES` 里的示例（正常路径，参数是一个存在的文件、stdin 是几行整数）和 `SANITIZE_FAILING` 里的示例（参数指向不存在的文件，覆盖错误冒出 `main` 的路径）。在仓库根目录用 pwsh 执行：
 
   ```powershell
