@@ -116,7 +116,11 @@ fn main() -> !string {
 - Modules: one file per module, `use name` and `pub fn`/`pub struct`.
 - Standard library: `std/io` (stdin, `println`), `std/fs` (read and write whole files), `std/env` (arguments), and `std/string` (length, compare, parse, trim, find, slice, split, words, lines, join).
 
-The [tutorial](TUTORIAL.md) (Chinese) walks through every feature with runnable examples.
+The [tutorial](TUTORIAL.md) (Chinese) walks through every feature with runnable examples. For a larger program, [examples/md2html](examples/md2html) is a four-module Markdown-to-HTML converter (about 290 lines) covering headings, lists, quotes, fenced code, inline formatting, links, and HTML escaping:
+
+```sh
+zam run examples/md2html -- examples/md2html/sample.md
+```
 
 ## Diagnostics
 
