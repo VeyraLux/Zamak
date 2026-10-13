@@ -293,6 +293,7 @@ impl Project {
             self.key(id, &mut keys, &mut BTreeSet::new())?;
         }
         compiler::check(&self.linked()?, &format!("{}:main", self.entry))
+            .map_err(|error| self.located_function(error))
     }
 
     fn linked(&self) -> Result<Module> {
@@ -345,13 +346,32 @@ impl Project {
     /// 模块解析期错误此前不带位置，AI 只能从 message 里抠模块名。指令级位置已经在
     /// `Block` 里，这里直接复用；粒度与类型检查器一致（都指向语句起始），不假装更精确。
     fn located(&self, module: &str, position: (usize, usize), error: String) -> String {
+        self.with_module_path(
+            module,
+            format!("line {}, column {}: {error}", position.0, position.1),
+        )
+    }
+
+    /// `compiler::check` 的错误自带 `line L, column C`，但函数名是链接后的 `模块:函数`、
+    /// 不含文件路径；项目模式下 `main.rs` 因此只能把 `file` 退化成项目目录。这里按前缀
+    /// 里的模块补回真实路径，使诊断契约里的 `file` 与解析期错误保持一致。
+    fn located_function(&self, error: String) -> String {
+        let Some((position, rest)) = error.split_once(": ") else {
+            return error;
+        };
+        if !position.starts_with("line ") {
+            return error;
+        }
+        let Some((module, _)) = rest.split_once(':') else {
+            return error;
+        };
+        let module = module.to_string();
+        self.with_module_path(&module, error)
+    }
+
+    fn with_module_path(&self, module: &str, error: String) -> String {
         match self.modules.get(module) {
-            Some(input) => format!(
-                "{}: line {}, column {}: {error}",
-                input.path.display(),
-                position.0,
-                position.1
-            ),
+            Some(input) => format!("{}: {error}", input.path.display()),
             None => error,
         }
     }
