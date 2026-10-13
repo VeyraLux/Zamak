@@ -15,7 +15,7 @@ $stage = Join-Path $OutDir ('stage-' + [guid]::NewGuid().ToString('N'))
 $package = Join-Path $stage "zamak-$version-windows-x64"
 New-Item -ItemType Directory -Force -Path (Join-Path $package 'bin') | Out-Null
 Copy-Item $exe (Join-Path $package 'bin/zam.exe')
-foreach ($name in @('README.md','TUTORIAL.md','PREVIEW.md','CONTRIBUTING.md')) {
+foreach ($name in @('README.md','TUTORIAL.md','PREVIEW.md','CONTRIBUTING.md','LICENSE-MIT','LICENSE-APACHE')) {
     Copy-Item (Join-Path $root $name) $package
 }
 foreach ($directory in @('docs','ico')) {

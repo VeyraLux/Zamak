@@ -4,6 +4,7 @@
   "description": "Zamak 语言支持：语法高亮、注释与括号配置。纯 TextMate 语法，无运行时依赖，同一份语法可被 VS Code / TextMate 系编辑器复用。",
   "version": "0.1.0",
   "publisher": "zamak",
+  "license": "MIT OR Apache-2.0",
   "engines": {
     "vscode": "^1.70.0"
   },

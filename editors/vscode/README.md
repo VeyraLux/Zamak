@@ -35,7 +35,7 @@ code --install-extension zamak-0.1.0.vsix
 
 1. 在 <https://marketplace.visualstudio.com/manage> 注册发布者，拿到 publisher id，把 `package.json` 里的 `"publisher": "zamak"` 改成自己的 id（当前值只是占位）。
 2. 在 Azure DevOps 生成 Personal Access Token（scope 选 Marketplace → Manage）。
-3. 补齐市场要求但仓库里还没有的文件：`LICENSE`（许可证需用户/维护者选定）、`CHANGELOG.md`。
+3. 补齐市场要求的文件：`vsce` 只认扩展目录里的 `LICENSE`，打包前把仓库根目录的 `LICENSE-MIT` 复制为 `editors/vscode/LICENSE`（`package.json` 已声明 `MIT OR Apache-2.0`）；另需 `CHANGELOG.md`。
 4. 打包并发布：
 
 ```powershell
