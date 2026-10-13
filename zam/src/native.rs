@@ -1553,7 +1553,7 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
         if module.functions[entry].error.is_some() {
             let structure = fallible_name(module.functions[entry].result);
             source.push_str(&format!(
-                "int main(int argc, char **argv) {{ zam_argc = argc; zam_argv = argv; output_mode(); {structure} r = {}(); if (!r.ok) {{ uncaught_error(&r.error); return 1; }} return fflush(stdout) == EOF ? 1 : 0; }}\n",
+                "int main(int argc, char **argv) {{ zam_argc = argc; zam_argv = argv; output_mode(); {structure} r = {}(); if (!r.ok) {{ uncaught_error(&r.error); drop(&r.error); return 1; }} return fflush(stdout) == EOF ? 1 : 0; }}\n",
                 symbols[entry]
             ));
         } else {
