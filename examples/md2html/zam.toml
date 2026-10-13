@@ -1,0 +1,4 @@
+[project]
+name = "md2html"
+entry = "src/main.zm"
+modules = "src"
