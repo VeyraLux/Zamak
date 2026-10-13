@@ -11,7 +11,20 @@
 
 `check --json` 和 `build --json` 的 `diagnostics` 保留人类可读的 `message`，并提供稳定的 `code`、`category`、`file`、`line`、`column`、`function` 与可选 `suggestion`。AI 工具应优先依赖 `code` 和位置，不要用完整 message 做唯一分支条件。`zam/tests/diagnostics.rs` 用真实源码逐个断言这里的 code、category 和非空 suggestion（`ZM999` 没有可操作建议，是唯一的例外），避免分类只在单元测试里成立。
 
-`check --json` 与 `build --json` 各输出一行 JSON，形状固定为 `{"command":...,"ok":...,"diagnostics":[...]}`：`ok` 是布尔值，`diagnostics` 是数组。当前实现遇到第一个错误就返回，所以数组最多只有一项——AI 应把它当作修一条再检查的循环，而不是一次列出全部错误。`file`、`line`、`column`、`function`、`suggestion` 都可能是 `null`（部分整项目级工具错误仍没有行列位置，`ZM999` 没有建议；可定位的导入错误会保留源位置）。失败时进程退出码为 1，人类可读的一行仍写到 stderr，stdout 保持是合法 JSON。
+`check --json` 与 `build --json` 各输出一行 JSON，形状固定为 `{"command":...,"ok":...,"diagnostics":[...]}`：`ok` 是布尔值，`diagnostics` 是数组，按文件、行、列排序。词法、语法与模块解析错误遇到第一条就停，数组只有一项；通过这一步后，类型与所有权检查逐个函数独立进行，**每个出错的函数各报它的第一条错误**，所以数组可能有多项。AI 可以在一轮里修完各函数的问题再检查；同一函数里后续的错误要等第一条修好后才会出现。`file`、`line`、`column`、`function`、`suggestion` 都可能是 `null`（部分整项目级工具错误仍没有行列位置，`ZM999` 没有建议；可定位的导入错误会保留源位置）。失败时进程退出码为 1，stderr 仍有人类可读的诊断（格式见下），stdout 保持是合法 JSON。
+
+不带 `--json` 时，有位置的诊断在 stderr 渲染成：
+
+```text
+error[ZM301]: use after move: name
+ --> src/main.zm:8:5
+  |
+8 |     println(name)
+  |     ^^^^^^^^^^^^^
+  = help: borrow the value or move it only after the last use
+```
+
+词法与语法错误只划出出错的记号，语义错误从语句起点划到行尾。多条诊断之间空一行，最后一行是 `zam: N errors`。没有位置的错误仍是一行 `zam: <信息>`。解析这类文本不稳定，工具请用 `--json`。
 
 常见代码包括：
 

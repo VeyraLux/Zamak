@@ -126,7 +126,7 @@ fn new_project(directory: &Path, ai_template: bool) -> project::Result<()> {
     if ai_template {
         files.push((
             directory.join("AI.md"),
-            "# AI 工作循环\n\n1. 运行 `zam check --json <project>`。\n2. 根据 `file`、`line`、`column`、`function`、`code`、`category` 和 `suggestion` 定位最小修复。\n3. 修改后运行 `zam fmt <project>`，再重新检查。\n4. 通过后运行 `zam build <project>` 和 `zam run <project>`。\n\n每次 `check --json` 只返回第一个诊断，修好一条后再检查。保持每次修改小而明确。当前版本暂不支持浮点数、网络 I/O、泛型、枚举、闭包、线程和 FFI；可增长列表写作 `[i64]`/`[bool]`/`[string]`，字典写作 `{string: i64}` 等（空列表、空字典要标注类型），文件、标准输入与命令行参数见 `std/fs`、`std/io`、`std/env`。\n".to_string(),
+            "# AI 工作循环\n\n1. 运行 `zam check --json <project>`。\n2. 根据 `file`、`line`、`column`、`function`、`code`、`category` 和 `suggestion` 定位最小修复。\n3. 修改后运行 `zam fmt <project>`，再重新检查。\n4. 通过后运行 `zam build <project>` 和 `zam run <project>`。\n\n语法错误只报第一条；类型与所有权错误每个函数各报一条，可以一轮修完再检查。保持每次修改小而明确。当前版本暂不支持浮点数、网络 I/O、泛型、枚举、闭包、线程和 FFI；可增长列表写作 `[i64]`/`[bool]`/`[string]`，字典写作 `{string: i64}` 等（空列表、空字典要标注类型），文件、标准输入与命令行参数见 `std/fs`、`std/io`、`std/env`。\n".to_string(),
         ));
         files.push((
             directory.join("README.md"),
@@ -164,7 +164,11 @@ fn format_sources(input: &Path) -> project::Result<()> {
 fn report(command: &str, entry: &str, outcome: &project::Result<()>) -> String {
     let items = match outcome {
         Ok(()) => String::new(),
-        Err(error) => item(&diagnostic(entry, error)),
+        Err(error) => diagnostics(entry, error)
+            .iter()
+            .map(|(_, diagnostic)| item(diagnostic))
+            .collect::<Vec<_>>()
+            .join(","),
     };
     format!(
         "{{\"command\":\"{command}\",\"ok\":{},\"diagnostics\":[{items}]}}",
@@ -464,14 +468,142 @@ fn demo() -> project::Result<()> {
 
 fn main() {
     if let Err(error) = execute() {
-        eprintln!("zam: {error}");
+        // 带行列的诊断渲染成「错误码 + 位置 + 源码行 + 下划线 + 建议」；其余错误保持一行。
+        // 没有位置的错误不渲染源码，兜底文件名用不到。
+        let diagnostics = diagnostics(".", &error);
+        let count = diagnostics.len();
+        for (index, (raw, diagnostic)) in diagnostics.iter().enumerate() {
+            if index > 0 {
+                eprintln!();
+            }
+            match render(diagnostic) {
+                Some(text) => eprintln!("{text}"),
+                None => eprintln!("zam: {raw}"),
+            }
+        }
+        if count > 1 {
+            eprintln!("\nzam: {count} errors");
+        }
         std::process::exit(1);
     }
+}
+
+/// 拆开一次失败里的多条诊断，按文件、行、列排序。
+fn diagnostics(entry: &str, error: &str) -> Vec<(String, Diagnostic)> {
+    let mut items: Vec<_> = error
+        .split(compiler::DIAGNOSTIC_SEPARATOR)
+        .map(|raw| (raw.to_owned(), diagnostic(entry, raw)))
+        .collect();
+    items.sort_by(|(_, a), (_, b)| (&a.file, a.line, a.column).cmp(&(&b.file, b.line, b.column)));
+    items
+}
+
+/// 终端里的显示宽度：制表符按 4 格，东亚宽字符与 emoji 按 2 格。
+fn width(c: char) -> usize {
+    match c {
+        '\t' => 4,
+        '\u{1100}'..='\u{115F}'
+        | '\u{2E80}'..='\u{A4CF}'
+        | '\u{AC00}'..='\u{D7A3}'
+        | '\u{F900}'..='\u{FAFF}'
+        | '\u{FE30}'..='\u{FE4F}'
+        | '\u{FF00}'..='\u{FF60}'
+        | '\u{FFE0}'..='\u{FFE6}'
+        | '\u{1F300}'..='\u{1FAFF}'
+        | '\u{20000}'..='\u{3FFFD}' => 2,
+        _ => 1,
+    }
+}
+
+/// 源码行（制表符展开）和对应的下划线行。`column` 从 1 开始按字符计数；`token` 为真时只划
+/// 出该位置的一个记号（词法/语法错误），否则划到语句所在行的末尾（语义错误指向语句起点）。
+fn underline(line: &str, column: usize, token: bool) -> (String, String) {
+    let chars: Vec<char> = line.chars().collect();
+    let start = column.saturating_sub(1).min(chars.len());
+    let end = if token {
+        let mut end = start;
+        match chars.get(start) {
+            Some(c) if c.is_alphanumeric() || *c == '_' => {
+                while chars
+                    .get(end)
+                    .is_some_and(|c| c.is_alphanumeric() || *c == '_')
+                {
+                    end += 1;
+                }
+            }
+            Some('"') => {
+                end += 1;
+                while chars.get(end).is_some_and(|c| *c != '"') {
+                    end += 1;
+                }
+                end = (end + 1).min(chars.len());
+            }
+            Some(_) => end += 1,
+            None => {}
+        }
+        end
+    } else {
+        let mut end = chars.len();
+        while end > start && (chars[end - 1].is_whitespace() || chars[end - 1] == '{') {
+            end -= 1;
+        }
+        end
+    };
+    let shown = line.replace('\t', "    ");
+    let pad: usize = chars[..start].iter().map(|c| width(*c)).sum();
+    let span: usize = chars[start..end].iter().map(|c| width(*c)).sum();
+    (
+        shown,
+        format!("{}{}", " ".repeat(pad), "^".repeat(span.max(1))),
+    )
+}
+
+fn render(diagnostic: &Diagnostic) -> Option<String> {
+    let (line, column) = (diagnostic.line?, diagnostic.column?);
+    // 左侧栏按行号宽度对齐，`-->`、`|`、`=` 落在同一列。
+    let gutter = " ".repeat(line.to_string().len());
+    let mut out = format!(
+        "error[{}]: {}\n{gutter}--> {}:{line}:{column}",
+        diagnostic.code, diagnostic.message, diagnostic.file
+    );
+    let source = std::fs::read_to_string(&diagnostic.file).ok();
+    if let Some(text) = source
+        .as_deref()
+        .and_then(|text| text.lines().nth(line - 1))
+    {
+        let (shown, marks) = underline(text, column, diagnostic.category == "syntax");
+        out.push_str(&format!(
+            "\n{gutter} |\n{line} | {shown}\n{gutter} | {marks}"
+        ));
+    }
+    if let Some(suggestion) = diagnostic.suggestion {
+        out.push_str(&format!("\n{gutter} = help: {suggestion}"));
+    }
+    Some(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn underline_marks_tokens_or_statements_by_display_width() {
+        // 记号：标识符、字符串字面量、单个符号；中文按 2 格对齐，制表符展开成 4 格。
+        assert_eq!(
+            underline("let 名字 = @x", 10, true),
+            ("let 名字 = @x".into(), "           ^".into())
+        );
+        assert_eq!(
+            underline("\tprintln(\"未闭合", 10, true),
+            ("    println(\"未闭合".into(), "            ^^^^^^^".into())
+        );
+        assert_eq!(underline("x", 5, true).1, " ^");
+        // 语句：划到行尾，去掉行尾空白与开块的 `{`。
+        assert_eq!(
+            underline("    while xs.len() > 0 {  ", 5, false).1,
+            "    ^^^^^^^^^^^^^^^^^^"
+        );
+    }
 
     #[test]
     fn diagnostic_categories_distinguish_repair_actions() {
