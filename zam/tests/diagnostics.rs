@@ -342,3 +342,45 @@ fn module_resolution_errors_include_location() {
     }
     fs::remove_dir_all(root).unwrap();
 }
+
+/// 类型检查期的错误由 `compiler::check` 产生，message 里带的是链接后的 `模块:函数`、不含
+/// 文件路径；项目模式下 `main.rs` 因此曾把 `file` 退化成项目目录。这里断言它补回了真正
+/// 出错模块的路径，与解析期错误保持一致。
+#[test]
+fn project_check_errors_report_module_path() {
+    let root = std::env::temp_dir().join(format!("zam-check-location-{}", std::process::id()));
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("zam.toml"),
+        "[project]\nname = \"probe\"\nentry = \"src/main.zm\"\nmodules = \"src\"\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("main.zm"),
+        "use greeting\n\nfn main() {\n    println(greeting.hello())\n}\n",
+    )
+    .unwrap();
+    let module = root.join("src").join("greeting.zm");
+    fs::write(&module, "pub fn hello() -> string {\n    return 1\n}\n").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_zam"))
+        .args(["check", "--json"])
+        .arg(&root)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(!output.status.success(), "{stdout}");
+    assert_eq!(stdout.lines().count(), 1, "{stdout}");
+    let escaped = module.display().to_string().replace('\\', "\\\\");
+    for field in [
+        format!("\"file\":\"{escaped}\""),
+        "\"line\":2".to_string(),
+        "\"column\":5".to_string(),
+        "\"function\":\"greeting:hello\"".to_string(),
+        "\"code\":\"ZM200\"".to_string(),
+        "\"category\":\"type\"".to_string(),
+    ] {
+        assert!(stdout.contains(&field), "{field} missing from {stdout}");
+    }
+    fs::remove_dir_all(root).unwrap();
+}
