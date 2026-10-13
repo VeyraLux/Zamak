@@ -615,6 +615,22 @@ impl Generator<'_> {
                     self.loops.pop();
                     self.code.push_str("}\n");
                 }
+                Instruction::For(name, start, end, nested) => {
+                    // 起止按源码顺序各求值一次；counter < end <= INT64_MAX，自增不会溢出。
+                    let start = self.expr(start);
+                    let end = self.expr(end);
+                    let counter = format!("v{}", self.next);
+                    self.next += 1;
+                    self.code.push_str(&format!(
+                        "for (int64_t {counter} = {start}; {counter} < {end}; {counter}++) {{\n"
+                    ));
+                    self.locals.insert(name.clone(), (counter, Type::Int));
+                    self.loops.push(self.owners.len());
+                    self.block(nested, result_type);
+                    self.loops.pop();
+                    self.locals.remove(name);
+                    self.code.push_str("}\n");
+                }
                 Instruction::Let(name, _, _, expr) => {
                     let ty = self.ty(expr);
                     let value = self.expr(expr);
@@ -806,7 +822,9 @@ impl Generator<'_> {
                     Self::loop_mutations(yes, mutated);
                     Self::loop_mutations(no, mutated);
                 }
-                Instruction::While(_, nested) => Self::loop_mutations(nested, mutated),
+                Instruction::While(_, nested) | Instruction::For(_, _, _, nested) => {
+                    Self::loop_mutations(nested, mutated)
+                }
                 _ => {}
             }
         }
@@ -885,6 +903,11 @@ fn visit_exprs<'a>(body: &'a Block, visit: &mut impl FnMut(&'a Expr)) {
             }
             Instruction::While(condition, body) => {
                 expr(condition, visit);
+                visit_exprs(body, visit);
+            }
+            Instruction::For(_, start, end, body) => {
+                expr(start, visit);
+                expr(end, visit);
                 visit_exprs(body, visit);
             }
             _ => {}
@@ -1506,6 +1529,26 @@ mod tests {
         assert!(body.contains(" + "), "{body}");
     }
 
+    #[test]
+    fn for_ranges_emit_c_loops_without_redundant_checks() {
+        let mut module = crate::compiler::parse(
+            "fn main() {\nlet mut a = [0, 0, 0, 0]\nfor i in 0..4 {\na[i] = i * 2\nprintln(a[i])\nprintln(i + 1)\n}\n}",
+        )
+        .unwrap();
+        let function = module.functions.remove("main").unwrap();
+        module.functions.insert("case:main".into(), function);
+        crate::compiler::check(&module, "case:main").unwrap();
+        let source = generate(&module, "case:main", "case");
+        let body = source
+            .split_once("void f636173653a6d61696e(void) {\n")
+            .unwrap()
+            .1;
+        assert!(body.contains("for (int64_t "), "{body}");
+        assert!(!body.contains("checked_index("), "{body}");
+        assert!(!body.contains("add("), "{body}");
+        assert!(!body.contains("mul("), "{body}");
+    }
+
     fn scalar_module(source: &str) -> Module {
         fn qualify(expr: &mut Expr) {
             match expr {
@@ -1538,6 +1581,11 @@ mod tests {
                     }
                     Instruction::While(value, nested) => {
                         qualify(value);
+                        body(nested);
+                    }
+                    Instruction::For(_, start, end, nested) => {
+                        qualify(start);
+                        qualify(end);
                         body(nested);
                     }
                     _ => {}

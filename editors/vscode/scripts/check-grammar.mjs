@@ -50,7 +50,7 @@ for (const group of Object.keys(grammar.repository)) {
     errors.push(`repository group #${group} is never included`);
   }
 }
-const keywords = ['catch', 'fail', 'struct', 'i64', 'string', 'println', 'while', 'pub'];
+const keywords = ['catch', 'fail', 'struct', 'i64', 'string', 'println', 'while', 'for', 'pub'];
 const repository = JSON.stringify(grammar.repository);
 for (const keyword of keywords) {
   if (!repository.includes(keyword)) errors.push(`grammar does not mention ${keyword}`);

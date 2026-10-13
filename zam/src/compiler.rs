@@ -55,6 +55,8 @@ pub enum Instruction {
     Return(Option<Expr>),
     If(Expr, Block, Block),
     While(Expr, Block),
+    // `for name in start..end`：区间左闭右开，起止只求值一次，循环变量是不可变的 i64。
+    For(String, Expr, Expr, Block),
     Break,
     Continue,
 }
@@ -442,7 +444,11 @@ impl Parser {
             return Ok(Expr::Borrow(name, mutable));
         }
         let mut name = self.word()?;
-        while self.symbol('.') {
+        // 只有点号后面跟标识符才是字段路径；`a..b` 里的 `..` 留给 for 区间。
+        while self.peek() == Some(&Token::Symbol('.'))
+            && matches!(self.tokens.get(self.position + 1), Some(Token::Word(_)))
+        {
+            self.take();
             name.push('.');
             name.push_str(&self.word()?);
         }
@@ -533,6 +539,18 @@ impl Parser {
                 let condition = self.expr()?;
                 let nested = self.block(imports, result)?;
                 Instruction::While(condition, nested)
+            } else if self.keyword("for") {
+                let local = self.word()?;
+                if !self.keyword("in") {
+                    return Err("expected `in` after the for loop variable".into());
+                }
+                let start = self.expr()?;
+                if !(self.symbol('.') && self.symbol('.')) {
+                    return Err("expected `..` in for range: for name in start..end".into());
+                }
+                let end = self.expr()?;
+                let nested = self.block(imports, result)?;
+                Instruction::For(local, start, end, nested)
             } else if self.keyword("break") {
                 Instruction::Break
             } else if self.keyword("continue") {
@@ -834,7 +852,7 @@ pub fn encode(module: &Module) -> Vec<u8> {
         .map(|(name, structure)| (name, structure.public, &structure.fields))
         .collect();
     format!(
-        "ZAM-IR-12\n{declarations:?}\n{:?}\n{:?}\n{:?}\n",
+        "ZAM-IR-13\n{declarations:?}\n{:?}\n{:?}\n{:?}\n",
         module.type_names, module.imports, module.functions
     )
     .into_bytes()
@@ -1282,6 +1300,38 @@ impl Checker<'_> {
                     }
                     self.locals = before;
                     self.expr(condition, Type::Bool, &mut BTreeMap::new())?;
+                    returned = false;
+                }
+                Instruction::For(local, start, end, nested) => {
+                    self.expr(start, Type::Int, &mut loans)?;
+                    self.expr(end, Type::Int, &mut loans)?;
+                    if self.locals.contains_key(local) {
+                        return Err(format!("duplicate binding {local}"));
+                    }
+                    self.locals.insert(
+                        local.clone(),
+                        Binding {
+                            ty: Type::Int,
+                            mutable: false,
+                            live: true,
+                        },
+                    );
+                    let before = self.locals.clone();
+                    // 上界在进入循环前已求值，continue 不需要再检查任何条件。
+                    self.loops.push((before.clone(), Expr::Bool(true)));
+                    let returns = self.block(nested, result)?;
+                    self.loops.pop();
+                    if !returns {
+                        for (name, binding) in &before {
+                            if binding.live && !self.locals[name].live {
+                                return Err(format!(
+                                    "loop moves value without reinitialization: {name}"
+                                ));
+                            }
+                        }
+                    }
+                    self.locals = before;
+                    self.locals.remove(local);
                     returned = false;
                 }
                 Instruction::Break | Instruction::Continue => {
