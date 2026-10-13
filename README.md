@@ -1,5 +1,7 @@
 # Zamak
 
+[English](README.en.md) | 中文
+
 面向快速构建的静态类型原生语言原型。
 
 [![CI](https://github.com/rayL-K/Zamak/actions/workflows/ci.yml/badge.svg)](https://github.com/rayL-K/Zamak/actions/workflows/ci.yml)
