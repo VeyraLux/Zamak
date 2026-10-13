@@ -114,6 +114,321 @@ static S from_bool(int value) {
 }
 "#;
 
+// 标准库里需要平台能力的函数共用的 C 辅助代码；某个目标文件只要用到任一内建函数就整段发射一次。
+// Windows 不引入 <windows.h>（太重且宏会撞名），只声明用到的三个 kernel32 函数。
+const STD_PRELUDE: &str = r#"#ifdef _WIN32
+__declspec(dllimport) wchar_t *__stdcall GetCommandLineW(void);
+__declspec(dllimport) int __stdcall MultiByteToWideChar(unsigned int, unsigned long, const char *, int, wchar_t *, int);
+__declspec(dllimport) int __stdcall WideCharToMultiByte(unsigned int, unsigned long, const wchar_t *, int, char *, int, const char *, int *);
+#endif
+extern int zam_argc;
+extern char **zam_argv;
+static void zam_alloc_failed(void) { fputs("zam: allocation failed\n", stderr); exit(1); }
+static void zam_string_bounds(void) { fputs("zam: string index out of bounds\n", stderr); exit(1); }
+static S zam_message(const char *text, S *detail) {
+    S head = own((const unsigned char*)text, strlen(text));
+    return detail ? cat(head, copy(detail)) : head;
+}
+static void zam_stdin_binary(void) {
+#ifdef _WIN32
+    static int done;
+    if (!done) { done = 1; _setmode(_fileno(stdin), _O_BINARY); }
+#endif
+}
+// 路径按 UTF-8 解释；Windows 转成 UTF-16 走 _wfopen，中文路径才不会按本地代码页错读。
+static FILE *zam_open(S *path, const char *mode) {
+    FILE *file;
+    size_t i;
+    for (i = 0; i < path->len; i++) if (!path->data[i]) return NULL;
+#ifdef _WIN32
+    {
+        int n = 0;
+        wchar_t *wide, wmode[4];
+        if (path->len > INT_MAX / 2) return NULL;
+        if (path->len) {
+            n = MultiByteToWideChar(65001, 8, (const char*)path->data, (int)path->len, NULL, 0);
+            if (n <= 0) return NULL;
+        }
+        wide = (wchar_t*)malloc(((size_t)n + 1) * sizeof(wchar_t));
+        if (!wide) zam_alloc_failed();
+        if (n) MultiByteToWideChar(65001, 8, (const char*)path->data, (int)path->len, wide, n);
+        wide[n] = 0;
+        for (i = 0; mode[i] && i < 3; i++) wmode[i] = (wchar_t)mode[i];
+        wmode[i] = 0;
+        file = _wfopen(wide, wmode);
+        free(wide);
+    }
+#else
+    {
+        char *name = (char*)malloc(path->len + 1);
+        if (!name) zam_alloc_failed();
+        if (path->len) memcpy(name, path->data, path->len);
+        name[path->len] = 0;
+        file = fopen(name, mode);
+        free(name);
+    }
+#endif
+    return file;
+}
+static int zam_read_all(FILE *file, S *out) {
+    size_t cap = 4096, n = 0, got;
+    unsigned char *p = (unsigned char*)malloc(cap), *q;
+    if (!p) zam_alloc_failed();
+    for (;;) {
+        if (n == cap) {
+            if (cap > SIZE_MAX / 2) { free(p); return 0; }
+            q = (unsigned char*)realloc(p, cap * 2);
+            if (!q) zam_alloc_failed();
+            p = q; cap *= 2;
+        }
+        got = fread(p + n, 1, cap - n, file);
+        if (!got) break;
+        n += got;
+    }
+    if (ferror(file)) { free(p); return 0; }
+    out->data = p; out->len = n;
+    return 1;
+}
+#ifdef _WIN32
+// 按 MSVC 运行库的规则切分 GetCommandLineW()，再转 UTF-8；main 收到的 argv 是本地代码页。
+static S *zam_wargs;
+static int64_t zam_wcount = -1;
+static void zam_wpush(wchar_t **text, size_t *len, size_t *cap, wchar_t c) {
+    if (*len == *cap) {
+        wchar_t *next;
+        *cap = *cap ? *cap * 2 : 16;
+        next = (wchar_t*)realloc(*text, *cap * sizeof(wchar_t));
+        if (!next) zam_alloc_failed();
+        *text = next;
+    }
+    (*text)[(*len)++] = c;
+}
+static void zam_parse_args(void) {
+    const wchar_t *p = GetCommandLineW();
+    size_t count = 0, slots = 0;
+    if (*p == L'"') { p++; while (*p && *p != L'"') p++; if (*p) p++; }
+    else { while (*p && *p != L' ' && *p != L'\t') p++; }
+    for (;;) {
+        wchar_t *arg = NULL;
+        size_t len = 0, cap = 0, slashes, i;
+        int quoted = 0, n = 0;
+        unsigned char *bytes;
+        while (*p == L' ' || *p == L'\t') p++;
+        if (!*p) break;
+        while (*p && (quoted || (*p != L' ' && *p != L'\t'))) {
+            slashes = 0;
+            while (*p == L'\\') { slashes++; p++; }
+            if (*p == L'"') {
+                for (i = 0; i < slashes / 2; i++) zam_wpush(&arg, &len, &cap, L'\\');
+                if (slashes % 2) { zam_wpush(&arg, &len, &cap, L'"'); p++; }
+                else if (quoted && p[1] == L'"') { zam_wpush(&arg, &len, &cap, L'"'); p += 2; }
+                else { quoted = !quoted; p++; }
+            } else {
+                for (i = 0; i < slashes; i++) zam_wpush(&arg, &len, &cap, L'\\');
+                if (*p && (quoted || (*p != L' ' && *p != L'\t'))) zam_wpush(&arg, &len, &cap, *p++);
+            }
+        }
+        if (len) n = WideCharToMultiByte(65001, 0, arg, (int)len, NULL, 0, NULL, NULL);
+        bytes = (unsigned char*)malloc(n ? (size_t)n : 1);
+        if (!bytes) zam_alloc_failed();
+        if (n) WideCharToMultiByte(65001, 0, arg, (int)len, (char*)bytes, n, NULL, NULL);
+        free(arg);
+        if (count == slots) {
+            S *next;
+            slots = slots ? slots * 2 : 8;
+            next = (S*)realloc(zam_wargs, slots * sizeof(S));
+            if (!next) zam_alloc_failed();
+            zam_wargs = next;
+        }
+        zam_wargs[count].data = bytes;
+        zam_wargs[count].len = (size_t)n;
+        count++;
+    }
+    zam_wcount = (int64_t)count;
+}
+#endif
+static int64_t zam_arg_count(void) {
+#ifdef _WIN32
+    if (zam_wcount < 0) zam_parse_args();
+    return zam_wcount;
+#else
+    return zam_argc > 1 ? (int64_t)zam_argc - 1 : 0;
+#endif
+}
+static S zam_arg(int64_t index) {
+#ifdef _WIN32
+    return copy(&zam_wargs[index]);
+#else
+    const char *text = zam_argv[index + 1];
+    return own((const unsigned char*)text, strlen(text));
+#endif
+}
+"#;
+
+/// 标准库函数：签名进入类型检查，函数体是 C，按 `static` 发射到用到它的每个目标文件里。
+/// 参数在 C 里叫 `p0`、`p1`…；可失败函数用 `F_<类型>_ok/err` 构造结果。
+pub struct Builtin {
+    pub name: &'static str,
+    params: &'static [Type],
+    result: Type,
+    fallible: bool,
+    body: &'static str,
+}
+const BUILTINS: &[Builtin] = &[
+    Builtin {
+        name: "std/io:read_line",
+        params: &[Type::Mutable],
+        result: Type::Bool,
+        fallible: true,
+        body: r#"size_t cap = 64, n = 0; int c, any = 0;
+unsigned char *p = (unsigned char*)malloc(cap), *q;
+if (!p) zam_alloc_failed();
+zam_stdin_binary();
+while ((c = getc(stdin)) != EOF) {
+    any = 1;
+    if (c == '\n') break;
+    if (n == cap) { q = (unsigned char*)realloc(p, cap * 2); if (!q) zam_alloc_failed(); p = q; cap *= 2; }
+    p[n++] = (unsigned char)c;
+}
+if (ferror(stdin)) { free(p); return F_int_err(zam_message("cannot read standard input", NULL)); }
+if (n && p[n - 1] == '\r') n--;
+drop(p0); p0->data = p; p0->len = n;
+return F_int_ok(any);"#,
+    },
+    Builtin {
+        name: "std/io:read_all",
+        params: &[],
+        result: Type::Owned,
+        fallible: true,
+        body: r#"S text;
+zam_stdin_binary();
+if (!zam_read_all(stdin, &text)) return F_S_err(zam_message("cannot read standard input", NULL));
+return F_S_ok(text);"#,
+    },
+    Builtin {
+        name: "std/fs:read",
+        params: &[Type::Shared],
+        result: Type::Owned,
+        fallible: true,
+        body: r#"S text; int ok;
+FILE *file = zam_open(p0, "rb");
+if (!file) return F_S_err(zam_message("cannot open ", p0));
+ok = zam_read_all(file, &text);
+fclose(file);
+if (!ok) return F_S_err(zam_message("cannot read ", p0));
+return F_S_ok(text);"#,
+    },
+    Builtin {
+        name: "std/fs:write",
+        params: &[Type::Shared, Type::Shared],
+        result: Type::Unit,
+        fallible: true,
+        body: r#"int ok;
+FILE *file = zam_open(p0, "wb");
+if (!file) return F_void_err(zam_message("cannot open ", p0));
+ok = !p1->len || fwrite(p1->data, 1, p1->len, file) == p1->len;
+if (fclose(file) != 0) ok = 0;
+if (!ok) return F_void_err(zam_message("cannot write ", p0));
+return F_void_ok();"#,
+    },
+    Builtin {
+        name: "std/env:arg_count",
+        params: &[],
+        result: Type::Int,
+        fallible: false,
+        body: "return zam_arg_count();",
+    },
+    Builtin {
+        name: "std/env:arg",
+        params: &[Type::Int],
+        result: Type::Owned,
+        fallible: true,
+        body: r#"if (p0 < 0 || p0 >= zam_arg_count()) return F_S_err(zam_message("argument index out of range", NULL));
+return F_S_ok(zam_arg(p0));"#,
+    },
+    Builtin {
+        name: "std/string:parse_i64",
+        params: &[Type::Shared],
+        result: Type::Int,
+        fallible: true,
+        body: r#"size_t i = 0; int negative = 0; uint64_t limit, value = 0, digit;
+if (p0->len && (p0->data[0] == '-' || p0->data[0] == '+')) { negative = p0->data[0] == '-'; i = 1; }
+if (i == p0->len) return F_int64_t_err(zam_message("invalid integer: ", p0));
+limit = negative ? (uint64_t)INT64_MAX + 1 : (uint64_t)INT64_MAX;
+for (; i < p0->len; i++) {
+    if (p0->data[i] < '0' || p0->data[i] > '9') return F_int64_t_err(zam_message("invalid integer: ", p0));
+    digit = (uint64_t)(p0->data[i] - '0');
+    if (value > (limit - digit) / 10) return F_int64_t_err(zam_message("integer out of range: ", p0));
+    value = value * 10 + digit;
+}
+if (!negative) return F_int64_t_ok((int64_t)value);
+return F_int64_t_ok(value == (uint64_t)INT64_MAX + 1 ? INT64_MIN : -(int64_t)value);"#,
+    },
+    Builtin {
+        name: "std/string:trim",
+        params: &[Type::Shared],
+        result: Type::Owned,
+        fallible: false,
+        body: r#"size_t a = 0, b = p0->len;
+while (a < b && (p0->data[a] == ' ' || p0->data[a] == '\t' || p0->data[a] == '\n' || p0->data[a] == '\r')) a++;
+while (b > a && (p0->data[b - 1] == ' ' || p0->data[b - 1] == '\t' || p0->data[b - 1] == '\n' || p0->data[b - 1] == '\r')) b--;
+return own(p0->data + a, b - a);"#,
+    },
+    Builtin {
+        name: "std/string:byte_at",
+        params: &[Type::Shared, Type::Int],
+        result: Type::Int,
+        fallible: false,
+        body: r#"if (p1 < 0 || (uint64_t)p1 >= p0->len) zam_string_bounds();
+return p0->data[p1];"#,
+    },
+    Builtin {
+        name: "std/string:slice",
+        params: &[Type::Shared, Type::Int, Type::Int],
+        result: Type::Owned,
+        fallible: false,
+        body: r#"if (p1 < 0 || p2 < p1 || (uint64_t)p2 > p0->len) zam_string_bounds();
+// 不能从 UTF-8 多字节字符中间切开。
+if (((uint64_t)p1 < p0->len && (p0->data[p1] & 0xC0) == 0x80) || ((uint64_t)p2 < p0->len && (p0->data[p2] & 0xC0) == 0x80)) zam_string_bounds();
+return own(p0->data + p1, (size_t)(p2 - p1));"#,
+    },
+    Builtin {
+        name: "std/string:find",
+        params: &[Type::Shared, Type::Shared],
+        result: Type::Int,
+        fallible: false,
+        body: r#"size_t i;
+if (!p1->len) return 0;
+if (p1->len > p0->len) return -1;
+for (i = 0; i + p1->len <= p0->len; i++) if (memcmp(p0->data + i, p1->data, p1->len) == 0) return (int64_t)i;
+return -1;"#,
+    },
+];
+pub fn builtin(name: &str) -> Option<&'static Builtin> {
+    BUILTINS.iter().find(|builtin| builtin.name == name)
+}
+pub fn builtin_functions() -> impl Iterator<Item = (String, crate::compiler::Function)> {
+    BUILTINS.iter().map(|builtin| {
+        (
+            builtin.name.to_owned(),
+            crate::compiler::Function {
+                public: true,
+                params: builtin
+                    .params
+                    .iter()
+                    .enumerate()
+                    .map(|(index, ty)| (format!("p{index}"), *ty))
+                    .collect(),
+                result: builtin.result,
+                error: builtin.fallible.then_some(Type::Owned),
+                body: Vec::new(),
+                position: (1, 1),
+                builtin: true,
+            },
+        )
+    })
+}
+
 struct Generator<'a> {
     module: &'a Module,
     symbols: &'a BTreeMap<String, String>,
@@ -1158,8 +1473,21 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
             fallible_err(*ty)
         ));
     }
+    let mut prelude = false;
     for name in &needed {
-        source.push_str(&format!("{};\n", signature(name)));
+        if let Some(builtin) = builtin(name) {
+            if !prelude {
+                source.push_str(STD_PRELUDE);
+                prelude = true;
+            }
+            source.push_str(&format!(
+                "static {} {{\n{}\n}}\n",
+                signature(name),
+                builtin.body
+            ));
+        } else {
+            source.push_str(&format!("{};\n", signature(name)));
+        }
     }
     for version in &specializations {
         source.push_str(&format!(
@@ -1220,15 +1548,17 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
         source.push_str("}\n");
     }
     if entry.split_once(':').unwrap().0 == unit {
+        // argv 留给 std/env（Unix）；Windows 下 std/env 改读 GetCommandLineW 以拿到 UTF-8。
+        source.push_str("int zam_argc;\nchar **zam_argv;\n");
         if module.functions[entry].error.is_some() {
             let structure = fallible_name(module.functions[entry].result);
             source.push_str(&format!(
-                "int main(void) {{ output_mode(); {structure} r = {}(); if (!r.ok) {{ uncaught_error(&r.error); return 1; }} return fflush(stdout) == EOF ? 1 : 0; }}\n",
+                "int main(int argc, char **argv) {{ zam_argc = argc; zam_argv = argv; output_mode(); {structure} r = {}(); if (!r.ok) {{ uncaught_error(&r.error); return 1; }} return fflush(stdout) == EOF ? 1 : 0; }}\n",
                 symbols[entry]
             ));
         } else {
             source.push_str(&format!(
-                "int main(void) {{ output_mode(); {}(); return fflush(stdout) == EOF ? 1 : 0; }}\n",
+                "int main(int argc, char **argv) {{ zam_argc = argc; zam_argv = argv; output_mode(); {}(); return fflush(stdout) == EOF ? 1 : 0; }}\n",
                 symbols[entry]
             ));
         }

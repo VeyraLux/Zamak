@@ -878,6 +878,7 @@ mod tests {
             error: None,
             body: body.into_iter().map(|i| (i, (1, 1))).collect(),
             position: (1, 1),
+            builtin: false,
         }
     }
     fn binary(op: &str, a: Expr, b: Expr) -> Expr {

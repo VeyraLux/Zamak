@@ -11,7 +11,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-21");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-22");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -255,6 +255,14 @@ impl Project {
         } else {
             (module, call)
         };
+        if target.starts_with("std/") {
+            let qualified = format!("{target}:{name}");
+            return if native::builtin(&qualified).is_some() {
+                Ok(qualified)
+            } else {
+                Err(format!("{module}: unknown function {call}"))
+            };
+        }
         let function = self
             .modules
             .get(target)
@@ -282,8 +290,10 @@ impl Project {
             .ok_or("entry module requires fn main()")?;
         for (id, input) in &self.modules {
             for import in &input.module.imports {
-                if !matches!(import.as_str(), "std/io" | "std/fmt" | "std/string")
-                    && !self.modules.contains_key(import)
+                if !matches!(
+                    import.as_str(),
+                    "std/io" | "std/fmt" | "std/string" | "std/fs" | "std/env"
+                ) && !self.modules.contains_key(import)
                 {
                     return Err(format!("{id}: missing module {import}"));
                 }
@@ -325,6 +335,7 @@ impl Project {
                 linked.functions.insert(format!("{id}:{name}"), function);
             }
         }
+        linked.functions.extend(native::builtin_functions());
         Ok(linked)
     }
 
@@ -786,9 +797,10 @@ fn native_cached(
     Ok((bytes, false))
 }
 
-pub fn run_artifact(path: &Path) -> Result<()> {
+pub fn run_artifact(path: &Path, args: &[std::ffi::OsString]) -> Result<()> {
     let path = fs::canonicalize(path).map_err(|e| e.to_string())?;
     let status = std::process::Command::new(path)
+        .args(args)
         .status()
         .map_err(|e| e.to_string())?;
     if status.success() {

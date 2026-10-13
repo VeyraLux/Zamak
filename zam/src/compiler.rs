@@ -69,6 +69,8 @@ pub struct Function {
     pub error: Option<Type>,
     pub body: Block,
     pub position: SourcePosition,
+    // 标准库函数：只有签名，函数体由原生后端按名字提供；检查器不检查它的空函数体。
+    pub builtin: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -622,6 +624,15 @@ impl Parser {
                     } else {
                         Instruction::Call(expr)
                     }
+                } else if matches!(expr, Expr::Try(_) | Expr::Catch(_, _, _))
+                    && (result == Type::Unit
+                        || self.tokens[self.position..]
+                            .iter()
+                            .find(|token| **token != Token::Newline)
+                            != Some(&Token::Symbol('}')))
+                {
+                    // `write(&p)?` 这类语句：不是函数的最后一个值表达式，就只求值、不返回。
+                    Instruction::Call(expr)
                 } else {
                     Instruction::Return(Some(expr))
                 }
@@ -827,6 +838,7 @@ pub fn parse(source: &str) -> Result<Module, String> {
                         error,
                         body,
                         position: start,
+                        builtin: false,
                     },
                 )
                 .is_some()
@@ -852,7 +864,7 @@ pub fn encode(module: &Module) -> Vec<u8> {
         .map(|(name, structure)| (name, structure.public, &structure.fields))
         .collect();
     format!(
-        "ZAM-IR-13\n{declarations:?}\n{:?}\n{:?}\n{:?}\n",
+        "ZAM-IR-14\n{declarations:?}\n{:?}\n{:?}\n{:?}\n",
         module.type_names, module.imports, module.functions
     )
     .into_bytes()
@@ -1532,6 +1544,9 @@ pub fn check(module: &Module, entry: &str) -> Result<(), String> {
         return Err("main must have no parameters or return value".into());
     }
     for (name, function) in &module.functions {
+        if function.builtin {
+            continue;
+        }
         let mut checker = Checker {
             structs: &module.structs,
             functions: &module.functions,
