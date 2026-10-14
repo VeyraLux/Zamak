@@ -1,0 +1,31 @@
+// 位运算：& | ^ ~ << >>，优先级与 Python 相同；复合赋值 &= |= ^= <<= >>=；十六、二、八进制字面量。
+
+fn popcount(n: i64) -> i64:
+    let mut x = n
+    let mut count = 0
+    while x != 0:
+        count += x & 1
+        x = x >> 1 & 9223372036854775807
+    count
+
+fn main():
+    println(0xFF + 0b1010 + 0o17)
+    println(0xFFFF_FFFF)
+    println(12 & 10)
+    println(12 | 3)
+    println(12 ^ 10)
+    println(~0)
+    println(1 << 10)
+    println(-16 >> 2)
+    println(1 + 2 << 3)
+    println(6 & 3 == 2)
+    println(popcount(255))
+    println(popcount(-1))
+
+    let mut mask = 0
+    mask |= 1 << 4
+    mask |= 1
+    mask ^= 1
+    mask <<= 2
+    println(mask)
+    println(mask >> 6 & 1 == 1)

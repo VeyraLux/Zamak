@@ -1,5 +1,5 @@
 use crate::compiler::{
-    borrow_of, field_path, method_signature, numeric, overload, record_id, record_order,
+    bitwise, borrow_of, field_path, method_signature, numeric, overload, record_id, record_order,
     terminates, Block, Elem, Expr, Instruction, Module, Pattern, Type,
 };
 use crate::project::Result;
@@ -18,6 +18,9 @@ const RUNTIME: &str = r#"#include <stdio.h>
 #include <limits.h>
 #include <math.h>
 static void arithmetic_error(void) { fputs("zam: integer arithmetic error\n", stderr); exit(1); }
+// 移位量只能是 0–63；左移按无符号做（丢掉移出的位，不算溢出），右移是算术右移（向负无穷取整）。
+static int64_t zam_shl(int64_t a, int64_t n) { if (n < 0 || n > 63) arithmetic_error(); return (int64_t)((uint64_t)a << n); }
+static int64_t zam_shr(int64_t a, int64_t n) { if (n < 0 || n > 63) arithmetic_error(); return a >= 0 ? a >> n : ~(~a >> n); }
 #if defined(__GNUC__) || defined(__clang__)
 static int64_t add(int64_t a, int64_t b) {
     int64_t result;
@@ -1537,6 +1540,7 @@ impl Generator<'_> {
             Expr::Unary('!', _) => Type::Bool,
             Expr::Unary(_, value) => numeric(self.ty(value)),
             Expr::Binary(op, left, _) if op == "+" && is_text(self.ty(left)) => Type::Owned,
+            Expr::Binary(op, _, _) if bitwise(op) => Type::Int,
             Expr::Binary(op, left, _) => {
                 if matches!(op.as_str(), "+" | "-" | "*" | "/" | "%") {
                     numeric(self.ty(left))
@@ -1971,6 +1975,8 @@ impl Generator<'_> {
                         format!("(-{value})")
                     } else if *op == '-' {
                         format!("sub(0, {value})")
+                    } else if *op == '~' {
+                        format!("(~{value})")
                     } else {
                         format!("!{value}")
                     },
@@ -2047,6 +2053,8 @@ impl Generator<'_> {
                     "*" if !self.proofs.arithmetic(expr) => Some("mul"),
                     "/" if !safe_divisor => Some("quotient"),
                     "%" if !safe_divisor => Some("zam_remainder"),
+                    "<<" => Some("zam_shl"),
+                    ">>" => Some("zam_shr"),
                     _ => None,
                 };
                 self.scalar(
