@@ -180,7 +180,7 @@ def benchmark(args):
     root = Path(__file__).resolve().parent.parent
     output = root / "results" / ("tutorial-perf-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")); output.mkdir(parents=True)
     env = dict(os.environ, ZAMAK_CACHE_DIR=str(output / "zam-cache"))
-    template = (root / "examples/tutorial_perf/main.zm").read_text(encoding="utf-8").split("fn main() {")[0]
+    template = (root / "examples/tutorial_perf/main.zm").read_text(encoding="utf-8").split("fn main():")[0]
     builds, rows, calibrations = [], [], []
     def compile_c(label, source, extra):
         path=output/f"{label}.c"; path.write_text(source,encoding='utf-8'); exe=output/f"{label}.exe"
@@ -197,7 +197,7 @@ def benchmark(args):
         p=output/'common.go'; p.write_text(GO_SOURCE,encoding='utf-8'); exe=output/'common-go.exe'; cmd=[args.go,'build','-trimpath','-o',exe,p]; out,sec,err,_=command(cmd); builds.append(dict(language='Go',seconds=sec,command=[str(x) for x in cmd],stdout=out,stderr=err)); runners['Go']=exe
     def prepare(lang,kernel,repeats):
         if lang=='Zamak':
-            p=output/f'{kernel}_{repeats}.zm'; p.write_text(template+f'''fn main() {{\n    let mut r = 0\n    let mut total = 0\n    while r < {repeats} {{\n        total = total + {kernel}_batch(r % 8)\n        r = r + 1\n    }}\n    println(total)\n}}\n''',encoding='utf-8'); out,sec,err,_=command([args.zam,'build',p],env=env); builds.append(dict(language='Zamak',kernel=kernel,repeats=repeats,seconds=sec,command=[args.zam,'build',p],stdout=out,stderr=err)); paths=[line[7:] for line in err.splitlines() if line.startswith('OUTPUT ')]; return [paths[0]]
+            p=output/f'{kernel}_{repeats}.zm'; p.write_text(template+f'''fn main():\n    let mut r = 0\n    let mut total = 0\n    while r < {repeats}:\n        total = total + {kernel}_batch(r % 8)\n        r = r + 1\n    println(total)\n''',encoding='utf-8'); out,sec,err,_=command([args.zam,'build',p],env=env); builds.append(dict(language='Zamak',kernel=kernel,repeats=repeats,seconds=sec,command=[args.zam,'build',p],stdout=out,stderr=err)); paths=[line[7:] for line in err.splitlines() if line.startswith('OUTPUT ')]; return [paths[0]]
         if lang=='Python': return [sys.executable,runners[lang],'--kernel',kernel,'--repeats',repeats]
         return [runners[lang],list(KERNELS).index(kernel),repeats]
     languages=list(runners)

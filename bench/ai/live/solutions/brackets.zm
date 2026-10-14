@@ -1,32 +1,30 @@
 use std/io
 use std/string
 
-fn balanced(line: &string) -> bool {
+fn balanced(line: &string) -> bool:
     let mut stack: [i64] = []
-    for i in 0..string.byte_len(line) {
-        let c = string.byte_at(line, i)
-        if c == '(' || c == '[' || c == '{' {
-            stack.push(c)
-        } else if c == ')' || c == ']' || c == '}' {
-            if stack.len() == 0 {
-                return false
-            }
-            let open = stack.pop()
-            if (c == ')' && open != '(') || (c == ']' && open != '[') || (c == '}' && open != '{') {
-                return false
-            }
-        }
-    }
-    stack.len() == 0
-}
 
-fn main() -> !string {
+    for i in 0..string.byte_len(line):
+        let c = string.byte_at(line, i)
+
+        if c == '(' or c == '[' or c == '{':
+            stack.push(c)
+        elif c == ')' or c == ']' or c == '}':
+            if stack.len() == 0:
+                return false
+
+            let open = stack.pop()
+
+            if (c == ')' and open != '(') or (c == ']' and open != '[') or (c == '}' and open != '{'):
+                return false
+
+    stack.len() == 0
+
+fn main() -> !string:
     let mut line = ""
-    while io.read_line(&mut line)? {
-        if balanced(&line) {
+
+    while io.read_line(&mut line)?:
+        if balanced(&line):
             println("ok")
-        } else {
+        else:
             println("bad")
-        }
-    }
-}

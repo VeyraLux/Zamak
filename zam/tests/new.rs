@@ -25,7 +25,7 @@ fn new_scaffolds_a_runnable_project_and_refuses_existing() {
     );
     assert_eq!(
         fs::read_to_string(root.join("hello/src/main.zm")).unwrap(),
-        "fn main() {\n    println(\"hello from zamak\")\n}\n"
+        "fn main():\n    println(\"hello from zamak\")\n"
     );
     assert_eq!(
         fs::read_to_string(root.join("hello/.gitignore")).unwrap(),
@@ -39,13 +39,13 @@ fn new_scaffolds_a_runnable_project_and_refuses_existing() {
     assert!(!String::from_utf8_lossy(&formatted.stderr).contains("FORMAT"));
 
     // 目录已存在就拒绝，绝不覆盖里面的文件。
-    fs::write(root.join("hello/src/main.zm"), "fn main() {}\n").unwrap();
+    fs::write(root.join("hello/src/main.zm"), "fn main(): pass\n").unwrap();
     let again = zam(&["new", project]);
     assert!(!again.status.success());
     assert!(String::from_utf8_lossy(&again.stderr).contains("already exists"));
     assert_eq!(
         fs::read_to_string(root.join("hello/src/main.zm")).unwrap(),
-        "fn main() {}\n"
+        "fn main(): pass\n"
     );
 
     // 项目名必须是标识符（zam.toml 的 name 会写进配置）。

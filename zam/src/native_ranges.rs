@@ -1001,7 +1001,7 @@ mod tests {
     }
     #[test]
     fn failed_finite_analysis_rolls_back_call_inputs_before_widening() {
-        let module = crate::compiler::parse("fn main() {\nlet mut i = 9223372036854775806\nwhile i <= 9223372036854775807 {\nprobe(i)\ni = i + 1\n}\n}").unwrap();
+        let module = crate::compiler::parse("fn main():\n    let mut i = 9223372036854775806\n    while i <= 9223372036854775807:\n        probe(i)\n        i = i + 1").unwrap();
         let f = &module.functions["main"];
         let Instruction::While(_, body) = &f.body[1].0 else {
             panic!()
@@ -1034,7 +1034,7 @@ mod tests {
             };
             expr
         }
-        let module = crate::compiler::parse("fn main(n: i64) {\nlet a = [3, 1, 4]\nlet mut total = 0\nfor i in 0..3 {\nprintln(a[i])\ntotal = total + i\n}\nfor j in 0..n {\nprintln(a[j])\nprintln(j + 1)\ntotal = total + j\n}\nfor k in 9223372036854775806..9223372036854775807 {\nprintln(k + 1)\nprintln(k + 2)\n}\nfor m in -3..n {\nprintln(a[m])\n}\n}").unwrap();
+        let module = crate::compiler::parse("fn main(n: i64):\n    let a = [3, 1, 4]\n    let mut total = 0\n    for i in 0..3:\n        println(a[i])\n        total = total + i\n    for j in 0..n:\n        println(a[j])\n        println(j + 1)\n        total = total + j\n    for k in 9223372036854775806..9223372036854775807:\n        println(k + 1)\n        println(k + 2)\n    for m in -3..n:\n        println(a[m])").unwrap();
         let f = &module.functions["main"];
         let proofs = analyze(f);
         // Constant bounds are visited trip by trip: indexing and the accumulator are exact.
@@ -1072,9 +1072,10 @@ mod tests {
     }
     #[test]
     fn nonnegative_division_proofs_and_codegen_keep_signed_fallback() {
-        let module =
-            crate::compiler::parse("fn main(n: i64, d: i64) {\nprintln(n / d)\nprintln(n % d)\n}")
-                .unwrap();
+        let module = crate::compiler::parse(
+            "fn main(n: i64, d: i64):\n    println(n / d)\n    println(n % d)",
+        )
+        .unwrap();
         let f = &module.functions["main"];
         for (inputs, expected) in [
             (
@@ -1101,11 +1102,11 @@ mod tests {
         }
         for (source, unsigned) in [
             (
-                "fn main() {\nlet n = 9223372036854775807\nprintln(n / 4)\nprintln(n % 4)\n}",
+                "fn main():\n    let n = 9223372036854775807\n    println(n / 4)\n    println(n % 4)",
                 true,
             ),
             (
-                "fn main(n: i64) {\nprintln(n / 3)\nprintln(n % 3)\n}",
+                "fn main(n: i64):\n    println(n / 3)\n    println(n % 3)",
                 false,
             ),
         ] {
@@ -1133,7 +1134,7 @@ mod tests {
     #[test]
     fn dynamic_positive_divisors_keep_runtime_width_dispatch() {
         let mut module = crate::compiler::parse(
-            "fn main() {\nlet n = 9223372036854775807\nlet d = 3\nprintln(n / d)\nprintln(n % d)\n}",
+            "fn main():\n    let n = 9223372036854775807\n    let d = 3\n    println(n / d)\n    println(n % d)",
         ).unwrap();
         let f = module.functions.remove("main").unwrap();
         module.functions.insert("case:main".into(), f);
@@ -1150,9 +1151,9 @@ mod tests {
     #[test]
     fn nonnegative_division_repeated_visits_and_rollback_fail_closed() {
         for source in [
-            "fn main() {\nlet mut i = 0\nlet mut n = 3\nwhile i < 2 {\nprintln(n % 7)\nn = -3\ni = i + 1\n}\n}",
-            "fn main() {\nlet mut i = 0\nlet mut n = 3\nwhile i < 2 {\nprintln(n / 7)\nn = -3\ni = i + 1\n}\n}",
-            "fn main() {\nlet mut i = 9223372036854775806\nlet mut n = 3\nwhile i <= 9223372036854775807 {\nprintln(n % 7)\nn = -3\ni = i + 1\n}\n}",
+            "fn main():\n    let mut i = 0\n    let mut n = 3\n    while i < 2:\n        println(n % 7)\n        n = -3\n        i = i + 1",
+            "fn main():\n    let mut i = 0\n    let mut n = 3\n    while i < 2:\n        println(n / 7)\n        n = -3\n        i = i + 1",
+            "fn main():\n    let mut i = 9223372036854775806\n    let mut n = 3\n    while i <= 9223372036854775807:\n        println(n % 7)\n        n = -3\n        i = i + 1",
         ] {
             let module = crate::compiler::parse(source).unwrap();
             let f = &module.functions["main"];
@@ -1165,7 +1166,7 @@ mod tests {
     #[test]
     fn successful_operand_interval_never_removes_inner_overflow_check() {
         let module =
-            crate::compiler::parse("fn main(n: i64) {\nif n >= 0 { println((n + 1) / 4) }\n}")
+            crate::compiler::parse("fn main(n: i64):\n    if n >= 0: println((n + 1) / 4)")
                 .unwrap();
         let f = &module.functions["main"];
         let Instruction::If(_, body, _) = &f.body[0].0 else {
@@ -1185,7 +1186,7 @@ mod tests {
     #[test]
     fn specialized_nonnegative_recurrence_selects_unsigned_remainder() {
         let module = crate::compiler::parse(
-            "fn accum(seed: i64) -> i64 {\nlet mut acc = seed\nlet mut i = 0\nwhile i < 512 {\nacc = (acc * 31 + i) % 1000003\ni = i + 1\n}\nacc\n}\n",
+            "fn accum(seed: i64) -> i64:\n    let mut acc = seed\n    let mut i = 0\n    while i < 512:\n        acc = (acc * 31 + i) % 1000003\n        i = i + 1\n    acc\n",
         ).unwrap();
         let f = &module.functions["accum"];
         let Instruction::While(_, body) = &f.body[2].0 else {
@@ -1243,7 +1244,7 @@ mod tests {
     #[test]
     fn finite_recurrence_generates_raw_arithmetic_for_unknown_remainder_bound() {
         let mut module = crate::compiler::parse(
-            "fn main(seed: i64) {\nlet bound = seed % 40\nlet mut i = 0\nlet mut a = 0\nlet mut b = 1\nwhile i < bound {\nlet next = a + b\na = b\nb = next\ni = i + 1\n}\nprintln(a)\n}",
+            "fn main(seed: i64):\n    let bound = seed % 40\n    let mut i = 0\n    let mut a = 0\n    let mut b = 1\n    while i < bound:\n        let next = a + b\n        a = b\n        b = next\n        i = i + 1\n    println(a)",
         ).unwrap();
         let function = module.functions.remove("main").unwrap();
         module.functions.insert("case:main".into(), function);
@@ -1259,8 +1260,8 @@ mod tests {
     #[test]
     fn finite_visits_and_failed_speculation_never_keep_first_visit_proofs() {
         for source in [
-            "fn main() {\nlet mut i = 0\nlet mut x = 9223372036854775806\nwhile i < 2 {\nx = x + 1\ni = i + 1\n}\n}",
-            "fn main() {\nlet mut i = 9223372036854775806\nwhile i <= 9223372036854775807 {\ni = i + 1\n}\n}",
+            "fn main():\n    let mut i = 0\n    let mut x = 9223372036854775806\n    while i < 2:\n        x = x + 1\n        i = i + 1",
+            "fn main():\n    let mut i = 9223372036854775806\n    while i <= 9223372036854775807:\n        i = i + 1",
         ] {
             let module = crate::compiler::parse(source).unwrap();
             let f = &module.functions["main"];
@@ -1274,10 +1275,10 @@ mod tests {
     #[test]
     fn finite_recognizer_rejects_mutation_and_continue() {
         for source in [
-            "fn main() {\nlet mut bound = 2\nlet mut i = 0\nwhile i < bound {\nbound = bound + 1\ni = i + 1\n}\n}",
-            "fn main() {\nlet mut i = 0\nwhile i < 2 {\nif i == 0 { continue }\ni = i + 1\n}\n}",
-            "fn main() {\nlet mut i = 0\nwhile i < 2 {\nif i == 0 { i = 1 }\ni = i + 1\n}\n}",
-            "fn main() {\nlet mut i = 0\nwhile i < 2 {\nwhile false {}\ni = i + 1\n}\n}",
+            "fn main():\n    let mut bound = 2\n    let mut i = 0\n    while i < bound:\n        bound = bound + 1\n        i = i + 1",
+            "fn main():\n    let mut i = 0\n    while i < 2:\n        if i == 0: continue\n        i = i + 1",
+            "fn main():\n    let mut i = 0\n    while i < 2:\n        if i == 0: i = 1\n        i = i + 1",
+            "fn main():\n    let mut i = 0\n    while i < 2:\n        while false: pass\n        i = i + 1",
         ] {
             let module = crate::compiler::parse(source).unwrap();
             let f = &module.functions["main"];

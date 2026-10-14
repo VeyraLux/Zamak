@@ -5,7 +5,7 @@ fn sandbox(name: &str) -> PathBuf {
     fs::create_dir_all(&root).unwrap();
     fs::write(
         root.join("main.zm"),
-        "fn main() {\n    println(\"fallback ok\")\n}\n",
+        "fn main():\n    println(\"fallback ok\")\n",
     )
     .unwrap();
     root

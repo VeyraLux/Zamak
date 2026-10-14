@@ -39,8 +39,8 @@ fn fmt_rewrites_only_the_modules_whose_indentation_changed() {
     )
     .unwrap();
     // main.zm 缩进已经正确，greeting.zm 缩进是错的。
-    let clean = "use greeting\n\nfn main() {\n    greeting.hello()\n}\n";
-    let messy = "pub fn hello() -> string {\n\"hi\"\n}\n";
+    let clean = "use greeting\n\nfn main():\n    greeting.hello()\n";
+    let messy = "pub fn hello() -> string:\n  \"hi\"\n";
     fs::write(src.join("main.zm"), clean).unwrap();
     fs::write(src.join("greeting.zm"), messy).unwrap();
 
@@ -70,7 +70,7 @@ fn fmt_rewrites_only_the_modules_whose_indentation_changed() {
     assert_eq!(fs::read_to_string(src.join("main.zm")).unwrap(), clean);
     assert_eq!(
         fs::read_to_string(src.join("greeting.zm")).unwrap(),
-        "pub fn hello() -> string {\n    \"hi\"\n}\n"
+        "pub fn hello() -> string:\n    \"hi\"\n"
     );
 
     // 幂等：已经格式化过的项目再跑一次不该报任何改动。
@@ -104,11 +104,11 @@ fn fmt_writes_nothing_when_a_module_does_not_parse() {
     )
     .unwrap();
     // main.zm 缩进是错的（正常情况下会被改写），greeting.zm 语法不成立。
-    let messy = "fn main() {\nprintln(\"hi\")\n}\n";
+    let messy = "fn main():\n  println(\"hi\")\n";
     fs::write(src.join("main.zm"), messy).unwrap();
     fs::write(
         src.join("greeting.zm"),
-        "fn hello() -> string {\n\"unterminated\n}\n",
+        "fn hello() -> string:\n    \"unterminated\n",
     )
     .unwrap();
 
@@ -127,7 +127,7 @@ fn fmt_writes_nothing_when_a_module_does_not_parse() {
 #[test]
 fn fmt_accepts_a_single_file_and_rejects_json() {
     let path = std::env::temp_dir().join(format!("zam-fmt-file-{}.zm", std::process::id()));
-    fs::write(&path, "fn main() {\nprintln(\"hi\")\n}\n").unwrap();
+    fs::write(&path, "fn main():\n    println(\"hi\")\n").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_zam"))
         .arg("fmt")
         .arg(&path)
@@ -140,7 +140,7 @@ fn fmt_accepts_a_single_file_and_rejects_json() {
     );
     assert_eq!(
         fs::read_to_string(&path).unwrap(),
-        "fn main() {\n    println(\"hi\")\n}\n"
+        "fn main():\n    println(\"hi\")\n"
     );
     fs::remove_file(&path).unwrap();
 

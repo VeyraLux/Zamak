@@ -1,26 +1,26 @@
 use std/io
 use std/string
 
-fn encode(line: &string) -> string {
+fn encode(line: &string) -> string:
     let mut parts: [string] = []
     let size = string.byte_len(line)
     let mut start = 0
-    while start < size {
+
+    while start < size:
         let mut end = start + 1
-        while end < size && string.byte_at(line, end) == string.byte_at(line, start) {
+
+        while end < size and string.byte_at(line, end) == string.byte_at(line, start):
             end = end + 1
-        }
+
         let piece = string.slice(line, start, start + 1)
         let count = end - start
         parts.push("{piece}{count}")
         start = end
-    }
-    string.join(&parts, "")
-}
 
-fn main() -> !string {
+    string.join(&parts, "")
+
+fn main() -> !string:
     let mut line = ""
-    while io.read_line(&mut line)? {
+
+    while io.read_line(&mut line)?:
         println(encode(&line))
-    }
-}

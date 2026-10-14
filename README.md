@@ -14,18 +14,17 @@ This program counts how often each word appears in its input:
 use std/io
 use std/string
 
-fn main() -> !string {
+fn main() -> !string:
     let text = io.read_all()?
     let words = string.words(&text)
     let mut counts: {string: i64} = {}
-    for word in &words {
+
+    for word in &words:
         counts[word] = counts.get(word, 0) + 1
-    }
-    for word in &counts {
+
+    for word in &counts:
         let n = counts[word]
         println("{word}: {n}")
-    }
-}
 ```
 
 Run it with some input:
@@ -87,45 +86,45 @@ This program uses structs, error values, lists, maps, and string interpolation:
 ```zamak
 use std/string
 
-struct Person {
+struct Person:
     name: string
     age: i64
-}
 
 // Errors are values: `T!string` returns either a T or an error message.
-fn parse_age(text: &string) -> i64!string {
+fn parse_age(text: &string) -> i64!string:
     let age = string.parse_i64(text)?
-    if age < 0 {
-        fail "age must not be negative"
-    }
-    age
-}
 
-fn main() -> !string {
+    if age < 0:
+        fail "age must not be negative"
+
+    age
+
+fn main() -> !string:
     let mut ages: {string: i64} = {}
     let mut names: [string] = []
-    for i in 0..3 {
+
+    for i in 0..3:
         names.push("user{i}")
-    }
-    for name in &names {
+
+    for name in &names:
         ages[name] = string.byte_len(name) * 10
-    }
+
     let raw = "42"
-    let age = parse_age(&raw) catch e {
+    let age = parse_age(&raw) catch e:
         println("bad input: {e}")
         return
-    }
-    let p = Person { name: "Ada" age: age }
+    let p = Person(name: "Ada", age: age)
     println("{p.name} is {p.age}")
-}
 ```
 
+- **Blocks.** Blocks use indentation, like Python. A line that ends with `:` opens a block, and the block's lines are indented 4 spaces deeper. A block with one statement can stay on the same line, such as `if n < 1: return n`. Write `pass` for an empty block. Braces only appear in maps and string interpolation. Indent with spaces; `zam fmt` replaces tabs and normalizes indentation and blank lines.
 - **Types.** Zamak has `i64`, `f64`, `bool`, `string` (UTF-8), named structs, fixed arrays `[i64; N]`, lists `[T]`, and maps `{K: V}`. List elements and map values can be `i64`, `f64`, `bool`, `string`, or a struct, and map keys can be `i64` or `string`. A character literal such as `'#'` is an `i64` code point.
 - **Numbers.** `f64` follows IEEE 754, so dividing by zero gives `inf` or `NaN`. Zamak never converts between `i64` and `f64` implicitly. Write `f64(n)` or `i64(x)`, where `i64(x)` truncates toward zero. `println` prints the shortest text that reads back as the same `f64`, such as `0.1` or `2.0`, and `fmt.fixed(x, 2)` rounds to two decimal places.
+- **Structs.** Declare `struct Point:` with one field per indented line, and build a value with `Point(x: 1, y: 2)`, naming every field. Function names start with a lowercase letter, so `Point(...)` always means a struct.
 - **Struct borrows and struct lists.** A parameter typed `&Point` borrows a struct for one call, and `&mut Point` lets the function change it. In a list of structs, read or write a field with `items[i].qty`, borrow an element with `&items[i]`, and loop with `for item in &items`. Structs are never copied, so take an element out with `items.pop()` instead of `let item = items[i]`.
-- **Enums and match.** Declare `enum Shape { Circle(r: f64)  Empty }` with one variant per line, and build values with `Shape.Circle(1.0)` or `Shape.Empty`. A `match` lists one arm per variant, such as `Circle(r) => ...`, or ends with `_ => ...`. Zamak reports an error when an arm is missing. A `match` borrows the value, so arms read the data without moving it.
-- **Control flow.** Use `if`, `else if`, `else`, `while`, `break`, and `continue`. To choose a value, write `let v = if c { a } else { b }`. Loop over a range with `for i in 0..n`, over a list with `for x in &list`, and over map keys in insertion order with `for k in &map`.
-- **Errors.** A function that can fail returns `T!string` or `!string`. Use `fail` to return an error, `?` to pass it to the caller, and `catch e { ... }` to handle it in place.
+- **Enums and match.** Declare `enum Shape:` with one variant per indented line, such as `Circle(r: f64)` or `Empty`, and build values with `Shape.Circle(1.0)` or `Shape.Empty`. A `match` lists one arm per line, such as `Circle(r): 3.14 * r * r`, or ends with `_: ...`. Zamak reports an error when an arm is missing. A `match` borrows the value, so arms read the data without moving it.
+- **Control flow.** Use `if`, `elif`, `else`, `while`, `break`, and `continue`. To choose a value, write `let v = if c: a elif d: b else: e`. Combine conditions with `and`, `or`, and `not`, which follow Python's precedence and short-circuit. Loop over a range with `for i in 0..n`, over a list with `for x in &list`, and over map keys in insertion order with `for k in &map`.
+- **Errors.** A function that can fail returns `T!string` or `!string`. Use `fail` to return an error, `?` to pass it to the caller, and `catch e:` followed by an indented block to handle it in place.
 - **Modules.** Each file is a module. Import one with `use name`, and export items with `pub fn` and `pub struct`.
 - **Strings.** Join strings with `+`, compare them with `==` or `<`, and update variables with `+=`, `-=`, `*=`, `/=`, and `%=`. Interpolation accepts expressions such as `"{a + b}"` and `"{xs[0]}"`.
 - **Standard library.** `std/io` reads standard input and prints to standard output or standard error, `std/fs` reads and writes whole files, and `std/env` reads arguments. `std/string` measures, compares, parses, trims, searches, replaces, converts case, slices, splits, and joins strings. `std/math` provides square roots, powers, logarithms, trigonometry, rounding, and the constants `math.pi`, `math.e`, and `math.inf`.
@@ -163,7 +162,7 @@ Zamak doesn't support generics, closures, threads, a foreign function interface 
 
 ## Editor and agent support
 
-- **VS Code.** The extension in [editors/vscode](editors/vscode) adds syntax highlighting and bracket and quote matching. It's declarative and has no runtime dependencies.
+- **VS Code.** The extension in [editors/vscode](editors/vscode) adds syntax highlighting, bracket and quote matching, automatic indentation after a line that ends with `:`, and folding by indentation. It's declarative and has no runtime dependencies.
 - **AI coding agents.** [.agents/skills/zamak/SKILL.md](.agents/skills/zamak/SKILL.md) describes the commands, syntax, and common diagnostics for agents that read `.agents/skills`.
 
 ## Contribute

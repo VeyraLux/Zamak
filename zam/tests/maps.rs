@@ -44,38 +44,30 @@ fn maps_count_lookup_remove_and_iterate_in_insertion_order() {
     let case = Case::new("maps", "core");
     let output = case.run(
         r#"use std/string
-struct Index {
+struct Index:
     name: string
     hits: {string: i64}
-}
-fn total(m: &{string: i64}) -> i64 {
+fn total(m: &{string: i64}) -> i64:
     let mut sum = 0
-    for k in &m {
+    for k in &m:
         sum = sum + m[k]
-    }
     sum
-}
-fn bump(m: &mut {string: i64}, word: &string) {
+fn bump(m: &mut {string: i64}, word: &string):
     m[word] = m.get(word, 0) + 1
-}
-fn build() -> {i64: string} {
+fn build() -> {i64: string}:
     let mut out: {i64: string} = {}
-    for i in 0..5 {
+    for i in 0..5:
         out[i] = "n{i}"
-    }
     out
-}
-fn main() {
+fn main():
     let text = "the cat and the dog and the bird"
     let words = string.words(&text)
     let mut counts: {string: i64} = {}
-    for w in &words {
+    for w in &words:
         bump(&mut counts, w)
-    }
-    for k in &counts {
+    for k in &counts:
         let n = counts[k]
         println("{k}={n}")
-    }
     println(total(&counts))
     println(counts.contains("cat"))
     println(counts.get("cow", -1))
@@ -98,13 +90,12 @@ fn main() {
         2: false,
     }
     println(flags[2])
-    let mut idx = Index { name: "x" hits: {} }
+    let mut idx = Index(name: "x", hits: {})
     idx.hits["a"] = 1
     idx.hits["a"] = 2
     println(idx.hits["a"])
     let moved = counts
     println(moved.len())
-}
 "#,
     );
     assert_eq!(
@@ -118,7 +109,7 @@ fn main() {
 fn maps_survive_growth_and_tombstones() {
     let case = Case::new("maps", "growth");
     let output = case.run(
-        "fn main() {\n    let mut big: {i64: i64} = {}\n    for i in 0..5000 {\n        big[i] = i * 2\n    }\n    for i in 0..5000 {\n        if i % 3 == 0 {\n            big.remove(i)\n        }\n    }\n    let mut check = 0\n    for k in &big {\n        check = check + big[k]\n    }\n    println(big.len())\n    println(check)\n    for i in 0..10 {\n        big[i] = 7\n    }\n    println(big.len())\n    println(big[3])\n    let mut words: {string: i64} = {}\n    for round in 0..50 {\n        for i in 0..20 {\n            words[\"w{i}\"] = round\n        }\n        for i in 0..20 {\n            words.remove(\"w{i}\")\n        }\n    }\n    println(words.len())\n    words[\"w7\"] = 1\n    println(words[\"w7\"])\n}\n",
+        "fn main():\n    let mut big: {i64: i64} = {}\n    for i in 0..5000:\n        big[i] = i * 2\n    for i in 0..5000:\n        if i % 3 == 0:\n            big.remove(i)\n    let mut check = 0\n    for k in &big:\n        check = check + big[k]\n    println(big.len())\n    println(check)\n    for i in 0..10:\n        big[i] = 7\n    println(big.len())\n    println(big[3])\n    let mut words: {string: i64} = {}\n    for round in 0..50:\n        for i in 0..20:\n            words[\"w{i}\"] = round\n        for i in 0..20:\n            words.remove(\"w{i}\")\n    println(words.len())\n    words[\"w7\"] = 1\n    println(words[\"w7\"])\n",
     );
     assert_eq!(stdout(&output), "3333\n16663334\n3337\n7\n0\n1\n");
 }
@@ -149,7 +140,7 @@ fn wordfreq_example_sorts_by_count() {
 #[test]
 fn literals_lend_to_shared_string_parameters() {
     let case = Case::new("maps", "literals");
-    let output = case.run("use std/string\nfn shout(s: &string) {\n    println(\"<{s}>\")\n}\nfn main() {\n    println(string.byte_len(\"中文\"))\n    let csv = \"a,b\"\n    let parts = string.split(&csv, \",\")\n    println(parts.len())\n    println(string.equal(&csv, \"a,b\"))\n    let n = 3\n    shout(\"n={n}\")\n    for i in 0..2 {\n        shout(\"loop\")\n    }\n}\n");
+    let output = case.run("use std/string\nfn shout(s: &string):\n    println(\"<{s}>\")\nfn main():\n    println(string.byte_len(\"中文\"))\n    let csv = \"a,b\"\n    let parts = string.split(&csv, \",\")\n    println(parts.len())\n    println(string.equal(&csv, \"a,b\"))\n    let n = 3\n    shout(\"n={n}\")\n    for i in 0..2:\n        shout(\"loop\")\n");
     assert_eq!(stdout(&output), "6\n2\ntrue\n<n=3>\n<loop>\n<loop>\n");
 }
 
@@ -157,8 +148,8 @@ fn literals_lend_to_shared_string_parameters() {
 fn missing_keys_abort() {
     let case = Case::new("maps", "missing");
     for source in [
-        "fn main() {\n    let m: {string: i64} = {}\n    println(m[\"x\"])\n}\n",
-        "use std/string\nfn main() {\n    let m = {1: \"a\"}\n    println(string.byte_len(&m[2]))\n}\n",
+        "fn main():\n    let m: {string: i64} = {}\n    println(m[\"x\"])\n",
+        "use std/string\nfn main():\n    let m = {1: \"a\"}\n    println(string.byte_len(&m[2]))\n",
     ] {
         rejected(&case.run(source), "zam: key not found", source);
     }
@@ -181,11 +172,11 @@ fn checker_rejects_map_misuse() {
             "cannot mutably borrow immutable value m",
         ),
         (
-            "let mut m: {string: i64} = {\"a\": 1}\n    for k in &m {\n        m[k] = 2\n    }",
+            "let mut m: {string: i64} = {\"a\": 1}\n    for k in &m:\n        m[k] = 2",
             "borrowed by an enclosing for loop",
         ),
         (
-            "let mut m: {string: i64} = {\"a\": 1}\n    for k in &m {\n        m.remove(k)\n    }",
+            "let mut m: {string: i64} = {\"a\": 1}\n    for k in &m:\n        m.remove(k)",
             "borrowed by an enclosing for loop",
         ),
         (
@@ -215,20 +206,20 @@ fn checker_rejects_map_misuse() {
             "lists support len, push, pop and swap",
         ),
     ] {
-        let source = format!("fn take(s: &string) {{}}\nfn main() {{\n    {body}\n}}\n");
+        let source = format!("fn take(s: &string): pass\nfn main():\n    {body}\n");
         rejected(&case.run(&source), message, &source);
     }
     for (source, message) in [
         (
-            "fn f() -> &{string: i64} {\n    return {}\n}\nfn main() {}\n",
+            "fn f() -> &{string: i64}:\n    return {}\nfn main(): pass\n",
             "functions cannot return references",
         ),
         (
-            "fn f(m: &{string: i64}) {\n    m[\"a\"] = 1\n}\nfn main() {}\n",
+            "fn f(m: &{string: i64}):\n    m[\"a\"] = 1\nfn main(): pass\n",
             "cannot mutably borrow immutable value m",
         ),
         (
-            "use std/io\nfn main() -> !string {\n    io.read_line(\"x\")?\n}\n",
+            "use std/io\nfn main() -> !string:\n    io.read_line(\"x\")?\n",
             "mismatch",
         ),
     ] {
@@ -239,10 +230,10 @@ fn checker_rejects_map_misuse() {
 #[test]
 fn lists_swap_in_place() {
     let case = Case::new("maps", "swap");
-    let output = case.run("fn main() {\n    let mut xs: [string] = [\"a\", \"b\", \"c\"]\n    xs.swap(0, 2)\n    for x in &xs {\n        println(x)\n    }\n    xs.swap(1, 1)\n    println(xs.len())\n}\n");
+    let output = case.run("fn main():\n    let mut xs: [string] = [\"a\", \"b\", \"c\"]\n    xs.swap(0, 2)\n    for x in &xs:\n        println(x)\n    xs.swap(1, 1)\n    println(xs.len())\n");
     assert_eq!(stdout(&output), "c\nb\na\n3\n");
     rejected(
-        &case.run("fn main() {\n    let mut xs: [i64] = [1]\n    xs.swap(0, 1)\n}\n"),
+        &case.run("fn main():\n    let mut xs: [i64] = [1]\n    xs.swap(0, 1)\n"),
         "zam: list index out of bounds",
         "swap out of bounds",
     );

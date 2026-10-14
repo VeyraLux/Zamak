@@ -5,41 +5,70 @@ fn syntax_diagnostics_include_source_and_line() {
     let path = std::env::temp_dir().join(format!("zam-diagnostics-{}.zm", std::process::id()));
     for (source, line, column, message) in [
         (
-            "# comment\nfn main() {\nprintln(@)\n}\n",
+            "# comment\nfn main():\n    println(@)\n",
             3,
-            9,
+            13,
             "unexpected character",
         ),
         (
-            "fn main() {\nprintln(\"bad\\q\")\n}\n",
+            "fn main():\n    println(\"bad\\q\")\n",
             2,
-            9,
+            13,
             "unsupported string escape",
         ),
         (
-            "fn main() {\nprintln(\"open",
+            "fn main():\n    println(\"open",
             2,
-            9,
+            13,
             "unterminated string literal",
         ),
         (
-            "fn main() {\nprintln(\"你好\")\nprintln(1\n}\n",
+            "fn main():\n    println(\"你好\")\n    println(1\n",
             3,
-            10,
-            "expected",
-        ),
-        ("fn main() {\nprintln(1)\n", 3, 1, "unterminated"),
-        (
-            "fn main() { println(\"你好\") @ }",
-            1,
-            27,
-            "unexpected character",
+            12,
+            "'(' was never closed",
         ),
         (
-            "fn main() {\r\n\tprintln(@)\r\n}",
+            "fn main():\n",
             2,
-            10,
+            1,
+            "expected an indented block after the fn line",
+        ),
+        (
+            "fn main(): println(\"你好\") @",
+            1,
+            26,
             "unexpected character",
+        ),
+        (
+            "fn main():\r\n\tprintln(@)\r\n",
+            2,
+            1,
+            "indentation contains a tab; run `zam fmt`",
+        ),
+        (
+            "fn main():\n    let x = 1\n      println(x)\n",
+            3,
+            7,
+            "unexpected indent",
+        ),
+        (
+            "fn main():\n    if true:\n        println(1)\n  println(2)\n",
+            4,
+            3,
+            "unindent does not match any outer indentation level",
+        ),
+        (
+            "fn main():\nlet x = 1\nif x > 0:\nprintln(x)\n",
+            2,
+            1,
+            "the indentation may have been lost when the code was copied",
+        ),
+        (
+            "fn main() {\n    println(1)\n}\n",
+            1,
+            11,
+            "blocks are indented, not wrapped in braces",
         ),
     ] {
         fs::write(&path, source).unwrap();
@@ -73,19 +102,19 @@ fn semantic_diagnostics_include_line_and_column() {
     let path = std::env::temp_dir().join(format!("zam-semantic-{}.zm", std::process::id()));
     for (source, line, column, message) in [
         (
-            "fn main() {\n    let a = \"x\"\n    let b = a\n    println(a)\n}\n",
+            "fn main():\n    let a = \"x\"\n    let b = a\n    println(a)\n",
             4,
             5,
             "use after move",
         ),
         (
-            "fn main() {\n    let a = \"x\"\n    if true {\n        let b = a\n        println(a)\n    }\n}\n",
+            "fn main():\n    let a = \"x\"\n    if true:\n        let b = a\n        println(a)\n",
             5,
             9,
             "use after move",
         ),
         (
-            "fn f() -> string {}\nfn main() {}\n",
+            "fn f() -> string: pass\nfn main(): pass\n",
             1,
             1,
             "missing string return value",
@@ -100,13 +129,21 @@ fn semantic_diagnostics_include_line_and_column() {
         let error = String::from_utf8_lossy(&output.stderr);
         assert!(!output.status.success(), "accepted {source}");
         assert!(
-            error.contains(&format!("{}:{line}:{column}
-", path.display())),
+            error.contains(&format!(
+                "{}:{line}:{column}
+",
+                path.display()
+            )),
             "{source}: {error}"
         );
         let text = source.lines().nth(line - 1).unwrap();
-        assert!(error.contains(&format!("{line} | {text}
-")), "{source}: {error}");
+        assert!(
+            error.contains(&format!(
+                "{line} | {text}
+"
+            )),
+            "{source}: {error}"
+        );
         assert!(error.contains(message), "{source}: {error}");
     }
     fs::remove_file(path).unwrap();
@@ -118,17 +155,7 @@ fn every_failing_function_reports_its_first_error() {
     let path = std::env::temp_dir().join(format!("zam-multi-{}.zm", std::process::id()));
     fs::write(
         &path,
-        "fn later() {
-    let x: i64 = \"a\"
-}
-fn main() {
-    let a = \"x\"
-    let b = a
-    println(a)
-    println(a)
-}
-fn fine() {}
-",
+        "fn later():\n    let x: i64 = \"a\"\nfn main():\n    let a = \"x\"\n    let b = a\n    println(a)\n    println(a)\nfn fine(): pass\n",
     )
     .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_zam"))
@@ -146,13 +173,13 @@ fn fine() {}
         .expect(&error);
     let second = error
         .find(
-            ":7:5
+            ":6:5
 ",
         )
         .expect(&error);
     assert!(first < second, "{error}");
     assert!(
-        !error.contains(":8:5"),
+        !error.contains(":7:5"),
         "only the first error per function: {error}"
     );
     assert!(
@@ -176,7 +203,7 @@ fn fine() {}
         .map(|(at, _)| &stdout[at + 8..at + 13])
         .collect();
     assert_eq!(codes, ["ZM200", "ZM301"], "{stdout}");
-    assert!(stdout.find("\"line\":2,").unwrap() < stdout.find("\"line\":7,").unwrap());
+    assert!(stdout.find("\"line\":2,").unwrap() < stdout.find("\"line\":6,").unwrap());
     fs::remove_file(path).unwrap();
 }
 
@@ -184,7 +211,7 @@ fn fine() {}
 fn json_diagnostics_are_one_line_and_structured() {
     let path = std::env::temp_dir().join(format!("zam-json-{}.zm", std::process::id()));
     let escaped = path.display().to_string().replace('\\', "\\\\");
-    fs::write(&path, "fn main() {\nprintln(@)\n}\n").unwrap();
+    fs::write(&path, "fn main():\n    println(@)\n").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_zam"))
         .args(["check", "--json"])
         .arg(&path)
@@ -198,7 +225,7 @@ fn json_diagnostics_are_one_line_and_structured() {
         "\"ok\":false",
         &format!("\"file\":\"{escaped}\""),
         "\"line\":2",
-        "\"column\":9",
+        "\"column\":13",
         "\"function\":null",
         "\"code\":\"ZM100\"",
         "\"category\":\"syntax\"",
@@ -210,7 +237,7 @@ fn json_diagnostics_are_one_line_and_structured() {
     // 人类可读的那一行仍然在 stderr，stdout 保持是合法 JSON。
     assert!(String::from_utf8_lossy(&output.stderr).contains(&path.display().to_string()));
 
-    fs::write(&path, "fn main() {\nprintln(1)\n}\n").unwrap();
+    fs::write(&path, "fn main():\n    println(1)\n").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_zam"))
         .args(["check", "--json"])
         .arg(&path)
@@ -247,115 +274,115 @@ fn json_diagnostics_are_one_line_and_structured() {
 /// 要求它与 `docs/AI_WORKFLOW.md` 列出的码逐个对应。
 const REAL_SOURCE_CODES: &[(&str, &str, &str)] = &[
     (
-        "fn main() {\n    let x: i64 = \"s\"\n}\n",
+        "fn main():\n    let x: i64 = \"s\"\n",
         "ZM200",
         "type",
     ),
-    ("fn main() {\n    println(nope)\n}\n", "ZM201", "name"),
-    ("fn main() {\n    nope()\n}\n", "ZM201", "name"),
+    ("fn main():\n    println(nope)\n", "ZM201", "name"),
+    ("fn main():\n    nope()\n", "ZM201", "name"),
     (
-        "struct Point {\n    x: i64\n    y: i64\n}\nfn main() {\n    let p = Point {\n        x: 1\n        y: 2\n    }\n    println(p.z)\n}\n",
+        "struct Point:\n    x: i64\n    y: i64\nfn main():\n    let p = Point(\n        x: 1,\n        y: 2,\n    )\n    println(p.z)\n",
         "ZM202",
         "name",
     ),
     (
-        "fn main() {\n    let a = \"x\"\n    let b = a\n    println(a)\n}\n",
+        "fn main():\n    let a = \"x\"\n    let b = a\n    println(a)\n",
         "ZM301",
         "ownership",
     ),
     (
-        "fn main() {\n    let x = 1\n    x = 2\n}\n",
+        "fn main():\n    let x = 1\n    x = 2\n",
         "ZM302",
         "ownership",
     ),
     (
-        "fn f(a: &string, b: string) -> i64 {\n    return 1\n}\nfn main() {\n    let s = \"x\"\n    f(&s, s)\n}\n",
+        "fn f(a: &string, b: string) -> i64:\n    return 1\nfn main():\n    let s = \"x\"\n    f(&s, s)\n",
         "ZM421",
         "ownership",
     ),
     (
-        "fn main() {\n    let s = \"x\"\n    let r = &s\n}\n",
+        "fn main():\n    let s = \"x\"\n    let r = &s\n",
         "ZM422",
         "ownership",
     ),
     (
-        "fn f(a: &mut string) -> i64 {\n    return 1\n}\nfn main() {\n    let mut s = \"x\"\n    f(&s)\n}\n",
+        "fn f(a: &mut string) -> i64:\n    return 1\nfn main():\n    let mut s = \"x\"\n    f(&s)\n",
         "ZM423",
         "ownership",
     ),
     (
-        "fn f(a: &mut string) -> i64 {\n    return 1\n}\nfn main() {\n    let s = \"x\"\n    f(&mut s)\n}\n",
+        "fn f(a: &mut string) -> i64:\n    return 1\nfn main():\n    let s = \"x\"\n    f(&mut s)\n",
         "ZM424",
         "ownership",
     ),
     (
-        "fn f(a: &mut string) -> i64 {\n    return 1\n}\nfn main() {\n    let s = \"x\"\n    f(s)\n}\n",
+        "fn f(a: &mut string) -> i64:\n    return 1\nfn main():\n    let s = \"x\"\n    f(s)\n",
         "ZM425",
         "ownership",
     ),
     (
-        "fn f() -> string {}\nfn main() {}\n",
+        "fn f() -> string: pass\nfn main(): pass\n",
         "ZM510",
         "control_flow",
     ),
     (
-        "enum Light {\n    Red\n    Green\n}\nfn main() {\n    let l = Light.Red\n    match l {\n        Red => println(1)\n    }\n}\n",
+        "enum Light:\n    Red\n    Green\nfn main():\n    let l = Light.Red\n    match l:\n        Red: println(1)\n",
         "ZM511",
         "control_flow",
     ),
     (
-        "enum Light {\n    Red\n}\nfn main() {\n    let l = Light.Blue\n}\n",
+        "enum Light:\n    Red\nfn main():\n    let l = Light.Blue\n",
         "ZM201",
         "name",
     ),
     (
-        "fn main() {\n    let m: {bool: i64} = {}\n}\n",
+        "fn main():\n    let m: {bool: i64} = {}\n",
         "ZM900",
         "unsupported",
     ),
     (
-        "fn main() {\n    println(\"a\\qb\")\n}\n",
+        "fn main():\n    println(\"a\\qb\")\n",
         "ZM101",
         "syntax",
     ),
     (
-        "fn main() {\n    let x = 9223372036854775808\n    println(x)\n}\n",
+        "fn main():\n    let x = 9223372036854775808\n    println(x)\n",
         "ZM600",
         "arithmetic",
     ),
     (
-        "fn main() {\n    let a = [1, 2, 3]\n    println(a[5])\n}\n",
+        "fn main():\n    let a = [1, 2, 3]\n    println(a[5])\n",
         "ZM406",
         "bounds",
     ),
     (
-        "fn load(p: &string) -> i64!string {\n    return 1\n}\nfn main() {\n    let v = load(\"a\")\n    println(v)\n}\n",
+        "fn load(p: &string) -> i64!string:\n    return 1\nfn main():\n    let v = load(\"a\")\n    println(v)\n",
         "ZM500",
         "error_handling",
     ),
     (
-        "fn f() -> i64!i64 {\n    return 1\n}\nfn main() {\n    println(1)\n}\n",
+        "fn f() -> i64!i64:\n    return 1\nfn main():\n    println(1)\n",
         "ZM509",
         "error_handling",
     ),
     (
-        "fn main() {\n    println(\"hi\");\n}\n",
+        "fn main():\n    println(\"hi\");\n",
         "ZM110",
         "syntax",
     ),
     (
-        "fn foo() -> i64 {\n    return 1\n}\n\nfn foo() -> i64 {\n    return 2\n}\n\nfn main() {\n    println(foo())\n}\n",
+        "fn foo() -> i64:\n    return 1\n\nfn foo() -> i64:\n    return 2\n\nfn main():\n    println(foo())\n",
         "ZM204",
         "name",
     ),
-    ("fn main() {\nprintln(@)\n}\n", "ZM100", "syntax"),
+    ("fn main():\n    println(@)\n", "ZM100", "syntax"),
     (
-        "fn main() {\n    let point = shapes.Point { x: 1 }\n}\n",
+        "fn main():\n    let point = shapes.Point(x: 1)\n",
         "ZM203",
         "name",
     ),
     (
-        "fn main() {\n    let s = \"hi\"\n    println(string.byte_len(&s))\n}\n",
+        "fn main():\n    let s = \"hi\"\n    println(string.byte_len(&s))\n",
         "ZM203",
         "name",
     ),
@@ -431,7 +458,7 @@ fn build_json_keeps_progress_off_stdout() {
     let root = std::env::temp_dir().join(format!("zam-json-build-{}", std::process::id()));
     fs::create_dir_all(&root).unwrap();
     let path = root.join("main.zm");
-    fs::write(&path, "fn main() {\nprintln(1)\n}\n").unwrap();
+    fs::write(&path, "fn main():\n    println(1)\n").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_zam"))
         .args(["build", "--json"])
         .arg(&path)
@@ -459,7 +486,7 @@ fn build_json_keeps_progress_off_stdout() {
 /// 类型检查器一致（指向语句起始）；项目模式下 `file` 也从项目目录收紧到出错的那个模块。
 #[test]
 fn module_resolution_errors_include_location() {
-    let source = "fn main() {\n    let s = \"hi\"\n    println(string.byte_len(&s))\n}\n";
+    let source = "fn main():\n    let s = \"hi\"\n    println(string.byte_len(&s))\n";
     let root = std::env::temp_dir().join(format!("zam-module-location-{}", std::process::id()));
     fs::create_dir_all(root.join("src")).unwrap();
     let file = root.join("main.zm");
@@ -506,19 +533,19 @@ fn ambiguous_imports_are_classified_as_name_diagnostics() {
     .unwrap();
     fs::write(
         root.join("src").join("main.zm"),
-        "use one/foo\nuse two/foo\n\nfn main() {\n    println(foo.hello())\n}\n",
+        "use one/foo\nuse two/foo\n\nfn main():\n    println(foo.hello())\n",
     )
     .unwrap();
     fs::create_dir_all(root.join("src").join("one")).unwrap();
     fs::create_dir_all(root.join("src").join("two")).unwrap();
     fs::write(
         root.join("src").join("one").join("foo.zm"),
-        "pub fn hello() -> i64 {\n    return 1\n}\n",
+        "pub fn hello() -> i64:\n    return 1\n",
     )
     .unwrap();
     fs::write(
         root.join("src").join("two").join("foo.zm"),
-        "pub fn hello() -> i64 {\n    return 2\n}\n",
+        "pub fn hello() -> i64:\n    return 2\n",
     )
     .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_zam"))
@@ -549,15 +576,15 @@ fn catch_resolution_errors_keep_inner_location() {
     let file = root.join("main.zm");
     let module = root.join("src").join("main.zm");
     for (handler, line, column) in [
-        ("        println(missing.call())\n        return\n", 6, 9),
+        ("println(missing.call())\n        return\n", 5, 9),
         (
-            "        let inner = load() catch nested {\n            println(missing.call())\n            return\n        }\n        return\n",
-            7,
+            "let inner = load() catch nested:\n            println(missing.call())\n            return\n        return\n",
+            6,
             13,
         ),
     ] {
         let source = format!(
-            "fn load() -> i64!string {{\n    fail \"nope\"\n}}\nfn main() {{\n    let value = load() catch e {{\n{handler}    }}\n    println(value)\n}}\n"
+            "fn load() -> i64!string:\n    fail \"nope\"\nfn main():\n    let value = load() catch e:\n        {handler}\n    println(value)\n"
         );
         fs::write(&file, &source).unwrap();
         fs::write(&module, &source).unwrap();
@@ -599,11 +626,11 @@ fn project_check_errors_report_module_path() {
     .unwrap();
     fs::write(
         root.join("src").join("main.zm"),
-        "use greeting\n\nfn main() {\n    println(greeting.hello())\n}\n",
+        "use greeting\n\nfn main():\n    println(greeting.hello())\n",
     )
     .unwrap();
     let module = root.join("src").join("greeting.zm");
-    fs::write(&module, "pub fn hello() -> string {\n    return 1\n}\n").unwrap();
+    fs::write(&module, "pub fn hello() -> string:\n    return 1\n").unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_zam"))
         .args(["check", "--json"])

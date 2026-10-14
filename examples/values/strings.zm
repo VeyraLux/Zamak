@@ -1,16 +1,15 @@
 use std/string
 
-fn size(text: &string) -> i64 {
+fn size(text: &string) -> i64:
     string.byte_len(text)
-}
 
-fn chars(text: &string) -> i64 {
+fn chars(text: &string) -> i64:
     string.char_len(text)
-}
 
-struct Person { name: string }
+struct Person:
+    name: string
 
-fn main() {
+fn main():
     let text = "你好"
     println(size(&text))
     println(chars(&text))
@@ -21,7 +20,6 @@ fn main() {
     let same = "你好"
     println(string.equal(&text, &same))
     println(string.equal(&text, &empty))
-    let person = Person { name: "你好" }
+    let person = Person(name: "你好")
     println(string.byte_len(&person.name))
     println(string.equal(&person.name, &text))
-}

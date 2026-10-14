@@ -19,7 +19,8 @@ fn fmt_reindents_a_project_and_refuses_broken_source() {
     )
     .unwrap();
     let entry = root.join("src/main.zm");
-    let ugly = "fn main() {\n //保留注释\n let x =1\n\tif true {\n println(x)\n }\n}\n\n\n";
+    // Tab 缩进、行尾空白、多余空行；Tab 缩进的文件 check 会报错，fmt 照样能整理。
+    let ugly = "fn main():\n\t//保留注释\n\tlet x =1   \n\tif true:\n\t\tprintln(x)\n\n\n";
     fs::write(&entry, ugly).unwrap();
 
     let output = format(&root);
@@ -29,7 +30,7 @@ fn fmt_reindents_a_project_and_refuses_broken_source() {
     let formatted = fs::read_to_string(&entry).unwrap();
     assert_eq!(
         formatted,
-        "fn main() {\n    //保留注释\n    let x =1\n    if true {\n        println(x)\n    }\n}\n"
+        "fn main():\n    //保留注释\n    let x =1\n\n    if true:\n        println(x)\n"
     );
 
     // 已经格式化过：不再改写，也不再报 FORMAT。
@@ -39,7 +40,7 @@ fn fmt_reindents_a_project_and_refuses_broken_source() {
     assert_eq!(fs::read_to_string(&entry).unwrap(), formatted);
 
     // 语法坏掉的文件原样保留，命令失败。
-    let broken = "fn main() {\nprintln(@)\n}\n";
+    let broken = "fn main():\n    println(@)\n";
     fs::write(&entry, broken).unwrap();
     let failed = format(&root);
     assert!(!failed.status.success());

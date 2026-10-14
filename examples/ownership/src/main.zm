@@ -1,20 +1,16 @@
-fn show(text: &string) {
+fn show(text: &string):
     println(text)
-}
 
-fn update(text: &mut string) {
+fn update(text: &mut string):
     text = "借用结束后，所有者仍然可用"
-}
 
-fn consume(text: string) {
+fn consume(text: string):
     println(text)
-}
 
-fn main() {
+fn main():
     let mut message = "你好，原生 Zamak"
     show(&message)
     update(&mut message)
     show(&message)
     let moved = message
     consume(moved)
-}

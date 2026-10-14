@@ -5,7 +5,7 @@ use common::Case;
 #[test]
 fn positive_variable_boundaries_match_checked_signed_arithmetic() {
     let case = Case::new("nonnegative-division", "boundaries");
-    let mut source = String::from("fn main() {\n");
+    let mut source = String::from("fn main():\n");
     let mut expected = String::new();
     for (i, (n, d)) in [
         (0_i64, 1_i64),
@@ -20,7 +20,7 @@ fn positive_variable_boundaries_match_checked_signed_arithmetic() {
     .enumerate()
     {
         source.push_str(&format!(
-            "let n{i} = {n}\nlet d{i} = {d}\nprintln(n{i} / d{i})\nprintln(n{i} % d{i})\nprintln(n{i} / {d})\nprintln(n{i} % {d})\n"
+            "    let n{i} = {n}\n    let d{i} = {d}\n    println(n{i} / d{i})\n    println(n{i} % d{i})\n    println(n{i} / {d})\n    println(n{i} % {d})\n"
         ));
         expected.push_str(&format!(
             "{}\n{}\n{}\n{}\n",
@@ -30,7 +30,6 @@ fn positive_variable_boundaries_match_checked_signed_arithmetic() {
             n.checked_rem(d).unwrap()
         ));
     }
-    source.push_str("}\n");
     let result = case.run(&source);
     assert!(
         result.status.success(),
@@ -43,7 +42,7 @@ fn positive_variable_boundaries_match_checked_signed_arithmetic() {
 #[test]
 fn negative_and_repeated_sign_changes_keep_signed_semantics() {
     let case = Case::new("nonnegative-division", "signed");
-    let result = case.run("fn quotient(n: i64, d: i64) -> i64 { n / d }\nfn remainder(n: i64, d: i64) -> i64 { n % d }\nfn unknown() -> i64 { -9 }\nfn main() {\nprintln(quotient(unknown(), 4))\nprintln(remainder(unknown(), 4))\nprintln(quotient(9, -4))\nprintln(remainder(9, -4))\nlet mut n = 9\nlet mut i = 0\nwhile i < 2 {\nprintln(n / 4)\nprintln(n % 4)\nn = -9\ni = i + 1\n}\n}");
+    let result = case.run("fn quotient(n: i64, d: i64) -> i64: n / d\nfn remainder(n: i64, d: i64) -> i64: n % d\nfn unknown() -> i64: -9\nfn main():\n    println(quotient(unknown(), 4))\n    println(remainder(unknown(), 4))\n    println(quotient(9, -4))\n    println(remainder(9, -4))\n    let mut n = 9\n    let mut i = 0\n    while i < 2:\n        println(n / 4)\n        println(n % 4)\n        n = -9\n        i = i + 1");
     assert!(
         result.status.success(),
         "{}",
@@ -60,7 +59,8 @@ fn zero_and_signed_overflow_keep_arithmetic_errors() {
     let case = Case::new("nonnegative-division", "errors");
     for op in ["/", "%"] {
         for (n, d) in [(1, 0), (i64::MIN, -1)] {
-            let source = format!("fn main() {{\nlet n = {n}\nlet d = {d}\nprintln(n {op} d)\n}}");
+            let source =
+                format!("fn main():\n    let n = {n}\n    let d = {d}\n    println(n {op} d)\n");
             let result = case.run(&source);
             assert!(!result.status.success(), "accepted {source}");
             assert!(
@@ -76,7 +76,7 @@ fn zero_and_signed_overflow_keep_arithmetic_errors() {
 fn operand_order_and_successful_result_facts_keep_operand_errors() {
     let case = Case::new("nonnegative-division", "operand-order");
     for (op, answer) in [("/", "2"), ("%", "1")] {
-        let source = format!("fn first() -> i64 {{\nprintln(1)\n9\n}}\nfn second() -> i64 {{\nprintln(2)\n4\n}}\nfn main() {{ println(first() {op} second()) }}");
+        let source = format!("fn first() -> i64:\n    println(1)\n    9\nfn second() -> i64:\n    println(2)\n    4\nfn main(): println(first() {op} second())\n");
         let result = case.run(&source);
         assert!(
             result.status.success(),
@@ -89,12 +89,12 @@ fn operand_order_and_successful_result_facts_keep_operand_errors() {
         );
         // On success n + 1 is nonnegative, which proves unsigned lowering for
         // the outer operation. It must not authorize unchecked inner addition.
-        let source = format!("fn unknown() -> i64 {{ 9223372036854775807 }}\nfn second() -> i64 {{\nprintln(2)\n4\n}}\nfn main() {{\nlet n = unknown()\nif n >= 0 {{ println((n + 1) {op} (second() * 0 + 4)) }}\n}}");
+        let source = format!("fn unknown() -> i64: 9223372036854775807\nfn second() -> i64:\n    println(2)\n    4\nfn main():\n    let n = unknown()\n    if n >= 0: println((n + 1) {op} (second() * 0 + 4))\n");
         let result = case.run(&source);
         assert!(!result.status.success());
         assert!(String::from_utf8_lossy(&result.stderr).contains("integer arithmetic error"));
         assert_eq!(String::from_utf8_lossy(&result.stdout), "");
-        let source = format!("fn unknown() -> i64 {{ 9223372036854775807 }}\nfn first() -> i64 {{\nprintln(1)\n9\n}}\nfn main() {{\nlet n = unknown()\nif n >= 0 {{ println((first() * 0) {op} (n + 1)) }}\n}}");
+        let source = format!("fn unknown() -> i64: 9223372036854775807\nfn first() -> i64:\n    println(1)\n    9\nfn main():\n    let n = unknown()\n    if n >= 0: println((first() * 0) {op} (n + 1))\n");
         let result = case.run(&source);
         assert!(!result.status.success());
         assert!(String::from_utf8_lossy(&result.stderr).contains("integer arithmetic error"));
@@ -105,7 +105,7 @@ fn operand_order_and_successful_result_facts_keep_operand_errors() {
 #[test]
 fn specialized_nonnegative_recurrence_keeps_exact_results() {
     let case = Case::new("nonnegative-division", "recurrence");
-    let result = case.run("fn accum(seed: i64) -> i64 {\nlet mut acc = seed\nlet mut i = 0\nwhile i < 512 {\nacc = (acc * 31 + i) % 1000003\ni = i + 1\n}\nacc\n}\nfn main() {\nlet mut seed = 0\nwhile seed < 8 {\nprintln(accum(seed))\nseed = seed + 1\n}\n}");
+    let result = case.run("fn accum(seed: i64) -> i64:\n    let mut acc = seed\n    let mut i = 0\n    while i < 512:\n        acc = (acc * 31 + i) % 1000003\n        i = i + 1\n    acc\nfn main():\n    let mut seed = 0\n    while seed < 8:\n        println(accum(seed))\n        seed = seed + 1");
     assert!(
         result.status.success(),
         "{}",

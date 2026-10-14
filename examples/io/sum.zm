@@ -3,18 +3,19 @@ use std/string
 
 // 逐行读取整数并求和：空行跳过，遇到不是整数的行就报错退出（退出码 1）。
 // 用法（pwsh）："3`n4`n5" | zam run examples/io/sum.zm
-fn main() -> !string {
+fn main() -> !string:
     let mut line = ""
     let mut total = 0
     let mut count = 0
-    while io.read_line(&mut line)? {
+
+    while io.read_line(&mut line)?:
         let text = string.trim(&line)
-        if string.byte_len(&text) == 0 {
+
+        if string.byte_len(&text) == 0:
             continue
-        }
+
         let value = string.parse_i64(&text)?
         total = total + value
         count = count + 1
-    }
+
     println("count={count} total={total}")
-}

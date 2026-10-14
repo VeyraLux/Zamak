@@ -4,92 +4,84 @@ use std/fmt
 use std/io
 use std/string
 
-struct Student {
+struct Student:
     name: string
     scores: [i64]
-}
 
-struct Group {
+struct Group:
     count: i64
     best: string
-}
 
 // 只读借用：不移动学生，也不复制成绩列表。
-fn average(s: &Student) -> f64 {
-    if s.scores.len() == 0 {
+fn average(s: &Student) -> f64:
+    if s.scores.len() == 0:
         return 0.0
-    }
+
     let mut total = 0
-    for score in &s.scores {
+
+    for score in &s.scores:
         total += score
-    }
+
     f64(total) / f64(s.scores.len())
-}
 
 // 可变借用：原地修改调用方的学生。
-fn curve(s: &mut Student, bonus: i64) {
-    for i in 0..s.scores.len() {
+fn curve(s: &mut Student, bonus: i64):
+    for i in 0..s.scores.len():
         s.scores[i] = s.scores[i] + bonus
-        if s.scores[i] > 100 {
+
+        if s.scores[i] > 100:
             s.scores[i] = 100
-        }
-    }
-}
 
-fn grade(avg: f64) -> string {
-    if avg >= 90.0 {
+fn grade(avg: f64) -> string:
+    if avg >= 90.0:
         return "A"
-    } else if avg >= 80.0 {
+    elif avg >= 80.0:
         return "B"
-    } else if avg >= 70.0 {
+    elif avg >= 70.0:
         return "C"
-    }
-    "D"
-}
 
-fn main() -> !string {
+    "D"
+
+fn main() -> !string:
     let mut students: [Student] = []
     let mut line = ""
     // 每行：名字 分数 分数 ...
-    while io.read_line(&mut line)? {
+    while io.read_line(&mut line)?:
         let words = string.words(&line)
-        if words.len() == 0 {
+
+        if words.len() == 0:
             continue
-        }
-        students.push(Student { name: string.copy(&words[0]) scores: [] })
+
+        students.push(Student(name: string.copy(&words[0]), scores: []))
         let last = students.len() - 1
-        for i in 1..words.len() {
+
+        for i in 1..words.len():
             let score = string.parse_i64(&words[i])?
             students[last].scores.push(score)
-        }
-    }
+
     // 名字以 * 结尾的学生加 5 分。
-    for i in 0..students.len() {
-        if string.ends_with(&students[i].name, "*") {
+    for i in 0..students.len():
+        if string.ends_with(&students[i].name, "*"):
             curve(&mut students[i], 5)
             students[i].name = string.replace(&students[i].name, "*", "")
-        }
-    }
+
     // 按平均分从高到低排序（交换整个元素，不复制字符串和列表）。
-    for i in 0..students.len() {
-        for j in 0..students.len() - 1 - i {
-            if average(&students[j]) < average(&students[j + 1]) {
+    for i in 0..students.len():
+        for j in 0..students.len() - 1 - i:
+            if average(&students[j]) < average(&students[j + 1]):
                 students.swap(j, j + 1)
-            }
-        }
-    }
+
     let mut groups: {string: Group} = {}
-    for s in &students {
+
+    for s in &students:
         let avg = average(s)
         let letter = grade(avg)
         println("{s.name}: {fmt.fixed(avg, 1)} {letter}")
-        if groups.contains(&letter) {
+
+        if groups.contains(&letter):
             groups[&letter].count += 1
-        } else {
-            groups[&letter] = Group { count: 1 best: string.copy(&s.name) }
-        }
-    }
-    for letter in &groups {
+        else:
+            groups[&letter] = Group(count: 1, best: string.copy(&s.name))
+
+    for letter in &groups:
         println("{letter}: {groups[letter].count} (best {groups[letter].best})")
-    }
-}

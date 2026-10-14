@@ -113,7 +113,7 @@ fn examples_read_files_stdin_and_arguments() {
 #[test]
 fn arguments_survive_quoting_and_unicode() {
     let sandbox = Sandbox::new("args");
-    let echo = "use std/env\nfn main() -> !string {\nprintln(env.arg_count())\nfor i in 0..env.arg_count() {\nlet value = env.arg(i)?\nprintln(\"[{value}]\")\n}\n}\n";
+    let echo = "use std/env\nfn main() -> !string:\n    println(env.arg_count())\n    for i in 0..env.arg_count():\n        let value = env.arg(i)?\n        println(\"[{value}]\")\n";
     let args = [
         "a b",
         "中文",
@@ -140,22 +140,22 @@ fn arguments_survive_quoting_and_unicode() {
 #[test]
 fn string_helpers_parse_slice_and_search() {
     let sandbox = Sandbox::new("strings");
-    let program = "use std/string\nfn show(text: &string) -> !string {\nlet value = string.parse_i64(text)?\nprintln(value)\n}\nfn try(text: string) {\nshow(&text) catch e {\nprintln(e)\nreturn\n}\n}\nfn main() {\ntry(\"9223372036854775807\")\ntry(\"-9223372036854775808\")\ntry(\"+42\")\ntry(\"9223372036854775808\")\ntry(\"-\")\ntry(\"\")\ntry(\"1 \")\nlet padded = \" \\t 中 文 \\r\\n\"\nlet trimmed = string.trim(&padded)\nprintln(\"[{trimmed}]\")\nlet text = \"a中b\"\nprintln(string.byte_at(&text, 1))\nprintln(string.slice(&text, 1, 4))\nlet needle = \"b\"\nlet missing = \"z\"\nlet empty = \"\"\nprintln(string.find(&text, &needle))\nprintln(string.find(&text, &missing))\nprintln(string.find(&text, &empty))\n}\n";
+    let program = "use std/string\nfn show(text: &string) -> !string:\n    let value = string.parse_i64(text)?\n    println(value)\nfn try(text: string):\n    show(&text) catch e:\n        println(e)\n        return\nfn main():\n    try(\"9223372036854775807\")\n    try(\"-9223372036854775808\")\n    try(\"+42\")\n    try(\"9223372036854775808\")\n    try(\"-\")\n    try(\"\")\n    try(\"1 \")\n    let padded = \" \\t 中 文 \\r\\n\"\n    let trimmed = string.trim(&padded)\n    println(\"[{trimmed}]\")\n    let text = \"a中b\"\n    println(string.byte_at(&text, 1))\n    println(string.slice(&text, 1, 4))\n    let needle = \"b\"\n    let missing = \"z\"\n    let empty = \"\"\n    println(string.find(&text, &needle))\n    println(string.find(&text, &missing))\n    println(string.find(&text, &empty))\n";
     assert_eq!(
         stdout(&sandbox.run(program, NONE, None)),
         "9223372036854775807\n-9223372036854775808\n42\ninteger out of range: 9223372036854775808\ninvalid integer: -\ninvalid integer: \ninvalid integer: 1 \n[中 文]\n228\n中\n4\n-1\n0\n"
     );
     for (source, message) in [
         (
-            "use std/string\nfn main() {\nlet text = \"ab\"\nprintln(string.byte_at(&text, 2))\n}\n",
+            "use std/string\nfn main():\n    let text = \"ab\"\n    println(string.byte_at(&text, 2))\n",
             "string index out of bounds",
         ),
         (
-            "use std/string\nfn main() {\nlet text = \"中\"\nprintln(string.slice(&text, 0, 1))\n}\n",
+            "use std/string\nfn main():\n    let text = \"中\"\n    println(string.slice(&text, 0, 1))\n",
             "string index out of bounds",
         ),
         (
-            "use std/string\nfn main() {\nlet text = \"ab\"\nprintln(string.slice(&text, 2, 1))\n}\n",
+            "use std/string\nfn main():\n    let text = \"ab\"\n    println(string.slice(&text, 2, 1))\n",
             "string index out of bounds",
         ),
     ] {
@@ -168,27 +168,27 @@ fn checker_rejects_misused_builtins() {
     let sandbox = Sandbox::new("reject");
     for (source, message) in [
         (
-            "use std/fs\nfn main() -> !string {\nlet p = \"x\"\nlet t = fs.read(p)?\n}\n",
+            "use std/fs\nfn main() -> !string:\n    let p = \"x\"\n    let t = fs.read(p)?\n",
             "expected explicit borrow",
         ),
         (
-            "use std/fs\nfn main() {\nlet p = \"x\"\nlet t = fs.read(&p)\n}\n",
+            "use std/fs\nfn main():\n    let p = \"x\"\n    let t = fs.read(&p)\n",
             "fallible call",
         ),
         (
-            "fn main() -> !string {\nlet p = \"x\"\nlet t = fs.read(&p)?\n}\n",
+            "fn main() -> !string:\n    let p = \"x\"\n    let t = fs.read(&p)?\n",
             "ambiguous or missing import",
         ),
         (
-            "use std/fs\nfn main() -> !string {\nlet p = \"x\"\nfs.delete(&p)?\n}\n",
+            "use std/fs\nfn main() -> !string:\n    let p = \"x\"\n    fs.delete(&p)?\n",
             "unknown function fs.delete",
         ),
         (
-            "use std/io\nfn main() -> !string {\nlet line = \"\"\nwhile io.read_line(&mut line)? {}\n}\n",
+            "use std/io\nfn main() -> !string:\n    let line = \"\"\n    while io.read_line(&mut line)?: pass\n",
             "cannot mutably borrow immutable",
         ),
         (
-            "use std/env\nfn main() {\nlet n: string = env.arg_count()\n}\n",
+            "use std/env\nfn main():\n    let n: string = env.arg_count()\n",
             "mismatch",
         ),
     ] {
@@ -199,7 +199,7 @@ fn checker_rejects_misused_builtins() {
 #[test]
 fn write_errors_are_values() {
     let sandbox = Sandbox::new("write");
-    let program = "use std/env\nuse std/fs\nfn main() -> !string {\nlet path = env.arg(0)?\nlet text = \"x\"\nfs.write(&path, &text)?\nprintln(\"unreachable\")\n}\n";
+    let program = "use std/env\nuse std/fs\nfn main() -> !string:\n    let path = env.arg(0)?\n    let text = \"x\"\n    fs.write(&path, &text)?\n    println(\"unreachable\")\n";
     let directory: &Path = &sandbox.root;
     failure(&sandbox.run(program, &[directory], None), "cannot open ");
 }

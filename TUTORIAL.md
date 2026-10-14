@@ -45,9 +45,8 @@ hello from zamak
 也可以直接运行单个源码文件。在当前目录新建 `hello.zm`，写入以下内容，再执行 `zam run hello.zm`：
 
 ```zamak
-fn main() {
+fn main():
     println("你好，Zamak")
-}
 ```
 
 ```text
@@ -58,7 +57,9 @@ fn main() {
 
 - 程序从 `fn main()` 开始执行。
 - `println(...)` 打印一行，字符串字面量使用双引号。
-- 函数体使用大括号。本教程采用 4 个空格缩进，`zam fmt` 可以整理缩进。
+- 代码块靠缩进界定，与 Python 相同：`fn main():` 这样以冒号结尾的行开始一个块，块里的每一行比它多缩进 4 个空格，缩进退回来块就结束了。
+- 块里只有一条语句时可以写在冒号后面，例如 `fn main(): println("你好")`。空块写 `pass`。
+- 缩进只用空格，不用 Tab。`zam fmt` 会把 Tab 换成空格，并整理缩进和空行。
 - 注释用 `//`（行注释），也可以用 `#`。
 
 ## 第 2 节：变量与类型
@@ -66,7 +67,7 @@ fn main() {
 第 2 至 11 节的每个完整代码块都是独立程序。可以将当前示例保存为 `lesson.zm`，执行 `zam check lesson.zm` 检查，再执行 `zam run lesson.zm` 观察输出。切换示例时替换整个文件内容，不要将多个 `fn main()` 合并到同一文件。
 
 ```zamak
-fn main() {
+fn main():
     let name = "Zamak"
     let mut count: i64 = 3
     count = count + 1
@@ -74,7 +75,6 @@ fn main() {
     println(name)
     println(count)
     println(ok)
-}
 ```
 
 ```text
@@ -96,15 +96,14 @@ true
 ## 第 3 节：运算符
 
 ```zamak
-fn main() {
+fn main():
     println(7 / 2)
     println(7 % 2)
     println(2 + 3 * 4)
     println(10 - 4)
     println(1_000_000)
     println(3 > 2)
-    println(!true)
-}
+    println(not true)
 ```
 
 ```text
@@ -121,20 +120,20 @@ false
 
 - 算术：`+` `-` `*` `/` `%`。整数除法向零截断，例如 `7 / 2` 得到 `3`，`-7 / 2` 得到 `-3`；余数的符号与被除数一致，例如 `-7 % 2` 得到 `-1`。
 - 比较：`==` `!=` `<` `>` `<=` `>=`，结果是 `bool`。
-- 逻辑：`!`（非）、`&&`（与）、`||`（或）。
+- 逻辑：`not`（非）、`and`（与）、`or`（或），与 Python 相同。`and` 和 `or` 短路求值：左边已经决定结果时不再计算右边。
+- 优先级从低到高是 `or`、`and`、`not`、比较运算，所以 `not a == b` 表示 `not (a == b)`，`a or b and c` 表示 `a or (b and c)`。
 - 整数字面量的数字之间可以用单个 `_` 分组，例如 `1_000_000` 表示一百万。
 - 乘、除、取余的优先级高于加、减；可以用括号明确运算顺序。整数溢出和除零会导致运行失败。
 
 复合赋值 `+=` `-=` `*=` `/=` `%=` 把运算结果写回原变量：
 
 ```zamak
-fn main() {
+fn main():
     let mut score = 10
     score += 5
     score *= 2
     score -= 4
     println(score)
-}
 ```
 
 ```text
@@ -152,7 +151,7 @@ fn main() {
 use std/fmt
 use std/math
 
-fn main() {
+fn main():
     let price = 19.99
     let count = 3
     let total = price * f64(count)
@@ -162,7 +161,6 @@ fn main() {
     println(math.sqrt(2.0))
     println(0.1 + 0.2)
     println(1.0 / 0.0)
-}
 ```
 
 ```text
@@ -185,21 +183,18 @@ inf
 ## 第 4 节：条件判断
 
 ```zamak
-fn classify(n: i64) -> string {
-    if n < 0 {
+fn classify(n: i64) -> string:
+    if n < 0:
         return "negative"
-    } else if n == 0 {
+    elif n == 0:
         return "zero"
-    } else {
+    else:
         return "positive"
-    }
-}
 
-fn main() {
+fn main():
     println(classify(-3))
     println(classify(0))
     println(classify(9))
-}
 ```
 
 ```text
@@ -210,45 +205,45 @@ positive
 
 要点：
 
-- `if` 的条件不需要外层括号，条件后紧接代码块。
-- 多个条件可以使用 `else if` 依次判断。
+- `if` 的条件不需要外层括号，条件后面写冒号，下面缩进的几行是代码块。
+- 多个条件用 `elif` 依次判断（不写 `else if`），最后可以有 `else:`。
+- 比较用 `==`。条件里写成单个 `=`（如 `if score = 60:`）会报错，提示改成 `==`。
 - 条件必须是 `bool`，Zamak 不做真假值隐式转换。
 - `return` 立即从当前函数返回。本例各分支都返回 `string`，因此覆盖了函数的所有返回路径。
 
 `if` 也可以写在表达式位置，按条件选一个值：
 
 ```zamak
-fn main() {
+fn main():
     let n = -4
-    let sign = if n < 0 { "negative" } else if n == 0 { "zero" } else { "positive" }
-    let size = if n > 100 || n < -100 { "large" } else { "small" }
+    let sign = if n < 0: "negative" elif n == 0: "zero" else: "positive"
+    let size = if n > 100 or n < -100: "large" else: "small"
     println("{sign} {size}")
-}
 ```
 
 ```text
 negative small
 ```
 
-- 作为值的 `if` 必须有 `else`，每个分支只写一个表达式，两边的类型要相同。
+- 作为值的 `if` 写在一行里：`if 条件: 值 elif 条件: 值 else: 值`。必须有 `else`，每个分支只写一个表达式，各分支的类型要相同。
 - 分支里需要多步计算时，先用 `let` 算好，再放进 `if`；或者改用前面的语句写法。
 
 ## 第 5 节：循环
 
 ```zamak
-fn main() {
+fn main():
     let mut i = 0
-    while i < 5 {
+
+    while i < 5:
         i = i + 1
-        if i == 2 {
+
+        if i == 2:
             continue
-        }
-        if i == 5 {
+
+        if i == 5:
             break
-        }
+
         println(i)
-    }
-}
 ```
 
 ```text
@@ -260,18 +255,18 @@ fn main() {
 按次数循环用 `for`：
 
 ```zamak
-fn main() {
+fn main():
     let mut total = 0
-    for i in 1..5 {
+
+    for i in 1..5:
         total = total + i
-    }
+
     println(total)
 
     let scores = [90, 72, 85]
-    for i in 0..3 {
+
+    for i in 0..3:
         println(scores[i])
-    }
-}
 ```
 
 ```text
@@ -294,19 +289,16 @@ fn main() {
 ## 第 6 节：函数
 
 ```zamak
-fn add(a: i64, b: i64) -> i64 {
+fn add(a: i64, b: i64) -> i64:
     a + b
-}
 
-fn greet(name: string) -> string {
+fn greet(name: string) -> string:
     return "你好，{name}！"
-}
 
-fn main() {
+fn main():
     println(add(2, 3))
     let who = "Zamak"
     println(greet(who))
-}
 ```
 
 ```text
@@ -329,7 +321,7 @@ fn main() {
 ```zamak
 use std/string
 
-fn main() {
+fn main():
     let name = "Zamak"
     let text = "你好，{name}！"
     println(text)
@@ -338,7 +330,6 @@ fn main() {
     println(string.byte_len(&text))
     println(string.char_len(&text))
     println(string.equal(&text, &text))
-}
 ```
 
 ```text
@@ -367,7 +358,7 @@ true
 ```zamak
 use std/string
 
-fn main() {
+fn main():
     let first = "Za"
     let mut name = first + "mak"
     name += "!"
@@ -377,7 +368,6 @@ fn main() {
     println(name == "Zamak!")
     let scores: [i64] = [90, 72]
     println("total={scores[0] + scores[1]} length={string.char_len(&name)}")
-}
 ```
 
 ```text
@@ -399,15 +389,14 @@ Zamak 有两种数组：长度固定的定长数组 `[i64; N]`，以及可以增
 定长数组：
 
 ```zamak
-fn main() {
+fn main():
     let mut values: [i64; 3] = [10, 20, 30]
     values[1] = values[0] + 5
     let mut i = 0
-    while i < 3 {
+
+    while i < 3:
         println(values[i])
         i = i + 1
-    }
-}
 ```
 
 ```text
@@ -425,15 +414,15 @@ fn main() {
 列表 `[T]` 的元素可以是 `i64`、`f64`、`bool`、`string` 或结构体（见第 9 节），可以作为局部变量、函数参数、返回值和结构体字段：
 
 ```zamak
-fn average(scores: &[i64]) -> i64 {
+fn average(scores: &[i64]) -> i64:
     let mut sum = 0
-    for score in &scores {
-        sum = sum + score
-    }
-    sum / scores.len()
-}
 
-fn main() {
+    for score in &scores:
+        sum = sum + score
+
+    sum / scores.len()
+
+fn main():
     let mut scores: [i64] = [90, 72]
     scores.push(85)
     scores[1] = 75
@@ -441,7 +430,6 @@ fn main() {
     println(average(&scores))
     let last = scores.pop()
     println(last)
-}
 ```
 
 ```text
@@ -455,19 +443,19 @@ fn main() {
 ```zamak
 use std/string
 
-fn main() {
+fn main():
     let line = "apple banana  cherry"
     let mut words = string.words(&line)
     words.push("date")
-    for word in &words {
+
+    for word in &words:
         let size = string.char_len(word)
         println("{word}: {size}")
-    }
+
     let first = string.copy(&words[0])
     let sep = ", "
     println(string.join(&words, &sep))
     println(first)
-}
 ```
 
 ```text
@@ -495,24 +483,24 @@ apple
 ```zamak
 use std/string
 
-fn main() {
+fn main():
     let text = "red blue red green blue red"
     let words = string.words(&text)
     let mut counts: {string: i64} = {}
-    for word in &words {
+
+    for word in &words:
         counts[word] = counts.get(word, 0) + 1
-    }
-    for color in &counts {
+
+    for color in &counts:
         let n = counts[color]
         println("{color}: {n}")
-    }
+
     println(counts.contains("red"))
     counts.remove("blue")
     println(counts.len())
 
     let ages = {"amy": 30, "bob": 25}
     println(ages["amy"])
-}
 ```
 
 ```text
@@ -537,21 +525,19 @@ true
 ## 第 9 节：结构体
 
 ```zamak
-struct Point {
+struct Point:
     x: i64
     y: i64
-}
 
-fn move_by(point: Point, dx: i64) -> Point {
+fn move_by(point: Point, dx: i64) -> Point:
     let mut result = point
     result.x = result.x + dx
     result
-}
 
-fn main() {
-    let mut p = Point { x: 1
-        y: 2
-    }
+fn main():
+    let mut p = Point(x: 1,
+        y: 2,
+    )
     println(p.x)
     p.y = p.y + 3
     println(p.y)
@@ -559,7 +545,6 @@ fn main() {
     println(moved.x + moved.y)
     let q = move_by(moved, 10)
     println(q.x)
-}
 ```
 
 ```text
@@ -571,43 +556,41 @@ fn main() {
 
 要点：
 
-- 结构体声明每行写一个字段，字段之间不用逗号；函数参数之间仍需要逗号。
-- 构造用 `Point { x: 1 y: 2 }`，字段之间同样不写逗号，可以写在一行也可以分行。
+- 结构体声明写成 `struct Point:`，下面每行缩进写一个字段。
+- 构造写成 `Point(x: 1, y: 2)`：像调用一样用括号，每个字段都写名字，字段之间用逗号。字段多时可以分行写，括号里的换行和缩进不受限制。
+- 结构体名首字母大写，函数名首字母小写，所以 `Point(...)` 一眼就能和函数调用区分开。
 - 字段通过 `.` 访问。修改字段要求所属变量可变，如本例的 `let mut p`。
-- 结构体使用移动语义：执行 `let moved = p` 后，再读取 `p` 会报 `use after move`。对于可变变量，可以通过整体重新赋值恢复其有效值，例如 `p = Point { x: 1 y: 2 }`。
+- 结构体使用移动语义：执行 `let moved = p` 后，再读取 `p` 会报 `use after move`。对于可变变量，可以通过整体重新赋值恢复其有效值，例如 `p = Point(x: 1, y: 2)`。
 - 嵌套结构体字段可以连续访问，例如 `group.leader.age = group.leader.age + 1`。
 
 ### 结构体借用与结构体列表
 
 ```zamak
-struct Task {
+struct Task:
     title: string
     hours: i64
     done: bool
-}
 
-fn summary(t: &Task) -> string {
-    let mark = if t.done { "x" } else { " " }
+fn summary(t: &Task) -> string:
+    let mark = if t.done: "x" else: " "
     "[{mark}] {t.title} ({t.hours}h)"
-}
 
-fn finish(t: &mut Task) {
+fn finish(t: &mut Task):
     t.done = true
-}
 
-fn main() {
+fn main():
     let mut tasks: [Task] = []
-    tasks.push(Task { title: "写文档" hours: 2 done: false })
-    tasks.push(Task { title: "修 bug" hours: 5 done: false })
+    tasks.push(Task(title: "写文档", hours: 2, done: false))
+    tasks.push(Task(title: "修 bug", hours: 5, done: false))
     finish(&mut tasks[1])
     tasks[0].hours += 1
     let mut total = 0
-    for t in &tasks {
+
+    for t in &tasks:
         println(summary(t))
         total += t.hours
-    }
+
     println("合计 {total}h")
-}
 ```
 
 ```text
@@ -620,37 +603,32 @@ fn main() {
 - 列表和字典可以存结构体：`[Task]`、`{string: Task}`。`push` 把结构体移进列表，`pop` 把最后一个移出来。
 - `tasks[i].hours` 读写元素的字段，也能用复合赋值；`&tasks[i]`、`&mut tasks[i]` 借用整个元素，`&tasks[i].title` 借用元素的字段；`tasks[i].tags.push(x)` 调用元素字段上的列表或字典方法。
 - `for t in &tasks` 里的 `t` 是只读借用。要修改元素，改用 `for i in 0..tasks.len()` 按下标处理。
-- 结构体不能复制，所以 `let t = tasks[0]` 会报错。拿走元素用 `pop`，整体替换写 `tasks[0] = Task { ... }`，排序用 `tasks.swap(i, j)`。结构体值的字典不支持 `get`，先用 `contains` 判断，再读 `m[k].field`。
+- 结构体不能复制，所以 `let t = tasks[0]` 会报错。拿走元素用 `pop`，整体替换写 `tasks[0] = Task(...)`，排序用 `tasks.swap(i, j)`。结构体值的字典不支持 `get`，先用 `contains` 判断，再读 `m[k].field`。
 - 元素字段里的列表不能再接下标（`tasks[0].tags[1]`），把 `&tasks[0].tags` 传给函数处理。
 
 ### 枚举与 match
 
 ```zamak
-enum Shape {
+enum Shape:
     Circle(r: f64)
     Rect(w: f64, h: f64)
     Empty
-}
 
-fn area(s: &Shape) -> f64 {
-    match s {
-        Circle(r) => 3.14 * r * r
-        Rect(w, h) => w * h
-        Empty => 0.0
-    }
-}
+fn area(s: &Shape) -> f64:
+    match s:
+        Circle(r): 3.14 * r * r
+        Rect(w, h): w * h
+        Empty: 0.0
 
-fn main() {
+fn main():
     let shapes: [Shape] = [Shape.Circle(1.0), Shape.Rect(2.0, 3.0), Shape.Empty]
-    for s in &shapes {
-        let name = match s {
-            Circle(_) => "circle"
-            Rect(_, _) => "rect"
-            _ => "empty"
-        }
+
+    for s in &shapes:
+        let name = match s:
+            Circle(_): "circle"
+            Rect(_, _): "rect"
+            _: "empty"
         println("{name}: {area(s)}")
-    }
-}
 ```
 
 ```text
@@ -661,34 +639,30 @@ empty: 0.0
 
 - `enum` 每行声明一个变体，变体名首字母大写。带数据的变体写成 `Circle(r: f64)`，数据可以是数字、布尔、字符串、结构体、列表或字典。
 - 构造时按位置传值：`Shape.Circle(1.0)`；没有数据的变体写 `Shape.Empty`。跨模块写 `shapes.Shape.Circle(1.0)`。
-- `match` 按变体分支，`Circle(r) =>` 按位置绑定数据，`_` 表示不绑定。分支要覆盖所有变体，或在最后写 `_ =>` 兜底，否则检查报 `ZM511`。
-- 分支可以是一条语句，也可以是 `{ ... }` 代码块。写成 `let name = match s { ... }` 时，每个分支是一个值。
+- `match s:` 下面每行一个分支，`Circle(r):` 按位置绑定数据，`_` 表示不绑定。分支要覆盖所有变体，或在最后写 `_:` 兜底，否则检查报 `ZM511`。
+- 分支冒号后面可以写一条语句，也可以换行缩进写一块。写成 `let name = match s:` 时，每个分支冒号后面是一个值。
 - `match` 不移动被匹配的值：数字和布尔数据按值绑定，字符串、结构体等数据是只读借用。分支里不能修改或移走被匹配的变量。
 - 枚举和结构体一样赋值时移动，可以放进列表、字典和结构体字段，也能用 `&Shape` 借用。枚举不能用 `==` 比较，判断变体用 `match`。
 
 ## 第 10 节：所有权与借用
 
 ```zamak
-fn show(text: &string) {
+fn show(text: &string):
     println(text)
-}
 
-fn update(text: &mut string) {
+fn update(text: &mut string):
     text = "被借用修改过"
-}
 
-fn consume(text: string) {
+fn consume(text: string):
     println(text)
-}
 
-fn main() {
+fn main():
     let mut message = "原始内容"
     show(&message)
     update(&mut message)
     show(&message)
     let moved = message
     consume(moved)
-}
 ```
 
 ```text
@@ -715,24 +689,22 @@ fn main() {
 ```zamak
 use std/string
 
-fn parse(text: &string) -> i64!string {
+fn parse(text: &string) -> i64!string:
     let empty = ""
-    if string.equal(text, &empty) {
-        fail "empty input"
-    }
-    return 42
-}
 
-fn load(text: &string) -> i64!string {
+    if string.equal(text, &empty):
+        fail "empty input"
+
+    return 42
+
+fn load(text: &string) -> i64!string:
     let value = parse(text)?
     return value
-}
 
-fn main() -> !string {
+fn main() -> !string:
     let text = "42"
     let value = load(&text)?
     println(value)
-}
 ```
 
 ```text
@@ -757,22 +729,20 @@ zam: program failed: exit code: 1
 ```zamak
 use std/string
 
-fn parse(text: &string) -> i64!string {
+fn parse(text: &string) -> i64!string:
     let empty = ""
-    if string.equal(text, &empty) {
-        fail "empty input"
-    }
-    return 42
-}
 
-fn main() {
+    if string.equal(text, &empty):
+        fail "empty input"
+
+    return 42
+
+fn main():
     let text = "42"
-    let value = parse(&text) catch e {
+    let value = parse(&text) catch e:
         println("解析失败：{e}")
         return
-    }
     println(value)
-}
 ```
 
 成功时输出 `42`。将 `text` 的初值改为 `""` 后，错误分支输出以下内容，并从 `main` 返回；此时程序正常结束：
@@ -783,7 +753,7 @@ fn main() {
 
 要点：
 
-- `catch e { ... }` 里的 `e` 是错误值，只在块内可见。
+- `catch e:` 下面缩进的块里，`e` 是错误值，只在块内可见。
 - `catch` 块必须在所有路径上使用 `return` 从当前函数返回；若块内有条件分支，每个分支都必须返回。它不支持用末尾表达式为 `let value` 提供恢复值。成功时才会给 `value` 赋值并继续执行后续语句。
 - 当前错误类型仅支持 `string`，不支持泛型错误和错误堆栈。可失败调用必须使用 `?` 传播或使用 `catch` 处理。
 
@@ -812,18 +782,16 @@ hello/
 use greeting
 use std/io
 
-fn main() {
+fn main():
     greeting.hello()
     io.println("你好，Zamak")
-}
 ```
 
 `src/greeting.zm`：
 
 ```zamak
-pub fn hello() {
+pub fn hello():
     println("hello from zamak")
-}
 ```
 
 在 `hello` 项目根目录执行 `zam run`，得到以下程序输出。如果当前位于仓库根目录，也可以执行 `zam run examples/hello` 运行对应的仓库示例：
@@ -851,10 +819,10 @@ use std/env
 use std/fs
 use std/string
 
-fn main() -> !string {
-    if env.arg_count() < 1 {
+fn main() -> !string:
+    if env.arg_count() < 1:
         fail "usage: zam run main.zm -- <file>"
-    }
+
     let path = env.arg(0)?
     let text = fs.read(&path)?
     let bytes = string.byte_len(&text)
@@ -863,7 +831,6 @@ fn main() -> !string {
     println(report)
     let target = "report.txt"
     fs.write(&target, &report)?
-}
 ```
 
 `笔记.txt` 的内容是 `name=扎马克` 时，执行 `zam run main.zm -- 笔记.txt` 输出下面一行，并把同样的内容写进 `report.txt`：
@@ -880,17 +847,17 @@ fn main() -> !string {
 use std/io
 use std/string
 
-fn main() -> !string {
+fn main() -> !string:
     let mut line = ""
     let mut total = 0
-    while io.read_line(&mut line)? {
+
+    while io.read_line(&mut line)?:
         let text = string.trim(&line)
-        if string.byte_len(&text) > 0 {
+
+        if string.byte_len(&text) > 0:
             total = total + string.parse_i64(&text)?
-        }
-    }
+
     println(total)
-}
 ```
 
 在 pwsh 中执行 `"10`n20`n`n-5" | zam run main.zm`，输出 `25`。
@@ -900,7 +867,7 @@ fn main() -> !string {
 ```zamak
 use std/string
 
-fn main() {
+fn main():
     let entry = "  lang=Zamak  "
     let text = string.trim(&entry)
     let separator = "="
@@ -909,7 +876,6 @@ fn main() {
     let value = string.slice(&text, at + 1, string.byte_len(&text))
     println("{key} -> {value}")
     println(string.byte_at(&text, 0))
-}
 ```
 
 ```text
@@ -970,7 +936,7 @@ zam 0.1.0
 - `zam check`：只做词法、语法、类型与所有权检查，不生成机器码，因此不需要 C 编译器，适合在修改源码后快速验证。成功打印 `CHECK OK main`。
 - `zam build`：生成可执行文件，路径以 `OUTPUT <path>` 写到 stderr，可以直接运行。
 - `zam run`：先构建再运行，程序输出就是它的 stdout；`--` 之后的参数原样传给程序，例如 `zam run main.zm -- 笔记.txt`。
-- `zam fmt`：就地整理缩进（4 个空格）、去行尾空白、结尾留一个换行，保留原来的 CRLF/LF。只调整空白，不重建词法单元，因此保留注释和字符串内容；语法有错的代码会被拒绝而不会被改写。修改过的文件通过 `FORMAT <path>` 写入 stderr。它不调整行内空格或自动折行。
+- `zam fmt`：就地整理格式。缩进统一成 4 个空格（Tab 先换成空格），括号里的续行按括号层数缩进；多行的 `if`/`for`/`while`/`match` 前后各留一个空行（块里第一条、紧跟在注释后面、`elif`/`else` 之前、块的末尾除外），连续空行压成一个，顶层声明之间留一个空行；去掉行尾空白，结尾留一个换行，保留原来的 CRLF/LF。注释和字符串内容原样保留；语法有错的代码会被拒绝而不会被改写。修改过的文件通过 `FORMAT <path>` 写入 stderr。它不调整行内空格，也不自动折行。
 - `zam new <directory>`：生成最小项目骨架（第 1 节）。目录名必须是合法标识符，已存在的目录会被拒绝，不会覆盖任何文件。
 - `zam demo`：运行内置的双目录缓存演示，展示相同源码的缓存复用。
 - `zam check --json` / `zam build --json`：将结果以一行 JSON 写入 stdout，供编辑器、持续集成（CI）或 AI 工具读取。其他子命令不接受 `--json`。第 15 节示例对应的 JSON 如下：
@@ -987,11 +953,10 @@ zam 0.1.0
 下面的程序把 `name` 移给了 `other`，之后又使用它：
 
 ```text
-fn main() {
+fn main():
     let name = "Zamak"
     let other = name
     println(name)
-}
 ```
 
 `zam check main.zm` 的输出：
@@ -1014,8 +979,17 @@ error[ZM301]: use after move: name
 | 报错信息 | 原因 | 处理方法 |
 | --- | --- | --- |
 | `unexpected character '@'` | 出现了不属于 Zamak 的字符 | 删除或替换该字符 |
-| `expected '{', found Some(Word("string"))` | 语法不符合要求，例如类型标注位置错误 | 对照前面的小节检查该行结构 |
-| `unterminated function block` | 大括号未配对 | 补上 `}` |
+| `expected ':' at the end of the if line` | 块头末尾漏了冒号 | 在 `if`、`for`、`fn` 等行末加 `:` |
+| `blocks are indented, not wrapped in braces` | 用了 `{ }` 写代码块 | 行末的 `{` 换成 `:`，块缩进 4 格，删掉 `}` |
+| `expected an indented block after the if line` | 冒号后面换了行，下一行却没有缩进 | 把块里的行多缩进 4 个空格 |
+| `unexpected indent` | 不在块里的行多缩进了 | 和同一块的其他行对齐 |
+| `unindent does not match any outer indentation level` | 缩进退回时没有对齐到外层任何一层 | 和外层某个块的行对齐 |
+| `indentation contains a tab` | 缩进里有 Tab | 运行 `zam fmt` 把 Tab 换成空格 |
+| `the indentation may have been lost when the code was copied` | 整个文件几乎没有缩进，多半是复制时丢了 | 按块重新缩进 |
+| ``expected `elif` instead of `else if` `` | 写了 `else if` | 改成 `elif` |
+| ``expected `and` instead of `&&` `` | 用了 `&&`、`\|\|` 或前缀 `!` | 改成 `and`、`or`、`not` |
+| ``expected `==` to compare in the if condition`` | 条件里写了单个 `=` | 改成 `==` |
+| `'(' was never closed` | 括号没有闭合 | 补上对应的右括号 |
 | `use after move: a` | 变量的所有权已转移 | 用 `&a` 借用，或重新赋值 |
 | `cannot interpolate this value` | 插值中使用了结构体或数组等不支持的值 | 使用字符串、借用字符串、整数或布尔字段 |
 | `borrow escape: functions cannot return references` | 函数尝试返回 `&string`/`&mut string` | 返回拥有所有权的 `string` |
@@ -1054,7 +1028,7 @@ Zamak 0.1.0 的支持范围有限。编写程序时需注意以下限制：
 - 错误类型只能是 `string`，没有错误堆栈。
 - 定长数组仅支持 `i64` 局部值；列表 `[T]` 的元素与字典 `{K: V}` 的值可以是 `i64`、`f64`、`bool`、`string` 或结构体，字典键只能是 `i64` 或 `string`；还没有嵌套容器（`[[i64]]`），元素字段里的列表不能再接下标。方法不能链式调用。
 - 所有权检查覆盖 `string`、结构体、列表和字典；尚不支持线程、`unsafe` 和外部函数接口（FFI）。
-- 编辑器支持为 VS Code 语法高亮扩展（`editors/vscode/`），没有语言服务器、补全和调试器。
+- 编辑器支持为 VS Code 扩展（`editors/vscode/`）：语法高亮、冒号后自动缩进、按缩进折叠；没有语言服务器、补全和调试器。
 - 本教程采用源码安装；安装步骤和平台工具链要求见 [安装说明](PREVIEW.md)。
 
 ## 附录：示例与测试

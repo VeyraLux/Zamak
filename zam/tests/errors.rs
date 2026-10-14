@@ -36,28 +36,28 @@ fn error_values() {
     // `?` 与 `fail` 的规则，以及成功值类型仍然是 T。
     for (source, because) in [
         (
-            format!("{declarations}fn main() {{\nlet text = \"42\"\nlet value = parse(&text)\nprintln(value)\n}}"),
+            format!("{declarations}fn main():\n    let text = \"42\"\n    let value = parse(&text)\n    println(value)"),
             "fallible call without ?",
         ),
         (
-            format!("{declarations}fn main() {{\nlet text = \"42\"\nlet value = parse(&text)?\nprintln(value)\n}}"),
+            format!("{declarations}fn main():\n    let text = \"42\"\n    let value = parse(&text)?\n    println(value)"),
             "? in a function without an error type",
         ),
         (
-            format!("{declarations}fn main() -> !string {{\nlet text = \"42\"\nlet flag: bool = parse(&text)?\nprintln(flag)\n}}"),
+            format!("{declarations}fn main() -> !string:\n    let text = \"42\"\n    let flag: bool = parse(&text)?\n    println(flag)"),
             "success value is still i64",
         ),
         (
-            "fn double(n: i64) -> i64 {\nreturn n\n}\nfn main() -> !string {\nlet value = double(1)?\nprintln(value)\n}"
+            "fn double(n: i64) -> i64:\n    return n\nfn main() -> !string:\n    let value = double(1)?\n    println(value)"
                 .to_string(),
             "? on a call that cannot fail",
         ),
         (
-            "fn main() {\nfail \"nope\"\n}".to_string(),
+            "fn main():\n    fail \"nope\"".to_string(),
             "fail in a function without an error type",
         ),
         (
-            "fn f() -> i64!i64 {\nfail 1\n}\nfn main() -> !i64 {\nlet value = f()?\nprintln(value)\n}"
+            "fn f() -> i64!i64:\n    fail 1\nfn main() -> !i64:\n    let value = f()?\n    println(value)"
                 .to_string(),
             "non-string error type",
         ),
@@ -102,18 +102,18 @@ fn catch_blocks() {
     for (source, because) in [
         (
             format!(
-                "{declarations}fn main() {{\nlet text = \"42\"\nlet value = parse(&text) catch e {{\nprintln(\"failed: {{e}}\")\n}}\nprintln(value)\n}}"
+                "{declarations}fn main():\n    let text = \"42\"\n    let value = parse(&text) catch e:\n        println(\"failed: {{e}}\")\n    println(value)"
             ),
             "catch block without return",
         ),
         (
-            "fn double(n: i64) -> i64 {\nreturn n\n}\nfn main() {\nlet value = double(1) catch e {\nprintln(\"nope\")\nreturn\n}\nprintln(value)\n}"
+            "fn double(n: i64) -> i64:\n    return n\nfn main():\n    let value = double(1) catch e:\n        println(\"nope\")\n        return\n    println(value)"
                 .to_string(),
             "catch on a call that cannot fail",
         ),
         (
             format!(
-                "{declarations}fn main() {{\nlet e = \"taken\"\nlet text = \"42\"\nlet value = parse(&text) catch e {{\nprintln(\"failed: {{e}}\")\nreturn\n}}\nprintln(value)\n}}"
+                "{declarations}fn main():\n    let e = \"taken\"\n    let text = \"42\"\n    let value = parse(&text) catch e:\n        println(\"failed: {{e}}\")\n        return\n    println(value)"
             ),
             "catch binding shadows a live local",
         ),

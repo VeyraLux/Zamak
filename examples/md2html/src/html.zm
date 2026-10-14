@@ -1,34 +1,33 @@
 use std/string
 
 // 把 & < > " 换成 HTML 实体。按字节扫描：这几个都是 ASCII，切片不会切到多字节字符中间。
-pub fn escape(text: &string) -> string {
+pub fn escape(text: &string) -> string:
     let mut parts: [string] = []
     let mut start = 0
     let size = string.byte_len(text)
-    for i in 0..size {
+
+    for i in 0..size:
         let entity = entity_of(string.byte_at(text, i))
-        if string.byte_len(&entity) > 0 {
+
+        if string.byte_len(&entity) > 0:
             parts.push(string.slice(text, start, i))
             parts.push(entity)
             start = i + 1
-        }
-    }
+
     parts.push(string.slice(text, start, size))
     string.join(&parts, "")
-}
 
-fn entity_of(byte: i64) -> string {
-    if byte == '&' {
+fn entity_of(byte: i64) -> string:
+    if byte == '&':
         return "&amp;"
-    }
-    if byte == '<' {
+
+    if byte == '<':
         return "&lt;"
-    }
-    if byte == '>' {
+
+    if byte == '>':
         return "&gt;"
-    }
-    if byte == '"' {
+
+    if byte == '"':
         return "&quot;"
-    }
+
     ""
-}

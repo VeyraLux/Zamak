@@ -1,16 +1,15 @@
 use std/io
 
-fn main() -> !string {
+fn main() -> !string:
     let mut seen: {string: bool} = {}
     let mut removed = 0
     let mut line = ""
-    while io.read_line(&mut line)? {
-        if seen.contains(&line) {
+
+    while io.read_line(&mut line)?:
+        if seen.contains(&line):
             removed = removed + 1
-        } else {
+        else:
             seen[&line] = true
             println(line)
-        }
-    }
+
     println("removed {removed}")
-}

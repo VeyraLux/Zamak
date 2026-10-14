@@ -3,40 +3,43 @@ use html
 use inline
 
 // 块级结构：标题、段落、无序/有序列表、引用、围栏代码块、分隔线。逐行处理，结果按行连接。
-pub fn render(text: &string) -> string {
+pub fn render(text: &string) -> string:
     let lines = string.lines(text)
     let mut out: [string] = []
     let mut para: [string] = []
     let mut code: [string] = []
     // 当前打开的块：0 无，1 无序列表，2 有序列表，3 代码块，4 引用。
     let mut open = 0
-    for line in &lines {
-        if open == 3 {
-            if string.starts_with(line, "```") {
+
+    for line in &lines:
+        if open == 3:
+            if string.starts_with(line, "```"):
                 let body = string.join(&code, "\n")
                 out.push("<pre><code>{body}</code></pre>")
                 code = []
                 open = 0
-            } else {
+            else:
                 code.push(html.escape(line))
-            }
+
             continue
-        }
+
         let trimmed = string.trim(line)
-        if string.byte_len(&trimmed) == 0 {
+
+        if string.byte_len(&trimmed) == 0:
             close_paragraph(&mut para, &mut out)
             close_block(open, &mut out)
             open = 0
             continue
-        }
-        if string.starts_with(&trimmed, "```") {
+
+        if string.starts_with(&trimmed, "```"):
             close_paragraph(&mut para, &mut out)
             close_block(open, &mut out)
             open = 3
             continue
-        }
+
         let level = heading_level(&trimmed)
-        if level > 0 {
+
+        if level > 0:
             close_paragraph(&mut para, &mut out)
             close_block(open, &mut out)
             open = 0
@@ -44,106 +47,105 @@ pub fn render(text: &string) -> string {
             let body = inline.render(&title)
             out.push("<h{level}>{body}</h{level}>")
             continue
-        }
-        if string.equal(&trimmed, "---") {
+
+        if string.equal(&trimmed, "---"):
             close_paragraph(&mut para, &mut out)
             close_block(open, &mut out)
             open = 0
             out.push("<hr>")
             continue
-        }
-        let bullet = string.starts_with(&trimmed, "- ") || string.starts_with(&trimmed, "* ")
+
+        let bullet = string.starts_with(&trimmed, "- ") or string.starts_with(&trimmed, "* ")
         let number = ordered_marker(&trimmed)
-        if bullet || number > 0 {
+
+        if bullet or number > 0:
             close_paragraph(&mut para, &mut out)
             let mut kind = 2
             let mut skip = number
-            if bullet {
+
+            if bullet:
                 kind = 1
                 skip = 2
-            }
-            if open != kind {
+
+            if open != kind:
                 close_block(open, &mut out)
-                if kind == 1 {
+
+                if kind == 1:
                     out.push("<ul>")
-                } else {
+                else:
                     out.push("<ol>")
-                }
+
                 open = kind
-            }
+
             let item = string.slice(&trimmed, skip, string.byte_len(&trimmed))
             let body = inline.render(&item)
             out.push("<li>{body}</li>")
             continue
-        }
-        if string.starts_with(&trimmed, "> ") {
+
+        if string.starts_with(&trimmed, "> "):
             close_paragraph(&mut para, &mut out)
-            if open != 4 {
+
+            if open != 4:
                 close_block(open, &mut out)
                 out.push("<blockquote>")
                 open = 4
-            }
+
             let quote = string.slice(&trimmed, 2, string.byte_len(&trimmed))
             let body = inline.render(&quote)
             out.push("<p>{body}</p>")
             continue
-        }
+
         // 普通文本结束列表与引用，连续的行合成一个段落。
         close_block(open, &mut out)
         open = 0
         para.push(trimmed)
-    }
-    if open == 3 {
+
+    if open == 3:
         let body = string.join(&code, "\n")
         out.push("<pre><code>{body}</code></pre>")
         open = 0
-    }
+
     close_paragraph(&mut para, &mut out)
     close_block(open, &mut out)
     string.join(&out, "\n")
-}
 
-fn close_paragraph(para: &mut [string], out: &mut [string]) {
-    if para.len() > 0 {
+fn close_paragraph(para: &mut [string], out: &mut [string]):
+    if para.len() > 0:
         let joined = string.join(para, " ")
         let body = inline.render(&joined)
         out.push("<p>{body}</p>")
         para = []
-    }
-}
 
-fn close_block(open: i64, out: &mut [string]) {
-    if open == 1 {
+fn close_block(open: i64, out: &mut [string]):
+    if open == 1:
         out.push("</ul>")
-    } else if open == 2 {
+    elif open == 2:
         out.push("</ol>")
-    } else if open == 4 {
+    elif open == 4:
         out.push("</blockquote>")
-    }
-}
 
 // `# 标题` 到 `###### 标题`：返回井号个数，不是标题返回 0。
-fn heading_level(text: &string) -> i64 {
+fn heading_level(text: &string) -> i64:
     let size = string.byte_len(text)
     let mut level = 0
-    while level < size && level < 6 && string.byte_at(text, level) == '#' {
+
+    while level < size and level < 6 and string.byte_at(text, level) == '#':
         level = level + 1
-    }
-    if level > 0 && level < size && string.byte_at(text, level) == ' ' {
+
+    if level > 0 and level < size and string.byte_at(text, level) == ' ':
         return level
-    }
+
     0
-}
 
 // `12. 内容`：返回标记长度（含点和空格），不是有序列表项返回 0。
-fn ordered_marker(text: &string) -> i64 {
+fn ordered_marker(text: &string) -> i64:
     let size = string.byte_len(text)
     let mut i = 0
-    while i < size && string.byte_at(text, i) >= '0' && string.byte_at(text, i) <= '9' {
+
+    while i < size and string.byte_at(text, i) >= '0' and string.byte_at(text, i) <= '9':
         i = i + 1
-    }
-    if i > 0 && i + 1 < size && string.byte_at(text, i) == '.' && string.byte_at(text, i + 1) == ' ' {
+
+    if i > 0 and i + 1 < size and string.byte_at(text, i) == '.' and string.byte_at(text, i + 1) == ' ':
         return i + 2
-    }
+
     0
-}
