@@ -62,7 +62,7 @@
   },
   {
     "id": "unsupported-feature",
-    "source": "fn main() {\n    let x: f64 = 1\n}\n",
+    "source": "fn main() {\n    let m: {bool: i64} = {}\n}\n",
     "expected_code": "ZM900",
     "patches": [],
     "expected_output": ""
