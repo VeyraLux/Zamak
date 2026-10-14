@@ -141,8 +141,8 @@ fn struct_declarations_and_rejections() {
         "struct A:\n    b: B\nstruct B:\n    a: A\nfn main(): pass",
         "struct A:\n    b: Missing\nfn main(): pass",
         "struct B: pass\nstruct A:\n    b: B\nfn main():\n    let a = A(b: B())\n    let b = a.b",
-        "struct B: pass\nstruct A:\n    b: B\nfn main():\n    let a = A(b: B())\n    println(a.b)",
-        "struct B: pass\nstruct A:\n    b: B\nfn main():\n    let a = A(b: B())\n    println(a)",
+        "struct B: pass\nstruct A:\n    b: B\nfn main():\n    let a = A(b: B())\n    println(a.b < a.b)",
+        "struct B: pass\nstruct A:\n    b: B\nfn main():\n    let a = A(b: B())\n    println(a == 1)",
         "struct B: pass\nstruct A:\n    b: B\nfn main():\n    let mut a = A(b: B())\n    a.b = a.b",
     ] {
         fs::write(&path, source).unwrap();

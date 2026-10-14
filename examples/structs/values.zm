@@ -1,0 +1,41 @@
+// 复合值：copy(&x) 深复制，== 逐项比较，println 和插值直接打印。
+
+struct Point:
+    x: i64
+    y: i64
+
+struct Team:
+    name: string
+    members: [string]
+    scores: {string: f64}
+
+enum Shape:
+    Circle(r: f64)
+    Rect(w: f64, h: f64)
+    Empty
+
+fn main():
+    let p = Point(x: 1, y: 2)
+    let mut q = copy(&p)
+    println(p == q)
+    q.x = 5
+    println(p == q)
+    println(p)
+    println("moved to {q}")
+
+    let mut team = Team(name: "红队 \"A\"", members: ["amy", "bob"], scores: {"amy": 9.5})
+    let backup = copy(&team)
+    team.members.push("cid")
+    println(team == backup)
+    println(backup)
+    println(team.members)
+
+    let shapes: [Shape] = [Shape.Circle(1.5), Shape.Rect(2.0, 3.0), Shape.Empty]
+    println(shapes)
+    println(shapes[0] == Shape.Circle(1.5))
+    println(shapes[2] != Shape.Empty)
+
+    let left = {"b": 2, "a": 1}
+    let right = {"a": 1, "b": 2}
+    println(left == right)
+    println(left)

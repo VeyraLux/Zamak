@@ -115,7 +115,7 @@ fn checker_rejects_enum_misuse() {
         ("match s:\n        _:\n            s = Shape.Empty", "borrowed by an enclosing for loop"),
         ("match s:\n        Label(t):\n            let owned = t\n        _: println(1)", "borrow escape"),
         ("println(s.r)", "unknown field r"),
-        ("println(s)", "cannot print"),
+        ("println(s < s)", "only support == and !="),
         ("let a = s\n    match s:\n        _: println(1)", "use after move: s"),
         ("let x = match s:\n        Circle(r):\n            let y = r\n            y\n        _: 0.0", "a match expression arm holds a single value"),
         ("match s:\n        Circle(r) => println(r)\n        _ => println(0)", "arms are written Circle(r): value, not =>"),

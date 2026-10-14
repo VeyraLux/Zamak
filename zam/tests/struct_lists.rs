@@ -113,7 +113,7 @@ fn checker_rejects_struct_list_misuse() {
             "cannot mutably borrow immutable value fixed",
         ),
         ("both(&items[0], &mut items[1])", "borrow conflict"),
-        ("println(items[0])", "cannot print"),
+        ("println(items[0] < items[0])", "only support == and !="),
         ("println(items[0].missing)", "unknown field missing"),
         ("println(items[0].qty.len())", "has no method len"),
         (
@@ -157,4 +157,59 @@ fn checker_rejects_struct_list_misuse() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains(message), "{source}\n{stderr}");
     }
+}
+
+/// copy(&x) 深复制、== 逐项比较、println 与插值显示结构体、枚举、列表与字典。
+#[test]
+fn compound_values_copy_compare_and_print() {
+    let case = Case::new("struct-lists", "values");
+    assert_eq!(
+        stdout(&case.run(include_str!("../../examples/structs/values.zm"))),
+        "true\nfalse\nPoint(x: 1, y: 2)\nmoved to Point(x: 5, y: 2)\nfalse\nTeam(name: \"红队 \\\"A\\\"\", members: [\"amy\", \"bob\"], scores: {\"amy\": 9.5})\n[\"amy\", \"bob\", \"cid\"]\n[Shape.Circle(1.5), Shape.Rect(2.0, 3.0), Shape.Empty]\ntrue\nfalse\ntrue\n{\"b\": 2, \"a\": 1}\n"
+    );
+    // 复制出来的值与原值互不影响；借用参数、元素与字段都能复制；空结构体与空容器也能打印。
+    let output = case.run("struct E: pass\nstruct Bag:\n    items: [string]\n    e: E\nfn grow(b: &Bag) -> Bag:\n    let mut c = copy(b)\n    c.items.push(\"x\")\n    c\nfn main():\n    let bag = Bag(items: [\"a\"], e: E())\n    let big = grow(&bag)\n    println(bag)\n    println(big)\n    let bags: [Bag] = [big]\n    let first = copy(&bags[0])\n    let names = copy(&bag.items)\n    println(first == bags[0])\n    println(names)\n    let none: [i64] = []\n    let empty: {i64: bool} = {}\n    println(\"{none} {empty} {E()}\")\n    let s = \"tab\there\"\n    let t = copy(&s)\n    println(t)\n");
+    assert_eq!(
+        stdout(&output),
+        "Bag(items: [\"a\"], e: E())\nBag(items: [\"a\", \"x\"], e: E())\ntrue\n[\"a\"]\n[] {} E()\ntab\there\n"
+    );
+    for (body, message) in [
+        (
+            "let n = 1\n    let m = copy(&n)",
+            "already copied by assignment",
+        ),
+        (
+            "let p = P(x: 1)\n    let q = copy(p)",
+            "expected explicit borrow: write copy(&x)",
+        ),
+        (
+            "let p = P(x: 1)\n    println(p == 1)",
+            "compares two values of the same type",
+        ),
+        (
+            "let p = P(x: 1)\n    println(p < p)",
+            "only support == and !=",
+        ),
+        (
+            "let p = P(x: 1)\n    let q = p\n    println(p == q)",
+            "use after move: p",
+        ),
+        (
+            "let a = [1, 2]\n    let b = copy(&a)",
+            "copy is for strings, lists, maps, structs and enums",
+        ),
+        (
+            "let p = P(x: 1)\n    let q: i64 = copy(&p)",
+            "copy returns a value of the borrowed type",
+        ),
+    ] {
+        let source = format!("struct P:\n    x: i64\nfn main():\n    {body}\n");
+        let output = case.run(&source);
+        assert!(!output.status.success(), "accepted {source}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(message), "{source}: {stderr}");
+    }
+    // 用户自己定义的 copy 优先于内建的。
+    let output = case.run("fn copy(n: i64) -> i64: n + 1\nfn main(): println(copy(1))\n");
+    assert_eq!(stdout(&output), "2\n");
 }

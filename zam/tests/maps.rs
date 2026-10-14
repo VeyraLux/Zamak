@@ -188,7 +188,10 @@ fn checker_rejects_map_misuse() {
             "let mut m: {string: i64} = {}\n    m.push(1)",
             "maps support len, contains, get, remove, keys, values and clear",
         ),
-        ("let m: {string: i64} = {}\n    println(m)", "cannot print"),
+        (
+            "let m: {string: i64} = {}\n    println(m < m)",
+            "only support == and !=",
+        ),
         (
             "let m: {string: i64} = {}\n    println(m.get(\"a\"))",
             "argument count mismatch",

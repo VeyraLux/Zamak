@@ -92,6 +92,15 @@ pub fn overload(name: &str, first: Option<Type>) -> &str {
         _ => name,
     }
 }
+/// 全局 `copy(&x)`：深复制字符串、列表、字典、结构体与枚举。它对任何类型都成立，
+/// 所以不在函数表里，检查器与生成器按名字特判。
+pub const COPY: &str = "std/core:copy";
+
+/// 结构体（含枚举）、列表与字典：有按类型生成的复制、相等与显示函数。
+pub fn compound(ty: Type) -> bool {
+    matches!(ty, Type::Record(_) | Type::List(_) | Type::Map(_, _))
+}
+
 /// 调用后程序就结束、不再返回的函数：代码块写到它就算走完，不用再补 `return`。
 pub fn terminates(expr: &Expr) -> bool {
     matches!(expr, Expr::Call(name, _) if name == "std/env:exit")
@@ -2606,6 +2615,43 @@ impl<'a> Checker<'a> {
     fn callee<'n>(&self, name: &'n str, args: &[Expr]) -> &'n str {
         overload(name, args.first().and_then(|arg| self.ty(arg).ok()))
     }
+    /// 只读使用一个值时它的 owned 类型：`&x`、`&xs[i]` 与借用参数都换成被借用的类型。
+    fn value_type(&self, expr: &Expr) -> Result<Type, String> {
+        let ty = match expr {
+            Expr::Borrow(path, _) => self.place(path)?.1,
+            Expr::BorrowIndex(path, _, field, _) => self.element(path, field)?.1,
+            _ => self.ty(expr)?,
+        };
+        Ok(ty.borrowable().map_or(ty, |(owned, _)| owned))
+    }
+    /// 只读使用一个值（比较、打印、复制）：变量、字段、元素与借用都不移动；
+    /// 其他表达式（调用、字面量）求值成临时值，语句结束时释放。
+    fn read(
+        &mut self,
+        expr: &Expr,
+        ty: Type,
+        loans: &mut BTreeMap<String, Type>,
+    ) -> Result<(), String> {
+        let shared = borrow_of(ty, false).unwrap_or(ty);
+        match expr {
+            Expr::Variable(name) => self.binding(name).map(|_| ()),
+            Expr::Field(_, _) => self.ty(expr).map(|_| ()),
+            Expr::Borrow(_, false) | Expr::BorrowIndex(_, _, _, false) => {
+                self.expr(expr, shared, &mut loans.clone())
+            }
+            Expr::Index(local, index) if self.place(local)?.1.container().is_some() => self.expr(
+                &Expr::BorrowIndex(local.clone(), index.clone(), String::new(), false),
+                shared,
+                &mut loans.clone(),
+            ),
+            Expr::IndexField(local, index, field) => self.expr(
+                &Expr::BorrowIndex(local.clone(), index.clone(), field.clone(), false),
+                shared,
+                &mut loans.clone(),
+            ),
+            _ => self.expr(expr, ty, loans),
+        }
+    }
     fn method(&self, path: &str, method: &str) -> Result<(bool, Vec<Type>, Type), String> {
         let root = path.split('.').next().unwrap_or(path);
         if !self.locals.contains_key(root) {
@@ -2727,6 +2773,10 @@ impl<'a> Checker<'a> {
             } else {
                 Type::Shared
             }),
+            Expr::Call(name, args) if name == COPY => match args.as_slice() {
+                [arg] => self.value_type(arg),
+                _ => Err("argument count mismatch for copy".into()),
+            },
             Expr::Call(name, args) => self
                 .functions
                 .get(self.callee(name, args))
@@ -3048,6 +3098,12 @@ impl<'a> Checker<'a> {
             }
             Expr::Format(segments) if expected == Type::Owned => {
                 for segment in segments {
+                    // 结构体、列表与字典按 println 的格式插入，同样只读。
+                    let value = self.value_type(segment)?;
+                    if compound(value) {
+                        self.read(segment, value, loans)?;
+                        continue;
+                    }
                     // 插值只读取变量、字段与元素，不移动；其他表达式求值后插入。
                     let ty = self.ty(segment)?;
                     if !matches!(
@@ -3127,6 +3183,27 @@ impl<'a> Checker<'a> {
                 self.expr(value, ty, loans)
             }
             Expr::Binary(op, left, right) => {
+                if matches!(op.as_str(), "<" | "<=" | ">" | ">=")
+                    && compound(self.value_type(left)?)
+                {
+                    return Err(format!(
+                        "type mismatch: {op} compares i64, f64, bool and string values; structs, enums, lists and maps only support == and !="
+                    ));
+                }
+                // 结构体、枚举、列表、字典的 == / !=：逐项比较，两边都只读，不移动。
+                if matches!(op.as_str(), "==" | "!=") && compound(self.value_type(left)?) {
+                    let ty = self.value_type(left)?;
+                    if self.value_type(right)? != ty {
+                        return Err(format!(
+                            "type mismatch: {op} compares two values of the same type"
+                        ));
+                    }
+                    if expected != Type::Bool {
+                        return Err("type mismatch".into());
+                    }
+                    self.read(left, ty, loans)?;
+                    return self.read(right, ty, loans);
+                }
                 if bitwise(op) {
                     if self.ty(left)? != Type::Int || self.ty(right)? != Type::Int {
                         return Err(format!(
@@ -3171,7 +3248,7 @@ impl<'a> Checker<'a> {
                     numeric(self.ty(left)?)
                 };
                 if !matches!(operand, Type::Int | Type::Float | Type::Bool) {
-                    return Err("comparison requires i64, f64, bool or string".into());
+                    return Err("comparison requires i64, f64, bool or string; structs, enums, lists and maps only support == and !=".into());
                 }
                 self.expr(left, operand, loans)?;
                 self.expr(right, operand, loans)
@@ -3294,6 +3371,41 @@ impl<'a> Checker<'a> {
                 self.expr(index, key, loans)?;
                 self.container(path, mutable, loans)?;
                 Ok(())
+            }
+            Expr::Call(name, args) if name == COPY => {
+                let [arg] = args.as_slice() else {
+                    return Err(
+                        "argument count mismatch for copy: copy takes one borrowed value, such as copy(&x)"
+                            .into(),
+                    );
+                };
+                let ty = self.value_type(arg)?;
+                match ty {
+                    Type::Owned | Type::Record(_) | Type::List(_) | Type::Map(_, _) => {}
+                    Type::Int | Type::Float | Type::Bool => {
+                        return Err("type mismatch: copy is for strings, lists, maps, structs and enums; i64, f64 and bool values are already copied by assignment, such as let b = a".into())
+                    }
+                    _ => {
+                        return Err(
+                            "type mismatch: copy is for strings, lists, maps, structs and enums"
+                                .into(),
+                        )
+                    }
+                }
+                let borrowed = matches!(
+                    arg,
+                    Expr::Borrow(_, false) | Expr::BorrowIndex(_, _, _, false)
+                ) || self.ty(arg)?.is_reference();
+                if !borrowed {
+                    return Err(
+                        "expected explicit borrow: write copy(&x), copy(&xs[i]) or copy(&p.field)"
+                            .into(),
+                    );
+                }
+                if expected != ty {
+                    return Err("type mismatch: copy returns a value of the borrowed type".into());
+                }
+                self.read(arg, ty, loans)
             }
             Expr::Call(name, args) => {
                 let name = self.callee(name, args);
@@ -3657,6 +3769,10 @@ impl<'a> Checker<'a> {
                     self.expr(expr, ty, &mut loans)?;
                     self.locals.get_mut(local).unwrap().live = true;
                 }
+                Instruction::Print(expr) if self.value_type(expr).is_ok_and(compound) => {
+                    let value = self.value_type(expr)?;
+                    self.read(expr, value, &mut loans)?;
+                }
                 Instruction::Print(expr) => {
                     let ty = self.ty(expr)?;
                     if !matches!(
@@ -3668,7 +3784,7 @@ impl<'a> Checker<'a> {
                             | Type::Float
                             | Type::Bool
                     ) {
-                        return Err("cannot print void, struct, array, list or map".into());
+                        return Err("cannot print void or a fixed array".into());
                     }
                     if let Expr::Variable(local) = expr {
                         self.binding(local)?;
@@ -3697,7 +3813,9 @@ impl<'a> Checker<'a> {
                     }
                 }
                 Instruction::Call(expr) => {
-                    let ty = if let Expr::Call(callee, args) = expr {
+                    let ty = if matches!(expr, Expr::Call(callee, _) if callee == COPY) {
+                        self.ty(expr)?
+                    } else if let Expr::Call(callee, args) = expr {
                         self.functions
                             .get(self.callee(callee, args))
                             .ok_or_else(|| format!("unknown function {callee}"))?
