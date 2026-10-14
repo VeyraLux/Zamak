@@ -81,7 +81,7 @@ static void output_mode(void) {
 }
 // Windows 控制台按本地代码页（中文系统是 936）解释字节，直接写 UTF-8 会乱码。输出目标是
 // 控制台时先转成 UTF-16 再用 WriteConsoleW；重定向到文件或管道时照常写原始 UTF-8 字节。
-// ponytail: 控制台输入仍按本地代码页读入；交互式读中文需要时改用 ReadConsoleW。
+// 控制台输入见 STD_PRELUDE 的 zam_stdin_getc：同样按 UTF-16 读，再转成 UTF-8。
 static int zam_write(FILE *f, const unsigned char *p, size_t n) {
 #ifdef _WIN32
     void *console = (void*)_get_osfhandle(_fileno(f));
@@ -206,6 +206,7 @@ const STD_PRELUDE: &str = r#"#ifdef _WIN32
 __declspec(dllimport) wchar_t *__stdcall GetCommandLineW(void);
 __declspec(dllimport) int __stdcall MultiByteToWideChar(unsigned int, unsigned long, const char *, int, wchar_t *, int);
 __declspec(dllimport) int __stdcall WideCharToMultiByte(unsigned int, unsigned long, const wchar_t *, int, char *, int, const char *, int *);
+__declspec(dllimport) int __stdcall ReadConsoleW(void *, void *, unsigned long, unsigned long *, void *);
 #endif
 extern int zam_argc;
 extern char **zam_argv;
@@ -275,6 +276,76 @@ static int zam_read_all(FILE *file, S *out) {
     if (ferror(file)) { free(p); return 0; }
     out->data = p; out->len = n;
     return 1;
+}
+// 标准输入是 Windows 控制台时按 UTF-16 读（ReadConsoleW），转成 UTF-8 再逐字节交出去，
+// 中文系统的键盘输入才不会按本地代码页（936）变成 GBK 字节；重定向的标准输入照常按字节读。
+#ifdef _WIN32
+static int zam_console = -1, zam_console_error, zam_console_eof;
+static wchar_t zam_console_wide[4097];
+static unsigned char zam_console_bytes[3 * 4097 + 4];
+static size_t zam_console_at, zam_console_len;
+static unsigned long zam_console_carry;
+static int zam_stdin_console(void) {
+    unsigned long mode;
+    if (zam_console < 0) zam_console = GetConsoleMode((void*)_get_osfhandle(_fileno(stdin)), &mode) ? 1 : 0;
+    return zam_console;
+}
+static int zam_console_fill(void) {
+    unsigned long got = 0, total, keep;
+    int n;
+    if (zam_console_eof || zam_console_error) return 0;
+    if (!ReadConsoleW((void*)_get_osfhandle(_fileno(stdin)), zam_console_wide + zam_console_carry, 4096, &got, NULL)) {
+        zam_console_error = 1;
+        return 0;
+    }
+    total = zam_console_carry + got;
+    // 行首的 Ctrl+Z 表示输入结束，与 C 运行库的文本模式一致。
+    if (!got || (zam_console_carry == 0 && zam_console_wide[0] == 0x1A)) { zam_console_eof = 1; return 0; }
+    // 代理对的前半个留到下一次，和后半个一起转换。
+    keep = zam_console_wide[total - 1] >= 0xD800 && zam_console_wide[total - 1] <= 0xDBFF ? 1 : 0;
+    n = total > keep ? WideCharToMultiByte(65001, 0, zam_console_wide, (int)(total - keep), (char*)zam_console_bytes, (int)sizeof zam_console_bytes, NULL, NULL) : 0;
+    if (total > keep && n <= 0) { zam_console_error = 1; return 0; }
+    if (keep) zam_console_wide[0] = zam_console_wide[total - 1];
+    zam_console_carry = keep;
+    zam_console_at = 0;
+    zam_console_len = (size_t)n;
+    return 1;
+}
+#endif
+static int zam_stdin_getc(void) {
+#ifdef _WIN32
+    if (zam_stdin_console()) {
+        while (zam_console_at == zam_console_len) {
+            if (!zam_console_fill()) return EOF;
+        }
+        return zam_console_bytes[zam_console_at++];
+    }
+#endif
+    return getc(stdin);
+}
+static int zam_stdin_error(void) {
+#ifdef _WIN32
+    if (zam_stdin_console()) return zam_console_error;
+#endif
+    return ferror(stdin);
+}
+static int zam_stdin_all(S *out) {
+#ifdef _WIN32
+    if (zam_stdin_console()) {
+        size_t cap = 4096, n = 0;
+        unsigned char *p = (unsigned char*)malloc(cap), *q;
+        int c;
+        if (!p) zam_alloc_failed();
+        while ((c = zam_stdin_getc()) != EOF) {
+            if (n == cap) { q = (unsigned char*)realloc(p, cap * 2); if (!q) zam_alloc_failed(); p = q; cap *= 2; }
+            p[n++] = (unsigned char)c;
+        }
+        if (zam_console_error) { free(p); return 0; }
+        out->data = p; out->len = n;
+        return 1;
+    }
+#endif
+    return zam_read_all(stdin, out);
 }
 #ifdef _WIN32
 // 按 MSVC 运行库的规则切分 GetCommandLineW()，再转 UTF-8；main 收到的 argv 是本地代码页。
@@ -505,13 +576,13 @@ if (!zam_write(stderr, p0->data, p0->len) || fputc('\n', stderr) == EOF) exit(1)
 unsigned char *p = (unsigned char*)malloc(cap), *q;
 if (!p) zam_alloc_failed();
 zam_stdin_binary();
-while ((c = getc(stdin)) != EOF) {
+while ((c = zam_stdin_getc()) != EOF) {
     any = 1;
     if (c == '\n') break;
     if (n == cap) { q = (unsigned char*)realloc(p, cap * 2); if (!q) zam_alloc_failed(); p = q; cap *= 2; }
     p[n++] = (unsigned char)c;
 }
-if (ferror(stdin)) { free(p); return F_int_err(zam_message("cannot read standard input", NULL)); }
+if (zam_stdin_error()) { free(p); return F_int_err(zam_message("cannot read standard input", NULL)); }
 if (n && p[n - 1] == '\r') n--;
 drop(p0); p0->data = p; p0->len = n;
 return F_int_ok(any);"#,
@@ -523,7 +594,7 @@ return F_int_ok(any);"#,
         fallible: true,
         body: r#"S text;
 zam_stdin_binary();
-if (!zam_read_all(stdin, &text)) return F_S_err(zam_message("cannot read standard input", NULL));
+if (!zam_stdin_all(&text)) return F_S_err(zam_message("cannot read standard input", NULL));
 return F_S_ok(text);"#,
     },
     Builtin {

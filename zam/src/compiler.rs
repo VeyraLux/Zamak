@@ -943,7 +943,7 @@ impl Parser {
     }
     /// `if` 出现在表达式位置：`if c { a } else if d { b } else { e }`，分支各是一个值。
     fn if_value(&mut self) -> Result<Expr, String> {
-        let condition = self.expr()?;
+        let condition = self.condition("if")?;
         let yes = self.branch_value()?;
         self.newlines();
         if !self.keyword("else") {
@@ -1007,8 +1007,18 @@ impl Parser {
         }
         Ok(Expr::Format(parsed))
     }
-    fn if_statement(&mut self, imports: &[String], result: Type) -> Result<Instruction, String> {
+    /// `if`/`while` 的条件。新手常把比较写成 `if score = 60`，在这里直接指出要用 `==`。
+    fn condition(&mut self, keyword: &str) -> Result<Expr, String> {
         let condition = self.expr()?;
+        if self.peek() == Some(&Token::Symbol('=')) {
+            return Err(format!(
+                "expected `==` to compare in the {keyword} condition; a single `=` assigns a value"
+            ));
+        }
+        Ok(condition)
+    }
+    fn if_statement(&mut self, imports: &[String], result: Type) -> Result<Instruction, String> {
+        let condition = self.condition("if")?;
         let yes = self.block(imports, result)?;
         let boundary = self.position;
         self.newlines();
@@ -1063,7 +1073,7 @@ impl Parser {
         } else if self.keyword("match") {
             self.match_statement(imports, result)?
         } else if self.keyword("while") {
-            let condition = self.expr()?;
+            let condition = self.condition("while")?;
             let nested = self.block(imports, result)?;
             Instruction::While(condition, nested)
         } else if self.keyword("for") {

@@ -386,6 +386,12 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
             "unsupported",
             Some("use a construct listed as supported in `zam --help` or the tutorial"),
         )
+    } else if message.contains("a single `=` assigns") {
+        (
+            "ZM110",
+            "syntax",
+            Some("compare with `==`, for example `score == 60`; a single `=` only assigns"),
+        )
     } else if message.starts_with("expected")
         || message.contains("unterminated")
         || message.contains("character literal")

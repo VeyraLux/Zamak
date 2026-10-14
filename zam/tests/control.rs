@@ -185,3 +185,45 @@ fn control_flow_and_path_ownership() {
     }
     fs::remove_dir_all(root).unwrap();
 }
+
+/// 新手常把比较写成 `if score = 60`：报错直接指出要用 `==`，位置指向那个 `=`。
+#[test]
+fn single_equals_in_condition_suggests_double_equals() {
+    let root = std::env::temp_dir().join(format!("zam-control-equals-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let file = root.join("main.zm");
+    for (source, keyword, column) in [
+        (
+            "fn main() {\n    let score = 60\n    if score = 60 {\n        println(1)\n    }\n}\n",
+            "if",
+            14,
+        ),
+        (
+            "fn main() {\n    let mut n = 0\n    while n = 3 {\n        n += 1\n    }\n}\n",
+            "while",
+            13,
+        ),
+        (
+            "fn main() {\n    let x = 1\n    let s = if x = 1 { 2 } else { 3 }\n}\n",
+            "if",
+            18,
+        ),
+    ] {
+        fs::write(&file, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_zam"))
+            .args(["check", "--json"])
+            .arg(&file)
+            .output()
+            .unwrap();
+        let json = String::from_utf8_lossy(&output.stdout);
+        assert!(!output.status.success(), "accepted {source}");
+        assert!(
+            json.contains(&format!(
+                "expected `==` to compare in the {keyword} condition"
+            )) && json.contains(&format!("\"line\":3,\"column\":{column}"))
+                && json.contains("compare with `==`"),
+            "{json}"
+        );
+    }
+    fs::remove_dir_all(root).unwrap();
+}
