@@ -3165,7 +3165,7 @@ fn msvc_tool(environment: &BTreeMap<String, String>, name: &str) -> Result<std::
 
 // ponytail: 只有产物字节真变才升版本（会让缓存整体失效）；改了编译/链接命令行但字节不变时，
 // 先用旧缓存跑一次构建、确认仍是 OBJECT HIT 再决定不升。
-pub const OPTIONS: &str = "c11-O2-unroll-MT-Brepro-pathmap-objects-gnu-windows-lm-v7";
+pub const OPTIONS: &str = "c11-O2-unroll-MT-Brepro-pathmap-objects-gnu-windows-lm-v8";
 pub fn compile(tool: &str, dir: &Path, source: &str) -> Result<Vec<u8>> {
     std::fs::write(dir.join("program.c"), source).map_err(|e| e.to_string())?;
     // 编译器记录的是工作目录的写法；临时目录经过 8.3 短名（CI 的 `RUNNER~1`）、联接或
@@ -3246,11 +3246,14 @@ pub fn link(tool: &str, dir: &Path, objects: &[Vec<u8>]) -> Result<Vec<u8>> {
             .output()
     } else {
         // std/math 的函数在 Linux 上属于 libm，要显式链接；macOS 与 MinGW 也接受 -lm。
-        Command::new(tool)
-            .current_dir(dir)
-            .args(&names)
-            .args(["-lm", "-o", "program.exe"])
-            .output()
+        // MinGW 的 ld 默认把链接时间写进 PE 头，同一个链接键两次链接字节不同，
+        // 会被缓存当成 corrupt cache entry；关掉时间戳，与 MSVC 的 /Brepro 对应。
+        let mut command = Command::new(tool);
+        command.current_dir(dir).args(&names);
+        if cfg!(windows) {
+            command.arg("-Wl,--no-insert-timestamp");
+        }
+        command.args(["-lm", "-o", "program.exe"]).output()
     }
     .map_err(|e| e.to_string())?;
     if !output.status.success() {

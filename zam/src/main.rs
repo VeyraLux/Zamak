@@ -416,6 +416,15 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
             "syntax",
             Some("write `elif condition:` instead of `else if condition:`"),
         )
+    } else if ["instead of `&&`", "instead of `||`", "instead of `!`"]
+        .iter()
+        .any(|text| message.contains(text))
+    {
+        (
+            "ZM110",
+            "syntax",
+            Some("logical operators are words: write `a and b`, `a or b`, `not a`"),
+        )
     } else if message.contains("was never closed") {
         ("ZM110", "syntax", Some("add the matching closing bracket"))
     } else if message.contains("a single `=` assigns") {
