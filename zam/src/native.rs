@@ -1,6 +1,6 @@
 use crate::compiler::{
-    borrow_of, field_path, method_signature, numeric, record_id, record_order, Block, Elem, Expr,
-    Instruction, Module, Pattern, Type,
+    borrow_of, field_path, method_signature, numeric, overload, record_id, record_order,
+    terminates, Block, Elem, Expr, Instruction, Module, Pattern, Type,
 };
 use crate::project::Result;
 use std::collections::BTreeMap;
@@ -296,6 +296,46 @@ static FILE *zam_open(S *path, const char *mode) {
 #endif
     return file;
 }
+// 环境变量按 UTF-8 读；Windows 用 _wgetenv，非 ASCII 的名字和值才不会按本地代码页错读。
+static int zam_getenv(S *name, S *out) {
+    size_t i;
+    if (!name->len) return 0;
+    for (i = 0; i < name->len; i++) if (!name->data[i]) return 0;
+#ifdef _WIN32
+    {
+        int n; wchar_t *wide, *value; char *text;
+        if (name->len > INT_MAX / 2) return 0;
+        n = MultiByteToWideChar(65001, 8, (const char*)name->data, (int)name->len, NULL, 0);
+        if (n <= 0) return 0;
+        wide = (wchar_t*)malloc(((size_t)n + 1) * sizeof(wchar_t));
+        if (!wide) zam_alloc_failed();
+        MultiByteToWideChar(65001, 8, (const char*)name->data, (int)name->len, wide, n);
+        wide[n] = 0;
+        value = _wgetenv(wide);
+        free(wide);
+        if (!value) return 0;
+        n = WideCharToMultiByte(65001, 0, value, -1, NULL, 0, NULL, NULL);
+        if (n <= 0) return 0;
+        text = (char*)malloc((size_t)n);
+        if (!text) zam_alloc_failed();
+        WideCharToMultiByte(65001, 0, value, -1, text, n, NULL, NULL);
+        *out = own((const unsigned char*)text, (size_t)n - 1);
+        free(text);
+    }
+#else
+    {
+        char *key = (char*)malloc(name->len + 1), *value;
+        if (!key) zam_alloc_failed();
+        memcpy(key, name->data, name->len);
+        key[name->len] = 0;
+        value = getenv(key);
+        free(key);
+        if (!value) return 0;
+        *out = own((const unsigned char*)value, strlen(value));
+    }
+#endif
+    return 1;
+}
 static int zam_read_all(FILE *file, S *out) {
     size_t cap = 4096, n = 0, got;
     unsigned char *p = (unsigned char*)malloc(cap), *q;
@@ -498,6 +538,67 @@ static MATH: [Builtin; 13] = unary_math! {
     "atan" => "atan(p0)",
 };
 const BUILTINS: &[Builtin] = &[
+    Builtin {
+        name: "std/core:abs",
+        params: &[Type::Int],
+        result: Type::Int,
+        fallible: false,
+        // 与 `-x` 一样，i64 最小值取绝对值会溢出。
+        body: "if (p0 == INT64_MIN) arithmetic_error(); return p0 < 0 ? -p0 : p0;",
+    },
+    Builtin {
+        name: "std/core:abs_f64",
+        params: &[Type::Float],
+        result: Type::Float,
+        fallible: false,
+        body: "return fabs(p0);",
+    },
+    Builtin {
+        name: "std/core:min",
+        params: &[Type::Int, Type::Int],
+        result: Type::Int,
+        fallible: false,
+        body: "return p0 < p1 ? p0 : p1;",
+    },
+    Builtin {
+        name: "std/core:min_f64",
+        params: &[Type::Float, Type::Float],
+        result: Type::Float,
+        fallible: false,
+        // 与 math.min 一样用 fmin：一边是 NaN 时返回另一边。
+        body: "return fmin(p0, p1);",
+    },
+    Builtin {
+        name: "std/core:max",
+        params: &[Type::Int, Type::Int],
+        result: Type::Int,
+        fallible: false,
+        body: "return p0 > p1 ? p0 : p1;",
+    },
+    Builtin {
+        name: "std/core:max_f64",
+        params: &[Type::Float, Type::Float],
+        result: Type::Float,
+        fallible: false,
+        body: "return fmax(p0, p1);",
+    },
+    Builtin {
+        name: "std/env:exit",
+        params: &[Type::Int],
+        result: Type::Unit,
+        fallible: false,
+        // 退出码限定在 0–255：Unix 只保留低 8 位，限定后三个平台行为一致。
+        body: r#"if (p0 < 0 || p0 > 255) { fputs("zam: exit code must be between 0 and 255\n", stderr); exit(1); }
+fflush(stdout);
+exit((int)p0);"#,
+    },
+    Builtin {
+        name: "std/env:var",
+        params: &[Type::Shared],
+        result: Type::Owned,
+        fallible: true,
+        body: "S value; if (!zam_getenv(p0, &value)) return F_S_err(zam_message(\"environment variable not set: \", p0)); return F_S_ok(value);",
+    },
     Builtin {
         name: "std/core:f64",
         params: &[Type::Int],
@@ -1430,7 +1531,7 @@ impl Generator<'_> {
                     Type::Shared
                 }
             }
-            Expr::Call(name, _) => self.module.functions[name].result,
+            Expr::Call(name, args) => self.module.functions[self.callee(name, args)].result,
             Expr::Try(inner) => self.ty(inner),
             Expr::Catch(inner, _, _) => self.ty(inner),
             Expr::Unary('!', _) => Type::Bool,
@@ -1964,6 +2065,7 @@ impl Generator<'_> {
             Expr::Variable(name) => self.temporary(&format!("take({})", self.pointer(name))),
             Expr::Borrow(name, _) => self.pointer(name),
             Expr::Call(name, args) => {
+                let name = self.callee(name, args);
                 let result = self.module.functions[name].result;
                 let symbol = self
                     .call_targets
@@ -2191,6 +2293,10 @@ impl Generator<'_> {
         } else {
             self.scalar(&format!("{temp}.value"), result)
         }
+    }
+    /// 被调函数的实际名字：`abs`/`min`/`max` 按第一个参数的类型选版本。
+    fn callee<'n>(&self, name: &'n str, args: &[Expr]) -> &'n str {
+        overload(name, args.first().map(|arg| self.ty(arg)))
     }
     fn raw_call(&mut self, name: &str, args: &[Expr], symbol: Option<&str>) -> String {
         let function = &self.module.functions[name];
@@ -2474,6 +2580,10 @@ impl Generator<'_> {
                 }
                 Instruction::Call(expr) => {
                     self.expr(expr);
+                    // `env.exit(n)` 不会返回：代码块到此结束，后面也不用释放。
+                    if terminates(expr) {
+                        returned = true;
+                    }
                 }
                 Instruction::Break => {
                     self.cleanup_from(*self.loops.last().expect("checked loop jump"));
@@ -2874,6 +2984,10 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
             visit_exprs(&function.body, &mut |expr| match expr {
                 Expr::Call(name, _) => {
                     needed.insert(name.clone());
+                    // 重载的内建函数两个版本都带上，按参数类型调用其中一个。
+                    for ty in [Type::Int, Type::Float] {
+                        needed.insert(overload(name, Some(ty)).to_owned());
+                    }
                 }
                 Expr::Record(name, _) | Expr::Variant(name, _, _) => {
                     records.insert(name.clone());

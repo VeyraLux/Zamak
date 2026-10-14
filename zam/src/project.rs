@@ -11,7 +11,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-31");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-32");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -577,6 +577,16 @@ impl Project {
                     self.resolve_expr(module, locals, arg)?;
                 }
             }
+            // `abs`/`min`/`max`：与 Python 一样是全局内建函数；本模块自己定义了同名函数时用自己的。
+            Expr::Call(name, args)
+                if matches!(name.as_str(), "abs" | "min" | "max")
+                    && self.resolve(module, name).is_err() =>
+            {
+                *name = format!("std/core:{name}");
+                for arg in args {
+                    self.resolve_expr(module, locals, arg)?;
+                }
+            }
             Expr::Call(name, args) => {
                 if matches!(
                     name.as_str(),
@@ -1095,8 +1105,11 @@ pub fn run_artifact(path: &Path, args: &[std::ffi::OsString]) -> Result<()> {
         .status()
         .map_err(|e| e.to_string())?;
     if status.success() {
-        Ok(())
-    } else {
-        Err(format!("program failed: {status}"))
+        return Ok(());
+    }
+    // 与 `cargo run`、`python prog.py` 一样，原样带回程序自己的退出码，不再加一行提示。
+    match status.code() {
+        Some(code) => std::process::exit(code),
+        None => Err(format!("program failed: {status}")),
     }
 }

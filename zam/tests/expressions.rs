@@ -138,3 +138,51 @@ fn symbol_logic_operators_point_to_words() {
         case.run("fn f() -> i64!string: 1\nfn main() -> !string:\n    println(f()? != 2)\n");
     assert_eq!(stdout(&output), "true\n");
 }
+
+/// 全局 abs/min/max 按参数类型选整数或浮点版本；同名的用户函数优先；env.var 与 env.exit。
+#[test]
+fn global_numeric_builtins_exit_and_env() {
+    let case = Case::new("expressions", "builtins");
+    let source = include_str!("../../examples/values/builtins.zm");
+    let file = case.path("builtins.zm");
+    std::fs::write(&file, source).unwrap();
+    let run = |value: Option<&str>| {
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_zam"));
+        command
+            .arg("run")
+            .arg(&file)
+            .env("ZAMAK_CACHE_DIR", case.path("cache"));
+        match value {
+            Some(value) => command.env("ZAM_DEMO_HOME", value),
+            None => command.env_remove("ZAM_DEMO_HOME"),
+        };
+        command.output().unwrap()
+    };
+    let output = run(Some("/srv/中文"));
+    assert_eq!(stdout(&output), "7\n2.5\n3\n1.5\n10\nhome is /srv/中文\n");
+    // env.exit 结束程序：zam run 原样带回退出码，不再加自己的提示。
+    let output = run(None);
+    assert_eq!(output.status.code(), Some(3));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "7\n2.5\n3\n1.5\n10\nenvironment variable not set: ZAM_DEMO_HOME\n"
+    );
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("program failed"));
+    let output = case.run("fn max(a: i64, b: i64) -> i64: a\nfn main():\n    println(max(1, 2))\n    println(min(-0.5, 2.0))\n");
+    assert_eq!(stdout(&output), "1\n-0.5\n");
+    for (body, message) in [
+        (
+            "println(abs(-9223372036854775807 - 1))",
+            "zam: integer arithmetic error",
+        ),
+        ("println(min(1, 2.0))", "f64"),
+        ("env.exit(256)", "zam: exit code must be between 0 and 255"),
+        ("println(abs(\"x\"))", "mismatch"),
+    ] {
+        let source = format!("use std/env\nfn main():\n    {body}\n");
+        let output = case.run(&source);
+        assert!(!output.status.success(), "accepted {source}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(message), "{source}: {stderr}");
+    }
+}

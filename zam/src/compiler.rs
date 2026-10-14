@@ -82,6 +82,21 @@ pub fn borrow_of(ty: Type, mutable: bool) -> Option<Type> {
     })
 }
 
+/// 全局 `abs`/`min`/`max` 与 Python 一样对整数和浮点数都能用：按第一个参数的类型选内建版本。
+/// 检查器与代码生成共用，IR 里只记 `std/core:abs` 这个名字。
+pub fn overload(name: &str, first: Option<Type>) -> &str {
+    match (name, first) {
+        ("std/core:abs", Some(Type::Float)) => "std/core:abs_f64",
+        ("std/core:min", Some(Type::Float)) => "std/core:min_f64",
+        ("std/core:max", Some(Type::Float)) => "std/core:max_f64",
+        _ => name,
+    }
+}
+/// 调用后程序就结束、不再返回的函数：代码块写到它就算走完，不用再补 `return`。
+pub fn terminates(expr: &Expr) -> bool {
+    matches!(expr, Expr::Call(name, _) if name == "std/env:exit")
+}
+
 /// 容器方法的签名：(是否独占借用接收者, 参数类型, 结果类型)。检查器与代码生成共用。
 pub fn method_signature(receiver: Type, method: &str) -> Option<(bool, Vec<Type>, Type)> {
     Some(match (receiver.container()?, method) {
@@ -2378,6 +2393,10 @@ impl<'a> Checker<'a> {
         })?;
         Ok((key, mutable, params, result))
     }
+    /// 被调函数的实际名字：`abs`/`min`/`max` 按第一个参数的类型选版本。
+    fn callee<'n>(&self, name: &'n str, args: &[Expr]) -> &'n str {
+        overload(name, args.first().and_then(|arg| self.ty(arg).ok()))
+    }
     fn method(&self, path: &str, method: &str) -> Result<(bool, Vec<Type>, Type), String> {
         let root = path.split('.').next().unwrap_or(path);
         if !self.locals.contains_key(root) {
@@ -2499,9 +2518,9 @@ impl<'a> Checker<'a> {
             } else {
                 Type::Shared
             }),
-            Expr::Call(name, _) => self
+            Expr::Call(name, args) => self
                 .functions
-                .get(name)
+                .get(self.callee(name, args))
                 .map(|f| f.result)
                 .ok_or_else(|| format!("unknown function {name}")),
             // `?` 的值就是被调函数的成功值。
@@ -3051,6 +3070,7 @@ impl<'a> Checker<'a> {
                 Ok(())
             }
             Expr::Call(name, args) => {
+                let name = self.callee(name, args);
                 let callee = self
                     .functions
                     .get(name)
@@ -3451,9 +3471,9 @@ impl<'a> Checker<'a> {
                     }
                 }
                 Instruction::Call(expr) => {
-                    let ty = if let Expr::Call(callee, _) = expr {
+                    let ty = if let Expr::Call(callee, args) = expr {
                         self.functions
-                            .get(callee)
+                            .get(self.callee(callee, args))
                             .ok_or_else(|| format!("unknown function {callee}"))?
                             .result
                     } else if matches!(
@@ -3471,6 +3491,9 @@ impl<'a> Checker<'a> {
                         return Err("expected function call".into());
                     };
                     self.expr(expr, ty, &mut loans)?;
+                    if terminates(expr) {
+                        returned = true;
+                    }
                 }
                 Instruction::Fail(expr) => {
                     let error = self
