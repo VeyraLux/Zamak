@@ -82,13 +82,13 @@ fn every_tutorial_snippet_checks() {
 #[test]
 fn english_readme_examples_run() {
     // Windows 检出可能是 CRLF，先统一换行再切代码块。
-    let document = include_str!("../../README.en.md").replace("\r\n", "\n");
+    let document = include_str!("../../README.md").replace("\r\n", "\n");
     let blocks: Vec<&str> = document
         .split("```zamak\n")
         .skip(1)
         .map(|rest| rest.split("```").next().unwrap())
         .collect();
-    assert_eq!(blocks.len(), 2, "README.en.md 的 zamak 代码块数量变了");
+    assert_eq!(blocks.len(), 2, "README.md 的 zamak 代码块数量变了");
     let root = std::env::temp_dir().join(format!("zam-readme-en-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).unwrap();

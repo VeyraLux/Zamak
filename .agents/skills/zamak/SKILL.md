@@ -101,10 +101,10 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
    - 测试和示例不要写死 `.exe`、`\` 路径分隔符或 CRLF；产物路径从 stderr 的 `OUTPUT` 行取。Windows 检出可能把示例转成 CRLF（git `autocrlf`），断言输出时不要依赖源码的换行风格。
    - macOS 本机无法验证，涉及 `cc` 命令行、链接或目标文件后缀的改动，提交前说明「macOS 待 CI 确认」，推送后看 GitHub Actions 结果。
 5. 示例放 `examples/<主题>/*.zm`（多模块项目为 `<主题>/src/main.zm` + `zam.toml`），并在 `zam/tests/<主题>.rs` 里用 `include_str!(...)` 引用示例做正例与反例，真正运行产物并断言 stdout/stderr/退出码。
-6. 文档边界：`README.md` 会入库；`SYNTAX.md`、`ROADMAP.md`、`DESIGN.md`、`NAMING.md`、`MIGRATION.md` 被 `.gitignore` 忽略，只在本地维护。二者都要同步（README 如实标注缺口，ROADMAP 记进度）。
+6. 文档边界：`README.md`（英文，GitHub 首页）与 `README.zh-CN.md`（中文，更详细）都入库，改能力范围时两份都要同步；`SYNTAX.md`、`ROADMAP.md`、`DESIGN.md`、`NAMING.md`、`MIGRATION.md` 被 `.gitignore` 忽略，只在本地维护。二者都要同步（README 如实标注缺口，ROADMAP 记进度）。
 7. 提交：分支 `main`，信息用 `<type>:中文描述`（feat/fix/test/docs/chore），按主题分批，必要时 `git push origin main`。
 8. 编辑器/AI 生态：`editors/vscode/` 是纯 TextMate 语法扩展（零运行时依赖），改动关键字、符号或类型时要同步 `editors/vscode/syntaxes/zamak.tmLanguage.json` 与 `language-configuration.json`。
 
 ## 参考资料
 
-`README.md`（能力与缺口）、`TUTORIAL.md`（零基础教程，入库）、`SYNTAX.md`（语法细节）、`examples/`（可运行示例）、`ROADMAP.md`（当前进度的权威记录）、`zam/src/compiler.rs`（前端）、`zam/src/native.rs`（C 后端）、`zam/src/project.rs`（构建与缓存）。
+`README.md` / `README.zh-CN.md`（能力与缺口）、`TUTORIAL.md`（零基础教程，入库）、`SYNTAX.md`（语法细节）、`examples/`（可运行示例）、`ROADMAP.md`（当前进度的权威记录）、`zam/src/compiler.rs`（前端）、`zam/src/native.rs`（C 后端）、`zam/src/project.rs`（构建与缓存）。
