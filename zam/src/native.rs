@@ -899,9 +899,12 @@ fn note(set: &mut Containers, ty: Type) {
         Some(Type::List(elem)) => {
             set.insert((elem, None));
         }
-        // 字典的 keys() 返回键的列表，所以键类型的列表一并生成。
+        // 字典的 keys()/values() 返回键与值的列表，所以这两种列表一并生成。
         Some(Type::Map(key, value)) => {
             set.insert((key, None));
+            if !matches!(value, Elem::Record(_)) {
+                set.insert((value, None));
+            }
             set.insert((key, Some(value)));
         }
         _ => {}
@@ -1058,7 +1061,19 @@ static int has$M($M *m, $KP) { return find$M(m, k, $HASH) >= 0; }
 static $VT getor$M($M *m, $KP, $VT d) { int64_t at = find$M(m, k, $HASH); if (at < 0) return d; $DROPDEF return $VALOUT; }
 static int del$M($M *m, $KP) { int64_t at = find$M(m, k, $HASH); E$M *e; if (at < 0) return 0; e = &m->entries[at]; $DROPKEY $DROPVAL e->live = 0; m->count--; return 1; }
 static $L keys$M($M *m) { $L out = {0}; size_t i; for (i = 0; i < m->len; i++) { E$M *e = &m->entries[i]; if (e->live) push$L(&out, $KEYOUT); } return out; }
+static void clear$M($M *m) { size_t i; for (i = 0; i < m->len; i++) { E$M *e = &m->entries[i]; if (e->live) { $DROPKEY $DROPVAL } } m->len = 0; m->count = 0; for (i = 0; i < m->nslots; i++) m->slots[i] = -1; }
 "#;
+/// 字典的 `values()`：值的列表，字符串值复制；结构体值不能复制，没有这个方法。
+fn map_values(key: Elem, value: Elem) -> String {
+    let m = map_name(key, value);
+    let l = list_suffix(value);
+    let out = match value {
+        Elem::Str => "copy(&e->value)",
+        Elem::Record(_) => return String::new(),
+        _ => "e->value",
+    };
+    format!("static {l} values{m}({m} *m) {{ {l} out = {{0}}; size_t i; for (i = 0; i < m->len; i++) {{ E{m} *e = &m->entries[i]; if (e->live) push{l}(&out, {out}); }} return out; }}\n")
+}
 /// 把字典模板里的占位符换成具体的键值类型。
 fn map_helpers(template: &str, key: Elem, value: Elem) -> String {
     let text = key == Elem::Str;
@@ -1126,6 +1141,7 @@ fn list_helpers(elem: Elem) -> String {
         drop if drop.is_empty() => drop,
         drop => format!("for (size_t i = 0; i < l->len; i++) {drop} "),
     };
+    let comparable = comparable_list_helpers(elem);
     format!(
         "static void drop{l}({l} *l) {{ {drop_items}free(l->data); l->data = NULL; l->len = 0; l->cap = 0; }}
 static {l} take{l}({l} *l) {{ {l} v = *l; l->data = NULL; l->len = 0; l->cap = 0; return v; }}
@@ -1144,6 +1160,59 @@ static void push{l}({l} *l, {t} v) {{
 static {t} *at{l}({l} *l, int64_t i) {{ if (i < 0 || (uint64_t)i >= l->len) list_bounds(); return &l->data[i]; }}
 static {t} pop{l}({l} *l) {{ if (!l->len) list_empty(); return l->data[--l->len]; }}
 static void swap{l}({l} *l, int64_t i, int64_t j) {{ {t} tmp; if (i < 0 || j < 0 || (uint64_t)i >= l->len || (uint64_t)j >= l->len) list_bounds(); tmp = l->data[i]; l->data[i] = l->data[j]; l->data[j] = tmp; }}
+static void insert{l}({l} *l, int64_t i, {t} v) {{ if (i < 0 || (uint64_t)i > l->len) list_bounds(); push{l}(l, v); memmove(&l->data[i + 1], &l->data[i], (l->len - 1 - (size_t)i) * sizeof({t})); l->data[i] = v; }}
+static {t} removeat{l}({l} *l, int64_t i) {{ {t} v; if (i < 0 || (uint64_t)i >= l->len) list_bounds(); v = l->data[i]; memmove(&l->data[i], &l->data[i + 1], (l->len - 1 - (size_t)i) * sizeof({t})); l->len--; return v; }}
+static void reverse{l}({l} *l) {{ size_t i, j; for (i = 0, j = l->len; i + 1 < j; i++, j--) {{ {t} tmp = l->data[i]; l->data[i] = l->data[j - 1]; l->data[j - 1] = tmp; }} }}
+static void clear{l}({l} *l) {{ {drop_items}l->len = 0; }}
+static void extend{l}({l} *l, {l} o) {{ size_t i; for (i = 0; i < o.len; i++) push{l}(l, o.data[i]); free(o.data); }}
+{comparable}"
+    )
+}
+/// 能比较的元素（整数、浮点、布尔、字符串）才有排序、查找与切片：结构体还不能比较或复制。
+fn comparable_list_helpers(elem: Elem) -> String {
+    let l = list_suffix(elem);
+    let t = ctype(elem.ty());
+    let (compare, param, equal, copy) = match elem {
+        Elem::Int | Elem::Bool => ("(*a > *b) - (*a < *b)", t.clone(), "x == v", "x"),
+        // NaN 排在所有数之后；排序稳定，-0.0 与 0.0 保持原来的先后。
+        Elem::Float => (
+            "*a < *b ? -1 : *a > *b ? 1 : isnan(*a) - isnan(*b)",
+            t.clone(),
+            "x == v",
+            "x",
+        ),
+        Elem::Str => (
+            "string_compare(a, b)",
+            "S *".into(),
+            "string_equal(&x, v)",
+            "copy(&x)",
+        ),
+        Elem::Record(_) => return String::new(),
+    };
+    format!(
+        "static int cmp{l}({t} *a, {t} *b) {{ return {compare}; }}
+static void sort{l}({l} *l) {{
+    size_t n = l->len, width, i;
+    {t} *a = l->data, *b, *tmp;
+    if (n < 2) return;
+    if (n > SIZE_MAX / 2 / sizeof({t})) list_alloc_failed();
+    b = ({t}*)malloc(n * sizeof({t}));
+    if (!b) list_alloc_failed();
+    for (width = 1; width < n; width *= 2) {{
+        for (i = 0; i < n; i += 2 * width) {{
+            size_t mid = i + width < n ? i + width : n, hi = i + 2 * width < n ? i + 2 * width : n;
+            size_t x = i, y = mid, k = i;
+            while (x < mid && y < hi) b[k++] = cmp{l}(&a[y], &a[x]) < 0 ? a[y++] : a[x++];
+            while (x < mid) b[k++] = a[x++];
+            while (y < hi) b[k++] = a[y++];
+        }}
+        tmp = a; a = b; b = tmp;
+    }}
+    if (a != l->data) {{ memcpy(l->data, a, n * sizeof({t})); free(a); }} else free(b);
+}}
+static int64_t index{l}({l} *l, {param} v) {{ size_t i; for (i = 0; i < l->len; i++) {{ {t} x = l->data[i]; if ({equal}) return (int64_t)i; }} return -1; }}
+static int has{l}({l} *l, {param} v) {{ return index{l}(l, v) >= 0; }}
+static {l} slice{l}({l} *l, int64_t from, int64_t to) {{ {l} out = {{0}}; int64_t i; if (from < 0 || to < from || (uint64_t)to > l->len) list_bounds(); for (i = from; i < to; i++) {{ {t} x = l->data[i]; push{l}(&out, {copy}); }} return out; }}
 "
     )
 }
@@ -1958,13 +2027,16 @@ impl Generator<'_> {
         values: &[String],
         result: Type,
     ) -> String {
+        let container = receiver.container().expect("checked method");
+        let list = matches!(container, Type::List(_));
         let name = match method {
             "contains" => "has",
             "get" => "getor",
+            "remove" if list => "removeat",
             "remove" => "del",
+            "index_of" => "index",
             other => other,
         };
-        let container = receiver.container().expect("checked method");
         let call = format!("{name}{}({})", ctype(container), values.join(", "));
         self.call_value(&call, result)
     }
@@ -2861,6 +2933,7 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
     }
     for (key, value) in &maps {
         source.push_str(&map_helpers(MAP_TEMPLATE, *key, *value));
+        source.push_str(&map_values(*key, *value));
     }
     for name in &records {
         let structure = &module.structs[name];

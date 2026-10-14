@@ -89,6 +89,25 @@ pub fn method_signature(receiver: Type, method: &str) -> Option<(bool, Vec<Type>
         (Type::List(elem), "push") => (true, vec![elem.ty()], Type::Unit),
         (Type::List(elem), "pop") => (true, Vec::new(), elem.ty()),
         (Type::List(_), "swap") => (true, vec![Type::Int, Type::Int], Type::Unit),
+        (Type::List(elem), "insert") => (true, vec![Type::Int, elem.ty()], Type::Unit),
+        (Type::List(elem), "remove") => (true, vec![Type::Int], elem.ty()),
+        (Type::List(_), "reverse" | "clear") => (true, Vec::new(), Type::Unit),
+        (Type::List(elem), "extend") => (true, vec![Type::List(elem)], Type::Unit),
+        // 排序、查找与切片要比较或复制元素，结构体还不行。
+        (Type::List(elem), "sort") if elem.comparable() => (true, Vec::new(), Type::Unit),
+        (Type::List(elem), "contains") if elem.comparable() => {
+            (false, vec![elem.key_arg()], Type::Bool)
+        }
+        (Type::List(elem), "index_of") if elem.comparable() => {
+            (false, vec![elem.key_arg()], Type::Int)
+        }
+        (Type::List(elem), "slice") if elem.comparable() => {
+            (false, vec![Type::Int, Type::Int], Type::List(elem))
+        }
+        (Type::Map(_, _), "clear") => (true, Vec::new(), Type::Unit),
+        (Type::Map(_, value), "values") if value.comparable() => {
+            (false, Vec::new(), Type::List(value))
+        }
         (Type::Map(key, _), "contains") => (false, vec![key.key_arg()], Type::Bool),
         // 结构体不能复制，`get` 的默认值语义对它不成立。
         (Type::Map(key, value), "get") if !matches!(value, Elem::Record(_)) => {
@@ -98,6 +117,24 @@ pub fn method_signature(receiver: Type, method: &str) -> Option<(bool, Vec<Type>
         (Type::Map(key, _), "keys") => (false, Vec::new(), Type::List(key)),
         _ => return None,
     })
+}
+
+/// 方法名写错或元素类型不支持时，报错里列出能用的方法。
+fn supported_methods(container: Type, method: &str) -> &'static str {
+    match container {
+        Type::List(Elem::Record(_))
+            if matches!(method, "sort" | "contains" | "index_of" | "slice") =>
+        {
+            "struct elements cannot be compared or copied yet"
+        }
+        Type::List(_) => {
+            "lists support len, push, pop, insert, remove, swap, reverse, clear, extend, sort, contains, index_of and slice"
+        }
+        Type::Map(_, Elem::Record(_)) if method == "values" => {
+            "struct values cannot be copied; iterate the keys instead"
+        }
+        _ => "maps support len, contains, get, remove, keys, values and clear",
+    }
 }
 
 /// `[T]` 的元素与字典的值：标量、字符串或命名结构体（还没有嵌套容器）。
@@ -126,6 +163,10 @@ impl Elem {
             Elem::Record(id) => Type::RecordRef(id, false),
             _ => self.ty(),
         }
+    }
+    /// 能比较、能复制的元素：标量与字符串。
+    pub fn comparable(self) -> bool {
+        !matches!(self, Elem::Record(_))
     }
     /// 字典键作为参数时的类型：字符串键只读借用，整数键按值。
     pub fn key_arg(self) -> Type {
@@ -2332,11 +2373,7 @@ impl<'a> Checker<'a> {
             ));
         };
         let (mutable, params, result) = method_signature(target, method).ok_or_else(|| {
-            let supported = if matches!(container, Type::List(_)) {
-                "lists support len, push, pop and swap"
-            } else {
-                "maps support len, contains, get, remove and keys"
-            };
+            let supported = supported_methods(container, method);
             format!("unknown function {receiver}.{method}: {supported}")
         })?;
         Ok((key, mutable, params, result))
@@ -2359,11 +2396,7 @@ impl<'a> Checker<'a> {
                     "unknown function {path}.get: struct values cannot be copied; check {path}.contains(k), then read {path}[k].field or borrow &{path}[k]"
                 );
             }
-            let supported = if matches!(container, Type::List(_)) {
-                "lists support len, push, pop and swap"
-            } else {
-                "maps support len, contains, get, remove and keys"
-            };
+            let supported = supported_methods(container, method);
             format!("unknown function {path}.{method}: {supported}")
         })
     }

@@ -172,8 +172,8 @@ fn checker_rejects_list_misuse() {
             "iterate a list with for x in &items",
         ),
         (
-            "let xs: [i64] = [1]\n    xs.sort()",
-            "unknown function xs.sort",
+            "let xs: [i64] = [1]\n    xs.shuffle()",
+            "unknown function xs.shuffle",
         ),
         ("let n = 1\n    println(n.len())", "has no method len"),
         ("let xs: [i64] = [1]\n    println(xs)", "cannot print"),
@@ -243,4 +243,67 @@ fn trailing_calls_return_only_from_the_tail() {
         stdout(&output),
         "value 1\nvalue 2\nvalue 3\n0\n1\n3\nvalue 1\n10\nvalue 2\n20\n3\n"
     );
+}
+
+/// 列表的 sort/contains/index_of/insert/remove/reverse/slice/extend/clear 与字典的 values/clear。
+#[test]
+fn list_and_map_methods() {
+    let case = Case::new("lists", "methods");
+    let source = include_str!("../../examples/collections/listops.zm");
+    assert_eq!(
+        stdout(&case.run(source)),
+        "sorted: 1 2 3 5 8 9\ntrue\n5\n-1\nremoved 2\nedited: 0 1 3 5 8 9 10\nreversed: 10 9 8 5 3 1 0\nmiddle: 9 8 5\n9\n0\nBob;amy;bob;mia;\ntrue\nfirst Bob\n-1.0 0.5 2.5\nages: 30 25\n0\n"
+    );
+    // 排序稳定：-0.0 与 0.0 保持原顺序；NaN 排在最后；字符串元素移出与清空都不泄漏。
+    let output = case.run(
+        "fn main():\n    let mut xs: [f64] = [0.0, -0.0, 1.0 / 0.0 - 1.0 / 0.0, -2.0, 0.0]\n    xs.sort()\n    println(\"{xs[0]} {xs[1]} {xs[2]} {xs[3]} {xs[4]}\")\n    let mut words: [string] = [\"b\", \"a\"]\n    words.insert(1, \"c\")\n    let w = words.remove(0)\n    println(w)\n    let tail = words.slice(1, 2)\n    words.extend(tail)\n    println(\"{words[0]}{words[1]}{words[2]}\")\n    words.clear()\n    println(words.len())\n",
+    );
+    assert_eq!(stdout(&output), "-2.0 0.0 -0.0 0.0 NaN\nb\ncaa\n0\n");
+    for (body, message) in [
+        (
+            "let mut xs: [i64] = [1]\n    xs.insert(2, 0)",
+            "zam: list index out of bounds",
+        ),
+        (
+            "let mut xs: [i64] = [1]\n    println(xs.remove(1))",
+            "zam: list index out of bounds",
+        ),
+        (
+            "let xs: [i64] = [1]\n    let ys = xs.slice(1, 0)",
+            "zam: list index out of bounds",
+        ),
+        (
+            "let xs: [i64] = [1]\n    let ys = xs.slice(0, 2)",
+            "zam: list index out of bounds",
+        ),
+    ] {
+        let source = format!("fn main():\n    {body}\n");
+        rejected(&case.run(&source), message, &source);
+    }
+    for (body, message) in [
+        (
+            "let mut ps: [P] = []\n    ps.sort()",
+            "struct elements cannot be compared or copied yet",
+        ),
+        (
+            "let m: {string: P} = {}\n    let v = m.values()",
+            "struct values cannot be copied",
+        ),
+        (
+            "let mut xs: [i64] = [1]\n    xs.shuffle()",
+            "lists support len, push, pop, insert",
+        ),
+        (
+            "let mut xs: [i64] = [1]\n    for x in &xs:\n        xs.insert(0, x)",
+            "borrowed by an enclosing for loop",
+        ),
+        (
+            "let mut xs: [string] = []\n    let s = \"a\"\n    xs.insert(0, s)\n    println(s)",
+            "use after move: s",
+        ),
+        ("let xs: [i64] = [1]\n    xs.reverse()", "immutable"),
+    ] {
+        let source = format!("struct P:\n    x: i64\nfn main():\n    {body}\n");
+        rejected(&case.run(&source), message, &source);
+    }
 }

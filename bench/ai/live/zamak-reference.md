@@ -130,7 +130,8 @@ let area = match s:
 `T` is `i64`, `f64`, `bool`, `string`, a struct or an enum.
 
 - `let mut xs: [i64] = []` (an empty list needs a type annotation), `let xs: [string] = ["a", "b"]`.
-- `xs.len()`, `xs.push(v)`, `xs.pop()` (removes and returns the last element), `xs.swap(i, j)`.
+- `xs.len()`, `xs.push(v)`, `xs.pop()` (removes and returns the last element), `xs.insert(i, v)`, `xs.remove(i)` (removes and returns element `i`), `xs.swap(i, j)`, `xs.reverse()`, `xs.clear()`, `xs.extend(ys)` (moves all of `ys` to the end).
+- For `i64`, `f64`, `bool` and `string` elements: `xs.sort()` (ascending, stable), `xs.contains(v)`, `xs.index_of(v)` (-1 when absent), `xs.slice(a, b)` (a new list of elements `a..b`). String arguments are borrows: `names.contains("amy")`.
 - `xs[i]` reads an `i64`/`f64`/`bool` element and `xs[i] = v` writes. A string element cannot be taken out with `xs[i]`; pass `&xs[i]` to a `&string` parameter or copy it with `string.copy(&xs[i])`.
 - Struct elements: read and write fields with `xs[i].field` (also `+=`), pass `&xs[i]` / `&mut xs[i]` to `&Point` / `&mut Point` parameters, pass `&xs[i].name` to a `&string` parameter, call `xs[i].tags.push(v)`. `for p in &xs` gives a read-only `&Point`. Structs are never copied: `let p = xs[i]` is an error; use `xs.pop()` to take the last one out, `xs.swap(i, j)` to reorder, and `xs[i] = Point(...)` to replace. `xs[i].tags[j]` is not supported.
 - Methods are called on variables or fields only, never on call results: write `let parts = string.split(&s, ",")` then `parts.len()`.
@@ -142,7 +143,7 @@ let area = match s:
 - `let mut m: {string: i64} = {}` (an empty map needs a type annotation), `let m = {"a": 1, "b": 2}`.
 - `m[k]` reads (stops the program if the key is missing); `m[k] = v` inserts or replaces.
 - String keys are passed as borrows: `m[&name]`, `m["literal"]`, or a borrowed loop variable directly `m[word]`.
-- `m.len()`, `m.contains(k)`, `m.get(k, default)` (value or `default`), `m.remove(k)` (returns `bool`), `m.keys()` (a list of keys in insertion order).
+- `m.len()`, `m.contains(k)`, `m.get(k, default)` (value or `default`), `m.remove(k)` (returns `bool`), `m.keys()` and `m.values()` (lists in insertion order; `values` is not available for struct values), `m.clear()`.
 - Counting idiom: `counts[word] = counts.get(word, 0) + 1`.
 
 ## Standard library

@@ -1,0 +1,55 @@
+// 列表与字典的常用方法：排序、查找、插入、删除、反转、切片、合并、清空。
+
+fn show(label: &string, xs: &[i64]):
+    let mut text = ""
+    for x in &xs:
+        text = text + " {x}"
+    println("{label}:{text}")
+
+fn main():
+    let mut xs: [i64] = [5, 3, 8, 1, 9, 2]
+    xs.sort()
+    show("sorted", &xs)
+    println(xs.contains(8))
+    println(xs.index_of(9))
+    println(xs.index_of(7))
+
+    xs.insert(0, 0)
+    xs.insert(xs.len(), 10)
+    let removed = xs.remove(2)
+    println("removed {removed}")
+    show("edited", &xs)
+
+    xs.reverse()
+    show("reversed", &xs)
+    let middle = xs.slice(1, 4)
+    show("middle", &middle)
+
+    let more: [i64] = [100, 200]
+    xs.extend(more)
+    println(xs.len())
+    xs.clear()
+    println(xs.len())
+
+    let mut names: [string] = ["mia", "Bob", "amy", "bob"]
+    names.sort()
+    println(string_list(&names))
+    println(names.contains("amy"))
+    let first = names.remove(0)
+    println("first {first}")
+
+    let mut scores: [f64] = [2.5, -1.0, 0.5]
+    scores.sort()
+    println("{scores[0]} {scores[1]} {scores[2]}")
+
+    let mut ages = {"amy": 30, "bob": 25}
+    let values = ages.values()
+    show("ages", &values)
+    ages.clear()
+    println(ages.len())
+
+fn string_list(xs: &[string]) -> string:
+    let mut text = ""
+    for x in &xs:
+        text = text + x + ";"
+    text
