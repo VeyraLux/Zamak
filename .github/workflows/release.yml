@@ -1,0 +1,130 @@
+name: Release
+
+# Pushing a tag such as v0.1.0 builds, smoke-tests and publishes prebuilt compilers.
+# Running it manually only builds and uploads the archives as workflow artifacts.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            name: linux-x64
+            binary: zam
+          - os: windows-latest
+            name: windows-x64
+            binary: zam.exe
+          - os: macos-latest
+            name: macos-arm64
+            binary: zam
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check tag matches Cargo version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' zam/Cargo.toml | head -1)
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME does not match Cargo version $version"; exit 1; }
+      - name: Build
+        run: cargo build --release --locked --manifest-path zam/Cargo.toml
+      - name: Package
+        shell: bash
+        run: tools/package-release.sh "zam/target/release/${{ matrix.binary }}" "zamak-${{ matrix.name }}"
+      - name: Smoke test packaged compiler
+        shell: bash
+        run: |
+          zam="$PWD/dist/zamak-${{ matrix.name }}/bin/${{ matrix.binary }}"
+          work=$(mktemp -d)
+          cd "$work"
+          export ZAMAK_CACHE_DIR="$work/cache"
+          "$zam" --version
+          "$zam" new hello
+          test "$("$zam" run hello | tr -d '\r')" = "hello from zamak"
+          example="$GITHUB_WORKSPACE/dist/zamak-${{ matrix.name }}/examples/collections/wordfreq.zm"
+          actual=$(printf 'to be or not to be\n' | "$zam" run "$example" | tr -d '\r')
+          expected=$(printf '4 distinct words\n2 to\n2 be\n1 or\n1 not')
+          test "$actual" = "$expected" || { echo "unexpected output: $actual"; exit 1; }
+      - name: Archive (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          cd dist
+          tar -czf "zamak-${{ matrix.name }}.tar.gz" "zamak-${{ matrix.name }}"
+          shasum -a 256 "zamak-${{ matrix.name }}.tar.gz" > "zamak-${{ matrix.name }}.tar.gz.sha256"
+      - name: Test install.sh against the archive (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          (cd dist && python3 -m http.server 8766 --bind 127.0.0.1 >/dev/null 2>&1 &)
+          sleep 2
+          home="$RUNNER_TEMP/zamak-home"
+          ZAMAK_DOWNLOAD_BASE=http://127.0.0.1:8766 ZAMAK_HOME="$home" sh install.sh
+          work=$(mktemp -d)
+          cd "$work"
+          export ZAMAK_CACHE_DIR="$work/cache"
+          "$home/bin/zam" new hello
+          test "$("$home/bin/zam" run hello)" = "hello from zamak"
+      - name: Archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Set-Location dist
+          Compress-Archive -Path "zamak-${{ matrix.name }}" -DestinationPath "zamak-${{ matrix.name }}.zip"
+          $hash = (Get-FileHash "zamak-${{ matrix.name }}.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -Path "zamak-${{ matrix.name }}.zip.sha256" -Value "$hash  zamak-${{ matrix.name }}.zip" -NoNewline
+      - name: Test install.ps1 against the archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Start-Process python -ArgumentList '-m','http.server','8766','--bind','127.0.0.1' -WorkingDirectory dist -WindowStyle Hidden
+          Start-Sleep -Seconds 2
+          $env:ZAMAK_DOWNLOAD_BASE = 'http://127.0.0.1:8766'
+          $env:ZAMAK_HOME = Join-Path $env:RUNNER_TEMP 'zamak-home'
+          $env:ZAMAK_NO_MODIFY_PATH = '1'
+          ./install.ps1
+          $work = Join-Path $env:RUNNER_TEMP 'install-smoke'
+          New-Item -ItemType Directory -Path $work | Out-Null
+          Set-Location $work
+          $env:ZAMAK_CACHE_DIR = Join-Path $work 'cache'
+          $zam = Join-Path $env:ZAMAK_HOME 'bin/zam.exe'
+          & $zam new hello
+          $output = (& $zam run hello) -join "`n"
+          if ($output.Trim() -ne 'hello from zamak') { throw "unexpected output: $output" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zamak-${{ matrix.name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" assets/* \
+            --title "Zamak $GITHUB_REF_NAME" \
+            --prerelease \
+            --generate-notes
