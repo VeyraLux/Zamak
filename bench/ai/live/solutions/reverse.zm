@@ -1,0 +1,16 @@
+use std/io
+use std/string
+
+fn main() -> !string {
+    let text = io.read_all()?
+    let mut lines = string.lines(&text)
+    while lines.len() > 0 {
+        let line = lines.pop()
+        let mut words = string.words(&line)
+        let mut reversed: [string] = []
+        while words.len() > 0 {
+            reversed.push(words.pop())
+        }
+        println(string.join(&reversed, " "))
+    }
+}

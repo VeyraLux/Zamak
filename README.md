@@ -6,7 +6,7 @@ A statically typed language that compiles to native executables, designed around
 
 [![CI](https://github.com/rayL-K/Zamak/actions/workflows/ci.yml/badge.svg)](https://github.com/rayL-K/Zamak/actions/workflows/ci.yml)
 
-<img width="160" height="160" alt="Zamak" src="ico/Zamak_256x256.png" />
+<img width="96" height="96" alt="Zamak" src="ico/Zamak_256x256.png" />
 
 ```zamak
 use std/io
@@ -41,7 +41,8 @@ not: 1
 - **Fast feedback.** `zam check` type-checks and borrow-checks without invoking a C compiler. Builds are cached by content per module, so a one-line edit rebuilds only the affected module. On the project's 10-module, 5,250-line benchmark (Windows, MSVC, one machine), a one-line edit rebuilds in about 0.75 s and `check` takes under 0.1 s. Methodology and raw numbers are in [docs/ENGINEERING.md](docs/ENGINEERING.md) and [docs/PERFORMANCE.md](docs/PERFORMANCE.md) (Chinese).
 - **Ownership without a garbage collector.** Strings, structs, lists, and maps move on assignment. Borrows (`&x`, `&mut x`) live only for the duration of a call, which keeps the rules small: there are no lifetime annotations. Integer overflow, division by zero, and out-of-bounds access are checked at run time; a conservative range analysis removes checks it can prove redundant.
 - **Diagnostics built for tools.** Every error has a stable code (`ZM301`), a category, a position, and usually a suggested fix. `zam check --json` emits them as one line of JSON, and type errors are reported per function so an agent can fix several in one pass.
-- **Native, standalone output.** Zamak generates C and compiles it with MSVC, GCC, or Clang. The resulting executable needs neither Zamak nor Rust installed. Runtime performance on the integer benchmarks in `docs/PERFORMANCE.md` is in the same range as Rust and Go; treat that as a sanity check, not a headline.
+- **Learnable from one page.** In a benchmark with 3 models and 8 small CLI tasks, the models read only a one-page language reference. 23 of 24 Zamak programs passed every test on the first try, and the last one passed after one fix. Rust and Go passed all 24 on the first try. Method, tasks, and data are in [bench/ai/live](bench/ai/live/README.md).
+- **Native, standalone output.** Zamak generates C and compiles it with MSVC, GCC, or Clang. The resulting executable needs neither Zamak nor Rust installed. On the integer benchmarks in `docs/PERFORMANCE.md`, runtime performance is in the same range as Rust and Go.
 
 ## Install
 
@@ -116,7 +117,7 @@ fn main() -> !string {
 - Modules: one file per module, `use name` and `pub fn`/`pub struct`.
 - Standard library: `std/io` (stdin, `println`), `std/fs` (read and write whole files), `std/env` (arguments), and `std/string` (length, compare, parse, trim, find, replace, case conversion, slice, split, words, lines, join). Character literals such as `'#'` are `i64` code points.
 
-The [tutorial](TUTORIAL.md) (Chinese) walks through every feature with runnable examples. For a larger program, [examples/md2html](examples/md2html) is a four-module Markdown-to-HTML converter (about 290 lines) covering headings, lists, quotes, fenced code, inline formatting, links, and HTML escaping:
+The [tutorial](TUTORIAL.md) (Chinese) walks through every feature with runnable examples. For a larger program, [examples/md2html](examples/md2html) is a four-module Markdown-to-HTML converter (about 270 lines) covering headings, lists, quotes, fenced code, inline formatting, links, and HTML escaping:
 
 ```sh
 zam run examples/md2html -- examples/md2html/sample.md

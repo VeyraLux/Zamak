@@ -1,0 +1,30 @@
+use std/env
+use std/string
+
+fn main() -> !string {
+    let arg = env.arg(0)?
+    let n = string.parse_i64(&arg)?
+    let mut composite: [bool] = []
+    for i in 0..n + 1 {
+        composite.push(false)
+    }
+    let mut count = 0
+    let mut largest = 0
+    for i in 2..n + 1 {
+        if !composite[i] {
+            count = count + 1
+            largest = i
+            let mut j = i * i
+            while j <= n {
+                composite[j] = true
+                j = j + i
+            }
+        }
+    }
+    println(count)
+    if largest == 0 {
+        println("none")
+    } else {
+        println(largest)
+    }
+}

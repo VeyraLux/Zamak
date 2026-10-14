@@ -1,0 +1,29 @@
+use std/io
+use std/string
+
+fn main() -> !string {
+    let text = io.read_all()?
+    let lowered = string.lower(&text)
+    let words = string.words(&lowered)
+    let mut counts: {string: i64} = {}
+    for word in &words {
+        counts[word] = counts.get(word, 0) + 1
+    }
+    let mut order = counts.keys()
+    for i in 1..order.len() {
+        let mut j = i
+        while j > 0 && counts[&order[j - 1]] < counts[&order[j]] {
+            order.swap(j - 1, j)
+            j = j - 1
+        }
+    }
+    let mut shown = 0
+    for word in &order {
+        if shown == 3 {
+            break
+        }
+        let n = counts[word]
+        println("{n} {word}")
+        shown = shown + 1
+    }
+}

@@ -38,8 +38,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: 构建编译器
         run: cargo build --manifest-path zam/Cargo.toml --locked
-      - name: 离线 AI 闭环评测
+      - name: 离线 AI 修复评测
         run: pwsh -File bench/ai/run.ps1 -ZamPath zam/target/debug/zam.exe -LatencyRepeats 3
+      - name: 实时 AI 对比实验的参考解
+        run: python bench/ai/live/run.py --verify-solutions --zam zam/target/debug/zam.exe
       - name: 检查 AI 评测门槛
         shell: pwsh
         run: |
