@@ -311,6 +311,19 @@ impl Analysis {
                     (None, None) => Interval::TOP,
                 }
             }
+            Expr::Variant(_, _, values) => {
+                for value in values {
+                    self.expr(value, env, collect);
+                }
+                Interval::TOP
+            }
+            Expr::Match(scrutinee, arms) => {
+                self.expr(scrutinee, env, collect);
+                for ((_, bindings), value) in arms {
+                    self.expr(value, &opaque(env, bindings), collect);
+                }
+                Interval::TOP
+            }
             // f64 不参与整数区间推理。
             Expr::Field(_, _)
             | Expr::Text(_)
@@ -465,6 +478,15 @@ impl Analysis {
             }
             Instruction::While(condition, body) => {
                 return self.loop_flow(Head::Condition(condition), body, env, collect)
+            }
+            Instruction::Match(scrutinee, arms) => {
+                // Arms bind payloads that carry no interval facts; checked matches are exhaustive.
+                self.expr(scrutinee, &env, collect);
+                return arms
+                    .iter()
+                    .fold(Flow::default(), |flow, ((_, bindings), body)| {
+                        flow.merge(self.block(body, opaque(&env, bindings), collect))
+                    });
             }
             Instruction::Each(name, _, body) => {
                 // Elements are opaque here; the loop may run any number of times.
@@ -692,7 +714,10 @@ fn refine_bound(env: &Env, name: &str, lo: i128, hi: i128) -> State {
 fn expression_cost(expr: &Expr) -> Option<i128> {
     let children = match expr {
         // Hidden handler control flow and mutable borrows are outside this recognizer.
-        Expr::Catch(_, _, _) | Expr::Borrow(_, true) => return None,
+        Expr::Catch(_, _, _) | Expr::Borrow(_, true) | Expr::Match(_, _) => return None,
+        Expr::Variant(_, _, values) => values
+            .iter()
+            .try_fold(0, |cost, value| Some(cost + expression_cost(value)?))?,
         Expr::Unary(_, inner)
         | Expr::Try(inner)
         | Expr::ByteLen(inner)
@@ -734,7 +759,8 @@ fn body_cost(block: &Block, writes: &mut BTreeMap<String, usize>) -> Option<i128
             Instruction::Continue
             | Instruction::While(_, _)
             | Instruction::For(_, _, _, _)
-            | Instruction::Each(_, _, _) => return None,
+            | Instruction::Each(_, _, _)
+            | Instruction::Match(_, _) => return None,
             Instruction::Let(_, _, _, expr)
             | Instruction::Print(expr)
             | Instruction::Call(expr)
@@ -802,6 +828,20 @@ fn finite_iterations(condition: &Expr, body: &Block, entry: &Env) -> Option<usiz
     usize::try_from(iterations).ok()
 }
 
+/// match 分支的环境：载荷绑定没有区间事实。
+fn opaque(env: &Env, bindings: &[String]) -> Env {
+    let mut env = env.clone();
+    for binding in bindings {
+        env.insert(
+            binding.clone(),
+            Fact {
+                value: Interval::TOP,
+                length: None,
+            },
+        );
+    }
+    env
+}
 fn contained(header: &Env, next: &Env) -> bool {
     next.iter().all(|(name, fact)| {
         header
@@ -824,6 +864,11 @@ fn forget_mutations(block: &Block, env: &mut Env) {
             Instruction::While(_, body)
             | Instruction::For(_, _, _, body)
             | Instruction::Each(_, _, body) => forget_mutations(body, env),
+            Instruction::Match(_, arms) => {
+                for (_, body) in arms {
+                    forget_mutations(body, env);
+                }
+            }
             _ => {}
         }
     }

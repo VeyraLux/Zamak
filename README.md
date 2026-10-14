@@ -123,6 +123,7 @@ fn main() -> !string {
 - **Types.** Zamak has `i64`, `f64`, `bool`, `string` (UTF-8), named structs, fixed arrays `[i64; N]`, lists `[T]`, and maps `{K: V}`. List elements and map values can be `i64`, `f64`, `bool`, `string`, or a struct, and map keys can be `i64` or `string`. A character literal such as `'#'` is an `i64` code point.
 - **Numbers.** `f64` follows IEEE 754, so dividing by zero gives `inf` or `NaN`. Zamak never converts between `i64` and `f64` implicitly. Write `f64(n)` or `i64(x)`, where `i64(x)` truncates toward zero. `println` prints the shortest text that reads back as the same `f64`, such as `0.1` or `2.0`, and `fmt.fixed(x, 2)` rounds to two decimal places.
 - **Struct borrows and struct lists.** A parameter typed `&Point` borrows a struct for one call, and `&mut Point` lets the function change it. In a list of structs, read or write a field with `items[i].qty`, borrow an element with `&items[i]`, and loop with `for item in &items`. Structs are never copied, so take an element out with `items.pop()` instead of `let item = items[i]`.
+- **Enums and match.** Declare `enum Shape { Circle(r: f64)  Empty }` with one variant per line, and build values with `Shape.Circle(1.0)` or `Shape.Empty`. A `match` lists one arm per variant, such as `Circle(r) => ...`, or ends with `_ => ...`. Zamak reports an error when an arm is missing. A `match` borrows the value, so arms read the data without moving it.
 - **Control flow.** Use `if`, `else if`, `else`, `while`, `break`, and `continue`. To choose a value, write `let v = if c { a } else { b }`. Loop over a range with `for i in 0..n`, over a list with `for x in &list`, and over map keys in insertion order with `for k in &map`.
 - **Errors.** A function that can fail returns `T!string` or `!string`. Use `fail` to return an error, `?` to pass it to the caller, and `catch e { ... }` to handle it in place.
 - **Modules.** Each file is a module. Import one with `use name`, and export items with `pub fn` and `pub struct`.
@@ -158,7 +159,7 @@ For the list of error codes and the recommended loop for AI agents (check, make 
 
 ## Current limitations
 
-Zamak doesn't support generics, enums and `match`, closures, threads, a foreign function interface (FFI), nested containers such as `[[i64]]`, networking, or directory listing yet. There's no package manager, language server, or read-eval-print loop (REPL) yet. When you use an unsupported construct, `zam check` reports a diagnostic instead of compiling incorrect code.
+Zamak doesn't support generics, closures, threads, a foreign function interface (FFI), nested containers such as `[[i64]]`, networking, or directory listing yet. There's no package manager, language server, or read-eval-print loop (REPL) yet. When you use an unsupported construct, `zam check` reports a diagnostic instead of compiling incorrect code.
 
 ## Editor and agent support
 

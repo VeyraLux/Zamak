@@ -167,7 +167,14 @@ pub enum Expr {
     MapLit(Vec<(Expr, Expr)>),
     // `if c { a } else { b }` 作为值：每个分支是单个表达式，必须有 else。
     If(Box<Expr>, Box<Expr>, Box<Expr>),
+    // `Shape.Circle(1.0)`、`Shape.Empty`：构造枚举变体（模块解析后是限定的枚举名）。
+    Variant(String, String, Vec<Expr>),
+    // `match s { Circle(r) => ... }` 作为值：每个分支是单个表达式。
+    Match(Box<Expr>, Vec<(Pattern, Expr)>),
 }
+
+/// match 分支的模式：变体名（`None` 是 `_`）和按位置绑定的载荷名（`_` 表示不绑定）。
+pub type Pattern = (Option<String>, Vec<String>);
 
 #[derive(Clone, Debug)]
 pub enum Instruction {
@@ -187,6 +194,8 @@ pub enum Instruction {
     For(String, Expr, Expr, Block),
     // `for x in &items`：循环期间列表被冻结（不能修改或移走），字符串元素以共享借用绑定。
     Each(String, String, Block),
+    // `match s { ... }` 语句：分支是代码块或单条语句；匹配期间被匹配的位置冻结。
+    Match(Expr, Vec<(Pattern, Block)>),
     Break,
     Continue,
 }
@@ -207,6 +216,9 @@ pub struct Function {
 pub struct Struct {
     pub public: bool,
     pub fields: Vec<(String, Type)>,
+    // 枚举：每个变体的（名字, 第一个载荷字段的下标, 载荷字段数）。字段 0 是隐藏的标签 `$tag`，
+    // 各变体的载荷平铺在后面，名字形如 `Circle$r`；没选中的变体字段保持全零，释放时一并释放也安全。
+    pub variants: Vec<(String, usize, usize)>,
 }
 
 #[derive(Clone, Debug)]
@@ -451,6 +463,8 @@ struct Parser {
     result: Type,
     // 块末尾的调用被暂当作隐式返回值的语句位置；函数体解析完后由 `untail` 按尾部位置修正。
     implicit: BTreeSet<SourcePosition>,
+    // 正在解析 match 的被匹配值：`match Shape.Empty {` 里的 `{` 属于 match，不是结构体字面量。
+    scrutinee: bool,
 }
 
 /// 没有调用的表达式：重复求值不会产生额外副作用（复合赋值的下标用它判断）。
@@ -499,6 +513,11 @@ fn untail(body: &mut Block, tail: bool, implicit: &BTreeSet<SourcePosition>) {
             Instruction::If(_, yes, no) => {
                 untail(yes, here, implicit);
                 untail(no, here, implicit);
+            }
+            Instruction::Match(_, arms) => {
+                for (_, arm) in arms {
+                    untail(arm, here, implicit);
+                }
             }
             Instruction::While(_, nested)
             | Instruction::For(_, _, _, nested)
@@ -765,6 +784,9 @@ impl Parser {
         if self.keyword("if") {
             return self.if_value();
         }
+        if self.keyword("match") {
+            return self.match_value();
+        }
         if self.keyword("true") {
             return Ok(Expr::Bool(true));
         }
@@ -840,6 +862,7 @@ impl Parser {
             .rsplit('.')
             .next()
             .is_some_and(|n| n.starts_with(char::is_uppercase))
+            && !self.scrutinee
             && self.symbol('{')
         {
             self.newlines();
@@ -883,7 +906,14 @@ impl Parser {
             }
             return Ok(Expr::Variable(name));
         }
-        let call = Expr::Call(name, self.arguments()?);
+        let args = self.arguments()?;
+        // `Shape.Circle(1.0)`：点号后首字母大写的调用是枚举变体。
+        if let Some((enumeration, variant)) = name.rsplit_once('.') {
+            if variant.starts_with(char::is_uppercase) {
+                return Ok(Expr::Variant(enumeration.into(), variant.into(), args));
+            }
+        }
+        let call = Expr::Call(name, args);
         // `?` 只作用于调用；其他位置的 `?` 不是合法语法。
         if self.symbol('?') {
             return Ok(Expr::Try(Box::new(call)));
@@ -959,6 +989,7 @@ impl Parser {
                         imports: self.imports.clone(),
                         result: self.result,
                         implicit: BTreeSet::new(),
+                        scrutinee: false,
                     };
                     let expr = inner
                         .expr()
@@ -1004,187 +1035,267 @@ impl Parser {
                 return Err("unterminated function block".into());
             }
             let position = self.at();
-            let instruction = if self.keyword("if") {
-                body.push((self.if_statement(imports, result)?, position));
-                self.separator()?;
-                continue;
-            } else if self.keyword("while") {
-                let condition = self.expr()?;
-                let nested = self.block(imports, result)?;
-                Instruction::While(condition, nested)
-            } else if self.keyword("for") {
-                let local = self.word()?;
-                if !self.keyword("in") {
-                    return Err("expected `in` after the for loop variable".into());
-                }
-                if self.symbol('&') {
-                    if self.keyword("mut") {
-                        return Err(
-                            "unsupported for loop over &mut; index with for i in 0..items.len()"
-                                .into(),
-                        );
-                    }
-                    let mut path = self.word()?;
-                    while self.symbol('.') {
-                        path.push('.');
-                        path.push_str(&self.word()?);
-                    }
-                    let nested = self.block(imports, result)?;
-                    Instruction::Each(local, path, nested)
-                } else {
-                    let start = self.expr()?;
-                    if !(self.symbol('.') && self.symbol('.')) {
-                        return Err("expected `..` in for range: for name in start..end, or iterate a list with for x in &items".into());
-                    }
-                    let end = self.expr()?;
-                    let nested = self.block(imports, result)?;
-                    Instruction::For(local, start, end, nested)
-                }
-            } else if self.keyword("break") {
-                Instruction::Break
-            } else if self.keyword("continue") {
-                Instruction::Continue
-            } else if self.keyword("let") {
-                let mutable = self.keyword("mut");
-                let local = self.word()?;
-                let annotation = if self.symbol(':') {
-                    Some(self.ty()?)
-                } else {
-                    None
-                };
-                if annotation.is_some_and(Type::is_reference) {
-                    return Err("borrow escape: references cannot be stored in locals".into());
-                }
-                self.expect('=')?;
-                Instruction::Let(local, mutable, annotation, self.expr()?)
-            } else if self.keyword("return") {
-                let expr = if matches!(
-                    self.peek(),
-                    None | Some(Token::Newline) | Some(Token::Symbol('}'))
-                ) {
-                    None
-                } else {
-                    Some(self.expr()?)
-                };
-                Instruction::Return(expr)
-            } else if self.keyword("fail") {
-                // `fail e` 在声明了错误类型的函数里返回错误值。
-                Instruction::Fail(self.expr()?)
-            } else {
-                let expr = self.expr()?;
-                if let Some(Token::Symbol(op @ ('+' | '-' | '*' | '/' | '%'))) =
-                    self.peek().cloned()
-                {
-                    if self.tokens.get(self.position + 1) == Some(&Token::Symbol('=')) {
-                        // `x op= e` 等价于 `x = x op e`；下标里不能有调用，保证只求值一次的语义。
-                        self.position += 2;
-                        let value = self.expr()?;
-                        let combined =
-                            Expr::Binary(op.to_string(), Box::new(expr.clone()), Box::new(value));
-                        body.push((
-                            match expr {
-                                Expr::Variable(name) => Instruction::Assign(name, combined),
-                                Expr::Field(local, field) => {
-                                    Instruction::AssignField(local, field, combined)
-                                }
-                                Expr::Index(local, index) if pure(&index) => {
-                                    Instruction::AssignIndex(local, *index, combined)
-                                }
-                                Expr::IndexField(local, index, field) if pure(&index) => {
-                                    Instruction::AssignIndexField(local, *index, field, combined)
-                                }
-                                Expr::Index(_, _) | Expr::IndexField(_, _, _) => return Err(
-                                    "unsupported compound assignment index: it must not call functions; bind it with let first"
-                                        .into(),
-                                ),
-                                _ => {
-                                    return Err(format!(
-                                        "expected a variable, field or index before {op}="
-                                    ))
-                                }
-                            },
-                            position,
-                        ));
-                        self.separator()?;
-                        continue;
-                    }
-                }
-                if let Expr::Field(local, field) = &expr {
-                    if self.symbol('=') {
-                        Instruction::AssignField(local.clone(), field.clone(), self.expr()?)
-                    } else {
-                        Instruction::Return(Some(expr))
-                    }
-                } else if let Expr::Index(local, index) = &expr {
-                    if self.symbol('=') {
-                        Instruction::AssignIndex(local.clone(), (**index).clone(), self.expr()?)
-                    } else {
-                        Instruction::Return(Some(expr))
-                    }
-                } else if let Expr::IndexField(local, index, field) = &expr {
-                    if self.symbol('=') {
-                        Instruction::AssignIndexField(
-                            local.clone(),
-                            (**index).clone(),
-                            field.clone(),
-                            self.expr()?,
-                        )
-                    } else {
-                        Instruction::Return(Some(expr))
-                    }
-                } else if let Expr::Variable(name) = &expr {
-                    if self.symbol('=') {
-                        Instruction::Assign(name.clone(), self.expr()?)
-                    } else {
-                        Instruction::Return(Some(expr))
-                    }
-                } else if let Expr::Call(callee, args) = &expr {
-                    if matches!(callee.as_str(), "println" | "io.println" | "fmt.println") {
-                        if let Some(namespace) = callee.strip_suffix(".println") {
-                            if !imports.contains(&format!("std/{namespace}")) {
-                                return Err(format!("{callee} requires use std/{namespace}"));
-                            }
-                        }
-                        if args.len() != 1 {
-                            return Err("println requires one string argument".into());
-                        }
-                        Instruction::Print(args[0].clone())
-                    } else if result != Type::Unit
-                        && self.tokens[self.position..]
-                            .iter()
-                            .find(|token| **token != Token::Newline)
-                            == Some(&Token::Symbol('}'))
-                    {
-                        self.implicit.insert(position);
-                        Instruction::Return(Some(expr))
-                    } else {
-                        Instruction::Call(expr)
-                    }
-                } else if matches!(
-                    expr,
-                    Expr::Try(_) | Expr::Catch(_, _, _) | Expr::ElementMethod(_, _, _, _, _)
-                ) {
-                    // `write(&p)?` 这类语句：不是函数的最后一个值表达式，就只求值、不返回。
-                    if result != Type::Unit
-                        && self.tokens[self.position..]
-                            .iter()
-                            .find(|token| **token != Token::Newline)
-                            == Some(&Token::Symbol('}'))
-                    {
-                        self.implicit.insert(position);
-                        Instruction::Return(Some(expr))
-                    } else {
-                        Instruction::Call(expr)
-                    }
-                } else {
-                    Instruction::Return(Some(expr))
-                }
-            };
+            let instruction = self.statement(imports, result, None)?;
             body.push((instruction, position));
             self.separator()?;
         }
         self.take();
         Ok(body)
+    }
+    /// 后面（跳过换行）紧跟 `}`：当前语句是代码块的最后一条。
+    fn at_end(&self) -> bool {
+        self.tokens[self.position..]
+            .iter()
+            .find(|token| **token != Token::Newline)
+            == Some(&Token::Symbol('}'))
+    }
+    /// 一条语句。`last` 指定它是不是所在代码块的最后一条（match 分支的单条语句总是）；
+    /// 为 `None` 时看后面是不是 `}`。
+    fn statement(
+        &mut self,
+        imports: &[String],
+        result: Type,
+        last: Option<bool>,
+    ) -> Result<Instruction, String> {
+        let position = self.at();
+        Ok(if self.keyword("if") {
+            self.if_statement(imports, result)?
+        } else if self.keyword("match") {
+            self.match_statement(imports, result)?
+        } else if self.keyword("while") {
+            let condition = self.expr()?;
+            let nested = self.block(imports, result)?;
+            Instruction::While(condition, nested)
+        } else if self.keyword("for") {
+            let local = self.word()?;
+            if !self.keyword("in") {
+                return Err("expected `in` after the for loop variable".into());
+            }
+            if self.symbol('&') {
+                if self.keyword("mut") {
+                    return Err(
+                        "unsupported for loop over &mut; index with for i in 0..items.len()".into(),
+                    );
+                }
+                let mut path = self.word()?;
+                while self.symbol('.') {
+                    path.push('.');
+                    path.push_str(&self.word()?);
+                }
+                let nested = self.block(imports, result)?;
+                Instruction::Each(local, path, nested)
+            } else {
+                let start = self.expr()?;
+                if !(self.symbol('.') && self.symbol('.')) {
+                    return Err("expected `..` in for range: for name in start..end, or iterate a list with for x in &items".into());
+                }
+                let end = self.expr()?;
+                let nested = self.block(imports, result)?;
+                Instruction::For(local, start, end, nested)
+            }
+        } else if self.keyword("break") {
+            Instruction::Break
+        } else if self.keyword("continue") {
+            Instruction::Continue
+        } else if self.keyword("let") {
+            let mutable = self.keyword("mut");
+            let local = self.word()?;
+            let annotation = if self.symbol(':') {
+                Some(self.ty()?)
+            } else {
+                None
+            };
+            if annotation.is_some_and(Type::is_reference) {
+                return Err("borrow escape: references cannot be stored in locals".into());
+            }
+            self.expect('=')?;
+            Instruction::Let(local, mutable, annotation, self.expr()?)
+        } else if self.keyword("return") {
+            let expr = if matches!(
+                self.peek(),
+                None | Some(Token::Newline) | Some(Token::Symbol('}'))
+            ) {
+                None
+            } else {
+                Some(self.expr()?)
+            };
+            Instruction::Return(expr)
+        } else if self.keyword("fail") {
+            // `fail e` 在声明了错误类型的函数里返回错误值。
+            Instruction::Fail(self.expr()?)
+        } else {
+            let expr = self.expr()?;
+            if let Some(Token::Symbol(op @ ('+' | '-' | '*' | '/' | '%'))) = self.peek().cloned() {
+                if self.tokens.get(self.position + 1) == Some(&Token::Symbol('=')) {
+                    // `x op= e` 等价于 `x = x op e`；下标里不能有调用，保证只求值一次的语义。
+                    self.position += 2;
+                    let value = self.expr()?;
+                    let combined =
+                        Expr::Binary(op.to_string(), Box::new(expr.clone()), Box::new(value));
+                    return Ok(match expr {
+                            Expr::Variable(name) => Instruction::Assign(name, combined),
+                            Expr::Field(local, field) => {
+                                Instruction::AssignField(local, field, combined)
+                            }
+                            Expr::Index(local, index) if pure(&index) => {
+                                Instruction::AssignIndex(local, *index, combined)
+                            }
+                            Expr::IndexField(local, index, field) if pure(&index) => {
+                                Instruction::AssignIndexField(local, *index, field, combined)
+                            }
+                            Expr::Index(_, _) | Expr::IndexField(_, _, _) => return Err(
+                                "unsupported compound assignment index: it must not call functions; bind it with let first"
+                                    .into(),
+                            ),
+                            _ => {
+                                return Err(format!(
+                                    "expected a variable, field or index before {op}="
+                                ))
+                            }
+                    });
+                }
+            }
+            if let Expr::Field(local, field) = &expr {
+                if self.symbol('=') {
+                    Instruction::AssignField(local.clone(), field.clone(), self.expr()?)
+                } else {
+                    Instruction::Return(Some(expr))
+                }
+            } else if let Expr::Index(local, index) = &expr {
+                if self.symbol('=') {
+                    Instruction::AssignIndex(local.clone(), (**index).clone(), self.expr()?)
+                } else {
+                    Instruction::Return(Some(expr))
+                }
+            } else if let Expr::IndexField(local, index, field) = &expr {
+                if self.symbol('=') {
+                    Instruction::AssignIndexField(
+                        local.clone(),
+                        (**index).clone(),
+                        field.clone(),
+                        self.expr()?,
+                    )
+                } else {
+                    Instruction::Return(Some(expr))
+                }
+            } else if let Expr::Variable(name) = &expr {
+                if self.symbol('=') {
+                    Instruction::Assign(name.clone(), self.expr()?)
+                } else {
+                    Instruction::Return(Some(expr))
+                }
+            } else if let Expr::Call(callee, args) = &expr {
+                if matches!(callee.as_str(), "println" | "io.println" | "fmt.println") {
+                    if let Some(namespace) = callee.strip_suffix(".println") {
+                        if !imports.contains(&format!("std/{namespace}")) {
+                            return Err(format!("{callee} requires use std/{namespace}"));
+                        }
+                    }
+                    if args.len() != 1 {
+                        return Err("println requires one string argument".into());
+                    }
+                    Instruction::Print(args[0].clone())
+                } else if result != Type::Unit && last.unwrap_or_else(|| self.at_end()) {
+                    self.implicit.insert(position);
+                    Instruction::Return(Some(expr))
+                } else {
+                    Instruction::Call(expr)
+                }
+            } else if matches!(
+                expr,
+                Expr::Try(_) | Expr::Catch(_, _, _) | Expr::ElementMethod(_, _, _, _, _)
+            ) {
+                // `write(&p)?` 这类语句：不是函数的最后一个值表达式，就只求值、不返回。
+                if result != Type::Unit && last.unwrap_or_else(|| self.at_end()) {
+                    self.implicit.insert(position);
+                    Instruction::Return(Some(expr))
+                } else {
+                    Instruction::Call(expr)
+                }
+            } else {
+                Instruction::Return(Some(expr))
+            }
+        })
+    }
+    /// `match` 的分支模式：`Circle(r)`、`Rect(w, _)`、`Shape.Empty` 或 `_`，后接 `=>`。
+    fn pattern(&mut self) -> Result<Pattern, String> {
+        let pattern = if self.keyword("_") {
+            (None, Vec::new())
+        } else {
+            let name = self.type_name()?;
+            let variant = name.rsplit('.').next().unwrap_or(&name).to_owned();
+            if !variant.starts_with(char::is_uppercase) {
+                return Err(format!(
+                    "expected an enum variant such as Circle(r), or _, in a match arm; found {name}"
+                ));
+            }
+            let mut bindings = Vec::new();
+            if self.symbol('(') && !self.symbol(')') {
+                loop {
+                    bindings.push(self.word()?);
+                    if self.symbol(')') {
+                        break;
+                    }
+                    self.expect(',')?;
+                }
+            }
+            (Some(variant), bindings)
+        };
+        if !(self.symbol('=') && self.symbol('>')) {
+            return Err("expected => after the match pattern".into());
+        }
+        Ok(pattern)
+    }
+    /// 语句形式的 match：分支是 `{ ... }` 代码块或一条语句。
+    /// match 的被匹配值：其中不解析结构体字面量。
+    fn scrutinee(&mut self) -> Result<Expr, String> {
+        let outer = std::mem::replace(&mut self.scrutinee, true);
+        let scrutinee = self.expr();
+        self.scrutinee = outer;
+        scrutinee
+    }
+    fn match_statement(&mut self, imports: &[String], result: Type) -> Result<Instruction, String> {
+        let scrutinee = self.scrutinee()?;
+        self.expect('{')?;
+        self.newlines();
+        let mut arms = Vec::new();
+        while !self.symbol('}') {
+            let pattern = self.pattern()?;
+            let body = if self.peek() == Some(&Token::Symbol('{')) {
+                self.block(imports, result)?
+            } else {
+                let position = self.at();
+                vec![(self.statement(imports, result, Some(true))?, position)]
+            };
+            arms.push((pattern, body));
+            self.separator()?;
+        }
+        if arms.is_empty() {
+            return Err("expected at least one arm in the match".into());
+        }
+        Ok(Instruction::Match(scrutinee, arms))
+    }
+    /// 表达式形式的 match：`let v = match s { A => 1  B(x) => x }`，每个分支一个值。
+    fn match_value(&mut self) -> Result<Expr, String> {
+        let scrutinee = self.scrutinee()?;
+        self.expect('{')?;
+        self.newlines();
+        let mut arms = Vec::new();
+        while !self.symbol('}') {
+            let pattern = self.pattern()?;
+            if self.peek() == Some(&Token::Symbol('{')) {
+                return Err(
+                    "expected a value: a match expression arm holds a single value; compute it with let before the match, or write the match as a statement"
+                        .into(),
+                );
+            }
+            arms.push((pattern, self.expr()?));
+            self.separator()?;
+        }
+        if arms.is_empty() {
+            return Err("expected at least one arm in the match".into());
+        }
+        Ok(Expr::Match(Box::new(scrutinee), arms))
     }
 }
 
@@ -1262,6 +1373,7 @@ pub fn parse(source: &str) -> Result<Module, String> {
         imports: Vec::new(),
         result: Type::Unit,
         implicit: BTreeSet::new(),
+        scrutinee: false,
     };
     let result = (|| {
         let mut module = Module {
@@ -1318,7 +1430,81 @@ pub fn parse(source: &str) -> Result<Module, String> {
                 if module.functions.contains_key(&name)
                     || module
                         .structs
-                        .insert(name.clone(), Struct { public, fields })
+                        .insert(
+                            name.clone(),
+                            Struct {
+                                public,
+                                fields,
+                                variants: Vec::new(),
+                            },
+                        )
+                        .is_some()
+                {
+                    return Err(format!("duplicate declaration {name}"));
+                }
+                p.separator()?;
+                continue;
+            }
+            if p.keyword("enum") {
+                let name = p.word()?;
+                if matches!(name.as_str(), "string" | "i64" | "f64" | "bool") {
+                    return Err(format!("reserved type name {name}"));
+                }
+                if !name.starts_with(char::is_uppercase) {
+                    return Err("enum names must start with an uppercase letter".into());
+                }
+                p.expect('{')?;
+                p.newlines();
+                let mut fields = vec![("$tag".to_owned(), Type::Int)];
+                let mut variants: Vec<(String, usize, usize)> = Vec::new();
+                while !p.symbol('}') {
+                    let variant = p.word()?;
+                    if !variant.starts_with(char::is_uppercase) {
+                        return Err("enum variant names must start with an uppercase letter".into());
+                    }
+                    if variants.iter().any(|(other, _, _)| *other == variant) {
+                        return Err(format!("duplicate variant {name}.{variant}"));
+                    }
+                    let first = fields.len();
+                    if p.symbol('(') && !p.symbol(')') {
+                        let mut names = BTreeSet::new();
+                        loop {
+                            let field = p.word()?;
+                            if !names.insert(field.clone()) {
+                                return Err(format!("duplicate field {variant}.{field}"));
+                            }
+                            p.expect(':')?;
+                            let ty = p.ty()?;
+                            if ty.is_reference() {
+                                return Err("borrow escape: enums cannot store references".into());
+                            }
+                            if matches!(ty, Type::ArrayInt(_)) {
+                                return Err("arrays are only supported as local values".into());
+                            }
+                            fields.push((format!("{variant}${field}"), ty));
+                            if p.symbol(')') {
+                                break;
+                            }
+                            p.expect(',')?;
+                        }
+                    }
+                    variants.push((variant, first, fields.len() - first));
+                    p.separator()?;
+                }
+                if variants.is_empty() {
+                    return Err(format!("expected at least one variant in enum {name}"));
+                }
+                if module.functions.contains_key(&name)
+                    || module
+                        .structs
+                        .insert(
+                            name.clone(),
+                            Struct {
+                                public,
+                                fields,
+                                variants,
+                            },
+                        )
                         .is_some()
                 {
                     return Err(format!("duplicate declaration {name}"));
@@ -1327,7 +1513,7 @@ pub fn parse(source: &str) -> Result<Module, String> {
                 continue;
             }
             if !p.keyword("fn") {
-                return Err("expected use, struct or fn declaration".into());
+                return Err("expected use, struct, enum or fn declaration".into());
             }
             let name = p.word()?;
             // `i64(x)`、`f64(n)` 是内建的数值转换。
@@ -1412,10 +1598,17 @@ pub fn encode(module: &Module) -> Vec<u8> {
     let declarations: Vec<_> = module
         .structs
         .iter()
-        .map(|(name, structure)| (name, structure.public, &structure.fields))
+        .map(|(name, structure)| {
+            (
+                name,
+                structure.public,
+                &structure.fields,
+                &structure.variants,
+            )
+        })
         .collect();
     format!(
-        "ZAM-IR-19\n{declarations:?}\n{:?}\n{:?}\n{:?}\n",
+        "ZAM-IR-20\n{declarations:?}\n{:?}\n{:?}\n{:?}\n",
         module.type_names, module.imports, module.functions
     )
     .into_bytes()
@@ -1472,7 +1665,7 @@ struct Checker<'a> {
     // 正被 `for x in &items` 遍历的根绑定：循环体内不能修改、移走或独占借用它们。
     frozen: Vec<String>,
 }
-impl Checker<'_> {
+impl<'a> Checker<'a> {
     fn thawed(&self, root: &str) -> Result<(), String> {
         if self.frozen.iter().any(|name| name == root) {
             Err(format!(
@@ -1527,6 +1720,138 @@ impl Checker<'_> {
             Type::Map(key, value) => (key.key_arg(), value),
             _ => unreachable!("container type"),
         }
+    }
+    /// `ty` 是枚举或枚举的借用时，返回（限定名, 声明）。
+    fn enumeration(&self, ty: Type) -> Option<(&'a String, &'a Struct)> {
+        let (Type::Record(id) | Type::RecordRef(id, _)) = ty else {
+            return None;
+        };
+        self.structs
+            .iter()
+            .find(|(name, structure)| record_id(name) == id && !structure.variants.is_empty())
+    }
+    /// match 被匹配值的类型，不求值（位置按位置取类型）。
+    fn scrutinee_ty(&self, expr: &Expr) -> Result<Type, String> {
+        match expr {
+            Expr::Variable(name) => Ok(self.place(name)?.1),
+            Expr::Field(local, field) => Ok(self.place(&format!("{local}.{field}"))?.1),
+            Expr::Index(path, _) if self.place(path)?.1.container().is_some() => {
+                Ok(self.element(path, "")?.1)
+            }
+            Expr::IndexField(path, _, field) => Ok(self.element(path, field)?.1),
+            _ => self.ty(expr),
+        }
+    }
+    /// 检查 match 的被匹配值：变量、字段与元素只借用（返回匹配期间要冻结的根绑定），
+    /// 其他表达式求值成临时值。
+    fn scrutinee(
+        &mut self,
+        expr: &Expr,
+        loans: &mut BTreeMap<String, Type>,
+    ) -> Result<(u64, Option<String>), String> {
+        let ty = self.scrutinee_ty(expr)?;
+        let Some((name, _)) = self.enumeration(ty) else {
+            return Err("type mismatch: match requires an enum value".into());
+        };
+        let id = record_id(name);
+        let root = match expr {
+            Expr::Variable(name) | Expr::Field(name, _) => {
+                Some(name.split('.').next().unwrap_or(name).to_owned())
+            }
+            Expr::Index(path, index) | Expr::IndexField(path, index, _)
+                if self.place(path)?.1.container().is_some() =>
+            {
+                let (key, _) = self.element(path, "")?;
+                self.container(path, false, loans)?;
+                self.expr(index, key, loans)?;
+                Some(path.split('.').next().unwrap_or(path).to_owned())
+            }
+            _ => {
+                self.expr(expr, ty, loans)?;
+                None
+            }
+        };
+        if let Some(root) = &root {
+            if loans.get(root) == Some(&Type::Mutable) {
+                return Err(format!("borrow conflict: {root}"));
+            }
+        }
+        Ok((id, root))
+    }
+    /// 一个分支绑定的变量：标量载荷按值，其他载荷是只读借用。
+    fn arm_bindings(&self, id: u64, pattern: &Pattern) -> Result<Vec<(String, Type)>, String> {
+        let (name, declaration) = self.enumeration(Type::Record(id)).expect("checked enum");
+        let Some(variant) = &pattern.0 else {
+            return Ok(Vec::new());
+        };
+        let short = name.rsplit(':').next().unwrap_or(name);
+        let (_, first, count) = declaration
+            .variants
+            .iter()
+            .find(|(other, _, _)| other == variant)
+            .ok_or_else(|| format!("unknown variant {variant} of {short}"))?;
+        if pattern.1.len() != *count {
+            return Err(format!(
+                "type mismatch: {short}.{variant} has {count} field(s), but the pattern binds {}",
+                pattern.1.len()
+            ));
+        }
+        let mut bindings: Vec<(String, Type)> = Vec::new();
+        for (binding, (_, ty)) in pattern.1.iter().zip(&declaration.fields[*first..]) {
+            if binding == "_" {
+                continue;
+            }
+            if self.locals.contains_key(binding) || bindings.iter().any(|(b, _)| b == binding) {
+                return Err(format!("duplicate binding {binding}"));
+            }
+            let ty = if matches!(ty, Type::Int | Type::Float | Type::Bool) {
+                *ty
+            } else {
+                borrow_of(*ty, false).expect("enum payloads are owned values")
+            };
+            bindings.push((binding.clone(), ty));
+        }
+        Ok(bindings)
+    }
+    /// 分支要覆盖所有变体（或有 `_`），不能重复，`_` 之后不能再有分支。
+    fn arms_cover<'p>(
+        &self,
+        id: u64,
+        patterns: impl Iterator<Item = &'p Pattern>,
+    ) -> Result<(), String> {
+        let (name, declaration) = self.enumeration(Type::Record(id)).expect("checked enum");
+        let short = name.rsplit(':').next().unwrap_or(name);
+        let mut seen = BTreeSet::new();
+        let mut wildcard = false;
+        for (variant, _) in patterns {
+            if wildcard {
+                return Err("unreachable match arm after _".into());
+            }
+            match variant {
+                None => wildcard = true,
+                Some(variant) => {
+                    if !declaration.variants.iter().any(|(v, _, _)| v == variant) {
+                        return Err(format!("unknown variant {variant} of {short}"));
+                    }
+                    if !seen.insert(variant) {
+                        return Err(format!("duplicate match arm {variant}"));
+                    }
+                }
+            }
+        }
+        let missing: Vec<&str> = declaration
+            .variants
+            .iter()
+            .filter(|(v, _, _)| !seen.contains(v))
+            .map(|(v, _, _)| v.as_str())
+            .collect();
+        if !wildcard && !missing.is_empty() {
+            return Err(format!(
+                "match on {short} does not cover {}; add an arm for each or a _ arm",
+                missing.join(", ")
+            ));
+        }
+        Ok(())
     }
     /// 根绑定能否经由它写：`let mut` 局部，或 `&mut T` 结构体借用。
     fn writable(&self, root: &str) -> bool {
@@ -1609,11 +1934,41 @@ impl Checker<'_> {
     }
     fn ty(&self, expr: &Expr) -> Result<Type, String> {
         match expr {
-            Expr::Record(name, _) => {
+            Expr::Record(name, _) | Expr::Variant(name, _, _) => {
                 self.structs
                     .get(name)
                     .ok_or_else(|| format!("unknown struct {name}"))?;
                 Ok(Type::Record(record_id(name)))
+            }
+            // 分支的值可能用到绑定：在带上第一个分支绑定的副本里求类型。
+            Expr::Match(scrutinee, arms) => {
+                let ty = self.scrutinee_ty(scrutinee)?;
+                let Some((name, _)) = self.enumeration(ty) else {
+                    return Err("type mismatch: match requires an enum value".into());
+                };
+                let (pattern, value) = arms.first().ok_or("a match needs at least one arm")?;
+                let mut locals = self.locals.clone();
+                for (binding, ty) in self.arm_bindings(record_id(name), pattern)? {
+                    locals.insert(
+                        binding,
+                        Binding {
+                            ty,
+                            mutable: false,
+                            live: true,
+                        },
+                    );
+                }
+                Checker {
+                    structs: self.structs,
+                    functions: self.functions,
+                    locals,
+                    loops: Vec::new(),
+                    position: self.position,
+                    error: self.error,
+                    result: self.result,
+                    frozen: Vec::new(),
+                }
+                .ty(value)
             }
             Expr::Field(local, field) => {
                 field_path(self.structs, self.binding(local)?.ty, field).map(|(_, ty)| ty)
@@ -1736,6 +2091,85 @@ impl Checker<'_> {
         loans: &mut BTreeMap<String, Type>,
     ) -> Result<(), String> {
         match expr {
+            Expr::Record(name, _)
+                if self
+                    .structs
+                    .get(name)
+                    .is_some_and(|s| !s.variants.is_empty()) =>
+            {
+                let short = name.rsplit(':').next().unwrap_or(name);
+                Err(format!(
+                    "type mismatch: {short} is an enum; construct a variant with {short}.Variant(...)"
+                ))
+            }
+            Expr::Variant(name, variant, args) => {
+                let declaration = self
+                    .structs
+                    .get(name)
+                    .ok_or_else(|| format!("unknown struct {name}"))?;
+                let short = name.rsplit(':').next().unwrap_or(name);
+                if declaration.variants.is_empty() {
+                    return Err(format!("type mismatch: {short} is a struct, not an enum"));
+                }
+                if expected != Type::Record(record_id(name)) {
+                    return Err(format!("type mismatch: {short}.{variant} is a {short}"));
+                }
+                let (_, first, count) = declaration
+                    .variants
+                    .iter()
+                    .find(|(other, _, _)| other == variant)
+                    .ok_or_else(|| format!("unknown variant {variant} of {short}"))?;
+                if args.len() != *count {
+                    return Err(format!(
+                        "argument count mismatch for {short}.{variant}: it takes {count} value(s)"
+                    ));
+                }
+                let fields = declaration.fields[*first..first + count].to_vec();
+                for (arg, (_, ty)) in args.iter().zip(&fields) {
+                    self.expr(arg, *ty, loans)?;
+                }
+                Ok(())
+            }
+            Expr::Match(scrutinee, arms) => {
+                if expected.is_reference() || matches!(expected, Type::ArrayInt(_) | Type::Unit) {
+                    return Err(
+                        "type mismatch: a match expression produces an owned value, not a borrow or fixed array"
+                            .into(),
+                    );
+                }
+                let (id, root) = self.scrutinee(scrutinee, loans)?;
+                self.arms_cover(id, arms.iter().map(|(pattern, _)| pattern))?;
+                let before = self.locals.clone();
+                let mut states = Vec::new();
+                for (pattern, value) in arms {
+                    self.locals = before.clone();
+                    let bindings = self.arm_bindings(id, pattern)?;
+                    for (name, ty) in &bindings {
+                        self.locals.insert(
+                            name.clone(),
+                            Binding {
+                                ty: *ty,
+                                mutable: false,
+                                live: true,
+                            },
+                        );
+                    }
+                    self.frozen.extend(root.clone());
+                    self.expr(value, expected, &mut loans.clone())?;
+                    if root.is_some() {
+                        self.frozen.pop();
+                    }
+                    for (name, _) in &bindings {
+                        self.locals.remove(name);
+                    }
+                    states.push(self.locals.clone());
+                }
+                self.locals = before;
+                for (name, binding) in &mut self.locals {
+                    binding.live &= states.iter().all(|state| state[name].live);
+                }
+                Ok(())
+            }
             Expr::Record(name, fields) => {
                 if expected != Type::Record(record_id(name)) {
                     return Err("struct type mismatch".into());
@@ -2314,6 +2748,44 @@ impl Checker<'_> {
                     self.locals = before;
                     self.locals.remove(local);
                     returned = false;
+                }
+                Instruction::Match(scrutinee, arms) => {
+                    let (id, root) = self.scrutinee(scrutinee, &mut loans)?;
+                    self.arms_cover(id, arms.iter().map(|(pattern, _)| pattern))?;
+                    let before = self.locals.clone();
+                    let mut states = Vec::new();
+                    for (pattern, body) in arms {
+                        self.locals = before.clone();
+                        let bindings = self.arm_bindings(id, pattern)?;
+                        for (name, ty) in &bindings {
+                            self.locals.insert(
+                                name.clone(),
+                                Binding {
+                                    ty: *ty,
+                                    mutable: false,
+                                    live: true,
+                                },
+                            );
+                        }
+                        self.frozen.extend(root.clone());
+                        let returns = self.block(body, result)?;
+                        if root.is_some() {
+                            self.frozen.pop();
+                        }
+                        for (name, _) in &bindings {
+                            self.locals.remove(name);
+                        }
+                        states.push((returns, self.locals.clone()));
+                    }
+                    self.locals = before;
+                    // 没有返回的分支各自的所有权状态取交集。
+                    for (name, binding) in &mut self.locals {
+                        binding.live = states
+                            .iter()
+                            .filter(|(returns, _)| !returns)
+                            .all(|(_, state)| state[name].live);
+                    }
+                    returned = states.iter().all(|(returns, _)| *returns);
                 }
                 Instruction::For(local, start, end, nested) => {
                     self.expr(start, Type::Int, &mut loans)?;

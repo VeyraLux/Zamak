@@ -1,6 +1,6 @@
 use crate::compiler::{
     borrow_of, field_path, method_signature, numeric, record_id, record_order, Block, Elem, Expr,
-    Instruction, Module, Type,
+    Instruction, Module, Pattern, Type,
 };
 use crate::project::Result;
 use std::collections::BTreeMap;
@@ -1097,7 +1097,31 @@ fn ctype(ty: Type) -> String {
 impl Generator<'_> {
     fn ty(&self, expr: &Expr) -> Type {
         match expr {
-            Expr::Record(name, _) => Type::Record(record_id(name)),
+            Expr::Record(name, _) | Expr::Variant(name, _, _) => Type::Record(record_id(name)),
+            // 分支的值可能用到绑定：在带上第一个分支绑定的副本里求类型。
+            Expr::Match(scrutinee, arms) => {
+                let id = self.scrutinee_id(scrutinee);
+                let (pattern, value) = &arms[0];
+                let mut locals = self.locals.clone();
+                for (name, _, ty) in self.arm_bindings(id, pattern) {
+                    locals.insert(name, (String::new(), ty));
+                }
+                Generator {
+                    module: self.module,
+                    symbols: self.symbols,
+                    locals,
+                    owners: Vec::new(),
+                    loops: Vec::new(),
+                    proofs: ranges::Proofs::default(),
+                    call_targets: BTreeMap::new(),
+                    code: String::new(),
+                    next: 0,
+                    result: self.result,
+                    error: self.error,
+                    containers: Containers::new(),
+                }
+                .ty(value)
+            }
             Expr::Field(local, field) => {
                 field_path(&self.module.structs, self.locals[local].1, field)
                     .expect("checked field path")
@@ -1508,6 +1532,46 @@ impl Generator<'_> {
                 }
                 name.expect("interpolation has segments")
             }
+            Expr::Variant(name, variant, args) => {
+                let id = record_id(name);
+                let ty = Type::Record(id);
+                let local = self.scalar("{0}", ty);
+                self.owners.push((local.clone(), ty));
+                let (tag, first) = self.variant_of(id, variant);
+                self.code.push_str(&format!("{local}.m0 = {tag};\n"));
+                let fields = self.module.structs[name].fields.clone();
+                for (j, arg) in args.iter().enumerate() {
+                    let field = fields[first + j].1;
+                    let value = self.expr_as(arg, field);
+                    self.code.push_str(&format!(
+                        "{local}.m{} = {};\n",
+                        first + j,
+                        self.moved(&value, field)
+                    ));
+                }
+                local
+            }
+            Expr::Match(scrutinee, arms) => {
+                let ty = self.ty(expr);
+                let id = self.scrutinee_id(scrutinee);
+                let handle = self.scrutinee(scrutinee, id);
+                let result = self.scalar("{0}", ty);
+                for (index, (pattern, value)) in arms.iter().enumerate() {
+                    let opener =
+                        self.arm_opener(&handle, id, pattern, index, index + 1 == arms.len());
+                    self.code.push_str(&opener);
+                    let names = self.bind(&handle, id, pattern);
+                    self.branch_into(&result, value, ty);
+                    for name in names {
+                        self.locals.remove(&name);
+                    }
+                }
+                self.code.push_str("}\n");
+                if owned(ty) {
+                    self.owners.push((result.clone(), ty));
+                }
+                result
+            }
             Expr::If(condition, yes, no) => {
                 let ty = self.ty(expr);
                 let condition = self.expr(condition);
@@ -1696,6 +1760,125 @@ impl Generator<'_> {
             }
         }
     }
+    /// 枚举里某个变体的（标签, 第一个载荷字段的下标）。
+    fn variant_of(&self, id: u64, variant: &str) -> (usize, usize) {
+        let structure = self
+            .module
+            .structs
+            .iter()
+            .find(|(name, _)| record_id(name) == id)
+            .expect("checked enum")
+            .1;
+        structure
+            .variants
+            .iter()
+            .enumerate()
+            .find(|(_, (other, _, _))| other == variant)
+            .map(|(tag, (_, first, _))| (tag, *first))
+            .expect("checked variant")
+    }
+    /// match 被匹配值的枚举 id。
+    fn scrutinee_id(&self, expr: &Expr) -> u64 {
+        let ty = match expr {
+            Expr::Variable(name) => self.locals[name].1,
+            Expr::Field(local, field) => self.place_ty(&format!("{local}.{field}")),
+            Expr::Index(path, _) if self.place_ty(path).container().is_some() => {
+                self.element_ty(path, "")
+            }
+            Expr::IndexField(path, _, field) => self.element_ty(path, field),
+            _ => self.ty(expr),
+        };
+        match ty {
+            Type::Record(id) | Type::RecordRef(id, _) => id,
+            _ => unreachable!("checked match"),
+        }
+    }
+    /// 分支的绑定：（名字, 载荷成员下标, 类型）；标量按值，其他载荷是只读借用。
+    fn arm_bindings(&self, id: u64, pattern: &Pattern) -> Vec<(String, usize, Type)> {
+        let Some(variant) = &pattern.0 else {
+            return Vec::new();
+        };
+        let (_, first) = self.variant_of(id, variant);
+        let fields = &self
+            .module
+            .structs
+            .iter()
+            .find(|(name, _)| record_id(name) == id)
+            .expect("checked enum")
+            .1
+            .fields;
+        pattern
+            .1
+            .iter()
+            .enumerate()
+            .filter(|(_, binding)| *binding != "_")
+            .map(|(j, binding)| {
+                let ty = fields[first + j].1;
+                let bound = if by_value(ty) {
+                    ty
+                } else {
+                    borrow_of(ty, false).expect("owned payload")
+                };
+                (binding.clone(), first + j, bound)
+            })
+            .collect()
+    }
+    /// 求出被匹配值，返回指向它的 C 变量：位置直接取地址，其他表达式先求值成临时值。
+    fn scrutinee(&mut self, expr: &Expr, id: u64) -> String {
+        let pointer = match expr {
+            Expr::Variable(name) => self.pointer(name),
+            Expr::Field(local, field) => format!("&{}", self.field(local, field)),
+            Expr::Index(path, index) if self.place_ty(path).container().is_some() => {
+                format!("&{}", self.element(path, index, ""))
+            }
+            Expr::IndexField(path, index, field) => {
+                format!("&{}", self.element(path, index, field))
+            }
+            _ => {
+                let value = self.expr(expr);
+                format!("&{value}")
+            }
+        };
+        self.scalar(&pointer, Type::RecordRef(id, false))
+    }
+    /// 第 `index` 个分支的开头；最后一个分支不再判断标签（检查器保证分支覆盖了所有变体）。
+    fn arm_opener(
+        &self,
+        handle: &str,
+        id: u64,
+        pattern: &Pattern,
+        index: usize,
+        last: bool,
+    ) -> String {
+        let condition = match &pattern.0 {
+            Some(variant) if !last => Some(format!(
+                "{handle}->m0 == {}",
+                self.variant_of(id, variant).0
+            )),
+            _ => None,
+        };
+        match (index, condition) {
+            (0, Some(condition)) => format!("if ({condition}) {{\n"),
+            (0, None) => "{\n".into(),
+            (_, Some(condition)) => format!("}} else if ({condition}) {{\n"),
+            (_, None) => "} else {\n".into(),
+        }
+    }
+    /// 在分支开头声明绑定，返回绑定名，分支结束后由调用方移除。
+    fn bind(&mut self, handle: &str, id: u64, pattern: &Pattern) -> Vec<String> {
+        let mut names = Vec::new();
+        for (name, member, ty) in self.arm_bindings(id, pattern) {
+            let access = format!("{handle}->m{member}");
+            let value = if ty.is_reference() {
+                self.scalar(&format!("&{access}"), ty)
+            } else {
+                self.scalar(&access, ty)
+            };
+            self.locals.insert(name.clone(), (value, ty));
+            names.push(name);
+        }
+        names
+    }
     /// 容器方法的 C 调用；`values` 的第一项是接收者指针。
     fn method_call(
         &mut self,
@@ -1781,6 +1964,23 @@ impl Generator<'_> {
                     let no_returns = self.block(no, result_type);
                     self.code.push_str("}\n");
                     returned = yes_returns && no_returns;
+                }
+                Instruction::Match(scrutinee, arms) => {
+                    let id = self.scrutinee_id(scrutinee);
+                    let handle = self.scrutinee(scrutinee, id);
+                    let mut all = true;
+                    for (index, (pattern, body)) in arms.iter().enumerate() {
+                        let opener =
+                            self.arm_opener(&handle, id, pattern, index, index + 1 == arms.len());
+                        self.code.push_str(&opener);
+                        let names = self.bind(&handle, id, pattern);
+                        all &= self.block(body, result_type);
+                        for name in names {
+                            self.locals.remove(&name);
+                        }
+                    }
+                    self.code.push_str("}\n");
+                    returned = all;
                 }
                 Instruction::While(condition, nested) => {
                     let invariant = self.invariant_condition(condition, nested);
@@ -2113,6 +2313,11 @@ impl Generator<'_> {
                 Instruction::While(_, nested)
                 | Instruction::For(_, _, _, nested)
                 | Instruction::Each(_, _, nested) => Self::loop_mutations(nested, mutated),
+                Instruction::Match(_, arms) => {
+                    for (_, body) in arms {
+                        Self::loop_mutations(body, mutated);
+                    }
+                }
                 _ => {}
             }
         }
@@ -2147,10 +2352,17 @@ fn visit_exprs<'a>(body: &'a Block, visit: &mut impl FnMut(&'a Expr)) {
         match value {
             Expr::Call(_, args)
             | Expr::Method(_, _, args)
+            | Expr::Variant(_, _, args)
             | Expr::Array(args)
             | Expr::Format(args) => {
                 for arg in args {
                     expr(arg, visit);
+                }
+            }
+            Expr::Match(scrutinee, arms) => {
+                expr(scrutinee, visit);
+                for (_, value) in arms {
+                    expr(value, visit);
                 }
             }
             Expr::ElementMethod(_, index, _, _, args) => {
@@ -2222,6 +2434,12 @@ fn visit_exprs<'a>(body: &'a Block, visit: &mut impl FnMut(&'a Expr)) {
                 visit_exprs(body, visit);
             }
             Instruction::Each(_, _, body) => visit_exprs(body, visit),
+            Instruction::Match(scrutinee, arms) => {
+                expr(scrutinee, visit);
+                for (_, body) in arms {
+                    visit_exprs(body, visit);
+                }
+            }
             _ => {}
         }
     }
@@ -2388,7 +2606,7 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
                 Expr::Call(name, _) => {
                     needed.insert(name.clone());
                 }
-                Expr::Record(name, _) => {
+                Expr::Record(name, _) | Expr::Variant(name, _, _) => {
                     records.insert(name.clone());
                 }
                 _ => {}
