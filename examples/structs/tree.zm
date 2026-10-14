@@ -1,0 +1,33 @@
+// 经由列表的递归结构体：树的构造、递归遍历与释放。
+struct Node {
+    name: string
+    children: [Node]
+}
+
+fn size(n: &Node) -> i64 {
+    let mut total = 1
+    for child in &n.children {
+        total += size(child)
+    }
+    total
+}
+
+fn show(n: &Node, depth: i64) {
+    let mut pad = ""
+    for i in 0..depth {
+        pad += "  "
+    }
+    println("{pad}{n.name}")
+    for child in &n.children {
+        show(child, depth + 1)
+    }
+}
+
+fn main() {
+    let mut root = Node { name: "root" children: [] }
+    root.children.push(Node { name: "a" children: [] })
+    root.children.push(Node { name: "b" children: [Node { name: "b1" children: [] }] })
+    root.children[0].children.push(Node { name: "a1" children: [] })
+    show(&root, 0)
+    println(size(&root))
+}

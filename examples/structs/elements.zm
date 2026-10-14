@@ -1,0 +1,65 @@
+// 结构体元素的列表与字典：读写元素字段、借用元素与元素字段、元素字段上的方法、弹出与整体替换。
+use std/string
+struct Item {
+    name: string
+    qty: i64
+    tags: [string]
+}
+struct Shelf {
+    label: string
+    items: [Item]
+}
+fn show(item: &Item) -> string {
+    "{item.name}={item.qty}"
+}
+fn bump(item: &mut Item) {
+    item.qty *= 2
+    item.name = string.upper(&item.name)
+    item.tags.push("bumped")
+}
+fn rename(name: &mut string) {
+    name = name + "!"
+}
+fn count(items: &[Item]) -> i64 {
+    let mut total = 0
+    for item in &items {
+        total += item.qty
+    }
+    total
+}
+fn main() {
+    let mut items: [Item] = [Item { name: "a" qty: 1 tags: [] }, Item { name: "b" qty: 2 tags: ["x"] }]
+    items.push(Item { name: "c" qty: 3 tags: [] })
+    items[0].qty += 10
+    items[1].name = "bee"
+    bump(&mut items[2])
+    rename(&mut items[1].name)
+    items[0].tags.push("first")
+    items[0].tags.push("again")
+    println(items[0].tags.len())
+    println(items[2].tags.len())
+    println(string.byte_len(&items[1].name))
+    for item in &items {
+        println(show(item))
+    }
+    println(count(&items))
+    println(items[0].name < items[1].name)
+    let last = items.pop()
+    println(show(&last))
+    items[0] = Item { name: "z" qty: 0 tags: [] }
+    println("{items[0].name} {items[1].name} {items.len()}")
+    items.swap(0, 1)
+    println(items[0].name)
+    let mut shelf = Shelf { label: "top" items: [] }
+    shelf.items.push(Item { name: "s" qty: 7 tags: [] })
+    shelf.items[0].qty -= 1
+    println(count(&shelf.items))
+    let mut stock: {string: Item} = {}
+    stock["k"] = Item { name: "kiwi" qty: 4 tags: [] }
+    stock["k"].qty += 1
+    stock["k"].tags.push("green")
+    stock["k"] = Item { name: "kale" qty: stock["k"].qty tags: [] }
+    println(show(&stock["k"]))
+    println(stock.remove("k"))
+    println(stock.len())
+}

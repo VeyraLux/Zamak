@@ -54,7 +54,8 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 
 - 函数：`fn f(a: i64, s: &string) -> i64 { ... }`；函数尾部的值表达式即返回值（函数体最后一条，或尾部 if/else 分支的最后一条），也可写 `return`；**循环体和非尾部分支末尾的调用只求值、不返回**；跨模块可见要写 `pub fn`。
 - 绑定：`let x = 1`、`let mut x = 1`、`let mut x: i64 = 1`。**不支持遮蔽**（同一作用域重名报错）；块内变量不能逃出块。
-- 类型：`i64`、`f64`、`bool`、`string`、命名结构体、`[i64; N]`（定长，长度 1–1024，只能是局部值）、`[T]`（可增长列表，`T` 只能是 `i64`/`f64`/`bool`/`string`，可作局部、参数、返回值、结构体字段）、`{K: V}`（字典，`K` 是 `i64`/`string`，`V` 是 `i64`/`f64`/`bool`/`string`，用法同列表）。
+- 类型：`i64`、`f64`、`bool`、`string`、命名结构体、`[i64; N]`（定长，长度 1–1024，只能是局部值）、`[T]`（可增长列表，`T` 是 `i64`/`f64`/`bool`/`string` 或结构体，可作局部、参数、返回值、结构体字段）、`{K: V}`（字典，`K` 是 `i64`/`string`，`V` 是 `i64`/`f64`/`bool`/`string` 或结构体，用法同列表）。
+- 结构体借用与结构体列表：参数 `&Point` / `&mut Point`，实参 `&p` / `&mut p` / `&xs[i]` / `&mut xs[i]`；`&mut` 能改字段或整体赋值，`&` 不能写。`xs[i].f` 读写元素字段（复合赋值的下标不能调用函数），`&xs[i].name` 借用元素字段，`xs[i].tags.push(v)` 调用元素字段上的容器方法，`xs[i] = Point { ... }` 整体替换，`for p in &xs` 得到 `&Point`。**结构体不能复制**：`let p = xs[i]` 报 `cannot move a struct out of xs[..]`，拿走用 `pop`；结构体值的字典没有 `get`。不支持 `xs[i].tags[j]`（元素字段的列表再接下标）。C 侧：`Type::RecordRef` 是 `R*`，`Elem::Record` 的列表叫 `LR<id>`、字典值后缀 `R<id>`；`generate()` 先把结构体与容器收集到不动点，再「前置声明 → 列表/字典本体 → 结构体（按值依赖排序）→ 字典条目 → drop 原型 → 函数」发射。
 - 浮点 `f64`：字面量 `1.5`、`2e-3`、`1_000.5`（小数点两边都要有数字）；IEEE 754，`+ - * / %` 与比较不检查溢出，除零得 `inf`/`NaN`。**`i64` 与 `f64` 不隐式转换**：`x * 2` 要写 `x * 2.0`，变量用 `f64(n)` / `i64(x)`（向零截断，NaN 或越界终止程序）。`println`/插值输出最短可读回十进制（`0.1`、`2.0`、`1e16`、`2.5e-7`、`NaN`、`inf`）；`fmt.fixed(x, n)`（`use std/fmt`）保留 n 位小数；`string.parse_f64(&s) -> f64!string`。字典键不能是 `f64`。
 - 列表：空列表**必须标注类型** `let mut xs: [i64] = []`（不带标注的 `[1, 2]` 是定长数组）；`xs.len()`、`xs.push(v)`（字符串移入）、`xs.pop()`；`xs[i]` 读写（越界或空 `pop` 终止程序）；字符串元素**不能** `xs[i]` 取出，借用 `&xs[i]` 或 `string.copy(&xs[i])`；`for x in &xs` 遍历（字符串元素是只读借用），循环体内不能修改/移动 `xs`，要改就用 `for i in 0..xs.len()`；参数 `&[T]` / `&mut [T]`，传 `&xs` / `&mut xs`；`xs.swap(i, j)` 原地交换（字符串列表排序靠它）；方法接收者只能是变量或字段路径，**不能链式调用** `f().len()`。
 - 字典：字面量 `{"a": 1, "b": 2}`（逗号分隔，可分行），空字典**必须标注类型** `let mut m: {string: i64} = {}`；`m[k]` 读（键不存在**终止程序**）、`m[k] = v` 插入或替换；字符串键按只读借用传：`m[&name]`、`m["lit"]`、遍历得到的键直接 `m[k]`（owned 变量不加 `&` 会报 `expected explicit borrow`）；`m.len()`、`m.contains(k)`、`m.get(k, default)`（缺失返回 default，字符串值返回副本）、`m.remove(k) -> bool`、`m.keys() -> [K]`；`for k in &m` 按**插入顺序**遍历键，循环体内不能改 `m`；字符串值不能 `m[k]` 取出，用 `&m[k]` 或 `get`。计数惯用法：`counts[word] = counts.get(word, 0) + 1`。
@@ -74,10 +75,10 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
   - `std/env`：`arg_count() -> i64`、`arg(i) -> string!string`（不含程序名，从 0 开始）、`args() -> [string]`。
   - `std/math`（参数都是 `f64`）：`sqrt`、`pow(x, y)`、`exp`、`log`（自然对数）、`log10`、`sin`、`cos`、`tan`、`atan`、`atan2(y, x)`、`floor`、`ceil`、`round`（远离零）、`trunc`、`abs`、`min(a, b)`、`max(a, b)`、`is_nan(x) -> bool`；常量 `math.pi`、`math.e`、`math.inf`（`project.rs` 解析时替换成字面量）。
   - `std/fmt`：`fixed(x, digits) -> string`（digits 0–30，超出终止程序）；`println` 同全局。
-  - `println` / `io.println` / `fmt.println` 打印字符串、整数或布尔值。
+  - `println` / `io.println` / `fmt.println` 打印字符串、整数、浮点数或布尔值。
   - 可失败函数用 `?` 时当前函数要带 `!string`，所以读写文件的 `main` 一般写成 `fn main() -> !string`；`fs.write(&p, &t)?` 可以单独成一条语句。
   - 标准库实现：`zam/src/native.rs` 的 `BUILTINS` 表（签名 + C 函数体，`p0`/`p1`… 是参数）和 `STD_PRELUDE`（共用 C 辅助）；`project.rs` 把 `std/*` 调用解析成 `std/<模块>:<函数>`，检查器按普通函数签名检查。新增函数只需在表里加一项，再升 `native-c-N`。列表的 C 侧是每种元素一组 `Li`/`Lf`/`Lb`/`Ls` 结构与 `push/pop/at/len/swap/drop/take` 函数（`list_helpers`），字典是 `M<键><值>`（如 `Msi`）一组 `set/at/has/getor/del/keys/len` 与插入顺序表 + 开放寻址下标表（`MAP_TEMPLATE`）。用到哪些容器由生成器记录在 `Generator.containers`（每个 `scalar()` 都登记类型）加上签名和结构体字段，函数体先生成、容器辅助后拼在前面。容器方法签名只在 `compiler::method_signature` 一处定义，检查器与生成器共用。
-- **尚未实现，不要写**：泛型、闭包、枚举、`match`、结构体元素的列表/字典、嵌套容器、`for k, v in &m`、方法链式调用、`for x in &mut xs`、`i64`/`f64` 隐式转换、整数版 `math.abs/min/max`、元组、目录遍历、追加写文件、网络、时间、包管理器、调试器、REPL、文档生成、线程、unsafe/FFI、块注释、`string` 以外的错误类型、整体结构体借用、单独移出 owned 字段。
+- **尚未实现，不要写**：泛型、闭包、枚举、`match`、嵌套容器（`[[i64]]`、`xs[i].tags[j]`）、`for k, v in &m`、方法链式调用、`for x in &mut xs`、`i64`/`f64` 隐式转换、整数版 `math.abs/min/max`、元组、目录遍历、追加写文件、网络、时间、包管理器、调试器、REPL、文档生成、线程、unsafe/FFI、块注释、`string` 以外的错误类型、复制结构体、单独移出 owned 字段。
 
 ## 常见诊断（照文本改代码）
 
@@ -95,7 +96,7 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 
 ## 修改 Zamak 编译器本身
 
-1. 验收（工作目录 `zam/`）：`cargo test --locked`（20 个集成套件，Windows 冷跑约 30 秒；MSVC 环境捕获会缓存在临时目录，首次多付约 4 秒）、`cargo clippy --all-targets --locked -- -D warnings`、`cargo fmt --check`；改完源码要在**仓库根目录**重新 `cargo install --path zam --locked` 才能用新的 `zam`。CI（`.github/workflows/ci.yml`）在 `ubuntu-latest`/`windows-latest`/`macos-latest` 三个平台跑同样三项；AI 评测（`bench/ai/run.ps1`）和构建体积测量（`tools/measure-build.ps1`）只在 Windows 上用 pwsh 跑。**格式以 CI 的最新稳定版 rustfmt 为准**：本机 Windows 与 WSL 截至 2026-10-14 都是 Rust 1.99，与 CI 一致；CI 升级后若本机落后，不同版本对长 `match` 臂的排版可能不同，先 `rustup update stable`，或以 `tools/wsl-verify.sh` 的 `FMT_OK` 为准。
+1. 验收（工作目录 `zam/`）：`cargo test --locked`（25 个集成套件，Windows 冷跑约 30 秒；MSVC 环境捕获会缓存在临时目录，首次多付约 4 秒）、`cargo clippy --all-targets --locked -- -D warnings`、`cargo fmt --check`；改完源码要在**仓库根目录**重新 `cargo install --path zam --locked` 才能用新的 `zam`。CI（`.github/workflows/ci.yml`）在 `ubuntu-latest`/`windows-latest`/`macos-latest` 三个平台跑同样三项；AI 评测（`bench/ai/run.ps1`）和构建体积测量（`tools/measure-build.ps1`）只在 Windows 上用 pwsh 跑。**让原来不支持的写法变成支持时，本地也跑一遍** `pwsh -File bench/ai/run.ps1 -ZamPath zam/target/debug/zam.exe -LatencyRepeats 3` 和 `python bench/ai/live/run.py --verify-solutions --zam zam/target/debug/zam.exe`：`bench/ai/cases.json` 的 `unsupported-feature` 等用例拿「当前不支持的写法」当反例，支持之后要换一个仍不支持的写法。**格式以 CI 的最新稳定版 rustfmt 为准**：本机 Windows 与 WSL 截至 2026-10-14 都是 Rust 1.99，与 CI 一致；CI 升级后若本机落后，不同版本对长 `match` 臂的排版可能不同，先 `rustup update stable`，或以 `tools/wsl-verify.sh` 的 `FMT_OK` 为准。
    - 版本号：IR 编码（`Module`/`Function`/`Expr`/`Instruction` 的 Debug 输出）一变就要升 `native-c-N`，否则同一个缓存键会撞上旧内容，报 `corrupt cache entry ...zmo`（这是缓存在拦截，不是坏了）。
 2. 新增语言构造时按惯例升版本标记：`zam/src/compiler.rs` 的 encode 头 `ZAM-IR-N` 与 `zam/src/project.rs` 的 `VERSION`（`native-c-M`）。两者都参与缓存键，只作失效标记——缓存命中时按字节全等校验，没有 decode，旧产物只会报错不会静默错译；同时更新 `README.md` 里的 IR 号。
 3. C 后端源码按 UTF-8 写出，MSVC `cl` 默认按本地代码页（936）读取，会吞掉中文注释后的下一行 → 编译命令行必须保留 `/utf-8`。`zam/src/native.rs` 的 `OPTIONS`（`-vN`）是 MSVC 与 GNU 两套命令行**共用**的一个版本标记，改动任一边（`compile`/`link` 里的 `/O2 /MT ...` 或 `-std=c11 -O2 -funroll-loops ...`）都要考虑升它——但只在**产物字节真的变了**时升版：若只是改了调用方式（例如从 `cmd /c call vcvars64.bat && cl` 改成直接调 `cl.exe`），先用旧缓存验证仍全部 `OBJECT HIT`/`LINK HIT` 再决定不升，避免无谓的缓存失效。

@@ -94,7 +94,7 @@ fn struct_declarations_and_rejections() {
     assert!(String::from_utf8_lossy(&output.stdout).ends_with("first\nfirst\nmoved\n3\nmoved\n"));
     for source in [
         "fn take(p: Missing) {}\nfn main() {}",
-        "struct Person {}\nfn take(p: &Person) {}\nfn main() {}",
+        "struct Person {}\nfn take() -> &Person {}\nfn main() {}",
         "struct Person {}\nfn make() -> Person { return 1 }\nfn main() {}",
         "struct Person {}\nfn take(p: Person) {}\nfn main() {\nlet p = Person {}\ntake(p)\ntake(p)\n}",
         "struct Person {}\nstruct Other {}\nfn take(p: Person) {}\nfn main() { take(Other {}) }",

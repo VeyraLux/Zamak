@@ -422,7 +422,7 @@ fn main() {
 - 下标从 0 开始，范围为 `0` 到 `长度 - 1`。运行时会检查边界；越界访问会报错并退出。
 - 定长数组元素类型仅支持 `i64`，只能作为局部值，不能用于函数参数、返回值或结构体字段；这些场合使用列表。
 
-列表 `[T]` 的元素可以是 `i64`、`f64`、`bool` 或 `string`，可以作为局部变量、函数参数、返回值和结构体字段：
+列表 `[T]` 的元素可以是 `i64`、`f64`、`bool`、`string` 或结构体（见第 9 节），可以作为局部变量、函数参数、返回值和结构体字段：
 
 ```zamak
 fn average(scores: &[i64]) -> i64 {
@@ -526,7 +526,7 @@ true
 
 要点：
 
-- 类型写成 `{键类型: 值类型}`。键可以是 `i64` 或 `string`，值可以是 `i64`、`f64`、`bool` 或 `string`。
+- 类型写成 `{键类型: 值类型}`。键可以是 `i64` 或 `string`，值可以是 `i64`、`f64`、`bool`、`string` 或结构体。
 - 字面量写成 `{"amy": 30, "bob": 25}`，条目之间用逗号，可以分行写。空字典必须标注类型：`let mut m: {string: i64} = {}`。
 - `m[k]` 读取，键不存在时程序终止（`zam: key not found`）；不确定键是否存在时用 `m.get(k, 默认值)` 或先 `m.contains(k)`。
 - `m[k] = v` 插入或替换；`m.remove(k)` 删除并返回是否删到了；`m.len()` 返回条目数；`m.keys()` 返回键的列表。
@@ -577,6 +577,52 @@ fn main() {
 - 结构体使用移动语义：执行 `let moved = p` 后，再读取 `p` 会报 `use after move`。对于可变变量，可以通过整体重新赋值恢复其有效值，例如 `p = Point { x: 1 y: 2 }`。
 - 嵌套结构体字段可以连续访问，例如 `group.leader.age = group.leader.age + 1`。
 
+### 结构体借用与结构体列表
+
+```zamak
+struct Task {
+    title: string
+    hours: i64
+    done: bool
+}
+
+fn summary(t: &Task) -> string {
+    let mark = if t.done { "x" } else { " " }
+    "[{mark}] {t.title} ({t.hours}h)"
+}
+
+fn finish(t: &mut Task) {
+    t.done = true
+}
+
+fn main() {
+    let mut tasks: [Task] = []
+    tasks.push(Task { title: "写文档" hours: 2 done: false })
+    tasks.push(Task { title: "修 bug" hours: 5 done: false })
+    finish(&mut tasks[1])
+    tasks[0].hours += 1
+    let mut total = 0
+    for t in &tasks {
+        println(summary(t))
+        total += t.hours
+    }
+    println("合计 {total}h")
+}
+```
+
+```text
+[ ] 写文档 (3h)
+[x] 修 bug (5h)
+合计 8h
+```
+
+- 参数写成 `&Task` 是只读借用，写成 `&mut Task` 是可变借用，规则与字符串借用相同：只能作参数，调用返回就结束。经由 `&mut` 可以改字段，也可以整体赋值。
+- 列表和字典可以存结构体：`[Task]`、`{string: Task}`。`push` 把结构体移进列表，`pop` 把最后一个移出来。
+- `tasks[i].hours` 读写元素的字段，也能用复合赋值；`&tasks[i]`、`&mut tasks[i]` 借用整个元素，`&tasks[i].title` 借用元素的字段；`tasks[i].tags.push(x)` 调用元素字段上的列表或字典方法。
+- `for t in &tasks` 里的 `t` 是只读借用。要修改元素，改用 `for i in 0..tasks.len()` 按下标处理。
+- 结构体不能复制，所以 `let t = tasks[0]` 会报错。拿走元素用 `pop`，整体替换写 `tasks[0] = Task { ... }`，排序用 `tasks.swap(i, j)`。结构体值的字典不支持 `get`，先用 `contains` 判断，再读 `m[k].field`。
+- 元素字段里的列表不能再接下标（`tasks[0].tags[1]`），把 `&tasks[0].tags` 传给函数处理。
+
 ## 第 10 节：所有权与借用
 
 ```zamak
@@ -615,7 +661,7 @@ fn main() {
 - 需要修改字符串时，使用可变借用：将 `&mut message` 传给 `text: &mut string`，原变量必须通过 `let mut` 声明。
 - 借用仅在本次函数调用期间有效；`show` 和 `update` 返回后，`message` 仍可使用。同一次调用中，共享借用可以有多个，可变借用必须独占。借用只能用于参数，不能返回或保存在局部变量中。
 - 所有权和借用检查发生在编译期，运行 `zam check` 即可检查。诊断信息示例为 `line 4, column 1: main:main: use after move: a`。
-- 当前 `string` 和结构体使用移动语义，`i64`、`f64` 和 `bool` 使用复制语义。字符串字段支持借用；整体结构体借用和单独移出拥有所有权的字段尚不支持。
+- 当前 `string` 和结构体使用移动语义，`i64`、`f64` 和 `bool` 使用复制语义。字符串字段和整个结构体都可以借用（见第 9 节）；单独移出拥有所有权的字段尚不支持。
 
 ## 第 11 节：错误处理
 
@@ -963,7 +1009,7 @@ Zamak 0.1.0 的支持范围有限。编写程序时需注意以下限制：
 - 尚不提供包管理器、交互式执行环境（REPL）、文档生成工具或重构工具。
 - 标准库包括 `std/string`（`byte_len`、`char_len`、`equal`、`parse_i64`、`parse_f64`、`trim`、`byte_at`、`slice`、`find`、`find_from`、`starts_with`、`ends_with`、`contains`、`replace`、`lower`、`upper`、`copy`、`split`、`words`、`lines`、`join`）、`std/io`（`println`、`read_line`、`read_all`）、`std/fmt`（`println`、`fixed`）、`std/math`（见第 3 节）、`std/fs`（`read`、`write`）和 `std/env`（`arg_count`、`arg`、`args`），没有目录遍历、网络和时间函数。
 - 错误类型只能是 `string`，没有错误堆栈。
-- 定长数组仅支持 `i64` 局部值；列表 `[T]` 的元素与字典 `{K: V}` 的值只能是 `i64`、`f64`、`bool` 或 `string`，字典键只能是 `i64` 或 `string`，还没有结构体元素和嵌套容器。方法不能链式调用。
+- 定长数组仅支持 `i64` 局部值；列表 `[T]` 的元素与字典 `{K: V}` 的值可以是 `i64`、`f64`、`bool`、`string` 或结构体，字典键只能是 `i64` 或 `string`；还没有嵌套容器（`[[i64]]`），元素字段里的列表不能再接下标。方法不能链式调用。
 - 所有权检查覆盖 `string`、结构体、列表和字典；尚不支持线程、`unsafe` 和外部函数接口（FFI）。
 - 编辑器支持为 VS Code 语法高亮扩展（`editors/vscode/`），没有语言服务器、补全和调试器。
 - 本教程采用源码安装；安装步骤和平台工具链要求见 [安装说明](PREVIEW.md)。
@@ -976,7 +1022,7 @@ Zamak 0.1.0 的支持范围有限。编写程序时需注意以下限制：
 | --- | --- |
 | `examples/hello/` | 多模块项目、`use`、`io.println` |
 | `examples/ownership/` | `&string`、`&mut string`、移动 |
-| `examples/structs/` | 结构体声明、字段赋值、嵌套、跨模块类型 |
+| `examples/structs/` | 结构体声明、字段赋值、嵌套、跨模块类型、结构体列表与借用 |
 | `examples/control/` | 条件、`while`、`break`/`continue`、函数 |
 | `examples/values/` | 变量、运算符、浮点数与 `std/math`、字符串、数组、格式化、错误值、`catch` |
 

@@ -1,6 +1,6 @@
 use crate::compiler::{
-    field_path, method_signature, numeric, record_id, record_order, Block, Elem, Expr, Instruction,
-    Module, Type,
+    borrow_of, field_path, method_signature, numeric, record_id, record_order, Block, Elem, Expr,
+    Instruction, Module, Type,
 };
 use crate::project::Result;
 use std::collections::BTreeMap;
@@ -814,7 +814,20 @@ fn elem_of(ty: Type) -> Elem {
         Type::Int => Elem::Int,
         Type::Float => Elem::Float,
         Type::Bool => Elem::Bool,
+        Type::Record(id) => Elem::Record(id),
         _ => Elem::Str,
+    }
+}
+/// 类型里引用到的结构体：结构体本身、它的借用、结构体元素的列表或结构体值的字典。
+fn record_of(ty: Type) -> Option<u64> {
+    match ty {
+        Type::Record(id)
+        | Type::RecordRef(id, _)
+        | Type::List(Elem::Record(id))
+        | Type::ListRef(Elem::Record(id), _)
+        | Type::Map(_, Elem::Record(id))
+        | Type::MapRef(_, Elem::Record(id), _) => Some(id),
+        _ => None,
     }
 }
 /// 按值传递、不需要释放的标量。
@@ -866,12 +879,13 @@ fn take_fn(ty: Type) -> String {
 fn owned(ty: Type) -> bool {
     ty == Type::Owned || aggregate(ty)
 }
-fn elem_suffix(elem: Elem) -> char {
+fn elem_suffix(elem: Elem) -> String {
     match elem {
-        Elem::Int => 'i',
-        Elem::Float => 'f',
-        Elem::Bool => 'b',
-        Elem::Str => 's',
+        Elem::Int => "i".into(),
+        Elem::Float => "f".into(),
+        Elem::Bool => "b".into(),
+        Elem::Str => "s".into(),
+        Elem::Record(id) => format!("R{id}"),
     }
 }
 fn map_name(key: Elem, value: Elem) -> String {
@@ -883,9 +897,12 @@ static uint64_t zam_hash_str(S *key) { uint64_t h = 1469598103934665603ULL; size
 "#;
 // 插入顺序表 + 开放寻址下标表：遍历按插入顺序，删除留墓碑，下标表装载率不超过 1/2，
 // 重建时先压掉已删除的项。
-const MAP_TEMPLATE: &str = r#"typedef struct { $KT key; $VT value; uint64_t hash; int live; } E$M;
-typedef struct { E$M *entries; size_t len, cap, count; int64_t *slots; size_t nslots; } $M;
-static void drop$M($M *m) { size_t i; for (i = 0; i < m->len; i++) { E$M *e = &m->entries[i]; if (e->live) { $DROPKEY $DROPVAL } } free(m->entries); free(m->slots); memset(m, 0, sizeof(*m)); }
+// 类型分三段发射：前置声明、字典本体（只含条目指针）、条目（按值含键和值，要等结构体定义完）。
+const MAP_DECLARATION: &str = "typedef struct $M $M;\ntypedef struct E$M E$M;\n";
+const MAP_DEFINITION: &str =
+    "struct $M { E$M *entries; size_t len, cap, count; int64_t *slots; size_t nslots; };\n";
+const MAP_ENTRY: &str = "struct E$M { $KT key; $VT value; uint64_t hash; int live; };\n";
+const MAP_TEMPLATE: &str = r#"static void drop$M($M *m) { size_t i; for (i = 0; i < m->len; i++) { E$M *e = &m->entries[i]; if (e->live) { $DROPKEY $DROPVAL } } free(m->entries); free(m->slots); memset(m, 0, sizeof(*m)); }
 static $M take$M($M *m) { $M v = *m; memset(m, 0, sizeof(*m)); return v; }
 static int64_t len$M($M *m) { return (int64_t)m->count; }
 static int64_t find$M($M *m, $KP, uint64_t h) {
@@ -941,16 +958,21 @@ static $VT getor$M($M *m, $KP, $VT d) { int64_t at = find$M(m, k, $HASH); if (at
 static int del$M($M *m, $KP) { int64_t at = find$M(m, k, $HASH); E$M *e; if (at < 0) return 0; e = &m->entries[at]; $DROPKEY $DROPVAL e->live = 0; m->count--; return 1; }
 static $L keys$M($M *m) { $L out = {0}; size_t i; for (i = 0; i < m->len; i++) { E$M *e = &m->entries[i]; if (e->live) push$L(&out, $KEYOUT); } return out; }
 "#;
-fn map_helpers(key: Elem, value: Elem) -> String {
+/// 把字典模板里的占位符换成具体的键值类型。
+fn map_helpers(template: &str, key: Elem, value: Elem) -> String {
     let text = key == Elem::Str;
     let text_value = value == Elem::Str;
     let pick = |yes: &'static str, no: &'static str, flag: bool| if flag { yes } else { no };
     let value_type = ctype(value.ty());
     let name = map_name(key, value);
+    let list = list_suffix(key);
+    // 结构体值的 `getor` 不会被调用（检查器拒绝 `get`），但模板照常生成。
+    let drop_value = drop_elem(value, "&e->value");
+    let drop_default = drop_elem(value, "&d");
     [
         ("$DROPKEY", pick("drop(&e->key);", "", text)),
-        ("$DROPVAL", pick("drop(&e->value);", "", text_value)),
-        ("$DROPDEF", pick("drop(&d);", "", text_value)),
+        ("$DROPVAL", drop_value.as_str()),
+        ("$DROPDEF", drop_default.as_str()),
         ("$KEYOUT", pick("copy(&e->key)", "e->key", text)),
         (
             "$VALOUT",
@@ -966,38 +988,45 @@ fn map_helpers(key: Elem, value: Elem) -> String {
         ("$KP", pick("S *k", "int64_t k", text)),
         ("$KT", pick("S", "int64_t", text)),
         ("$VT", value_type.as_str()),
-        ("$L", list_suffix(key)),
+        ("$L", list.as_str()),
         ("$M", name.as_str()),
     ]
     .iter()
-    .fold(MAP_TEMPLATE.to_owned(), |text, (from, to)| {
+    .fold(template.to_owned(), |text, (from, to)| {
         text.replace(from, to)
     })
 }
-fn list_suffix(elem: Elem) -> &'static str {
+fn list_suffix(elem: Elem) -> String {
+    format!("L{}", elem_suffix(elem))
+}
+/// 释放一个 owned 元素的 C 语句（`slot` 是指向它的表达式）；标量不用释放。
+fn drop_elem(elem: Elem, slot: &str) -> String {
     match elem {
-        Elem::Int => "Li",
-        Elem::Float => "Lf",
-        Elem::Bool => "Lb",
-        Elem::Str => "Ls",
+        Elem::Str => format!("drop({slot});"),
+        Elem::Record(id) => format!("dropR{id}({slot});"),
+        _ => String::new(),
     }
 }
 const LIST_PRELUDE: &str = r#"static void list_bounds(void) { fputs("zam: list index out of bounds\n", stderr); exit(1); }
 static void list_empty(void) { fputs("zam: pop from empty list\n", stderr); exit(1); }
 static void list_alloc_failed(void) { fputs("zam: allocation failed\n", stderr); exit(1); }
 "#;
-/// 某种元素的列表：结构体与它的释放、移走、长度、追加、按下标取地址、弹出。
+/// 列表本体只含元素指针，元素类型声明过即可定义。
+fn list_definition(elem: Elem) -> String {
+    let l = list_suffix(elem);
+    let t = ctype(elem.ty());
+    format!("struct {l} {{ {t} *data; size_t len; size_t cap; }};\n")
+}
+/// 某种元素的列表函数：释放、移走、长度、追加、按下标取地址、弹出、交换。
 fn list_helpers(elem: Elem) -> String {
     let l = list_suffix(elem);
     let t = ctype(elem.ty());
-    let drop_items = if elem == Elem::Str {
-        "for (size_t i = 0; i < l->len; i++) drop(&l->data[i]); "
-    } else {
-        ""
+    let drop_items = match drop_elem(elem, "&l->data[i]") {
+        drop if drop.is_empty() => drop,
+        drop => format!("for (size_t i = 0; i < l->len; i++) {drop} "),
     };
     format!(
-        "typedef struct {{ {t} *data; size_t len; size_t cap; }} {l};
-static void drop{l}({l} *l) {{ {drop_items}free(l->data); l->data = NULL; l->len = 0; l->cap = 0; }}
+        "static void drop{l}({l} *l) {{ {drop_items}free(l->data); l->data = NULL; l->len = 0; l->cap = 0; }}
 static {l} take{l}({l} *l) {{ {l} v = *l; l->data = NULL; l->len = 0; l->cap = 0; return v; }}
 static int64_t len{l}({l} *l) {{ return (int64_t)l->len; }}
 static void push{l}({l} *l, {t} v) {{
@@ -1020,7 +1049,8 @@ static void swap{l}({l} *l, int64_t i, int64_t j) {{ {t} tmp; if (i < 0 || j < 0
 fn ctype(ty: Type) -> String {
     match ty {
         Type::Record(id) => return format!("R{id}"),
-        Type::List(elem) => return list_suffix(elem).into(),
+        Type::RecordRef(id, _) => return format!("R{id}*"),
+        Type::List(elem) => return list_suffix(elem),
         Type::ListRef(elem, _) => return format!("{}*", list_suffix(elem)),
         Type::Map(key, value) => return map_name(key, value),
         Type::MapRef(key, value, _) => return format!("{}*", map_name(key, value)),
@@ -1056,15 +1086,17 @@ impl Generator<'_> {
                 let (key, value) = entries.first().expect("checked non-empty map literal");
                 Type::Map(elem_of(self.ty(key)), elem_of(self.ty(value)))
             }
-            Expr::BorrowIndex(_, _, mutable) => {
-                if *mutable {
-                    Type::Mutable
-                } else {
-                    Type::Shared
-                }
+            Expr::IndexField(path, _, field) => self.element_ty(path, field),
+            Expr::BorrowIndex(path, _, field, mutable) => {
+                borrow_of(self.element_ty(path, field), *mutable).expect("checked borrow")
             }
             Expr::Method(path, method, _) => {
                 method_signature(self.place_ty(path), method)
+                    .expect("checked method")
+                    .2
+            }
+            Expr::ElementMethod(path, _, field, method, _) => {
+                method_signature(self.element_ty(path, field), method)
                     .expect("checked method")
                     .2
             }
@@ -1099,9 +1131,18 @@ impl Generator<'_> {
         match expr {
             Expr::Variable(name) | Expr::Borrow(name, _) => self.pointer(name),
             Expr::Field(local, field) => format!("&{}", self.field(local, field)),
-            Expr::Index(local, index) => {
-                self.expr(&Expr::BorrowIndex(local.clone(), index.clone(), false))
-            }
+            Expr::Index(local, index) => self.expr(&Expr::BorrowIndex(
+                local.clone(),
+                index.clone(),
+                String::new(),
+                false,
+            )),
+            Expr::IndexField(local, index, field) => self.expr(&Expr::BorrowIndex(
+                local.clone(),
+                index.clone(),
+                field.clone(),
+                false,
+            )),
             _ => {
                 let value = self.expr(expr);
                 format!("&{value}")
@@ -1153,7 +1194,7 @@ impl Generator<'_> {
     fn borrowed(&mut self, expr: &Expr) -> String {
         match expr {
             Expr::Variable(name) | Expr::Borrow(name, _) => self.pointer(name),
-            Expr::BorrowIndex(_, _, _) => self.expr(expr),
+            Expr::BorrowIndex(_, _, _, _) => self.expr(expr),
             // 字面量与插值借给 `&string` 参数：先生成临时字符串，作用域结束时释放。
             Expr::Text(_) | Expr::Format(_) => {
                 let value = self.expr(expr);
@@ -1188,11 +1229,7 @@ impl Generator<'_> {
                 self.owners.push((local.clone(), ty));
                 for value in values {
                     let value = self.expr(value);
-                    let value = if elem == Elem::Str {
-                        format!("take(&{value})")
-                    } else {
-                        value
-                    };
+                    let value = self.moved(&value, elem.ty());
                     self.code
                         .push_str(&format!("push{}(&{local}, {value});\n", list_suffix(elem)));
                 }
@@ -1234,13 +1271,54 @@ impl Generator<'_> {
         }
     }
     fn field(&self, local: &str, field: &str) -> String {
-        let (indices, _) = field_path(&self.module.structs, self.locals[local].1, field)
-            .expect("checked field path");
-        let mut target = self.locals[local].0.clone();
-        for index in indices {
-            target.push_str(&format!(".m{index}"));
+        let (name, ty) = &self.locals[local];
+        let target = if matches!(ty, Type::RecordRef(_, _)) {
+            format!("(*{name})")
+        } else {
+            name.clone()
+        };
+        target + &self.members(*ty, field)
+    }
+    /// 结构体里字段路径对应的 C 成员访问后缀，如 `.m0.m2`；路径为空时是空串。
+    fn members(&self, ty: Type, field: &str) -> String {
+        if field.is_empty() {
+            return String::new();
         }
-        target
+        field_path(&self.module.structs, ty, field)
+            .expect("checked field path")
+            .0
+            .iter()
+            .map(|index| format!(".m{index}"))
+            .collect()
+    }
+    /// 容器元素（或元素里的字段）的类型。
+    fn element_ty(&self, path: &str, field: &str) -> Type {
+        let elem = match self.place_ty(path).container() {
+            Some(Type::List(elem) | Type::Map(_, elem)) => elem.ty(),
+            _ => unreachable!("checked element"),
+        };
+        if field.is_empty() {
+            elem
+        } else {
+            field_path(&self.module.structs, elem, field)
+                .expect("checked field path")
+                .1
+        }
+    }
+    /// 容器元素（或元素里的字段）的 C 左值：先求下标，再取容器指针。
+    fn element(&mut self, path: &str, index: &Expr, field: &str) -> String {
+        let container = self.place_ty(path).container().expect("checked element");
+        let elem = match container {
+            Type::List(elem) | Type::Map(_, elem) => elem.ty(),
+            _ => unreachable!("container type"),
+        };
+        let key = self.key(index, container);
+        let pointer = self.pointer(path);
+        format!(
+            "(*at{}({pointer}, {key})){}",
+            ctype(container),
+            self.members(elem, field)
+        )
     }
     fn expr(&mut self, expr: &Expr) -> String {
         match expr {
@@ -1304,18 +1382,19 @@ impl Generator<'_> {
                     self.ty(expr),
                 )
             }
-            Expr::BorrowIndex(path, index, mutable) => {
-                let container = self.place_ty(path).container().expect("checked borrow");
-                let key = self.key(index, container);
-                let pointer = self.pointer(path);
-                self.scalar(
-                    &format!("at{}({pointer}, {key})", ctype(container)),
-                    if *mutable {
-                        Type::Mutable
-                    } else {
-                        Type::Shared
-                    },
-                )
+            Expr::BorrowIndex(path, index, field, _) => {
+                let ty = self.ty(expr);
+                let target = self.element(path, index, field);
+                self.scalar(&format!("&{target}"), ty)
+            }
+            Expr::IndexField(path, index, field) => {
+                let ty = self.ty(expr);
+                let target = self.element(path, index, field);
+                if by_value(ty) {
+                    self.scalar(&target, ty)
+                } else {
+                    self.temporary(&format!("copy(&{target})"))
+                }
             }
             Expr::Method(path, method, args) => {
                 let receiver = self.place_ty(path);
@@ -1327,15 +1406,19 @@ impl Generator<'_> {
                     values.push(self.argument(arg, *ty));
                 }
                 values.insert(0, self.pointer(path));
-                let name = match method.as_str() {
-                    "contains" => "has",
-                    "get" => "getor",
-                    "remove" => "del",
-                    other => other,
-                };
-                let container = receiver.container().expect("checked method");
-                let call = format!("{name}{}({})", ctype(container), values.join(", "));
-                self.call_value(&call, result)
+                self.method_call(receiver, method, &values, result)
+            }
+            Expr::ElementMethod(path, index, field, method, args) => {
+                let receiver = self.element_ty(path, field);
+                let (_, params, result) =
+                    method_signature(receiver, method).expect("checked method");
+                let mut values = Vec::new();
+                for (arg, ty) in args.iter().zip(&params) {
+                    values.push(self.argument(arg, *ty));
+                }
+                let target = self.element(path, index, field);
+                values.insert(0, format!("&{target}"));
+                self.method_call(receiver, method, &values, result)
             }
             Expr::MapLit(_) => {
                 let ty = self.ty(expr);
@@ -1583,6 +1666,24 @@ impl Generator<'_> {
             }
         }
     }
+    /// 容器方法的 C 调用；`values` 的第一项是接收者指针。
+    fn method_call(
+        &mut self,
+        receiver: Type,
+        method: &str,
+        values: &[String],
+        result: Type,
+    ) -> String {
+        let name = match method {
+            "contains" => "has",
+            "get" => "getor",
+            "remove" => "del",
+            other => other,
+        };
+        let container = receiver.container().expect("checked method");
+        let call = format!("{name}{}({})", ctype(container), values.join(", "));
+        self.call_value(&call, result)
+    }
     /// if 表达式的一个分支：求值、把结果移进 `target`，再释放分支里的临时值。
     fn branch_into(&mut self, target: &str, expr: &Expr, ty: Type) {
         let start = self.owners.len();
@@ -1729,15 +1830,13 @@ impl Generator<'_> {
                         }
                         _ => unreachable!(),
                     };
-                    let item = if elem == Elem::Str {
-                        (
-                            self.scalar(&format!("&{access}"), Type::Shared),
-                            Type::Shared,
-                        )
+                    let ty = elem.item();
+                    let item = if ty.is_reference() {
+                        self.scalar(&format!("&{access}"), ty)
                     } else {
-                        (self.scalar(&access, elem.ty()), elem.ty())
+                        self.scalar(&access, ty)
                     };
-                    self.locals.insert(name.clone(), item);
+                    self.locals.insert(name.clone(), (item, ty));
                     self.loops.push(self.owners.len());
                     self.block(nested, result_type);
                     self.loops.pop();
@@ -1753,15 +1852,45 @@ impl Generator<'_> {
                     let pointer = self.pointer(local);
                     let c = ctype(container);
                     self.code.push_str(&match container {
-                        Type::List(Elem::Str) => format!(
-                            "{{ S *slot = at{c}({pointer}, {key}); drop(slot); *slot = take(&{value}); }}\n"
-                        ),
-                        Type::List(_) => format!("*at{c}({pointer}, {key}) = {value};\n"),
                         Type::Map(_, elem) => format!(
                             "set{c}({pointer}, {key}, {});\n",
                             self.moved(&value, elem.ty())
                         ),
+                        Type::List(elem) if owned(elem.ty()) => format!(
+                            "{{ {} *slot = at{c}({pointer}, {key}); {}(slot); *slot = {}(&{value}); }}\n",
+                            ctype(elem.ty()),
+                            drop_fn(elem.ty()),
+                            take_fn(elem.ty())
+                        ),
+                        Type::List(_) => format!("*at{c}({pointer}, {key}) = {value};\n"),
                         _ => unreachable!(),
+                    });
+                }
+                Instruction::AssignIndexField(local, index, field, expr) => {
+                    // 下标、新值、容器指针依次求值，与检查器的借用顺序一致。
+                    let container = self.place_ty(local).container().expect("checked element");
+                    let elem = match container {
+                        Type::List(elem) | Type::Map(_, elem) => elem.ty(),
+                        _ => unreachable!("container type"),
+                    };
+                    let ty = self.element_ty(local, field);
+                    let key = self.key(index, container);
+                    let value = self.expr_as(expr, ty);
+                    let pointer = self.pointer(local);
+                    let target = format!(
+                        "(*at{}({pointer}, {key})){}",
+                        ctype(container),
+                        self.members(elem, field)
+                    );
+                    self.code.push_str(&if owned(ty) {
+                        format!(
+                            "{{ {} *slot = &{target}; {}(slot); *slot = {}(&{value}); }}\n",
+                            ctype(ty),
+                            drop_fn(ty),
+                            take_fn(ty)
+                        )
+                    } else {
+                        format!("{target} = {value};\n")
                     });
                 }
                 Instruction::AssignIndex(local, index, expr) => {
@@ -1833,7 +1962,9 @@ impl Generator<'_> {
                     }
                     let pointer = match expr {
                         Expr::Variable(name) | Expr::Borrow(name, _) => self.pointer(name),
-                        Expr::BorrowIndex(_, _, _) | Expr::Index(_, _) => self.text_value(expr),
+                        Expr::BorrowIndex(_, _, _, _)
+                        | Expr::Index(_, _)
+                        | Expr::IndexField(_, _, _) => self.text_value(expr),
                         Expr::Field(local, field) => format!("&{}", self.field(local, field)),
                         _ => {
                             let value = self.expr(expr);
@@ -1940,7 +2071,9 @@ impl Generator<'_> {
                 Instruction::Assign(name, _) => {
                     mutated.insert(name.clone());
                 }
-                Instruction::AssignField(name, _, _) | Instruction::AssignIndex(name, _, _) => {
+                Instruction::AssignField(name, _, _)
+                | Instruction::AssignIndex(name, _, _)
+                | Instruction::AssignIndexField(name, _, _, _) => {
                     mutated.insert(name.clone());
                 }
                 Instruction::If(_, yes, no) => {
@@ -1990,12 +2123,19 @@ fn visit_exprs<'a>(body: &'a Block, visit: &mut impl FnMut(&'a Expr)) {
                     expr(arg, visit);
                 }
             }
+            Expr::ElementMethod(_, index, _, _, args) => {
+                expr(index, visit);
+                for arg in args {
+                    expr(arg, visit);
+                }
+            }
             Expr::Unary(_, inner)
             | Expr::Try(inner)
             | Expr::ByteLen(inner)
             | Expr::CharLen(inner)
             | Expr::Index(_, inner)
-            | Expr::BorrowIndex(_, inner, _) => expr(inner, visit),
+            | Expr::IndexField(_, inner, _)
+            | Expr::BorrowIndex(_, inner, _, _) => expr(inner, visit),
             Expr::Binary(_, a, b) | Expr::StringEqual(a, b) => {
                 expr(a, visit);
                 expr(b, visit);
@@ -2032,7 +2172,8 @@ fn visit_exprs<'a>(body: &'a Block, visit: &mut impl FnMut(&'a Expr)) {
             | Instruction::Call(value)
             | Instruction::Fail(value)
             | Instruction::Return(Some(value)) => expr(value, visit),
-            Instruction::AssignIndex(_, index, value) => {
+            Instruction::AssignIndex(_, index, value)
+            | Instruction::AssignIndexField(_, index, _, value) => {
                 expr(index, visit);
                 expr(value, visit);
             }
@@ -2200,6 +2341,14 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
         )
     };
     let mut source = RUNTIME.to_owned();
+    let record_name = |id: u64| {
+        module
+            .structs
+            .keys()
+            .find(|name| record_id(name) == id)
+            .expect("checked struct")
+            .clone()
+    };
     let mut records = std::collections::BTreeSet::new();
     let mut needed = std::collections::BTreeSet::new();
     for (name, function) in &module.functions {
@@ -2227,19 +2376,11 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
             .map(|(_, ty)| ty)
             .chain(std::iter::once(&function.result))
         {
-            if let Type::Record(id) = ty {
-                records.insert(
-                    module
-                        .structs
-                        .keys()
-                        .find(|name| record_id(name) == *id)
-                        .unwrap()
-                        .clone(),
-                );
+            if let Some(id) = record_of(*ty) {
+                records.insert(record_name(id));
             }
         }
     }
-    let records = record_order(module, &records).expect("checked struct layouts");
     // 列表与字典的 C 辅助按用到的类型生成：签名、结构体字段，以及函数体里出现过的每个值。
     let mut containers = Containers::new();
     for name in &needed {
@@ -2248,11 +2389,6 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
             note(&mut containers, *ty);
         }
         note(&mut containers, function.result);
-    }
-    for name in &records {
-        for (_, ty) in &module.structs[name].fields {
-            note(&mut containers, *ty);
-        }
     }
     let specialized_decls: String = specializations
         .iter()
@@ -2319,27 +2455,62 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
         bodies.push_str("}\n");
         containers.extend(g.containers);
     }
-    if !containers.is_empty() {
-        source.push_str(LIST_PRELUDE);
-    }
-    if containers.iter().any(|(_, value)| value.is_some()) {
-        source.push_str(MAP_PRELUDE);
-    }
-    for (elem, value) in &containers {
-        if value.is_none() {
-            source.push_str(&list_helpers(*elem));
+    // 结构体与容器互相引用（结构体字段是列表，列表元素是结构体），收集到不再增加为止。
+    loop {
+        let before = (records.len(), containers.len());
+        for name in records.clone() {
+            for (_, ty) in &module.structs[&name].fields {
+                note(&mut containers, *ty);
+                if let Some(id) = record_of(*ty) {
+                    records.insert(record_name(id));
+                }
+            }
+        }
+        for (key, value) in containers.clone() {
+            for elem in std::iter::once(key).chain(value) {
+                if let Elem::Record(id) = elem {
+                    records.insert(record_name(id));
+                }
+            }
+        }
+        if (records.len(), containers.len()) == before {
+            break;
         }
     }
-    for (key, value) in &containers {
-        if let Some(value) = value {
-            source.push_str(&map_helpers(*key, *value));
-        }
+    let records = record_order(module, &records).expect("checked struct layouts");
+    let lists: Vec<Elem> = containers
+        .iter()
+        .filter(|(_, value)| value.is_none())
+        .map(|(elem, _)| *elem)
+        .collect();
+    let maps: Vec<(Elem, Elem)> = containers
+        .iter()
+        .filter_map(|(key, value)| value.map(|value| (*key, value)))
+        .collect();
+    // 类型先全部前置声明，再按依赖定义：列表与字典本体只含指针，结构体按字段的按值依赖排序，
+    // 字典条目按值含结构体，放在最后；函数都在类型之后，释放函数先给出原型以支持互相调用。
+    for name in &records {
+        let id = record_id(name);
+        source.push_str(&format!("typedef struct R{id} R{id};\n"));
     }
-    for name in records {
-        let structure = &module.structs[&name];
-        let id = record_id(&name);
+    for elem in &lists {
+        let l = list_suffix(*elem);
+        source.push_str(&format!("typedef struct {l} {l};\n"));
+    }
+    for (key, value) in &maps {
+        source.push_str(&map_helpers(MAP_DECLARATION, *key, *value));
+    }
+    for elem in &lists {
+        source.push_str(&list_definition(*elem));
+    }
+    for (key, value) in &maps {
+        source.push_str(&map_helpers(MAP_DEFINITION, *key, *value));
+    }
+    for name in &records {
+        let structure = &module.structs[name];
+        let id = record_id(name);
         source.push_str(&format!(
-            "typedef struct {{ {} }} R{id};\n",
+            "struct R{id} {{ {} }};\n",
             if structure.fields.is_empty() {
                 "int empty;".into()
             } else {
@@ -2352,6 +2523,29 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
                     .join(" ")
             }
         ));
+    }
+    for (key, value) in &maps {
+        source.push_str(&map_helpers(MAP_ENTRY, *key, *value));
+    }
+    for name in &records {
+        let id = record_id(name);
+        source.push_str(&format!("static void dropR{id}(R{id} *p);\n"));
+    }
+    if !containers.is_empty() {
+        source.push_str(LIST_PRELUDE);
+    }
+    if !maps.is_empty() {
+        source.push_str(MAP_PRELUDE);
+    }
+    for elem in &lists {
+        source.push_str(&list_helpers(*elem));
+    }
+    for (key, value) in &maps {
+        source.push_str(&map_helpers(MAP_TEMPLATE, *key, *value));
+    }
+    for name in &records {
+        let structure = &module.structs[name];
+        let id = record_id(name);
         source.push_str(&format!("static void dropR{id}(R{id} *p) {{"));
         for (i, (_, ty)) in structure.fields.iter().enumerate() {
             if owned(*ty) {

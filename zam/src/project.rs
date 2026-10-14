@@ -11,7 +11,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-26");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-27");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -350,18 +350,27 @@ impl Project {
         Ok(linked)
     }
 
+    /// 把类型里的结构体 id（结构体本身、它的借用、列表元素或字典值）换成按模块限定的 id。
     fn resolve_type(&self, module: &str, ty: &mut compiler::Type) -> Result<()> {
-        if let compiler::Type::Record(id) = ty {
-            let name = self.modules[module]
-                .module
-                .type_names
-                .get(id)
-                .ok_or("unknown type name")?;
-            let mut constructor = Expr::Record(name.clone(), Vec::new());
-            self.resolve_expr(module, &BTreeSet::new(), &mut constructor)?;
-            if let Expr::Record(name, _) = constructor {
-                *ty = compiler::Type::Record(compiler::record_id(&name));
-            }
+        use compiler::{Elem, Type};
+        let (Type::Record(id)
+        | Type::RecordRef(id, _)
+        | Type::List(Elem::Record(id))
+        | Type::ListRef(Elem::Record(id), _)
+        | Type::Map(_, Elem::Record(id))
+        | Type::MapRef(_, Elem::Record(id), _)) = ty
+        else {
+            return Ok(());
+        };
+        let name = self.modules[module]
+            .module
+            .type_names
+            .get(id)
+            .ok_or("unknown type name")?;
+        let mut constructor = Expr::Record(name.clone(), Vec::new());
+        self.resolve_expr(module, &BTreeSet::new(), &mut constructor)?;
+        if let Expr::Record(name, _) = constructor {
+            *id = compiler::record_id(&name);
         }
         Ok(())
     }
@@ -423,11 +432,16 @@ impl Project {
                 Instruction::Let(_, _, _, expr)
                 | Instruction::Assign(_, expr)
                 | Instruction::AssignField(_, _, expr)
-                | Instruction::AssignIndex(_, _, expr)
                 | Instruction::Print(expr)
                 | Instruction::Call(expr)
                 | Instruction::Fail(expr) => Some(expr),
                 Instruction::Return(expr) => expr.as_mut(),
+                Instruction::AssignIndex(_, index, expr)
+                | Instruction::AssignIndexField(_, index, _, expr) => {
+                    self.resolve_expr(module, locals, index)
+                        .map_err(|error| self.located(module, position, error))?;
+                    Some(expr)
+                }
                 Instruction::If(condition, yes, no) => {
                     self.resolve_body(module, locals, yes)?;
                     self.resolve_body(module, locals, no)?;
@@ -586,7 +600,15 @@ impl Project {
                     self.resolve_expr(module, locals, arg)?;
                 }
             }
-            Expr::BorrowIndex(_, index, _) => self.resolve_expr(module, locals, index)?,
+            Expr::ElementMethod(_, index, _, _, args) => {
+                self.resolve_expr(module, locals, index)?;
+                for arg in args {
+                    self.resolve_expr(module, locals, arg)?;
+                }
+            }
+            Expr::BorrowIndex(_, index, _, _) | Expr::IndexField(_, index, _) => {
+                self.resolve_expr(module, locals, index)?
+            }
             Expr::MapLit(entries) => {
                 for (key, value) in entries {
                     self.resolve_expr(module, locals, key)?;
@@ -903,6 +925,10 @@ fn declared(body: &Block, names: &mut BTreeSet<String>) {
             | Expr::Array(values)
             | Expr::Format(values) => values.iter().for_each(|value| expr(value, names)),
             Expr::Record(_, fields) => fields.iter().for_each(|(_, value)| expr(value, names)),
+            Expr::ElementMethod(_, index, _, _, values) => {
+                expr(index, names);
+                values.iter().for_each(|value| expr(value, names));
+            }
             Expr::MapLit(entries) => entries.iter().for_each(|(key, value)| {
                 expr(key, names);
                 expr(value, names);
@@ -917,7 +943,8 @@ fn declared(body: &Block, names: &mut BTreeSet<String>) {
             | Expr::ByteLen(inner)
             | Expr::CharLen(inner)
             | Expr::Index(_, inner)
-            | Expr::BorrowIndex(_, inner, _) => expr(inner, names),
+            | Expr::IndexField(_, inner, _)
+            | Expr::BorrowIndex(_, inner, _, _) => expr(inner, names),
             Expr::Binary(_, left, right) | Expr::StringEqual(left, right) => {
                 expr(left, names);
                 expr(right, names);
@@ -937,7 +964,8 @@ fn declared(body: &Block, names: &mut BTreeSet<String>) {
             | Instruction::Call(value)
             | Instruction::Fail(value)
             | Instruction::Return(Some(value)) => expr(value, names),
-            Instruction::AssignIndex(_, index, value) => {
+            Instruction::AssignIndex(_, index, value)
+            | Instruction::AssignIndexField(_, index, _, value) => {
                 expr(index, names);
                 expr(value, names);
             }
