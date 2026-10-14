@@ -226,3 +226,95 @@ fn bitwise_operators_and_radix_literals() {
         assert!(stderr.contains(message), "{source}: {stderr}");
     }
 }
+
+/// 顶层常量：编译期求值、跨模块 `pub const`、字符串常量当 `&string` 传，以及各种误用。
+#[test]
+fn constants_fold_and_inline() {
+    let case = Case::new("expressions", "constants");
+    let source = include_str!("../../examples/values/constants.zm");
+    assert_eq!(
+        stdout(&case.run(source)),
+        "Board v1\n8x4 = 32\n64\n15\n1.0\ntrue\nlast row 3\n"
+    );
+    let project = case.path("project");
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    std::fs::write(
+        project.join("zam.toml"),
+        "[project]\nname = \"consts\"\nentry = \"src/main.zm\"\nmodules = \"src\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project.join("src/config.zm"),
+        "pub const LIMIT = 10\npub const NAME = \"zamak\"\nconst SECRET = 7\npub fn twice() -> i64: LIMIT * 2\n",
+    )
+    .unwrap();
+    let run_project = |main: &str| {
+        std::fs::write(project.join("src/main.zm"), main).unwrap();
+        std::process::Command::new(env!("CARGO_BIN_EXE_zam"))
+            .arg("run")
+            .arg(&project)
+            .env("ZAMAK_CACHE_DIR", case.path("cache"))
+            .output()
+            .unwrap()
+    };
+    let output = run_project("use config\nuse std/string\nconst N = 3\nfn main():\n    println(config.LIMIT + N)\n    println(string.byte_len(&config.NAME))\n    println(config.twice())\n    println(\"{config.NAME}!\")\n");
+    assert_eq!(stdout(&output), "13\n5\n20\nzamak!\n");
+    let output = run_project("use config\nfn main(): println(config.SECRET)\n");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("private constant config.SECRET"),
+        "{stderr}"
+    );
+    for (source, message) in [
+        (
+            "const limit = 1\nfn main(): pass",
+            "constant names are written in UPPER_CASE, such as LIMIT",
+        ),
+        (
+            "fn f() -> i64: 1\nconst A = f()\nfn main(): pass",
+            "constants can only use literals",
+        ),
+        (
+            "const A: f64 = 1\nfn main(): pass",
+            "declared f64 but its value is i64",
+        ),
+        (
+            "const A = 1 / 0\nfn main(): pass",
+            "integer arithmetic error in constant",
+        ),
+        (
+            "const A = 1 << 64\nfn main(): pass",
+            "integer arithmetic error in constant",
+        ),
+        (
+            "const A = B\nconst B = 1\nfn main(): pass",
+            "unknown constant B",
+        ),
+        (
+            "const A = 1\nconst A = 2\nfn main(): pass",
+            "duplicate declaration A",
+        ),
+        (
+            "const P = 1\nstruct P:\n    x: i64\nfn main(): pass",
+            "duplicate declaration P",
+        ),
+        (
+            "const A = 1\nfn main():\n    A = 2",
+            "cannot assign to the constant A",
+        ),
+        (
+            "const A = 1\nfn main():\n    let A = 2",
+            "A is already a constant",
+        ),
+        ("const A = 1 + 2.0\nfn main(): pass", "mixes i64 and f64"),
+        (
+            "const A = 1\nfn take(s: &string): pass\nfn main(): take(&A)",
+            "cannot borrow the constant A",
+        ),
+    ] {
+        let output = case.run(source);
+        assert!(!output.status.success(), "accepted {source}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(message), "{source}: {stderr}");
+    }
+}

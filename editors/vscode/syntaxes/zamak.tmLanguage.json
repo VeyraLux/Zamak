@@ -67,7 +67,11 @@
         },
         {
           "name": "keyword.other.zamak",
-          "match": "\\b(?:fn|pub|use|struct|enum|let|mut|fail)\\b"
+          "match": "\\b(?:fn|pub|use|struct|enum|const|let|mut|fail)\\b"
+        },
+        {
+          "name": "variable.other.constant.zamak",
+          "match": "\\b[A-Z][A-Z0-9_]*\\b(?![a-z])"
         },
         {
           "name": "constant.language.zamak",

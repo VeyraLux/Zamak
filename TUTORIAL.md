@@ -89,6 +89,7 @@ true
 - 类型标注写在冒号后，如 `let mut count: i64 = 3`。省略类型标注时，编译器根据初值推断类型。
 - 四种基本类型：`i64`（64 位整数）、`f64`（64 位浮点数，见第 3 节）、`bool`（`true`/`false`）、`string`（字符串）。
 - **没有变量遮蔽**：同一作用域内不能再次用 `let` 声明同名变量。
+- 顶层常量写在函数外面：`const LIMIT = 100`、`const RATE: f64 = 0.25`、`const NAME = "zamak"`。常量名全大写，值在编译时算好，只能用字面量、前面声明过的常量和运算符（例如 `const CELLS = WIDTH * HEIGHT`）。常量不能重新赋值，局部变量也不能和它同名。加 `pub` 后其他模块可以写 `config.LIMIT`。
 - `i64`、`f64` 和 `bool` 使用复制语义，`let copy = count` 得到独立的值，`count` 仍可使用。
 
 练习：将 `let mut count` 改为 `let count`，保存后运行 `zam check` 并指定该文件。确认编译器拒绝给不可变变量重新赋值，再恢复 `mut`。
@@ -808,7 +809,7 @@ hello from zamak
 
 - `entry` 是入口文件，`modules` 是模块所在目录。
 - **模块名就是文件名**：`greeting.zm` 用 `use greeting` 引入，调用写成 `greeting.hello()`。
-- 跨模块可见的函数、结构体要加 `pub`。
+- 跨模块可见的函数、结构体、常量要加 `pub`；导入后写 `config.LIMIT` 使用别的模块的常量。
 - 跨模块用类型要写模块前缀：`leader: model.Person`。
 - 文件后缀统一是 `.zm`；入口必须是 `.zm`（否则报 `entry must be a .zm file`）。
 - 对于单文件程序，`zam check`/`build`/`run`/`fmt` 也接受单个 `.zm` 文件。

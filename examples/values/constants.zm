@@ -1,0 +1,25 @@
+// 顶层常量：名字全大写，值在编译时算好，可以用前面声明过的常量和运算符。
+
+const WIDTH = 8
+const HEIGHT = 4
+const CELLS = WIDTH * HEIGHT
+const MASK = (1 << 4) - 1
+const RATE: f64 = 0.25
+const TITLE = "Board"
+const BANNER = TITLE + " v1"
+const VERBOSE = CELLS > 16 and not false
+
+fn area(scale: i64) -> i64:
+    CELLS * scale
+
+fn main():
+    println(BANNER)
+    println("{WIDTH}x{HEIGHT} = {CELLS}")
+    println(area(2))
+    println(255 & MASK)
+    println(RATE * 4.0)
+    println(VERBOSE)
+
+    for i in 0..HEIGHT:
+        if i == HEIGHT - 1:
+            println("last row {i}")

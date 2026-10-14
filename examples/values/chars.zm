@@ -6,8 +6,10 @@ fn main() -> !string:
     let chars = string.chars(&text)
     println(chars.len())
     let mut reversed = ""
+
     for c in &chars:
         reversed = c + reversed
+
     println(reversed)
 
     let codes = string.codepoints("你a")
@@ -23,6 +25,7 @@ fn main() -> !string:
     println(string.count("banana", "an"))
 
     let names: [string] = ["amy", "李雷", "bob"]
+
     for name in &names:
         let score = string.char_len(name) * 10
         let left = string.pad_right(name, 6)
