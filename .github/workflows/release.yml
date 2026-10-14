@@ -38,7 +38,7 @@ jobs:
         run: cargo build --release --locked --manifest-path zam/Cargo.toml
       - name: Package
         shell: bash
-        run: tools/package-release.sh "zam/target/release/${{ matrix.binary }}" "zamak-${{ matrix.name }}"
+        run: bash tools/package-release.sh "zam/target/release/${{ matrix.binary }}" "zamak-${{ matrix.name }}"
       - name: Smoke test packaged compiler
         shell: bash
         run: |
