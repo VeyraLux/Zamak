@@ -181,7 +181,7 @@ fn checker_rejects_list_misuse() {
             "let xs: [i64] = [1]\n    let ys = xs\n    println(xs.len())",
             "use after move: xs",
         ),
-        ("let xs: [f64] = []", "unsupported list element type"),
+        ("let xs: [Thing] = []", "unsupported list element type"),
         (
             "let xs: [i64] = [1]\n    take(&xs[0])",
             "scalar references are not supported",

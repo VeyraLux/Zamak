@@ -1,6 +1,6 @@
 use crate::compiler::{
-    field_path, method_signature, record_id, record_order, Block, Elem, Expr, Instruction, Module,
-    Type,
+    field_path, method_signature, numeric, record_id, record_order, Block, Elem, Expr, Instruction,
+    Module, Type,
 };
 use crate::project::Result;
 use std::collections::BTreeMap;
@@ -16,6 +16,7 @@ const RUNTIME: &str = r#"#include <stdio.h>
 #include <stdint.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <math.h>
 static void arithmetic_error(void) { fputs("zam: integer arithmetic error\n", stderr); exit(1); }
 #if defined(__GNUC__) || defined(__clang__)
 static int64_t add(int64_t a, int64_t b) {
@@ -55,7 +56,7 @@ static int64_t quotient(int64_t a, int64_t b) {
 #endif
     return a/b;
 }
-static int64_t remainder(int64_t a, int64_t b) {
+static int64_t zam_remainder(int64_t a, int64_t b) {
     if (!b || (a == INT64_MIN && b == -1)) arithmetic_error();
 #if defined(__GNUC__) || defined(__clang__)
     if (((uint64_t)a | (uint64_t)b) <= UINT32_MAX) return (int64_t)((uint32_t)a % (uint32_t)b);
@@ -118,6 +119,54 @@ static S from_int(int64_t value) {
 }
 static S from_bool(int value) {
     return own((const unsigned char*)(value ? "true" : "false"), value ? 4 : 5);
+}
+// f64 的文本：能原样读回的最短十进制；十进制指数在 [-5, 16) 内写成定点（整数也带 .0），
+// 否则写成 1e16、1.5e-7。out 至少 48 字节，返回长度。
+static size_t zam_f64_text(double x, char *out) {
+    char text[40], digits[24];
+    int precision, exponent, count = 0, length = 0, i;
+    uint64_t bits;
+    const char *p;
+    if (x != x) { memcpy(out, "NaN", 3); return 3; }
+    memcpy(&bits, &x, sizeof bits);
+    if (bits >> 63) out[length++] = '-';
+    if (x == 0) { memcpy(out + length, "0.0", 3); return (size_t)length + 3; }
+    if (x == HUGE_VAL || x == -HUGE_VAL) { memcpy(out + length, "inf", 3); return (size_t)length + 3; }
+    for (precision = 1; precision < 17; precision++) {
+        snprintf(text, sizeof text, "%.*e", precision - 1, x);
+        if (strtod(text, NULL) == x) break;
+    }
+    snprintf(text, sizeof text, "%.*e", precision - 1, x);
+    for (p = text + (text[0] == '-'); *p != 'e'; p++) if (*p != '.') digits[count++] = *p;
+    exponent = atoi(p + 1);
+    if (exponent >= -5 && exponent < 16) {
+        if (exponent < 0) {
+            out[length++] = '0'; out[length++] = '.';
+            for (i = -1; i > exponent; i--) out[length++] = '0';
+            for (i = 0; i < count; i++) out[length++] = digits[i];
+        } else {
+            for (i = 0; i <= exponent; i++) out[length++] = i < count ? digits[i] : '0';
+            out[length++] = '.';
+            if (count > exponent + 1) { for (i = exponent + 1; i < count; i++) out[length++] = digits[i]; }
+            else out[length++] = '0';
+        }
+    } else {
+        out[length++] = digits[0];
+        if (count > 1) { out[length++] = '.'; for (i = 1; i < count; i++) out[length++] = digits[i]; }
+        length += snprintf(out + length, 8, "e%d", exponent);
+    }
+    return (size_t)length;
+}
+static S from_f64(double value) {
+    char text[48];
+    size_t n = zam_f64_text(value, text);
+    return own((const unsigned char*)text, n);
+}
+static void print_f64(double value) {
+    char text[48];
+    size_t n = zam_f64_text(value, text);
+    text[n++] = '\n';
+    if (fwrite(text, 1, n, stdout) != n) exit(1);
 }
 "#;
 
@@ -282,7 +331,126 @@ pub struct Builtin {
     fallible: bool,
     body: &'static str,
 }
+/// `std/math` 里 f64 → f64 的单参数函数：(名字, C 表达式)。
+macro_rules! unary_math {
+    ($($name:literal => $body:literal),* $(,)?) => {
+        [$(Builtin {
+            name: concat!("std/math:", $name),
+            params: &[Type::Float],
+            result: Type::Float,
+            fallible: false,
+            body: concat!("return ", $body, ";"),
+        }),*]
+    };
+}
+static MATH: [Builtin; 13] = unary_math! {
+    "sqrt" => "sqrt(p0)",
+    "exp" => "exp(p0)",
+    "log" => "log(p0)",
+    "log10" => "log10(p0)",
+    "sin" => "sin(p0)",
+    "cos" => "cos(p0)",
+    "tan" => "tan(p0)",
+    "floor" => "floor(p0)",
+    "ceil" => "ceil(p0)",
+    "round" => "round(p0)",
+    "trunc" => "trunc(p0)",
+    "abs" => "fabs(p0)",
+    "atan" => "atan(p0)",
+};
 const BUILTINS: &[Builtin] = &[
+    Builtin {
+        name: "std/core:f64",
+        params: &[Type::Int],
+        result: Type::Float,
+        fallible: false,
+        body: "return (double)p0;",
+    },
+    Builtin {
+        name: "std/core:i64",
+        params: &[Type::Float],
+        result: Type::Int,
+        fallible: false,
+        // 向零截断；NaN 与超出 i64 的值没有对应整数，按运行时错误停下。
+        body: r#"if (!(p0 >= -9223372036854775808.0 && p0 < 9223372036854775808.0)) { fputs("zam: f64 value out of i64 range\n", stderr); exit(1); }
+return (int64_t)p0;"#,
+    },
+    Builtin {
+        name: "std/math:pow",
+        params: &[Type::Float, Type::Float],
+        result: Type::Float,
+        fallible: false,
+        body: "return pow(p0, p1);",
+    },
+    Builtin {
+        name: "std/math:atan2",
+        params: &[Type::Float, Type::Float],
+        result: Type::Float,
+        fallible: false,
+        body: "return atan2(p0, p1);",
+    },
+    Builtin {
+        name: "std/math:min",
+        params: &[Type::Float, Type::Float],
+        result: Type::Float,
+        fallible: false,
+        body: "return fmin(p0, p1);",
+    },
+    Builtin {
+        name: "std/math:max",
+        params: &[Type::Float, Type::Float],
+        result: Type::Float,
+        fallible: false,
+        body: "return fmax(p0, p1);",
+    },
+    Builtin {
+        name: "std/math:is_nan",
+        params: &[Type::Float],
+        result: Type::Bool,
+        fallible: false,
+        body: "return p0 != p0;",
+    },
+    Builtin {
+        name: "std/fmt:fixed",
+        params: &[Type::Float, Type::Int],
+        result: Type::Owned,
+        fallible: false,
+        body: r#"char text[48]; int n; S s;
+if (p1 < 0 || p1 > 30) { fputs("zam: fmt.fixed digits must be between 0 and 30\n", stderr); exit(1); }
+if (p0 != p0 || p0 == HUGE_VAL || p0 == -HUGE_VAL) return own((const unsigned char*)text, zam_f64_text(p0, text));
+n = snprintf(NULL, 0, "%.*f", (int)p1, p0);
+s.data = (unsigned char*)malloc((size_t)n + 1);
+if (!s.data) zam_alloc_failed();
+snprintf((char*)s.data, (size_t)n + 1, "%.*f", (int)p1, p0);
+s.len = (size_t)n;
+return s;"#,
+    },
+    Builtin {
+        name: "std/string:parse_f64",
+        params: &[Type::Shared],
+        result: Type::Float,
+        fallible: true,
+        // 只认十进制：可选符号、数字（可带小数点）、可选指数；不接受空白、inf、nan 与十六进制。
+        body: r#"size_t i = 0, digits = 0, exponent = 0; char *text; double value;
+if (i < p0->len && (p0->data[i] == '-' || p0->data[i] == '+')) i++;
+while (i < p0->len && p0->data[i] >= '0' && p0->data[i] <= '9') { i++; digits++; }
+if (i < p0->len && p0->data[i] == '.') { i++; while (i < p0->len && p0->data[i] >= '0' && p0->data[i] <= '9') { i++; digits++; } }
+if (digits && i < p0->len && (p0->data[i] == 'e' || p0->data[i] == 'E')) {
+    i++;
+    if (i < p0->len && (p0->data[i] == '-' || p0->data[i] == '+')) i++;
+    while (i < p0->len && p0->data[i] >= '0' && p0->data[i] <= '9') { i++; exponent++; }
+    if (!exponent) digits = 0;
+}
+if (!digits || i != p0->len) return F_double_err(zam_message("invalid float: ", p0));
+text = (char*)malloc(p0->len + 1);
+if (!text) zam_alloc_failed();
+memcpy(text, p0->data, p0->len);
+text[p0->len] = 0;
+value = strtod(text, NULL);
+free(text);
+if (value == HUGE_VAL || value == -HUGE_VAL) return F_double_err(zam_message("float out of range: ", p0));
+return F_double_ok(value);"#,
+    },
     Builtin {
         name: "std/io:print",
         params: &[Type::Shared],
@@ -580,10 +748,13 @@ return -1;"#,
     },
 ];
 pub fn builtin(name: &str) -> Option<&'static Builtin> {
-    BUILTINS.iter().find(|builtin| builtin.name == name)
+    BUILTINS
+        .iter()
+        .chain(&MATH)
+        .find(|builtin| builtin.name == name)
 }
 pub fn builtin_functions() -> impl Iterator<Item = (String, crate::compiler::Function)> {
-    BUILTINS.iter().map(|builtin| {
+    BUILTINS.iter().chain(&MATH).map(|builtin| {
         (
             builtin.name.to_owned(),
             crate::compiler::Function {
@@ -641,8 +812,26 @@ fn is_text(ty: Type) -> bool {
 fn elem_of(ty: Type) -> Elem {
     match ty {
         Type::Int => Elem::Int,
+        Type::Float => Elem::Float,
         Type::Bool => Elem::Bool,
         _ => Elem::Str,
+    }
+}
+/// 按值传递、不需要释放的标量。
+fn by_value(ty: Type) -> bool {
+    matches!(ty, Type::Int | Type::Float | Type::Bool)
+}
+/// C 里的 f64 字面量：Rust 的 Debug 输出是能精确读回的最短十进制，C 也认这种写法。
+fn float_literal(value: f64) -> String {
+    if value.is_infinite() {
+        if value > 0.0 {
+            "HUGE_VAL"
+        } else {
+            "(-HUGE_VAL)"
+        }
+        .into()
+    } else {
+        format!("({value:?})")
     }
 }
 // 失败函数的结果结构体：ok=1 时 value 有效，ok=0 时 error 有效。
@@ -680,6 +869,7 @@ fn owned(ty: Type) -> bool {
 fn elem_suffix(elem: Elem) -> char {
     match elem {
         Elem::Int => 'i',
+        Elem::Float => 'f',
         Elem::Bool => 'b',
         Elem::Str => 's',
     }
@@ -787,6 +977,7 @@ fn map_helpers(key: Elem, value: Elem) -> String {
 fn list_suffix(elem: Elem) -> &'static str {
     match elem {
         Elem::Int => "Li",
+        Elem::Float => "Lf",
         Elem::Bool => "Lb",
         Elem::Str => "Ls",
     }
@@ -836,6 +1027,7 @@ fn ctype(ty: Type) -> String {
         Type::Owned => "S",
         Type::Shared | Type::Mutable => "S*",
         Type::Int => "int64_t",
+        Type::Float => "double",
         Type::Bool => "int",
         Type::ArrayInt(length) => return format!("int64_t[{length}]"),
         Type::Unit => "void",
@@ -852,6 +1044,7 @@ impl Generator<'_> {
                     .1
             }
             Expr::Int(_) | Expr::ByteLen(_) | Expr::CharLen(_) => Type::Int,
+            Expr::Float(_) => Type::Float,
             Expr::Array(values) => Type::ArrayInt(values.len()),
             Expr::Index(local, _) => match self.place_ty(local) {
                 Type::ArrayInt(_) => Type::Int,
@@ -888,17 +1081,12 @@ impl Generator<'_> {
             Expr::Call(name, _) => self.module.functions[name].result,
             Expr::Try(inner) => self.ty(inner),
             Expr::Catch(inner, _, _) => self.ty(inner),
-            Expr::Unary(op, _) => {
-                if *op == '!' {
-                    Type::Bool
-                } else {
-                    Type::Int
-                }
-            }
+            Expr::Unary('!', _) => Type::Bool,
+            Expr::Unary(_, value) => numeric(self.ty(value)),
             Expr::Binary(op, left, _) if op == "+" && is_text(self.ty(left)) => Type::Owned,
-            Expr::Binary(op, _, _) => {
+            Expr::Binary(op, left, _) => {
                 if matches!(op.as_str(), "+" | "-" | "*" | "/" | "%") {
-                    Type::Int
+                    numeric(self.ty(left))
                 } else {
                     Type::Bool
                 }
@@ -947,6 +1135,7 @@ impl Generator<'_> {
         match ty {
             Type::Owned | Type::Shared | Type::Mutable => format!("copy({pointer})"),
             Type::Int => format!("from_int({pointer})"),
+            Type::Float => format!("from_f64({pointer})"),
             _ => format!("from_bool({pointer})"),
         }
     }
@@ -978,7 +1167,7 @@ impl Generator<'_> {
         if owned(ty) {
             let value = self.expr_as(arg, ty);
             self.moved(&value, ty)
-        } else if matches!(ty, Type::Int | Type::Bool) {
+        } else if by_value(ty) {
             self.expr(arg)
         } else {
             self.borrowed(arg)
@@ -1178,7 +1367,7 @@ impl Generator<'_> {
                         Expr::Field(local, field) => {
                             let ty = self.ty(segment);
                             let target = self.field(local, field);
-                            let target = if matches!(ty, Type::Int | Type::Bool) {
+                            let target = if by_value(ty) {
                                 target
                             } else {
                                 format!("&{target}")
@@ -1228,12 +1417,13 @@ impl Generator<'_> {
                 },
                 Type::Int,
             ),
+            Expr::Float(value) => self.scalar(&float_literal(*value), Type::Float),
             Expr::Bool(value) => self.scalar(if *value { "1" } else { "0" }, Type::Bool),
             Expr::Unary(op, value) => {
                 let ty = self.ty(expr);
                 let value = self.expr(value);
                 self.scalar(
-                    &if *op == '-' && self.proofs.arithmetic(expr) {
+                    &if *op == '-' && (ty == Type::Float || self.proofs.arithmetic(expr)) {
                         format!("(-{value})")
                     } else if *op == '-' {
                         format!("sub(0, {value})")
@@ -1254,6 +1444,20 @@ impl Generator<'_> {
                 } else {
                     self.scalar(&format!("(string_compare({a}, {b}) {op} 0)"), Type::Bool)
                 }
+            }
+            // f64 按 IEEE 754 运算：不检查溢出，除以零得到 inf 或 NaN。
+            Expr::Binary(op, left, right) if self.ty(left) == Type::Float => {
+                let ty = self.ty(expr);
+                let a = self.expr(left);
+                let b = self.expr(right);
+                self.scalar(
+                    &if op == "%" {
+                        format!("fmod({a}, {b})")
+                    } else {
+                        format!("({a} {op} {b})")
+                    },
+                    ty,
+                )
             }
             Expr::Binary(op, left, right) => {
                 let ty = self.ty(expr);
@@ -1298,7 +1502,7 @@ impl Generator<'_> {
                     "-" if !self.proofs.arithmetic(expr) => Some("sub"),
                     "*" if !self.proofs.arithmetic(expr) => Some("mul"),
                     "/" if !safe_divisor => Some("quotient"),
-                    "%" if !safe_divisor => Some("remainder"),
+                    "%" if !safe_divisor => Some("zam_remainder"),
                     _ => None,
                 };
                 self.scalar(
@@ -1310,7 +1514,7 @@ impl Generator<'_> {
                     ty,
                 )
             }
-            Expr::Variable(name) if matches!(self.locals[name].1, Type::Int | Type::Bool) => {
+            Expr::Variable(name) if by_value(self.locals[name].1) => {
                 let (value, ty) = self.locals[name].clone();
                 self.scalar(&value, ty)
             }
@@ -1600,7 +1804,7 @@ impl Generator<'_> {
                         local_ty
                     };
                     let value = self.expr_as(expr, ty);
-                    if matches!(ty, Type::Int | Type::Bool) {
+                    if by_value(ty) {
                         self.code
                             .push_str(&format!("{} = {value};\n", self.locals[name].0));
                         continue;
@@ -1614,12 +1818,16 @@ impl Generator<'_> {
                 }
                 Instruction::Print(expr) => {
                     let ty = self.ty(expr);
-                    if matches!(ty, Type::Int | Type::Bool) {
+                    if by_value(ty) {
                         let value = self.expr(expr);
-                        self.code.push_str(&if ty == Type::Int {
-                            format!("if (printf(\"%\" PRId64 \"\\n\", {value}) < 0) exit(1);\n")
-                        } else {
-                            format!("if (puts({value} ? \"true\" : \"false\") == EOF) exit(1);\n")
+                        self.code.push_str(&match ty {
+                            Type::Int => {
+                                format!("if (printf(\"%\" PRId64 \"\\n\", {value}) < 0) exit(1);\n")
+                            }
+                            Type::Float => format!("print_f64({value});\n"),
+                            _ => format!(
+                                "if (puts({value} ? \"true\" : \"false\") == EOF) exit(1);\n"
+                            ),
                         });
                         continue;
                     }
@@ -2444,7 +2652,7 @@ fn msvc_tool(environment: &BTreeMap<String, String>, name: &str) -> Result<std::
 
 // ponytail: 只有产物字节真变才升版本（会让缓存整体失效）；改了编译/链接命令行但字节不变时，
 // 先用旧缓存跑一次构建、确认仍是 OBJECT HIT 再决定不升。
-pub const OPTIONS: &str = "c11-O2-unroll-MT-Brepro-pathmap-objects-gnu-windows-v6";
+pub const OPTIONS: &str = "c11-O2-unroll-MT-Brepro-pathmap-objects-gnu-windows-lm-v7";
 pub fn compile(tool: &str, dir: &Path, source: &str) -> Result<Vec<u8>> {
     std::fs::write(dir.join("program.c"), source).map_err(|e| e.to_string())?;
     // 编译器记录的是工作目录的写法；临时目录经过 8.3 短名（CI 的 `RUNNER~1`）、联接或
@@ -2524,10 +2732,11 @@ pub fn link(tool: &str, dir: &Path, objects: &[Vec<u8>]) -> Result<Vec<u8>> {
             .args(&names)
             .output()
     } else {
+        // std/math 的函数在 Linux 上属于 libm，要显式链接；macOS 与 MinGW 也接受 -lm。
         Command::new(tool)
             .current_dir(dir)
             .args(&names)
-            .args(["-o", "program.exe"])
+            .args(["-lm", "-o", "program.exe"])
             .output()
     }
     .map_err(|e| e.to_string())?;

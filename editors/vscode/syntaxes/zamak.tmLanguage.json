@@ -71,7 +71,7 @@
         },
         {
           "name": "storage.type.zamak",
-          "match": "\\b(?:i64|bool|string)\\b"
+          "match": "\\b(?:i64|f64|bool|string)\\b"
         },
         {
           "name": "support.function.builtin.zamak",
@@ -107,7 +107,7 @@
         },
         {
           "name": "constant.numeric.zamak",
-          "match": "\\b[0-9][0-9_]*\\b"
+          "match": "\\b[0-9][0-9_]*(?:\\.[0-9][0-9_]*)?(?:[eE][+-]?[0-9]+)?\\b"
         }
       ]
     },

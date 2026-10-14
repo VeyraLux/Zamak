@@ -170,7 +170,7 @@ fn checker_rejects_map_misuse() {
     for (body, message) in [
         ("let m = {}", "empty map literal needs a type annotation"),
         ("let m: {f64: i64} = {}", "unsupported map key type"),
-        ("let m: {string: f64} = {}", "unsupported map value type"),
+        ("let m: {string: Thing} = {}", "unsupported map value type"),
         ("let m = {\"a\": 1, \"b\": true}", "mismatch"),
         (
             "let m = {\"a\": \"x\"}\n    let s = m[\"a\"]",

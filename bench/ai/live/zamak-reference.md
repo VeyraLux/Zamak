@@ -18,11 +18,19 @@ fn main() -> !string {
 
 ## Values and bindings
 
-- Types: `i64`, `bool`, `string` (UTF-8, owned), structs, lists `[T]`, maps `{K: V}`. There are no floats, chars, tuples, enums, generics or closures.
+- Types: `i64`, `f64`, `bool`, `string` (UTF-8, owned), structs, lists `[T]`, maps `{K: V}`. There are no chars, tuples, enums, generics or closures.
 - `let x = 1`, `let mut x = 1`, `let mut x: i64 = 1`. Only `let mut` bindings can be reassigned. A name cannot be declared twice in the same function scope chain (no shadowing).
 - Integer literals may use `_` between digits: `1_000_000`. Character literals like `'a'`, `'#'`, `'\n'`, `'\''` are `i64` Unicode code points (useful with `string.byte_at`).
 - Operators: `+ - * / %`, `== != < <= > >=`, `&& || !`, unary `-`, parentheses. Compound assignment `+= -= *= /= %=` works on variables, fields and elements. On strings, `+` concatenates (`a + b` makes a new string and moves neither side) and `== != < <= > >=` compare contents. Strings and integers cannot be mixed: `"n=" + 1` is an error; use interpolation.
 - Integer overflow, division by zero, and out-of-range indexes stop the program with an error.
+
+## Floats
+
+- `f64` literals need a digit on both sides of the point or an exponent: `1.5`, `0.25`, `2e-3`, `1_000.5`.
+- `f64` follows IEEE 754: `+ - * / %` and comparisons never stop the program; dividing by zero gives `inf` or `NaN`.
+- There is no implicit conversion between `i64` and `f64`. `x * 2` is an error when `x` is `f64`; write `x * 2.0`. Convert with `f64(n)` and `i64(x)` (truncates toward zero; stops the program on `NaN` or out-of-range values). Round first with `math.round(x)` if needed.
+- `println(x)` and `"{x}"` print the shortest text that reads back as the same value: `0.1`, `2.0`, `1e16`, `2.5e-7`. For a fixed number of decimals use `fmt.fixed(x, 2) -> string` (`use std/fmt`).
+- `[f64]` lists and `{K: f64}` map values work like `i64` ones. Map keys cannot be `f64`.
 
 ## Strings
 
@@ -105,12 +113,14 @@ Import a module with `use std/<name>` and call `name.function(...)`. `println(x)
 - `std/io`: `io.print(&text)` (no newline), `io.eprintln(&text)` (standard error), `io.read_line(&mut line) -> bool!string` reads the next line into `line` without its trailing `\n` or `\r\n` and returns `false` at end of input (typical loop: `let mut line = ""` then `while io.read_line(&mut line)? { ... }`); `io.read_all() -> string!string`.
 - `std/env`: `env.args() -> [string]` (program arguments, without the program name), `env.arg(i) -> string!string`, `env.arg_count() -> i64`.
 - `std/fs`: `fs.read(&path) -> string!string`, `fs.write(&path, &text) -> !string`.
+- `std/math` (all `f64`): `sqrt`, `pow(x, y)`, `exp`, `log` (natural), `log10`, `sin`, `cos`, `tan`, `atan`, `atan2(y, x)`, `floor`, `ceil`, `round` (half away from zero), `trunc`, `abs`, `min(a, b)`, `max(a, b)`, `is_nan(x) -> bool`; constants `math.pi`, `math.e`, `math.inf`.
+- `std/fmt`: `fmt.fixed(x, digits) -> string` (0 to 30 digits).
 - `std/string` (all positions are byte offsets):
   - `byte_len(&s) -> i64`, `char_len(&s) -> i64`, `byte_at(&s, i) -> i64`
   - `equal(&a, &b) -> bool`, `starts_with(&s, &p) -> bool`, `ends_with(&s, &p) -> bool`, `contains(&s, &p) -> bool`
   - `find(&s, &needle) -> i64` and `find_from(&s, &needle, start) -> i64` (-1 when absent)
   - `slice(&s, start, end) -> string` (bytes `start..end`), `trim(&s) -> string`, `lower(&s) -> string`, `upper(&s) -> string`, `replace(&s, &from, &to) -> string`, `copy(&s) -> string`
-  - `parse_i64(&s) -> i64!string` (decimal, optional sign, no surrounding spaces)
+  - `parse_i64(&s) -> i64!string` (decimal, optional sign, no surrounding spaces), `parse_f64(&s) -> f64!string` (decimal with optional fraction and exponent)
   - `split(&s, &sep) -> [string]` (keeps empty fields), `words(&s) -> [string]` (splits on whitespace), `lines(&s) -> [string]` (drops `\r`; no empty item after a final newline), `join(&list, &sep) -> string`
 
 ## Example

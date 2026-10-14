@@ -87,9 +87,9 @@ true
 
 - `let` 声明变量，默认不可重新赋值；需要重新赋值时使用 `let mut`。
 - 类型标注写在冒号后，如 `let mut count: i64 = 3`。省略类型标注时，编译器根据初值推断类型。
-- 三种基本类型：`i64`（64 位整数）、`bool`（`true`/`false`）、`string`（字符串）。
+- 四种基本类型：`i64`（64 位整数）、`f64`（64 位浮点数，见第 3 节）、`bool`（`true`/`false`）、`string`（字符串）。
 - **没有变量遮蔽**：同一作用域内不能再次用 `let` 声明同名变量。
-- `i64` 和 `bool` 使用复制语义，`let copy = count` 得到独立的值，`count` 仍可使用。
+- `i64`、`f64` 和 `bool` 使用复制语义，`let copy = count` 得到独立的值，`count` 仍可使用。
 
 练习：将 `let mut count` 改为 `let count`，保存后运行 `zam check` 并指定该文件。确认编译器拒绝给不可变变量重新赋值，再恢复 `mut`。
 
@@ -143,6 +143,44 @@ fn main() {
 
 - `x += e` 等价于 `x = x + e`，变量要用 `let mut` 声明。也可以用在字段（`p.age += 1`）和元素（`xs[i] += 1`、`counts["a"] += 1`）上。
 - 元素的下标里不能调用函数，例如 `xs[next()] += 1` 会报错；先用 `let` 把下标算出来。
+
+### 浮点数
+
+带小数点或指数的字面量是 `f64`，例如 `1.5`、`0.25`、`2e-3`。数学函数在 `std/math` 里，按位数格式化用 `fmt.fixed`：
+
+```zamak
+use std/fmt
+use std/math
+
+fn main() {
+    let price = 19.99
+    let count = 3
+    let total = price * f64(count)
+    println(total)
+    println(fmt.fixed(total, 2))
+    println(i64(total))
+    println(math.sqrt(2.0))
+    println(0.1 + 0.2)
+    println(1.0 / 0.0)
+}
+```
+
+```text
+59.97
+59.97
+59
+1.4142135623730951
+0.30000000000000004
+inf
+```
+
+- `i64` 和 `f64` 之间没有隐式转换。`price * count` 会报错，要写成 `price * f64(count)`；整数字面量也要写成 `2.0` 而不是 `2`。
+- `i64(x)` 向零截断，`i64(2.9)` 得到 `2`；要四舍五入就先用 `math.round(x)`。`x` 是 NaN 或超出 `i64` 范围时，程序停止运行并报错。
+- `f64` 按 IEEE 754 运算，不检查溢出：除以零得到 `inf` 或 `NaN`。`%` 也能用于 `f64`，结果的符号与被除数一致。
+- `println` 打印能原样读回的最短十进制：整数值也带 `.0`（如 `2.0`），绝对值很大或很小时用科学计数法（如 `1e16`、`2.5e-7`）。
+- `fmt.fixed(x, n)` 保留 `n` 位小数（`n` 在 0 到 30 之间）。舍入作用在 `x` 的二进制值上，所以 `fmt.fixed(2.675, 2)` 得到 `2.67`。
+- `std/math` 提供 `sqrt`、`pow`、`exp`、`log`（自然对数）、`log10`、`sin`、`cos`、`tan`、`atan`、`atan2`、`floor`、`ceil`、`round`、`trunc`、`abs`、`min`、`max`、`is_nan`，以及常量 `math.pi`、`math.e`、`math.inf`。这些函数只接受 `f64`。
+- 字符串转浮点数用 `string.parse_f64(&s)`，失败时返回错误，用法和 `parse_i64` 相同。
 
 ## 第 4 节：条件判断
 
@@ -384,7 +422,7 @@ fn main() {
 - 下标从 0 开始，范围为 `0` 到 `长度 - 1`。运行时会检查边界；越界访问会报错并退出。
 - 定长数组元素类型仅支持 `i64`，只能作为局部值，不能用于函数参数、返回值或结构体字段；这些场合使用列表。
 
-列表 `[T]` 的元素可以是 `i64`、`bool` 或 `string`，可以作为局部变量、函数参数、返回值和结构体字段：
+列表 `[T]` 的元素可以是 `i64`、`f64`、`bool` 或 `string`，可以作为局部变量、函数参数、返回值和结构体字段：
 
 ```zamak
 fn average(scores: &[i64]) -> i64 {
@@ -488,7 +526,7 @@ true
 
 要点：
 
-- 类型写成 `{键类型: 值类型}`。键可以是 `i64` 或 `string`，值可以是 `i64`、`bool` 或 `string`。
+- 类型写成 `{键类型: 值类型}`。键可以是 `i64` 或 `string`，值可以是 `i64`、`f64`、`bool` 或 `string`。
 - 字面量写成 `{"amy": 30, "bob": 25}`，条目之间用逗号，可以分行写。空字典必须标注类型：`let mut m: {string: i64} = {}`。
 - `m[k]` 读取，键不存在时程序终止（`zam: key not found`）；不确定键是否存在时用 `m.get(k, 默认值)` 或先 `m.contains(k)`。
 - `m[k] = v` 插入或替换；`m.remove(k)` 删除并返回是否删到了；`m.len()` 返回条目数；`m.keys()` 返回键的列表。
@@ -577,13 +615,13 @@ fn main() {
 - 需要修改字符串时，使用可变借用：将 `&mut message` 传给 `text: &mut string`，原变量必须通过 `let mut` 声明。
 - 借用仅在本次函数调用期间有效；`show` 和 `update` 返回后，`message` 仍可使用。同一次调用中，共享借用可以有多个，可变借用必须独占。借用只能用于参数，不能返回或保存在局部变量中。
 - 所有权和借用检查发生在编译期，运行 `zam check` 即可检查。诊断信息示例为 `line 4, column 1: main:main: use after move: a`。
-- 当前 `string` 和结构体使用移动语义，`i64` 和 `bool` 使用复制语义。字符串字段支持借用；整体结构体借用和单独移出拥有所有权的字段尚不支持。
+- 当前 `string` 和结构体使用移动语义，`i64`、`f64` 和 `bool` 使用复制语义。字符串字段支持借用；整体结构体借用和单独移出拥有所有权的字段尚不支持。
 
 ## 第 11 节：错误处理
 
 函数在返回类型后加 `!错误类型`，表示调用可能失败；当前错误类型仅支持 `string`。
 
-下面的 `parse` 仅用于演示错误处理：它拒绝空字符串，并对所有非空字符串返回固定值 `42`，不执行整数解析。它不是可用于输入校验的解析器，标准库目前也未提供字符串转整数接口。
+下面的 `parse` 仅用于演示错误处理：它拒绝空字符串，并对所有非空字符串返回固定值 `42`，不执行整数解析。它不是可用于输入校验的解析器；真正解析整数用 `string.parse_i64`（见第 13 节）。
 
 ```zamak
 use std/string
@@ -799,6 +837,8 @@ lang -> Zamak
 | `io.read_line(&mut line) -> bool!string` | 读一行到 `line`，去掉行尾的 `\n` 或 `\r\n`；输入结束时返回 `false` 并把 `line` 置空 |
 | `io.read_all() -> string!string` | 读取全部标准输入 |
 | `string.parse_i64(&s) -> i64!string` | 解析十进制整数，可带 `+`/`-`；含空白或超出 `i64` 范围时返回错误 |
+| `string.parse_f64(&s) -> f64!string` | 解析十进制浮点数，如 `-2.5`、`.5`、`1e3`；含空白、`inf`、`nan` 或超出范围时返回错误 |
+| `fmt.fixed(x, digits) -> string` | 把 `f64` 格式化成 `digits` 位小数（0 到 30） |
 | `string.trim(&s) -> string` | 去掉首尾的空格、制表符和换行，返回新字符串 |
 | `string.byte_at(&s, i) -> i64` | 第 `i` 个字节（0–255）；越界时程序终止 |
 | `string.slice(&s, start, end) -> string` | 复制字节区间 `[start, end)`；越界或切在多字节字符中间时程序终止 |
@@ -903,6 +943,8 @@ error[ZM301]: use after move: name
 | `zam: program failed: exit code: 1` | 未处理的错误传播到 `main` | 检查错误信息和输入；需要处理时在调用处使用 `catch` |
 | `cannot open <path>` | `fs.read`/`fs.write` 打不开文件 | 检查路径是否存在、是否是目录、是否有权限 |
 | `invalid integer: <text>` | `string.parse_i64` 的输入不是十进制整数 | 先用 `string.trim` 去掉空白，再解析 |
+| `+ mixes i64 and f64` | 整数和浮点数直接相加或比较 | 用 `f64(n)` 或 `i64(x)` 转换一边，整数字面量写成 `2.0` |
+| `zam: f64 value out of i64 range` | `i64(x)` 的 `x` 是 NaN 或超出 `i64` 范围 | 转换前先检查范围，或用 `math.is_nan` 排除 NaN |
 | `argument index out of range` | `env.arg(i)` 的 `i` 超出参数个数 | 先用 `env.arg_count()` 检查 |
 | `zam: string index out of bounds` | `byte_at`/`slice` 越界，或切在多字节字符中间 | 用 `string.byte_len`、`string.find` 先确定范围 |
 | `zam: list index out of bounds` / `zam: pop from empty list` | 列表下标越界，或对空列表 `pop` | 先用 `xs.len()` 检查 |
@@ -919,9 +961,9 @@ Zamak 0.1.0 的支持范围有限。编写程序时需注意以下限制：
 
 - 尚不支持 `switch`/`match`、枚举、泛型、闭包和 trait/接口；`for` 支持整数区间 `a..b` 以及遍历 `&列表`、`&字典`。
 - 尚不提供包管理器、交互式执行环境（REPL）、文档生成工具或重构工具。
-- 标准库包括 `std/string`（`byte_len`、`char_len`、`equal`、`parse_i64`、`trim`、`byte_at`、`slice`、`find`、`find_from`、`starts_with`、`ends_with`、`contains`、`replace`、`lower`、`upper`、`copy`、`split`、`words`、`lines`、`join`）、`std/io`（`println`、`read_line`、`read_all`）、`std/fmt`（`println`）、`std/fs`（`read`、`write`）和 `std/env`（`arg_count`、`arg`、`args`），没有目录遍历、网络和时间函数。
+- 标准库包括 `std/string`（`byte_len`、`char_len`、`equal`、`parse_i64`、`parse_f64`、`trim`、`byte_at`、`slice`、`find`、`find_from`、`starts_with`、`ends_with`、`contains`、`replace`、`lower`、`upper`、`copy`、`split`、`words`、`lines`、`join`）、`std/io`（`println`、`read_line`、`read_all`）、`std/fmt`（`println`、`fixed`）、`std/math`（见第 3 节）、`std/fs`（`read`、`write`）和 `std/env`（`arg_count`、`arg`、`args`），没有目录遍历、网络和时间函数。
 - 错误类型只能是 `string`，没有错误堆栈。
-- 定长数组仅支持 `i64` 局部值；列表 `[T]` 的元素与字典 `{K: V}` 的值只能是 `i64`、`bool` 或 `string`，字典键只能是 `i64` 或 `string`，还没有结构体元素和嵌套容器。方法不能链式调用。
+- 定长数组仅支持 `i64` 局部值；列表 `[T]` 的元素与字典 `{K: V}` 的值只能是 `i64`、`f64`、`bool` 或 `string`，字典键只能是 `i64` 或 `string`，还没有结构体元素和嵌套容器。方法不能链式调用。
 - 所有权检查覆盖 `string`、结构体、列表和字典；尚不支持线程、`unsafe` 和外部函数接口（FFI）。
 - 编辑器支持为 VS Code 语法高亮扩展（`editors/vscode/`），没有语言服务器、补全和调试器。
 - 本教程采用源码安装；安装步骤和平台工具链要求见 [安装说明](PREVIEW.md)。
@@ -936,6 +978,6 @@ Zamak 0.1.0 的支持范围有限。编写程序时需注意以下限制：
 | `examples/ownership/` | `&string`、`&mut string`、移动 |
 | `examples/structs/` | 结构体声明、字段赋值、嵌套、跨模块类型 |
 | `examples/control/` | 条件、`while`、`break`/`continue`、函数 |
-| `examples/values/` | 变量、运算符、字符串、数组、格式化、错误值、`catch` |
+| `examples/values/` | 变量、运算符、浮点数与 `std/math`、字符串、数组、格式化、错误值、`catch` |
 
 集成测试位于 `zam/tests/`。其中 `tutorial.rs` 检查本教程的 Zamak 代码块，`errors.rs` 覆盖 `T!string`、`fail`、`?`、`catch` 的成功与失败路径，`source_format.rs` 覆盖 `zam fmt` 的行为。验证新的写法时，可以先保存为独立 `.zm` 文件并运行 `zam check 文件名.zm`；需要确认运行行为时再使用 `zam run`。
