@@ -227,3 +227,53 @@ fn single_equals_in_condition_suggests_double_equals() {
     }
     fs::remove_dir_all(root).unwrap();
 }
+
+/// 字面量 match 展开成 if 链：`|` 列多个值，调用结果只求值一次，表达式形式要有 `_`（布尔列全也行）；
+/// 调用结果上可以接着调用列表与字典的方法。
+#[test]
+fn literal_match_and_chained_methods() {
+    let case = Case::new("control", "literal-match");
+    let output = case.run(include_str!("../../examples/control/literal_match.zm"));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "-1 is minus one\n0 is zero\n1 is small\n2 is small\n3 is small\n4 is many\nred\nyellow\nunknown fruit kiwi\nvowel\nother\nyes\nstopping\n[\"y\", \"z\"]\n2\n"
+    );
+    let output = case.run("fn next(n: i64) -> i64:\n    println(\"called\")\n    n + 1\nfn main():\n    match next(1):\n        1: println(\"one\")\n        2: println(\"two\")\n        _: println(\"other\")\n    let s = match next(5):\n        6: 1.5\n        _: 0.0\n    println(s)\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "called\ntwo\ncalled\n1.5\n"
+    );
+    for (body, message) in [
+        (
+            "match n:\n        1: pass\n        Foo: pass",
+            "mixes enum variants and literal patterns",
+        ),
+        (
+            "match n:\n        _: pass\n        1: pass",
+            "unreachable match arm after _",
+        ),
+        ("match n:\n        1 | 1: pass", "duplicate match arm"),
+        ("let x = match n:\n        1: 2", "needs a _ arm"),
+        ("match n:\n        \"a\": pass", "type mismatch"),
+        ("match n:\n        \"{n}\": pass", "without interpolation"),
+        ("let x = f().foo()", "unknown function .foo: lists support"),
+        (
+            "let x = g().len()",
+            "methods are only available on lists and maps",
+        ),
+        ("println(f().push(1))", "cannot print void"),
+    ] {
+        let source = format!(
+            "fn f() -> [i64]: [1]\nfn g() -> i64: 1\nfn main():\n    let n = 1\n    {body}\n"
+        );
+        let output = case.run(&source);
+        assert!(!output.status.success(), "accepted {source}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(message), "{source}: {stderr}");
+    }
+}

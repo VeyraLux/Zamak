@@ -127,6 +127,7 @@ let area = match s:
 - As a statement, an arm is one statement on the same line or an indented block; as a value (`let x = match ...`), each arm is one expression.
 - `match` borrows the value: numbers and booleans are copied into the bindings, strings and structs are read-only borrows. Enums compare with `==` (same variant and equal data); use `match` to read the data.
 - Enums move like structs and can be stored in lists, maps and struct fields, or borrowed as `&Shape`.
+- `match` also branches on literal values: integers, characters (`'a'`), strings and booleans, with `|` for alternatives: `1 | 2: "small"`, `"quit": return`, `_: ...`. A statement match may omit `_`; a match expression needs `_` (or both `true` and `false`).
 
 ## Lists `[T]`
 
@@ -137,7 +138,7 @@ let area = match s:
 - For `i64`, `f64`, `bool` and `string` elements: `xs.sort()` (ascending, stable), `xs.contains(v)`, `xs.index_of(v)` (-1 when absent), `xs.slice(a, b)` (a new list of elements `a..b`). String arguments are borrows: `names.contains("amy")`.
 - `xs[i]` reads an `i64`/`f64`/`bool` element and `xs[i] = v` writes. A string element cannot be taken out with `xs[i]`; pass `&xs[i]` to a `&string` parameter or copy it with `string.copy(&xs[i])`.
 - Struct elements: read and write fields with `xs[i].field` (also `+=`), pass `&xs[i]` / `&mut xs[i]` to `&Point` / `&mut Point` parameters, pass `&xs[i].name` to a `&string` parameter, call `xs[i].tags.push(v)`. `for p in &xs` gives a read-only `&Point`. Structs move on assignment: `let p = xs[i]` is an error; write `copy(&xs[i])` for an independent copy, `xs.pop()` to take the last one out, `xs.swap(i, j)` to reorder, and `xs[i] = Point(...)` to replace. `xs[i].tags[j]` is not supported.
-- Methods are called on variables or fields only, never on call results: write `let parts = string.split(&s, ",")` then `parts.len()`.
+- Methods can be called on variables, fields and call results: `parts.len()`, `string.split(&s, ",").len()`, `xs.slice(0, 2).len()`.
 
 ## Maps `{K: V}`
 

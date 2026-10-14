@@ -275,8 +275,10 @@ impl Analysis {
                 }
                 Interval::TOP
             }
-            Expr::Method(_, method, values) | Expr::ElementMethod(_, _, _, method, values) => {
-                if let Expr::ElementMethod(_, index, _, _, _) = expr {
+            Expr::Method(_, method, values)
+            | Expr::ElementMethod(_, _, _, method, values)
+            | Expr::Chain(_, method, values) => {
+                if let Expr::ElementMethod(_, index, _, _, _) | Expr::Chain(index, _, _) = expr {
                     self.expr(index, env, collect);
                 }
                 for value in values {
@@ -747,7 +749,7 @@ fn expression_cost(expr: &Expr) -> Option<i128> {
         | Expr::Format(values) => values
             .iter()
             .try_fold(0, |cost, value| Some(cost + expression_cost(value)?))?,
-        Expr::ElementMethod(_, index, _, _, values) => values
+        Expr::ElementMethod(_, index, _, _, values) | Expr::Chain(index, _, values) => values
             .iter()
             .try_fold(expression_cost(index)?, |cost, value| {
                 Some(cost + expression_cost(value)?)

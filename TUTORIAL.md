@@ -482,7 +482,7 @@ apple
 - `xs.contains(v)` 判断有没有，`xs.index_of(v)` 返回第一次出现的下标，找不到是 -1；字符串元素传借用，例如 `names.contains("amy")`。
 - `xs.insert(i, v)` 插到下标 `i` 前面（`i` 可以等于长度，即追加），`xs.remove(i)` 删除并返回下标 `i` 的元素，`xs.clear()` 清空，`xs.extend(ys)` 把 `ys` 的元素整个移到末尾。
 - `xs.slice(a, b)` 复制出下标 `a` 到 `b`（不含 `b`）的新列表，越界时程序终止。排序、查找和切片要比较或复制元素，结构体列表还不能用。
-- 方法只能用在变量或字段上，例如 `bag.items.push(x)`；暂不支持链式写法 `f().len()`，先用 `let` 绑定。
+- 方法用在变量、字段或调用结果上，例如 `bag.items.push(x)`、`string.split(&s, ",").len()`、`xs.slice(0, 2).len()`。
 
 字典按键存取值，下面统计每种颜色出现的次数：
 
@@ -649,6 +649,7 @@ empty: 0.0
 - 分支冒号后面可以写一条语句，也可以换行缩进写一块。写成 `let name = match s:` 时，每个分支冒号后面是一个值。
 - `match` 不移动被匹配的值：数字和布尔数据按值绑定，字符串、结构体等数据是只读借用。分支里不能修改或移走被匹配的变量。
 - 枚举和结构体一样赋值时移动，可以放进列表、字典和结构体字段，也能用 `&Shape` 借用。枚举可以用 `==` 比较（标签相同且数据相等），取出数据用 `match`。
+- `match` 也能按值分支：整数、字符（如 `'a'`）、字符串、布尔字面量，`|` 列出几个值，`_` 接住其余。语句形式可以没有 `_`（都不匹配时什么也不做）；表达式形式 `let v = match n:` 要有 `_`，或者把 `true`、`false` 都列出来。`match` 后面是调用时只求值一次。
 - 结构体、枚举、列表和字典都能用 `==`、`!=` 逐项比较（字典与插入顺序无关），也能直接 `println` 或放进插值，输出的写法和构造时一样，例如 `Point(x: 1, y: 2)`、`Shape.Circle(1.5)`、`["a", "b"]`、`{"amy": 30}`；里面的字符串带引号。`copy(&x)` 深复制一份，改副本不影响原值。比较、打印和复制都只读取，不移动变量。
 
 ## 第 10 节：所有权与借用
@@ -1037,11 +1038,11 @@ error[ZM301]: use after move: name
 
 Zamak 0.1.0 的支持范围有限。编写程序时需注意以下限制：
 
-- `match` 只用于枚举，还不能匹配整数或字符串；尚不支持泛型、闭包和 trait/接口；`for` 支持整数区间 `a..b` 以及遍历 `&列表`、`&字典`。
+- `match` 匹配枚举变体，或者整数、字符、字符串、布尔字面量（`1 | 2 | 3:`、`"go":`），还不支持区间和守卫条件；尚不支持泛型、闭包和 trait/接口；`for` 支持整数区间 `a..b` 以及遍历 `&列表`、`&字典`。
 - 尚不提供包管理器、交互式执行环境（REPL）、文档生成工具或重构工具。
 - 标准库包括 `std/string`（`byte_len`、`char_len`、`equal`、`parse_i64`、`parse_f64`、`trim`、`byte_at`、`slice`、`find`、`find_from`、`starts_with`、`ends_with`、`contains`、`replace`、`lower`、`upper`、`copy`、`split`、`words`、`lines`、`join`、`chars`、`codepoints`、`from_code`、`bytes`、`from_bytes`、`repeat`、`count`、`pad_left`、`pad_right`）、`std/io`（`println`、`read_line`、`read_all`）、`std/fmt`（`println`、`fixed`）、`std/math`（见第 3 节）、`std/fs`（`read`、`write`）和 `std/env`（`arg_count`、`arg`、`args`、`var`、`exit`），以及不用导入的 `abs`、`min`、`max`，没有目录遍历、网络和时间函数。
 - 错误类型只能是 `string`，没有错误堆栈。
-- 定长数组仅支持 `i64` 局部值；列表 `[T]` 的元素与字典 `{K: V}` 的值可以是 `i64`、`f64`、`bool`、`string` 或结构体，字典键只能是 `i64` 或 `string`；还没有嵌套容器（`[[i64]]`），元素字段里的列表不能再接下标。方法不能链式调用。
+- 定长数组仅支持 `i64` 局部值；列表 `[T]` 的元素与字典 `{K: V}` 的值可以是 `i64`、`f64`、`bool`、`string` 或结构体，字典键只能是 `i64` 或 `string`；还没有嵌套容器（`[[i64]]`），元素字段里的列表不能再接下标。调用结果上可以接着调用方法。
 - 所有权检查覆盖 `string`、结构体、列表和字典；尚不支持线程、`unsafe` 和外部函数接口（FFI）。
 - 编辑器支持为 VS Code 扩展（`editors/vscode/`）：语法高亮、冒号后自动缩进、按缩进折叠；没有语言服务器、补全和调试器。
 - 本教程采用源码安装；安装步骤和平台工具链要求见 [安装说明](PREVIEW.md)。

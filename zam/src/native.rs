@@ -1530,6 +1530,11 @@ impl Generator<'_> {
                     .expect("checked method")
                     .2
             }
+            Expr::Chain(receiver, method, _) => {
+                method_signature(self.ty(receiver), method)
+                    .expect("checked method")
+                    .2
+            }
             Expr::Bool(_) | Expr::StringEqual(_, _) => Type::Bool,
             Expr::Text(_) | Expr::Format(_) => Type::Owned,
             Expr::Variable(name) => self.locals[name].1,
@@ -1839,6 +1844,17 @@ impl Generator<'_> {
                 }
                 values.insert(0, self.pointer(path));
                 self.method_call(receiver, method, &values, result)
+            }
+            Expr::Chain(receiver, method, args) => {
+                let ty = self.ty(receiver);
+                let (_, params, result) = method_signature(ty, method).expect("checked method");
+                // 调用结果是临时值，登记在 owners 里，语句结束时释放。
+                let value = self.expr_as(receiver, ty);
+                let mut values = vec![format!("&{value}")];
+                for (arg, ty) in args.iter().zip(&params) {
+                    values.push(self.argument(arg, *ty));
+                }
+                self.method_call(ty, method, &values, result)
             }
             Expr::ElementMethod(path, index, field, method, args) => {
                 let receiver = self.element_ty(path, field);
@@ -2847,7 +2863,7 @@ fn visit_exprs<'a>(body: &'a Block, visit: &mut impl FnMut(&'a Expr)) {
                     expr(value, visit);
                 }
             }
-            Expr::ElementMethod(_, index, _, _, args) => {
+            Expr::ElementMethod(_, index, _, _, args) | Expr::Chain(index, _, args) => {
                 expr(index, visit);
                 for arg in args {
                     expr(arg, visit);
