@@ -1,0 +1,70 @@
+// 日常表达式：if 表达式、复合赋值、字符串拼接与比较、插值里的表达式、io.print 与 io.eprintln。
+use std/io
+use std/string
+
+struct P {
+    name: string
+    age: i64
+}
+
+fn label(n: i64) -> string {
+    if n < 0 { "negative" } else if n == 0 { "zero" } else { "positive" }
+}
+
+fn main() {
+    let a = 7
+    let b = 3
+    let max = if a > b { a } else { b }
+    println(max)
+    println(label(-2))
+    println(label(0))
+    let word = if max > 5 {
+        "big"
+    } else {
+        "small"
+    }
+    println(word)
+    println(if a == 7 { "seven" } else { "other" })
+
+    let mut total = 10
+    total += 5
+    total -= 1
+    total *= 3
+    total /= 2
+    total %= 8
+    println(total)
+    let mut xs: [i64] = [1, 2, 3]
+    let i = 1
+    xs[i] += 10
+    xs[0] *= 4
+    println(xs[0] + xs[1])
+    let mut counts: {string: i64} = {"a": 1}
+    counts["a"] += 1
+    println(counts["a"])
+    let mut p = P { name: "ann" age: 30 }
+    p.age += 1
+    println(p.age)
+
+    let first = "Za"
+    let second = "mak"
+    let joined = first + second + "!"
+    println(joined)
+    println(first)
+    let mut s = "x"
+    s += "y"
+    s = s + "z"
+    println(s)
+    println("apple" < "banana")
+    println(first == "Za")
+    println(first != second)
+    println("b" >= "ab")
+    let names: [string] = ["bob", "al"]
+    println(names[0] < names[1])
+    println(names[1])
+    println("n={a + b} max={max} len={string.byte_len(&joined)} first={names[0]} up={string.upper(&first)}")
+    println("{xs[2]} {a * b - 1}")
+    io.print("no newline ")
+    io.print("here\n")
+    io.eprintln("to stderr {a}")
+    println(p.name + "!")
+}

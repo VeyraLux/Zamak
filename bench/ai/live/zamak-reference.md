@@ -14,21 +14,21 @@ fn main() -> !string {
 }
 ```
 
-`main` takes no parameters. It returns nothing (`fn main()`) or may fail (`fn main() -> !string`). If `main` fails, the error message is written to standard error and the program exits with status 1. This is the only way to write to standard error.
+`main` takes no parameters. It returns nothing (`fn main()`) or may fail (`fn main() -> !string`). If `main` fails, the error message is written to standard error and the program exits with status 1. To print a line to standard error, use `io.eprintln(&text)`.
 
 ## Values and bindings
 
 - Types: `i64`, `bool`, `string` (UTF-8, owned), structs, lists `[T]`, maps `{K: V}`. There are no floats, chars, tuples, enums, generics or closures.
 - `let x = 1`, `let mut x = 1`, `let mut x: i64 = 1`. Only `let mut` bindings can be reassigned. A name cannot be declared twice in the same function scope chain (no shadowing).
 - Integer literals may use `_` between digits: `1_000_000`. Character literals like `'a'`, `'#'`, `'\n'`, `'\''` are `i64` Unicode code points (useful with `string.byte_at`).
-- Operators: `+ - * / %`, `== != < <= > >=`, `&& || !`, unary `-`, parentheses. There is no `+=`; write `x = x + 1`. `+` does not work on strings. Comparison operators other than `==`/`!=` only work on `i64`; strings are compared with `string.equal`.
+- Operators: `+ - * / %`, `== != < <= > >=`, `&& || !`, unary `-`, parentheses. Compound assignment `+= -= *= /= %=` works on variables, fields and elements. On strings, `+` concatenates (`a + b` makes a new string and moves neither side) and `== != < <= > >=` compare contents. Strings and integers cannot be mixed: `"n=" + 1` is an error; use interpolation.
 - Integer overflow, division by zero, and out-of-range indexes stop the program with an error.
 
 ## Strings
 
 - Escapes: `\n \r \t \" \\`.
-- Interpolation: `"{name}"` inserts a variable or a field path such as `"{p.age}"`. Only plain variables and field paths may appear inside braces, not calls, indexes or arithmetic; bind them with `let` first. `{{` and `}}` produce literal braces.
-- Build strings with interpolation or `string.join`.
+- Interpolation: `"{name}"` inserts a variable or a field path such as `"{p.age}"`. Any expression without string literals or braces may appear inside: `"{a + b}"`, `"{xs[i]}"`, `"{string.upper(&s)}"`. `{{` and `}}` produce literal braces.
+- Build strings with `+`, interpolation or `string.join`.
 
 ## Ownership and borrowing
 
@@ -49,7 +49,7 @@ The last expression of the function body (or of the final `if`/`else` branches) 
 
 ## Control flow
 
-- `if cond { } else if cond { } else { }`; conditions must be `bool`. `if` is a statement, not an expression: to choose a value, declare `let mut v = a` and assign in a branch.
+- `if cond { } else if cond { } else { }`; conditions must be `bool`. To choose a value, use an if expression: `let v = if c { a } else if d { b } else { e }`; it needs `else`, and each branch is a single expression.
 - `while cond { }`, `break`, `continue`.
 - `for i in start..end { }` iterates integers from `start` up to but not including `end`.
 - `for x in &list { }` iterates list elements; `for k in &map { }` iterates map keys in insertion order. String elements/keys are read-only borrows. The list or map cannot be modified inside that loop; use `for i in 0..xs.len()` to modify by index.
@@ -102,7 +102,7 @@ Fields are one per line without commas; struct literals list fields without comm
 
 Import a module with `use std/<name>` and call `name.function(...)`. `println(x)` needs no import and prints one `string`, `i64` or `bool` followed by a newline.
 
-- `std/io`: `io.read_line(&mut line) -> bool!string` reads the next line into `line` without its trailing `\n` or `\r\n` and returns `false` at end of input (typical loop: `let mut line = ""` then `while io.read_line(&mut line)? { ... }`); `io.read_all() -> string!string`.
+- `std/io`: `io.print(&text)` (no newline), `io.eprintln(&text)` (standard error), `io.read_line(&mut line) -> bool!string` reads the next line into `line` without its trailing `\n` or `\r\n` and returns `false` at end of input (typical loop: `let mut line = ""` then `while io.read_line(&mut line)? { ... }`); `io.read_all() -> string!string`.
 - `std/env`: `env.args() -> [string]` (program arguments, without the program name), `env.arg(i) -> string!string`, `env.arg_count() -> i64`.
 - `std/fs`: `fs.read(&path) -> string!string`, `fs.write(&path, &text) -> !string`.
 - `std/string` (all positions are byte offsets):

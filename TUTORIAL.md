@@ -125,6 +125,25 @@ false
 - 整数字面量的数字之间可以用单个 `_` 分组，例如 `1_000_000` 表示一百万。
 - 乘、除、取余的优先级高于加、减；可以用括号明确运算顺序。整数溢出和除零会导致运行失败。
 
+复合赋值 `+=` `-=` `*=` `/=` `%=` 把运算结果写回原变量：
+
+```zamak
+fn main() {
+    let mut score = 10
+    score += 5
+    score *= 2
+    score -= 4
+    println(score)
+}
+```
+
+```text
+26
+```
+
+- `x += e` 等价于 `x = x + e`，变量要用 `let mut` 声明。也可以用在字段（`p.age += 1`）和元素（`xs[i] += 1`、`counts["a"] += 1`）上。
+- 元素的下标里不能调用函数，例如 `xs[next()] += 1` 会报错；先用 `let` 把下标算出来。
+
 ## 第 4 节：条件判断
 
 ```zamak
@@ -157,6 +176,24 @@ positive
 - 多个条件可以使用 `else if` 依次判断。
 - 条件必须是 `bool`，Zamak 不做真假值隐式转换。
 - `return` 立即从当前函数返回。本例各分支都返回 `string`，因此覆盖了函数的所有返回路径。
+
+`if` 也可以写在表达式位置，按条件选一个值：
+
+```zamak
+fn main() {
+    let n = -4
+    let sign = if n < 0 { "negative" } else if n == 0 { "zero" } else { "positive" }
+    let size = if n > 100 || n < -100 { "large" } else { "small" }
+    println("{sign} {size}")
+}
+```
+
+```text
+negative small
+```
+
+- 作为值的 `if` 必须有 `else`，每个分支只写一个表达式，两边的类型要相同。
+- 分支里需要多步计算时，先用 `let` 算好，再放进 `if`；或者改用前面的语句写法。
 
 ## 第 5 节：循环
 
@@ -213,7 +250,7 @@ fn main() {
 - 循环变量 `i` 是只读的 `i64`，只在循环体内可见；不能与已有变量同名。
 - 目前 `for` 只能遍历整数区间，不能直接遍历数组；按下标遍历数组写 `for i in 0..长度`。
 - `while` 适合按条件结束的循环，条件必须是 `bool`。
-- 尚不支持 `+=` 等复合赋值，递增应写为 `i = i + 1`。
+- 递增可以写 `i += 1`（见第 3 节）。
 - `continue` 跳过本次循环剩下的部分，`break` 直接结束循环；两者在 `while` 和 `for` 中都可用，只影响最内层循环。
 
 ## 第 6 节：函数
@@ -283,8 +320,39 @@ true
 - 输出字面大括号时使用 `{{` 和 `}}`。
 - 字符串字面量必须写在一行内；字符串内容需要换行时，使用 `\n` 转义。
 - 标准库 `std/string` 提供三个函数：`string.byte_len(&s)` 返回 UTF-8 字节数，`string.char_len(&s)` 返回 Unicode 码点数，`string.equal(&a, &b)` 判断内容是否相等。本例的 `你好，Zamak！` 占 17 字节，包含 9 个码点。
+- 插值的花括号里可以写表达式，例如 `"{a + b}"`、`"{xs[0]}"`、`"{string.upper(&name)}"`；但不能再写字符串字面量或花括号。
 - Unicode 码点不等同于用户看到的一个字符（字素簇）。组合附加符号或由多个码点组成的 emoji 可能显示为一个字符，`char_len` 仍逐个码点计数。常见汉字在 UTF-8 中通常占 3 字节，因此字节数与码点数不同。
 - 字符字面量用单引号：`'a'`、`'#'`、`'\n'`、`'\''`，它的值是这个字符的 Unicode 码点，类型是 `i64`。和 `string.byte_at` 读到的字节比较时只用 ASCII 字符，例如 `string.byte_at(&s, 0) == '#'`；汉字的码点大于 255，不等于任何单个字节。
+
+字符串可以用 `+` 拼接，用 `==`、`<` 等比较：
+
+```zamak
+use std/string
+
+fn main() {
+    let first = "Za"
+    let mut name = first + "mak"
+    name += "!"
+    println(name)
+    println(first)
+    println("apple" < "banana")
+    println(name == "Zamak!")
+    let scores: [i64] = [90, 72]
+    println("total={scores[0] + scores[1]} length={string.char_len(&name)}")
+}
+```
+
+```text
+Zamak!
+Za
+true
+true
+total=162 length=6
+```
+
+- `a + b` 生成一个新字符串，`a` 和 `b` 都不会被移动，之后还能继续使用。
+- `==` `!=` 比较内容是否相同，`<` `<=` `>` `>=` 按字节顺序比较，结果是 `bool`。
+- 字符串不能和整数相加，例如 `"n=" + 1` 会报错；用插值 `"n={n}"`。
 
 ## 第 8 节：数组、列表与字典
 
