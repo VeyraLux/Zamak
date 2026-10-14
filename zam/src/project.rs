@@ -11,7 +11,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-33");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-35");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -334,6 +334,7 @@ impl Project {
             type_names: BTreeMap::new(),
             imports: Vec::new(),
             functions: BTreeMap::new(),
+            constants: BTreeMap::new(),
         };
         for (id, input) in &self.modules {
             for (name, structure) in &input.module.structs {
@@ -358,6 +359,17 @@ impl Project {
                     .map(|(name, _)| name.clone())
                     .collect();
                 declared(&function.body, &mut locals);
+                // 不支持遮蔽：局部名不能和本模块的常量同名。
+                if let Some(name) = locals
+                    .iter()
+                    .find(|name| input.module.constants.contains_key(name.as_str()))
+                {
+                    return Err(self.located(
+                        id,
+                        position,
+                        format!("{name} is already a constant; choose another name for the local"),
+                    ));
+                }
                 self.resolve_body(id, &locals, &mut function.body)?;
                 linked.functions.insert(format!("{id}:{name}"), function);
             }
@@ -444,6 +456,24 @@ impl Project {
                 self.resolve_type(module, ty)
                     .map_err(|error| self.located(module, position, error))?;
             }
+            if let Instruction::Assign(name, _)
+            | Instruction::AssignField(name, _, _)
+            | Instruction::AssignIndex(name, _, _)
+            | Instruction::AssignIndexField(name, _, _, _) = instruction
+            {
+                if !locals.contains(name.as_str())
+                    && self.modules[module]
+                        .module
+                        .constants
+                        .contains_key(name.as_str())
+                {
+                    return Err(self.located(
+                        module,
+                        position,
+                        format!("cannot assign to the constant {name}"),
+                    ));
+                }
+            }
             let expr = match instruction {
                 Instruction::Let(_, _, _, expr)
                 | Instruction::Assign(_, expr)
@@ -493,7 +523,62 @@ impl Project {
         Ok(())
     }
 
+    /// 常量的用法换成它的字面量：本模块的 `LIMIT`、导入模块的 `config.LIMIT`，以及字符串常量的
+    /// 借用 `&NAME`（`&string` 参数本来就接受字符串字面量）。不是常量时返回 None。
+    fn constant_use(
+        &self,
+        module: &str,
+        locals: &BTreeSet<String>,
+        expr: &Expr,
+    ) -> Result<Option<Expr>> {
+        let (path, borrowed) = match expr {
+            Expr::Variable(name) => (name.clone(), false),
+            Expr::Borrow(name, false) => (name.clone(), true),
+            Expr::Field(root, field) => (format!("{root}.{field}"), false),
+            _ => return Ok(None),
+        };
+        let (target, name) = match path.split_once('.') {
+            None => (module.to_owned(), path.as_str()),
+            Some((alias, name)) if !name.contains('.') && !locals.contains(alias) => {
+                let imports: Vec<_> = self.modules[module]
+                    .module
+                    .imports
+                    .iter()
+                    .filter(|p| p.rsplit('/').next() == Some(alias))
+                    .collect();
+                match imports.as_slice() {
+                    [target] if self.modules.contains_key(target.as_str()) => {
+                        ((*target).clone(), name)
+                    }
+                    _ => return Ok(None),
+                }
+            }
+            _ => return Ok(None),
+        };
+        if target == module && locals.contains(name) {
+            return Ok(None);
+        }
+        let Some(constant) = self.modules[&target].module.constants.get(name) else {
+            return Ok(None);
+        };
+        if target != module && !constant.public {
+            return Err(format!(
+                "private constant {path}; declare it with pub const"
+            ));
+        }
+        if borrowed && !matches!(constant.value, Expr::Text(_)) {
+            return Err(format!(
+                "cannot borrow the constant {path}; only string constants can be passed as &string"
+            ));
+        }
+        Ok(Some(constant.value.clone()))
+    }
+
     fn resolve_expr(&self, module: &str, locals: &BTreeSet<String>, expr: &mut Expr) -> Result<()> {
+        if let Some(value) = self.constant_use(module, locals, expr)? {
+            *expr = value;
+            return Ok(());
+        }
         match expr {
             Expr::Record(name, fields) => {
                 let (target, short) = if let Some((alias, short)) = name.split_once('.') {

@@ -3,9 +3,11 @@
 fn popcount(n: i64) -> i64:
     let mut x = n
     let mut count = 0
+
     while x != 0:
         count += x & 1
         x = x >> 1 & 9223372036854775807
+
     count
 
 fn main():

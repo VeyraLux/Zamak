@@ -280,12 +280,124 @@ pub struct Struct {
     pub variants: Vec<(String, usize, usize)>,
 }
 
+/// 顶层常量：值在解析时算好，是整数、浮点、布尔或字符串字面量；用到的地方直接换成这个字面量。
+#[derive(Clone, Debug)]
+pub struct Constant {
+    pub public: bool,
+    pub value: Expr,
+}
+
 #[derive(Clone, Debug)]
 pub struct Module {
     pub structs: BTreeMap<String, Struct>,
     pub type_names: BTreeMap<u64, String>,
     pub imports: Vec<String>,
     pub functions: BTreeMap<String, Function>,
+    pub constants: BTreeMap<String, Constant>,
+}
+
+/// 常量名全大写（可含数字与下划线），与结构体的大驼峰名区分。
+pub fn constant_name(name: &str) -> bool {
+    name.starts_with(|c: char| c.is_ascii_uppercase())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+}
+
+/// 在编译期算出常量表达式：只能用字面量、前面声明过的常量和运算符。整数溢出、除零、
+/// 移位量越界在这里直接报错，与运行时的规则一致。
+fn fold(expr: &Expr, constants: &BTreeMap<String, Constant>) -> Result<Expr, String> {
+    let fail = || "constants can only use literals, earlier constants and operators".to_owned();
+    let overflow = || "integer arithmetic error in constant".to_owned();
+    Ok(match expr {
+        Expr::Int(_) | Expr::Float(_) | Expr::Bool(_) | Expr::Text(_) => expr.clone(),
+        Expr::Variable(name) => constants
+            .get(name)
+            .map(|constant| constant.value.clone())
+            .ok_or_else(|| format!("unknown constant {name}; {}", fail()))?,
+        Expr::Unary(op, value) => match (op, fold(value, constants)?) {
+            ('-', Expr::Int(n)) => Expr::Int(n.checked_neg().ok_or_else(overflow)?),
+            ('-', Expr::Float(x)) => Expr::Float(-x),
+            ('~', Expr::Int(n)) => Expr::Int(!n),
+            ('!', Expr::Bool(b)) => Expr::Bool(!b),
+            _ => return Err("type mismatch in constant".into()),
+        },
+        Expr::Binary(op, left, right) => {
+            let (a, b) = (fold(left, constants)?, fold(right, constants)?);
+            let compare = |order: std::cmp::Ordering| {
+                use std::cmp::Ordering::*;
+                Expr::Bool(match op.as_str() {
+                    "==" => order == Equal,
+                    "!=" => order != Equal,
+                    "<" => order == Less,
+                    "<=" => order != Greater,
+                    ">" => order == Greater,
+                    _ => order != Less,
+                })
+            };
+            let comparison = matches!(op.as_str(), "==" | "!=" | "<" | "<=" | ">" | ">=");
+            match (a, b) {
+                (Expr::Int(x), Expr::Int(y)) if comparison => compare(x.cmp(&y)),
+                (Expr::Int(x), Expr::Int(y)) => Expr::Int(
+                    match op.as_str() {
+                        "+" => x.checked_add(y),
+                        "-" => x.checked_sub(y),
+                        "*" => x.checked_mul(y),
+                        "/" => x.checked_div(y),
+                        "%" => x.checked_rem(y),
+                        "&" => Some(x & y),
+                        "|" => Some(x | y),
+                        "^" => Some(x ^ y),
+                        "<<" => (0..64).contains(&y).then(|| ((x as u64) << y) as i64),
+                        ">>" => (0..64).contains(&y).then(|| x >> y),
+                        _ => return Err("type mismatch in constant".into()),
+                    }
+                    .ok_or_else(overflow)?,
+                ),
+                (Expr::Float(x), Expr::Float(y)) if comparison => {
+                    // NaN 与任何数比较都不成立，只有 != 为真。
+                    match x.partial_cmp(&y) {
+                        Some(order) => compare(order),
+                        None => Expr::Bool(op == "!="),
+                    }
+                }
+                (Expr::Float(x), Expr::Float(y)) => Expr::Float(match op.as_str() {
+                    "+" => x + y,
+                    "-" => x - y,
+                    "*" => x * y,
+                    "/" => x / y,
+                    "%" => x % y,
+                    _ => return Err("type mismatch in constant".into()),
+                }),
+                (Expr::Bool(x), Expr::Bool(y)) => Expr::Bool(match op.as_str() {
+                    "&&" => x && y,
+                    "||" => x || y,
+                    "==" => x == y,
+                    "!=" => x != y,
+                    _ => return Err("type mismatch in constant".into()),
+                }),
+                (Expr::Text(x), Expr::Text(y)) if comparison => compare(x.cmp(&y)),
+                (Expr::Text(x), Expr::Text(y)) if op == "+" => Expr::Text(x + &y),
+                (Expr::Int(_), Expr::Float(_)) | (Expr::Float(_), Expr::Int(_)) => {
+                    return Err(format!(
+                        "type mismatch: {op} mixes i64 and f64 in a constant; write integers as 1.0"
+                    ))
+                }
+                _ => return Err("type mismatch in constant".into()),
+            }
+        }
+        _ => return Err(fail()),
+    })
+}
+
+/// 常量字面量的类型。
+fn literal_type(expr: &Expr) -> Type {
+    match expr {
+        Expr::Int(_) => Type::Int,
+        Expr::Float(_) => Type::Float,
+        Expr::Bool(_) => Type::Bool,
+        _ => Type::Owned,
+    }
 }
 
 type SourcePosition = (usize, usize);
@@ -622,8 +734,12 @@ pub fn format(source: &str) -> Result<String, String> {
                     first: positions[first].0 - 1,
                     last: positions[i].0 - 1,
                     depth,
-                    head: match &tokens[first] {
-                        Token::Word(word) => word.clone(),
+                    // `pub const` 的开头按 `const` 算，连续的常量之间不加空行。
+                    head: match (&tokens[first], tokens.get(first + 1)) {
+                        (Token::Word(word), Some(Token::Word(next))) if word == "pub" => {
+                            next.clone()
+                        }
+                        (Token::Word(word), _) => word.clone(),
                         _ => String::new(),
                     },
                     opens: tokens.get(i + 1) == Some(&Token::Indent),
@@ -752,13 +868,13 @@ pub fn format(source: &str) -> Result<String, String> {
             after_line.insert(logical[end].last, line.depth);
         }
     }
-    // 顶层声明之间（连续的 use 除外），空行放在声明前面紧挨着的注释之前。
+    // 顶层声明之间（连续的 use、连续的单行 const 除外），空行放在声明前面紧挨着的注释之前。
     let top: Vec<usize> = (0..logical.len())
         .filter(|&i| logical[i].depth == 0)
         .collect();
     for pair in top.windows(2) {
         let (a, b) = (&logical[pair[0]], &logical[pair[1]]);
-        if a.head == "use" && b.head == "use" {
+        if (a.head == "use" && b.head == "use") || (a.head == "const" && b.head == "const") {
             continue;
         }
         before_line.insert(b.first);
@@ -1890,6 +2006,7 @@ pub fn parse(source: &str) -> Result<Module, String> {
             type_names: BTreeMap::new(),
             imports: Vec::new(),
             functions: BTreeMap::new(),
+            constants: BTreeMap::new(),
         };
         p.newlines();
         while p.peek().is_some() {
@@ -1914,6 +2031,40 @@ pub fn parse(source: &str) -> Result<Module, String> {
             }
             let public = p.keyword("pub");
             let start = p.at();
+            // `const LIMIT = 100`、`const NAME: string = "x"`：解析时就算出值。
+            if p.keyword("const") {
+                let name = p.word()?;
+                if !constant_name(&name) {
+                    return Err(format!(
+                        "constant names are written in UPPER_CASE, such as {}",
+                        name.to_uppercase()
+                    ));
+                }
+                let annotation = if p.symbol(':') { Some(p.ty()?) } else { None };
+                p.expect('=')?;
+                let value = fold(&p.expr()?, &module.constants)?;
+                if let Some(ty) = annotation {
+                    let found = literal_type(&value);
+                    if ty != found {
+                        return Err(match (ty, found) {
+                            (Type::Float, Type::Int) => format!(
+                                "type mismatch: constant {name} is declared f64 but its value is i64; write it as 1.0"
+                            ),
+                            _ => format!("type mismatch: constant {name} does not have the declared type"),
+                        });
+                    }
+                }
+                if module.structs.contains_key(&name)
+                    || module
+                        .constants
+                        .insert(name.clone(), Constant { public, value })
+                        .is_some()
+                {
+                    return Err(format!("duplicate declaration {name}"));
+                }
+                p.separator()?;
+                continue;
+            }
             if p.keyword("struct") {
                 let name = p.word()?;
                 if matches!(name.as_str(), "string" | "i64" | "f64" | "bool") {
@@ -1961,6 +2112,7 @@ pub fn parse(source: &str) -> Result<Module, String> {
                     p.separator()?;
                 }
                 if module.functions.contains_key(&name)
+                    || module.constants.contains_key(&name)
                     || module
                         .structs
                         .insert(
@@ -2040,6 +2192,7 @@ pub fn parse(source: &str) -> Result<Module, String> {
                     return Err(format!("expected at least one variant in enum {name}"));
                 }
                 if module.functions.contains_key(&name)
+                    || module.constants.contains_key(&name)
                     || module
                         .structs
                         .insert(
@@ -2058,7 +2211,7 @@ pub fn parse(source: &str) -> Result<Module, String> {
                 continue;
             }
             if !p.keyword("fn") {
-                return Err("expected use, struct, enum or fn declaration".into());
+                return Err("expected use, const, struct, enum or fn declaration".into());
             }
             let name = p.word()?;
             // 首字母大写的名字留给结构体与枚举：`Point(x: 1)` 是结构体字面量，不是调用。
@@ -2159,8 +2312,13 @@ pub fn encode(module: &Module) -> Vec<u8> {
             )
         })
         .collect();
+    let constants: Vec<_> = module
+        .constants
+        .iter()
+        .map(|(name, constant)| (name, constant.public, &constant.value))
+        .collect();
     format!(
-        "ZAM-IR-22\n{declarations:?}\n{:?}\n{:?}\n{:?}\n",
+        "ZAM-IR-23\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
         module.type_names, module.imports, module.functions
     )
     .into_bytes()

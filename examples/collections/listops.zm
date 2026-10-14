@@ -2,8 +2,10 @@
 
 fn show(label: &string, xs: &[i64]):
     let mut text = ""
+
     for x in &xs:
         text = text + " {x}"
+
     println("{label}:{text}")
 
 fn main():
@@ -50,6 +52,8 @@ fn main():
 
 fn string_list(xs: &[string]) -> string:
     let mut text = ""
+
     for x in &xs:
         text = text + x + ";"
+
     text
