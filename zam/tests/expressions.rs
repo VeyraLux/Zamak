@@ -101,19 +101,38 @@ fn word_operators_follow_python_precedence() {
 #[test]
 fn symbol_logic_operators_point_to_words() {
     let case = Case::new("expressions", "symbols");
-    for (body, message) in [
-        ("println(true && false)", "expected `and` instead of `&&`"),
-        ("println(true || false)", "expected `or` instead of `||`"),
-        ("println(!true)", "expected `not` instead of `!`"),
-        ("let and = 1", "reserved word and"),
-        ("let not = 1", "reserved word not"),
-        ("println(1 == not true)", "`not` cannot follow a comparison"),
+    for (body, message, column) in [
+        (
+            "println(true && false)",
+            "expected `and` instead of `&&`",
+            18,
+        ),
+        (
+            "println(true || false)",
+            "expected `or` instead of `||`",
+            18,
+        ),
+        ("println(!true)", "expected `not` instead of `!`", 13),
+        ("let and = 1", "reserved word and", 0),
+        ("let not = 1", "reserved word not", 0),
+        (
+            "println(1 == not true)",
+            "`not` cannot follow a comparison",
+            0,
+        ),
     ] {
         let source = format!("fn main():\n    {body}\n");
         let output = case.run(&source);
         assert!(!output.status.success(), "accepted {source}");
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains(message), "{source}: {stderr}");
+        if column > 0 {
+            assert!(
+                stderr.contains(&format!(":2:{column}")),
+                "{source}: {stderr}"
+            );
+            assert!(stderr.contains("write `a and b`"), "{source}: {stderr}");
+        }
     }
     let output =
         case.run("fn f() -> i64!string: 1\nfn main() -> !string:\n    println(f()? != 2)\n");

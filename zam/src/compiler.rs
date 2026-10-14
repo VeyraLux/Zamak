@@ -1168,7 +1168,7 @@ impl Parser {
             }
             return Ok(Expr::Unary('-', Box::new(self.atom()?)));
         }
-        if self.symbol('!') {
+        if self.peek() == Some(&Token::Symbol('!')) {
             return Err(
                 "expected `not` instead of `!`; `!` only marks error types such as i64!string"
                     .into(),
