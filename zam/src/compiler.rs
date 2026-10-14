@@ -259,6 +259,9 @@ pub enum Expr {
     Method(String, String, Vec<Expr>),
     // `xs[i].tags.push(v)`：接收者是结构体元素里的容器字段（容器路径, 下标, 字段路径, 方法, 参数）。
     ElementMethod(String, Box<Expr>, String, String, Vec<Expr>),
+    // `f().len()`、`xs.slice(0, 2).len()`：在调用结果（临时值）上调用列表或字典的方法，
+    // 临时值在语句结束时释放。
+    Chain(Box<Expr>, String, Vec<Expr>),
     // `{k: v, ...}` 字典字面量；空字典需要类型标注。
     MapLit(Vec<(Expr, Expr)>),
     // `if c { a } else { b }` 作为值：每个分支是单个表达式，必须有 else。
@@ -984,6 +987,24 @@ struct Parser {
     implicit: BTreeSet<SourcePosition>,
     // 整个文件几乎没有缩进：缺缩进块的报错里提示可能是复制时丢了缩进。
     flat: bool,
+    // 要插在当前语句前面的语句：对调用结果做字面量 match 时，先把值存进隐藏变量。
+    pending: Vec<Instruction>,
+    temps: usize,
+}
+
+/// match 的一个分支：枚举变体、字面量（`1 | 2`、`"a"`、`true`）或 `_`。
+enum Arm {
+    Variant(Pattern),
+    Values(Vec<Expr>),
+    Wildcard,
+}
+impl Arm {
+    fn pattern(self) -> Pattern {
+        match self {
+            Arm::Variant(pattern) => pattern,
+            _ => (None, Vec::new()),
+        }
+    }
 }
 
 /// 没有调用的表达式：重复求值不会产生额外副作用（复合赋值的下标用它判断）。
@@ -1151,6 +1172,7 @@ impl Parser {
         if self.peek() != Some(&Token::Newline) {
             let position = self.at();
             if let Some(instruction) = self.statement(imports, result, Some(true))? {
+                body.extend(self.pending.drain(..).map(|hoisted| (hoisted, position)));
                 body.push((instruction, position));
             }
             return Ok(body);
@@ -1160,6 +1182,7 @@ impl Parser {
         while !matches!(self.peek(), Some(Token::Dedent) | None) {
             let position = self.at();
             if let Some(instruction) = self.statement(imports, result, None)? {
+                body.extend(self.pending.drain(..).map(|hoisted| (hoisted, position)));
                 body.push((instruction, position));
             }
             self.separator()?;
@@ -1586,17 +1609,27 @@ impl Parser {
             };
         }
         let args = self.arguments()?;
-        let call = Expr::Call(name, args);
+        let mut call = Expr::Call(name, args);
         // `?` 只作用于调用；其他位置的 `?` 不是合法语法。
         if self.symbol('?') {
-            return Ok(Expr::Try(Box::new(call)));
-        }
-        // `call catch e: ...` 就地处理错误，不传播。
-        if self.keyword("catch") {
+            call = Expr::Try(Box::new(call));
+        } else if self.keyword("catch") {
+            // `call catch e: ...` 就地处理错误，不传播。
             let binding = self.word()?;
             let imports = self.imports.clone();
             let block = self.suite(&imports, self.result, "catch")?;
             return Ok(Expr::Catch(Box::new(call), binding, block));
+        }
+        // 调用结果上接着调用方法：`string.split(&s, ",").len()`。
+        while self.peek() == Some(&Token::Symbol('.'))
+            && matches!(self.tokens.get(self.position + 1), Some(Token::Word(_)))
+            && self.tokens.get(self.position + 2) == Some(&Token::Symbol('('))
+        {
+            self.take();
+            let method = self.word()?;
+            self.expect('(')?;
+            let args = self.arguments()?;
+            call = Expr::Chain(Box::new(call), method, args);
         }
         Ok(call)
     }
@@ -1653,6 +1686,8 @@ impl Parser {
                         result: self.result,
                         implicit: BTreeSet::new(),
                         flat: false,
+                        pending: Vec::new(),
+                        temps: 0,
                     };
                     let expr = inner
                         .expr()
@@ -1883,7 +1918,10 @@ impl Parser {
                 }
             } else if matches!(
                 expr,
-                Expr::Try(_) | Expr::Catch(_, _, _) | Expr::ElementMethod(_, _, _, _, _)
+                Expr::Try(_)
+                    | Expr::Catch(_, _, _)
+                    | Expr::ElementMethod(_, _, _, _, _)
+                    | Expr::Chain(_, _, _)
             ) {
                 // `write(&p)?` 这类语句：不是函数的最后一个值表达式，就只求值、不返回。
                 if result != Type::Unit && last.unwrap_or_else(|| self.at_end()) {
@@ -1897,10 +1935,34 @@ impl Parser {
             }
         }))
     }
-    /// `match` 的分支模式：`Circle(r)`、`Rect(w, _)`、`Shape.Empty` 或 `_`，后接 `:`。
-    fn pattern(&mut self) -> Result<Pattern, String> {
+    /// `match` 的分支模式：`Circle(r)`、`Rect(w, _)`、`Shape.Empty`、字面量 `1 | 2`、`"a"`、`true`
+    /// 或 `_`，后接 `:`。
+    fn pattern(&mut self) -> Result<Arm, String> {
+        let literal = matches!(
+            self.peek(),
+            Some(Token::Number(_) | Token::Float(_) | Token::Text(_) | Token::Symbol('-'))
+        ) || matches!(self.peek(), Some(Token::Word(word)) if word == "true" || word == "false");
         let pattern = if self.keyword("_") {
-            (None, Vec::new())
+            Arm::Wildcard
+        } else if literal {
+            let mut values = Vec::new();
+            loop {
+                let value = self.atom()?;
+                if !matches!(
+                    value,
+                    Expr::Int(_) | Expr::Float(_) | Expr::Bool(_) | Expr::Text(_)
+                ) {
+                    return Err(
+                        "match patterns are literals such as 1, -2, 'a', \"text\" or true, without interpolation"
+                            .into(),
+                    );
+                }
+                values.push(value);
+                if !self.symbol('|') {
+                    break;
+                }
+            }
+            Arm::Values(values)
         } else {
             let name = self.type_name()?;
             let variant = name.rsplit('.').next().unwrap_or(&name).to_owned();
@@ -1919,7 +1981,13 @@ impl Parser {
                     self.expect(',')?;
                 }
             }
-            (Some(variant), bindings)
+            if self.peek() == Some(&Token::Symbol('|')) {
+                return Err(
+                    "only literal patterns can be combined with |; write one arm per variant"
+                        .into(),
+                );
+            }
+            Arm::Variant((Some(variant), bindings))
         };
         if self.peek() == Some(&Token::Symbol('='))
             && self.tokens.get(self.position + 1) == Some(&Token::Symbol('>'))
@@ -1942,6 +2010,7 @@ impl Parser {
     }
     /// 语句形式的 match：分支是同一行的一条语句或缩进的一块。
     fn match_statement(&mut self, imports: &[String], result: Type) -> Result<Instruction, String> {
+        let position = self.at();
         let scrutinee = self.expr()?;
         self.arms()?;
         let mut arms = Vec::new();
@@ -1952,7 +2021,29 @@ impl Parser {
             self.separator()?;
         }
         self.take();
-        Ok(Instruction::Match(scrutinee, arms))
+        if !literal_arms(&arms)? {
+            let arms = arms
+                .into_iter()
+                .map(|(arm, body)| (arm.pattern(), body))
+                .collect();
+            return Ok(Instruction::Match(scrutinee, arms));
+        }
+        // 字面量 match 展开成 if/elif/else：每个分支的条件是 `值 == 字面量`，`|` 连成 or。
+        let subject = self.subject(scrutinee);
+        let mut tail: Block = Vec::new();
+        for (arm, body) in arms.into_iter().rev() {
+            tail = match arm {
+                Arm::Values(values) => vec![(
+                    Instruction::If(literal_test(&subject, values), body, tail),
+                    position,
+                )],
+                _ => body,
+            };
+        }
+        Ok(match tail.pop() {
+            Some((instruction, _)) if tail.is_empty() => instruction,
+            _ => unreachable!("literal match has a value arm first"),
+        })
     }
     /// 表达式形式的 match：`let v = match s:` 下面每行一个 `Pattern: 值`。
     fn match_value(&mut self) -> Result<Expr, String> {
@@ -1965,8 +2056,89 @@ impl Parser {
             self.separator()?;
         }
         self.take();
-        Ok(Expr::Match(Box::new(scrutinee), arms))
+        if !literal_arms(&arms)? {
+            let arms = arms
+                .into_iter()
+                .map(|(arm, value)| (arm.pattern(), value))
+                .collect();
+            return Ok(Expr::Match(Box::new(scrutinee), arms));
+        }
+        // 值要有着落：最后是 `_`，或者布尔值的 true、false 都列出了。
+        let wildcard = matches!(arms.last(), Some((Arm::Wildcard, _)));
+        let mut booleans = BTreeSet::new();
+        for (arm, _) in &arms {
+            if let Arm::Values(values) = arm {
+                for value in values {
+                    if let Expr::Bool(b) = value {
+                        booleans.insert(*b);
+                    }
+                }
+            }
+        }
+        if !wildcard && booleans.len() < 2 {
+            return Err("a match expression needs a _ arm for the values no pattern lists".into());
+        }
+        let subject = self.subject(scrutinee);
+        let mut arms = arms.into_iter().rev();
+        let mut value = arms.next().expect("match has arms").1;
+        for (arm, branch) in arms {
+            let Arm::Values(values) = arm else {
+                unreachable!("_ is the last arm")
+            };
+            value = Expr::If(
+                Box::new(literal_test(&subject, values)),
+                Box::new(branch),
+                Box::new(value),
+            );
+        }
+        Ok(value)
     }
+    /// 字面量 match 反复比较的值：变量、字段、元素直接用；调用等其他表达式先存进隐藏变量
+    /// （插在当前语句前面求值一次）。
+    fn subject(&mut self, scrutinee: Expr) -> Expr {
+        if pure(&scrutinee) && !matches!(scrutinee, Expr::Borrow(_, _)) {
+            return scrutinee;
+        }
+        let name = format!("$match{}", self.temps);
+        self.temps += 1;
+        self.pending
+            .push(Instruction::Let(name.clone(), false, None, scrutinee));
+        Expr::Variable(name)
+    }
+}
+
+/// 分支是不是字面量模式（要展开成 if 链）。不能和枚举变体混用；`_` 只能在最后；字面量不能重复。
+fn literal_arms<T>(arms: &[(Arm, T)]) -> Result<bool, String> {
+    let literal = arms.iter().any(|(arm, _)| matches!(arm, Arm::Values(_)));
+    let mut seen = BTreeSet::new();
+    for (index, (arm, _)) in arms.iter().enumerate() {
+        match arm {
+            Arm::Variant(_) if literal => {
+                return Err("this match mixes enum variants and literal patterns".into())
+            }
+            Arm::Wildcard if index + 1 < arms.len() => {
+                return Err("unreachable match arm after _".into())
+            }
+            Arm::Values(values) => {
+                for value in values {
+                    if !seen.insert(format!("{value:?}")) {
+                        return Err(format!("duplicate match arm {value:?}"));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(literal)
+}
+
+/// 字面量分支的条件：`subject == v1 or subject == v2 ...`。
+fn literal_test(subject: &Expr, values: Vec<Expr>) -> Expr {
+    values
+        .into_iter()
+        .map(|value| Expr::Binary("==".into(), Box::new(subject.clone()), Box::new(value)))
+        .reduce(|a, b| Expr::Binary("||".into(), Box::new(a), Box::new(b)))
+        .expect("a literal arm lists at least one value")
 }
 
 // 字符串插值：`{name}` 读取变量或字段，`{{`/`}}` 输出字面大括号。
@@ -2044,6 +2216,8 @@ pub fn parse(source: &str) -> Result<Module, String> {
         result: Type::Unit,
         implicit: BTreeSet::new(),
         flat,
+        pending: Vec::new(),
+        temps: 0,
     };
     let result = (|| {
         let mut module = Module {
@@ -2363,7 +2537,7 @@ pub fn encode(module: &Module) -> Vec<u8> {
         .map(|(name, constant)| (name, constant.public, &constant.value))
         .collect();
     format!(
-        "ZAM-IR-24\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
+        "ZAM-IR-25\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
         module.type_names, module.imports, module.functions
     )
     .into_bytes()
@@ -2506,7 +2680,7 @@ impl<'a> Checker<'a> {
     ) -> Result<(u64, Option<String>), String> {
         let ty = self.scrutinee_ty(expr)?;
         let Some((name, _)) = self.enumeration(ty) else {
-            return Err("type mismatch: match requires an enum value".into());
+            return Err("type mismatch: match requires an enum value, or literal patterns such as 1, \"a\" or true".into());
         };
         let id = record_id(name);
         let root = match expr {
@@ -2651,6 +2825,18 @@ impl<'a> Checker<'a> {
     fn callee<'n>(&self, name: &'n str, args: &[Expr]) -> &'n str {
         overload(name, args.first().and_then(|arg| self.ty(arg).ok()))
     }
+    /// 调用结果上的方法不存在：列出能用的方法。
+    fn chain_error(&self, ty: Type, method: &str) -> String {
+        match ty.container() {
+            Some(container) => format!(
+                "unknown function .{method}: {}",
+                supported_methods(container, method)
+            ),
+            None => format!(
+                "type mismatch: this value has no method {method}; methods are only available on lists and maps"
+            ),
+        }
+    }
     /// 只读使用一个值时它的 owned 类型：`&x`、`&xs[i]` 与借用参数都换成被借用的类型。
     fn value_type(&self, expr: &Expr) -> Result<Type, String> {
         let ty = match expr {
@@ -2732,7 +2918,7 @@ impl<'a> Checker<'a> {
             Expr::Match(scrutinee, arms) => {
                 let ty = self.scrutinee_ty(scrutinee)?;
                 let Some((name, _)) = self.enumeration(ty) else {
-                    return Err("type mismatch: match requires an enum value".into());
+                    return Err("type mismatch: match requires an enum value, or literal patterns such as 1, \"a\" or true".into());
                 };
                 let (pattern, value) = arms.first().ok_or("a match needs at least one arm")?;
                 let mut locals = self.locals.clone();
@@ -2795,6 +2981,12 @@ impl<'a> Checker<'a> {
                     .ok_or_else(|| "scalar references are not supported".into())
             }
             Expr::Method(path, method, _) => self.method(path, method).map(|(_, _, ty)| ty),
+            Expr::Chain(receiver, method, _) => {
+                let ty = self.ty(receiver)?;
+                method_signature(ty, method)
+                    .map(|(_, _, result)| result)
+                    .ok_or_else(|| self.chain_error(ty, method))
+            }
             Expr::ElementMethod(path, _, field, method, _) => self
                 .element_method(path, field, method)
                 .map(|(_, _, _, ty)| ty),
@@ -3387,6 +3579,27 @@ impl<'a> Checker<'a> {
                 self.container(path, mutable, loans)?;
                 Ok(())
             }
+            Expr::Chain(receiver, method, args) => {
+                // 先求值调用结果（临时值，语句结束时释放），再求实参，然后调用方法。
+                let ty = self.ty(receiver)?;
+                let (_, params, result) =
+                    method_signature(ty, method).ok_or_else(|| self.chain_error(ty, method))?;
+                if !matches!(ty, Type::List(_) | Type::Map(_, _)) {
+                    return Err(self.chain_error(ty, method));
+                }
+                if result != expected {
+                    return Err(format!("return type mismatch for .{method}"));
+                }
+                if params.len() != args.len() {
+                    return Err(format!("argument count mismatch for .{method}"));
+                }
+                self.expr(receiver, ty, loans)?;
+                let mut frame = loans.clone();
+                for (arg, ty) in args.iter().zip(&params) {
+                    self.expr(arg, *ty, &mut frame)?;
+                }
+                Ok(())
+            }
             Expr::ElementMethod(path, index, field, method, args) => {
                 let (key, mutable, params, result) = self.element_method(path, field, method)?;
                 if result != expected {
@@ -3871,6 +4084,7 @@ impl<'a> Checker<'a> {
                             | Expr::Catch(_, _, _)
                             | Expr::Method(_, _, _)
                             | Expr::ElementMethod(_, _, _, _, _)
+                            | Expr::Chain(_, _, _)
                     ) {
                         self.ty(expr)?
                     } else {

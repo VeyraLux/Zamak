@@ -11,7 +11,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-36");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-37");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -744,7 +744,7 @@ impl Project {
                     self.resolve_expr(module, locals, arg)?;
                 }
             }
-            Expr::ElementMethod(_, index, _, _, args) => {
+            Expr::ElementMethod(_, index, _, _, args) | Expr::Chain(index, _, args) => {
                 self.resolve_expr(module, locals, index)?;
                 for arg in args {
                     self.resolve_expr(module, locals, arg)?;
@@ -1100,7 +1100,7 @@ fn declared(body: &Block, names: &mut BTreeSet<String>) {
             | Expr::Array(values)
             | Expr::Format(values) => values.iter().for_each(|value| expr(value, names)),
             Expr::Record(_, fields) => fields.iter().for_each(|(_, value)| expr(value, names)),
-            Expr::ElementMethod(_, index, _, _, values) => {
+            Expr::ElementMethod(_, index, _, _, values) | Expr::Chain(index, _, values) => {
                 expr(index, names);
                 values.iter().for_each(|value| expr(value, names));
             }
