@@ -55,3 +55,35 @@ fn string_search_replace_and_case() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("zam: string index out of bounds"));
 }
+
+/// 按字符处理：chars/codepoints/from_code/bytes/from_bytes/repeat/count/pad_left/pad_right。
+#[test]
+fn characters_bytes_and_padding() {
+    let case = Case::new("text", "characters");
+    let source = include_str!("../../examples/values/chars.zm");
+    assert_eq!(
+        stdout(&case.run(source)),
+        "9\n!好你 kamaZ\n20320 97\n好!\n195 169\né\nababab\n2\n|amy   |  30|\n|李雷    |  20|\n|bob   |  30|\n"
+    );
+    let output = case.run("use std/string\nfn main():\n    println(string.repeat(\"x\", -2) == \"\")\n    println(string.count(\"aaaa\", \"aa\"))\n    println(string.count(\"你好\", \"\"))\n    let empty = string.chars(\"\")\n    println(empty.len())\n    println(string.pad_left(\"long\", 2))\n");
+    assert_eq!(stdout(&output), "true\n2\n3\n0\nlong\n");
+    for (body, message) in [
+        ("println(string.from_code(55296))", "zam: invalid code point"),
+        ("println(string.from_code(-1))", "zam: invalid code point"),
+        (
+            "let bytes: [i64] = [256]\n    let s = string.from_bytes(&bytes) catch e:\n        println(e)\n        return\n    println(s)",
+            "",
+        ),
+    ] {
+        let source = format!("use std/string\nfn main():\n    {body}\n");
+        let output = case.run(&source);
+        if message.is_empty() {
+            assert_eq!(stdout(&output), "byte out of range\n");
+        } else {
+            assert!(!output.status.success(), "accepted {source}");
+            assert!(String::from_utf8_lossy(&output.stderr).contains(message));
+        }
+    }
+    let output = case.run("use std/string\nfn main() -> !string:\n    let bytes: [i64] = [228, 189]\n    println(string.from_bytes(&bytes)?)\n");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("invalid UTF-8"));
+}
