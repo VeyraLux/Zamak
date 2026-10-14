@@ -2,11 +2,13 @@
 
 English | [中文](README.zh-CN.md)
 
-A statically typed language that compiles to native executables, designed around a fast edit → check → build loop for people and AI agents.
+Zamak is a statically typed language that compiles to native executables. It's built for a fast loop of editing, checking, and building code, for both people and AI coding agents.
 
 [![CI](https://github.com/rayL-K/Zamak/actions/workflows/ci.yml/badge.svg)](https://github.com/rayL-K/Zamak/actions/workflows/ci.yml)
 
 <img width="96" height="96" alt="Zamak" src="ico/Zamak_256x256.png" />
+
+This program counts how often each word appears in its input:
 
 ```zamak
 use std/io
@@ -26,6 +28,8 @@ fn main() -> !string {
 }
 ```
 
+Run it with some input:
+
 ```text
 $ echo "to be or not to be" | zam run count.zm
 to: 2
@@ -34,33 +38,36 @@ or: 1
 not: 1
 ```
 
-> **Status: prototype (0.1.0).** The language is usable for learning, experiments, and small command-line tools. Syntax and cache formats may still change. Not for production use.
+> [!NOTE]
+> Zamak is a prototype (version 0.1.0). Use it to learn, experiment, and write small command-line tools. Syntax and cache formats might change, so don't use it in production yet.
 
 ## Why Zamak
 
-- **Fast feedback.** `zam check` type-checks and borrow-checks without invoking a C compiler. Builds are cached by content per module, so a one-line edit rebuilds only the affected module. On the project's 10-module, 5,250-line benchmark (Windows, MSVC, one machine), a one-line edit rebuilds in about 0.75 s and `check` takes under 0.1 s. Methodology and raw numbers are in [docs/ENGINEERING.md](docs/ENGINEERING.md) and [docs/PERFORMANCE.md](docs/PERFORMANCE.md) (Chinese).
-- **Ownership without a garbage collector.** Strings, structs, lists, and maps move on assignment. Borrows (`&x`, `&mut x`) live only for the duration of a call, which keeps the rules small: there are no lifetime annotations. Integer overflow, division by zero, and out-of-bounds access are checked at run time; a conservative range analysis removes checks it can prove redundant.
-- **Diagnostics built for tools.** Every error has a stable code (`ZM301`), a category, a position, and usually a suggested fix. `zam check --json` emits them as one line of JSON, and type errors are reported per function so an agent can fix several in one pass.
-- **Learnable from one page.** In a benchmark with 3 models and 8 small CLI tasks, the models read only a one-page language reference. 23 of 24 Zamak programs passed every test on the first try, and the last one passed after one fix. Rust and Go passed all 24 on the first try. Method, tasks, and data are in [bench/ai/live](bench/ai/live/README.md).
-- **Native, standalone output.** Zamak generates C and compiles it with MSVC, GCC, or Clang. The resulting executable needs neither Zamak nor Rust installed. On the integer benchmarks in `docs/PERFORMANCE.md`, runtime performance is in the same range as Rust and Go.
+- **Fast feedback.** `zam check` checks types and ownership without calling a C compiler. `zam build` caches each module by content, so a one-line edit rebuilds only the module you changed. On the project's 10-module, 5,250-line benchmark (Windows, MSVC, one machine), a one-line edit rebuilds in about 0.75 seconds, and `zam check` finishes in less than 0.1 seconds. For the method and raw numbers, see [docs/ENGINEERING.md](docs/ENGINEERING.md) and [docs/PERFORMANCE.md](docs/PERFORMANCE.md) (in Chinese).
+- **Ownership without a garbage collector.** Strings, structs, lists, and maps move when you assign them. A borrow (`&x` or `&mut x`) lasts only for one call, so you never write lifetime annotations. Zamak checks integer overflow, division by zero, and out-of-bounds access at run time, and it removes the checks that a conservative range analysis proves redundant.
+- **Diagnostics built for tools.** Every error has a stable code such as `ZM301`, a category, a position, and usually a suggested fix. `zam check --json` writes them as one line of JSON. Zamak reports type errors per function, so an agent can fix several of them in one pass.
+- **Learnable from one page.** In a benchmark with three models and eight small command-line tasks, each model read only a one-page language reference. Of the 24 Zamak programs, 23 passed every test on the first try, and the last one passed after one fix. The Rust and Go versions passed all 24 tasks on the first try. For the method, tasks, and data, see [bench/ai/live](bench/ai/live/README.md).
+- **Native, standalone output.** Zamak generates C and compiles it with Microsoft C++ (MSVC), GCC, or Clang. The executable runs without Zamak or Rust installed. On the integer benchmarks in [docs/PERFORMANCE.md](docs/PERFORMANCE.md), its runtime performance is in the same range as Rust and Go.
 
-## Install
+## Install Zamak
 
-Build from source with Rust stable and a C compiler:
+To build Zamak from source, you need Rust stable and a C compiler. In the repository root, run:
 
 ```sh
 cargo install --path zam --locked
 ```
 
+Zamak finds a C compiler on each platform as follows:
+
 | Platform | C compiler |
 | --- | --- |
-| Windows x64 | Visual Studio Build Tools ("Desktop development with C++"), found through `vswhere`. Without it, Zamak falls back to `gcc` (for example MinGW-w64) and then `clang` on `PATH`. |
-| Linux | `cc`, `clang`, or `gcc` on `PATH` (for example `build-essential`). |
-| macOS | Xcode Command Line Tools (`xcode-select --install`). |
+| Windows x64 | Visual Studio Build Tools with the **Desktop development with C++** workload, located through `vswhere`. If it isn't installed, Zamak uses `gcc` (for example, MinGW-w64) or `clang` from `PATH`. |
+| Linux | `cc`, `clang`, or `gcc` from `PATH`. On Debian and Ubuntu, install `build-essential`. |
+| macOS | Xcode Command Line Tools. To install them, run `xcode-select --install`. |
 
-Set `CC` to choose a GCC-style compiler explicitly. `zam check` needs no C compiler. All three platforms run the full test suite in CI.
+To choose a GCC-style compiler yourself, set the `CC` environment variable. `zam check` doesn't need a C compiler. Continuous integration (CI) runs the full test suite on all three platforms.
 
-## First project
+## Create your first project
 
 ```sh
 zam new hello        # creates hello/zam.toml and hello/src/main.zm
@@ -71,9 +78,11 @@ zam build hello      # writes build/hello-<hash>(.exe)
 zam run app.zm -- a b   # pass arguments to the program
 ```
 
-Build progress goes to stderr; stdout carries only the program's output.
+`zam` writes build progress to standard error, so standard output contains only your program's output.
 
-## The language in one screen
+## Language tour
+
+This program uses structs, error values, lists, maps, and string interpolation:
 
 ```zamak
 use std/string
@@ -111,19 +120,21 @@ fn main() -> !string {
 }
 ```
 
-- Types: `i64`, `bool`, `string` (UTF-8), named structs, fixed arrays `[i64; N]`, lists `[T]`, and maps `{K: V}`. List elements and map values can be `i64`, `bool`, or `string`; map keys are `i64` or `string`.
-- Control flow: `if`/`else if`/`else`, `while`, `for i in 0..n`, `for x in &list`, `for k in &map` (insertion order), `break`, `continue`.
-- Errors: `T!string` and `!string` signatures, `fail`, `?` to propagate, `catch e { ... }` to handle in place.
-- Modules: one file per module, `use name` and `pub fn`/`pub struct`.
-- Standard library: `std/io` (stdin, `println`), `std/fs` (read and write whole files), `std/env` (arguments), and `std/string` (length, compare, parse, trim, find, replace, case conversion, slice, split, words, lines, join). Character literals such as `'#'` are `i64` code points.
+- **Types.** Zamak has `i64`, `bool`, `string` (UTF-8), named structs, fixed arrays `[i64; N]`, lists `[T]`, and maps `{K: V}`. List elements and map values can be `i64`, `bool`, or `string`, and map keys can be `i64` or `string`. A character literal such as `'#'` is an `i64` code point.
+- **Control flow.** Use `if`, `else if`, `else`, `while`, `break`, and `continue`. Loop over a range with `for i in 0..n`, over a list with `for x in &list`, and over map keys in insertion order with `for k in &map`.
+- **Errors.** A function that can fail returns `T!string` or `!string`. Use `fail` to return an error, `?` to pass it to the caller, and `catch e { ... }` to handle it in place.
+- **Modules.** Each file is a module. Import one with `use name`, and export items with `pub fn` and `pub struct`.
+- **Standard library.** `std/io` reads standard input and prints, `std/fs` reads and writes whole files, and `std/env` reads arguments. `std/string` measures, compares, parses, trims, searches, replaces, converts case, slices, splits, and joins strings.
 
-The [tutorial](TUTORIAL.md) (Chinese) walks through every feature with runnable examples. For a larger program, [examples/md2html](examples/md2html) is a four-module Markdown-to-HTML converter (about 270 lines) covering headings, lists, quotes, fenced code, inline formatting, links, and HTML escaping:
+The [tutorial](TUTORIAL.md) (in Chinese) covers every feature with runnable examples. For a larger program, see [examples/md2html](examples/md2html), a Markdown-to-HTML converter with four modules and about 270 lines. It handles headings, lists, quotes, fenced code, inline formatting, links, and HTML escaping. To run it:
 
 ```sh
 zam run examples/md2html -- examples/md2html/sample.md
 ```
 
 ## Diagnostics
+
+When a check fails, `zam` shows the error code, the location, the source line, and a suggested fix:
 
 ```text
 error[ZM301]: use after move: name
@@ -134,26 +145,33 @@ error[ZM301]: use after move: name
   = help: borrow the value or move it only after the last use
 ```
 
-The same error from `zam check --json moved.zm`:
+`zam check --json moved.zm` reports the same error as one line of JSON:
 
 ```json
 {"command":"check","ok":false,"diagnostics":[{"file":"moved.zm","line":8,"column":5,"function":"main:main","code":"ZM301","category":"ownership","message":"use after move: name","suggestion":"borrow the value or move it only after the last use"}]}
 ```
 
-The code list and the recommended agent loop (check → minimal fix → fmt → check → build → run) are in [docs/AI_WORKFLOW.md](docs/AI_WORKFLOW.md) (Chinese). `zam new <dir> --template ai` adds an `AI.md` that describes the loop to a coding agent.
+For the list of error codes and the recommended loop for AI agents (check, make the smallest fix, format, check, build, and run), see [docs/AI_WORKFLOW.md](docs/AI_WORKFLOW.md) (in Chinese). To give a coding agent instructions for this loop, create your project with `zam new <dir> --template ai`, which adds an `AI.md` file.
 
-## Not yet supported
+## Current limitations
 
-Floating point, generics, enums and `match`, closures, threads, FFI, lists or maps of structs, nested containers, networking, directory listing, a package manager, a language server, and a REPL. Unsupported constructs fail at `zam check` with a diagnostic rather than being silently miscompiled.
+Zamak doesn't support floating-point numbers, generics, enums and `match`, closures, threads, a foreign function interface (FFI), lists or maps of structs, nested containers, networking, or directory listing yet. There's no package manager, language server, or read-eval-print loop (REPL) yet. When you use an unsupported construct, `zam check` reports a diagnostic instead of compiling incorrect code.
 
-## Editor support
+## Editor and agent support
 
-`editors/vscode/` contains a declarative VS Code extension with syntax highlighting and bracket configuration.
+- **VS Code.** The extension in [editors/vscode](editors/vscode) adds syntax highlighting and bracket and quote matching. It's declarative and has no runtime dependencies.
+- **AI coding agents.** [.agents/skills/zamak/SKILL.md](.agents/skills/zamak/SKILL.md) describes the commands, syntax, and common diagnostics for agents that read `.agents/skills`.
 
-## Contributing
+## Contribute
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) (Chinese). Changes must pass `cargo test --locked`, `cargo fmt --check`, and `cargo clippy --all-targets --locked -- -D warnings` in `zam/`.
+For the development guide, see [CONTRIBUTING.md](CONTRIBUTING.md) (in Chinese). Before you submit a change, make sure these commands pass in the `zam` folder:
+
+```sh
+cargo test --locked
+cargo fmt --check
+cargo clippy --all-targets --locked -- -D warnings
+```
 
 ## License
 
-Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option. Unless you state otherwise, contributions are licensed the same way.
+You can use Zamak under either the [MIT license](LICENSE-MIT) or the [Apache License 2.0](LICENSE-APACHE). Unless you state otherwise, you license your contributions under the same terms.
