@@ -164,8 +164,8 @@ fn checker_rejects_list_misuse() {
             "borrowed by an enclosing for loop",
         ),
         (
-            "let mut xs: [i64] = [1]\n    for x in &mut xs: pass",
-            "unsupported for loop over &mut",
+            "let xs: [i64] = [1]\n    for x in &mut xs: pass",
+            "cannot mutably borrow immutable value xs",
         ),
         (
             "let xs: [i64] = [1]\n    for x in xs: pass",
@@ -307,6 +307,52 @@ fn list_and_map_methods() {
         ("let xs: [i64] = [1]\n    xs.reverse()", "immutable"),
     ] {
         let source = format!("struct P:\n    x: i64\nfn main():\n    {body}\n");
+        rejected(&case.run(&source), message, &source);
+    }
+}
+
+/// 带下标遍历、字典键值成对遍历、`&mut` 原地修改元素（标量是可赋值的别名，字符串与结构体是 `&mut` 借用）。
+#[test]
+fn indexed_pair_and_mutable_loops() {
+    let case = Case::new("lists", "loops");
+    assert_eq!(
+        stdout(&case.run(include_str!("../../examples/collections/loops.zm"))),
+        "0: zero\n1: one\n2: two\ntea costs 3.5\ncake costs 4.0\n{\"tea\": 7.0, \"cake\": 8.0}\n[10, 20, 30]\n[\"0-amy\", \"1-bob\"]\n[Item(name: \"pen\", qty: 2), Item(name: \"cup\", qty: 6)]\n"
+    );
+    // 删除过的字典项被跳过；break/continue 与 &mut 一起用；整数键的字典。
+    let output = case.run("fn main():\n    let mut m = {1: 10, 2: 20, 3: 30}\n    m.remove(2)\n    for k, v in &mut m:\n        if k == 3: continue\n        v += 1\n    for k, v in &m: println(\"{k}={v}\")\n    let mut xs: [i64] = [5, 6, 7]\n    for i, x in &mut xs:\n        if i == 2: break\n        x = -x\n    println(xs)\n");
+    assert_eq!(stdout(&output), "1=11\n3=30\n[-5, -6, 7]\n");
+    for (body, message) in [
+        (
+            "let mut m = {\"a\": 1}\n    for k in &mut m: pass",
+            "write for k, v in &mut m",
+        ),
+        (
+            "for i, x in 0..3: pass",
+            "two loop variables need a borrowed list or map",
+        ),
+        (
+            "let xs: [i64] = [1]\n    for x in &xs:\n        x = 2",
+            "cannot assign immutable value x",
+        ),
+        (
+            "let mut xs: [i64] = [1]\n    for x in &mut xs:\n        xs.push(x)",
+            "borrowed by an enclosing for loop",
+        ),
+        (
+            "let xs: [i64] = [1]\n    for x, x in &xs: pass",
+            "duplicate binding x",
+        ),
+        (
+            "let m = {\"a\": 1}\n    for k, v in &m:\n        v = 2",
+            "cannot assign immutable value v",
+        ),
+        (
+            "let xs: [string] = [\"a\"]\n    for i, s in &xs:\n        i = 1",
+            "cannot assign immutable value i",
+        ),
+    ] {
+        let source = format!("fn main():\n    {body}\n");
         rejected(&case.run(&source), message, &source);
     }
 }

@@ -11,7 +11,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-35");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-36");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -503,7 +503,7 @@ impl Project {
                     self.resolve_body(module, locals, nested)?;
                     Some(end)
                 }
-                Instruction::Each(_, _, nested) => {
+                Instruction::Each(_, _, _, _, nested) => {
                     self.resolve_body(module, locals, nested)?;
                     None
                 }
@@ -1167,8 +1167,9 @@ fn declared(body: &Block, names: &mut BTreeSet<String>) {
                 expr(end, names);
                 declared(nested, names);
             }
-            Instruction::Each(name, _, nested) => {
+            Instruction::Each(name, second, _, _, nested) => {
                 names.insert(name.clone());
+                names.extend(second.iter().cloned());
                 declared(nested, names);
             }
             Instruction::Match(scrutinee, arms) => {

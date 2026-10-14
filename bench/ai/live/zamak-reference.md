@@ -80,7 +80,8 @@ else:
 - To choose a value, use an if expression on one line: `let v = if c: a elif d: b else: e`; it needs `else`, and each branch is a single expression.
 - `while cond:`, `break`, `continue`.
 - `for i in start..end:` iterates integers from `start` up to but not including `end`.
-- `for x in &list:` iterates list elements; `for k in &map:` iterates map keys in insertion order. String elements/keys are read-only borrows. The list or map cannot be modified inside that loop; use `for i in 0..xs.len():` to modify by index.
+- `for x in &list:` iterates list elements and `for i, x in &list:` also gives the index; `for k in &map:` iterates map keys in insertion order and `for k, v in &map:` gives keys and values. String elements/keys are read-only borrows.
+- `for x in &mut list:` and `for k, v in &mut map:` change elements in place: assigning `x = x * 2` writes the element, struct elements allow `x.field += 1`. Elements cannot be added or removed inside these loops.
 
 ## Errors
 
