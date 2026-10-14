@@ -1,0 +1,30 @@
+// 按字符处理字符串：拆字符、码点、字节、重复、计数与对齐。
+use std/string
+
+fn main() -> !string:
+    let text = "Zamak 你好!"
+    let chars = string.chars(&text)
+    println(chars.len())
+    let mut reversed = ""
+    for c in &chars:
+        reversed = c + reversed
+    println(reversed)
+
+    let codes = string.codepoints("你a")
+    println("{codes[0]} {codes[1]}")
+    println(string.from_code(22909) + string.from_code('!'))
+
+    let bytes = string.bytes("é")
+    println("{bytes[0]} {bytes[1]}")
+    let back = string.from_bytes(&bytes)?
+    println(back)
+
+    println(string.repeat("ab", 3))
+    println(string.count("banana", "an"))
+
+    let names: [string] = ["amy", "李雷", "bob"]
+    for name in &names:
+        let score = string.char_len(name) * 10
+        let left = string.pad_right(name, 6)
+        let right = string.pad_left("{score}", 4)
+        println("|{left}|{right}|")

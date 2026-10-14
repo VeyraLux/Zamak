@@ -213,6 +213,44 @@ extern char **zam_argv;
 static void zam_alloc_failed(void) { fputs("zam: allocation failed\n", stderr); exit(1); }
 static int zam_space(unsigned char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
 static void zam_string_bounds(void) { fputs("zam: string index out of bounds\n", stderr); exit(1); }
+// 从 p 开始的一个 UTF-8 字符：返回字节数并写出码点；不合法（截断、过长编码、代理区、超出范围）时返回 0。
+static size_t zam_utf8_next(const unsigned char *p, size_t n, int64_t *code) {
+    size_t len, i; uint32_t c;
+    if (!n) return 0;
+    if (p[0] < 0x80) { *code = p[0]; return 1; }
+    if ((p[0] & 0xE0) == 0xC0) { len = 2; c = p[0] & 0x1F; }
+    else if ((p[0] & 0xF0) == 0xE0) { len = 3; c = p[0] & 0x0F; }
+    else if ((p[0] & 0xF8) == 0xF0) { len = 4; c = p[0] & 0x07; }
+    else return 0;
+    if (n < len) return 0;
+    for (i = 1; i < len; i++) { if ((p[i] & 0xC0) != 0x80) return 0; c = (c << 6) | (p[i] & 0x3F); }
+    if ((len == 2 && c < 0x80) || (len == 3 && c < 0x800) || (len == 4 && c < 0x10000) || c > 0x10FFFF || (c >= 0xD800 && c <= 0xDFFF)) return 0;
+    *code = c;
+    return len;
+}
+// 码点编码成 UTF-8，返回字节数；不是合法码点时返回 0。
+static size_t zam_utf8_put(int64_t c, unsigned char *out) {
+    if (c < 0 || c > 0x10FFFF || (c >= 0xD800 && c <= 0xDFFF)) return 0;
+    if (c < 0x80) { out[0] = (unsigned char)c; return 1; }
+    if (c < 0x800) { out[0] = (unsigned char)(0xC0 | (c >> 6)); out[1] = (unsigned char)(0x80 | (c & 0x3F)); return 2; }
+    if (c < 0x10000) { out[0] = (unsigned char)(0xE0 | (c >> 12)); out[1] = (unsigned char)(0x80 | ((c >> 6) & 0x3F)); out[2] = (unsigned char)(0x80 | (c & 0x3F)); return 3; }
+    out[0] = (unsigned char)(0xF0 | (c >> 18)); out[1] = (unsigned char)(0x80 | ((c >> 12) & 0x3F)); out[2] = (unsigned char)(0x80 | ((c >> 6) & 0x3F)); out[3] = (unsigned char)(0x80 | (c & 0x3F));
+    return 4;
+}
+// 按字符数（不计 UTF-8 续字节）补空格到 width；left 为 1 时空格加在左边。
+static S zam_pad(S *s, int64_t width, int left) {
+    size_t chars = 0, i, extra; S out;
+    for (i = 0; i < s->len; i++) if ((s->data[i] & 0xC0) != 0x80) chars++;
+    if (width <= 0 || (uint64_t)width <= chars) return copy(s);
+    extra = (size_t)width - chars;
+    if (extra > SIZE_MAX - s->len) zam_alloc_failed();
+    out.len = s->len + extra;
+    out.data = (unsigned char*)malloc(out.len);
+    if (!out.data) zam_alloc_failed();
+    memset(out.data + (left ? 0 : s->len), ' ', extra);
+    if (s->len) memcpy(out.data + (left ? extra : 0), s->data, s->len);
+    return out;
+}
 static S zam_message(const char *text, S *detail) {
     S head = own((const unsigned char*)text, strlen(text));
     return detail ? cat(head, copy(detail)) : head;
@@ -835,6 +873,94 @@ return p0->data[p1];"#,
 // 不能从 UTF-8 多字节字符中间切开。
 if (((uint64_t)p1 < p0->len && (p0->data[p1] & 0xC0) == 0x80) || ((uint64_t)p2 < p0->len && (p0->data[p2] & 0xC0) == 0x80)) zam_string_bounds();
 return own(p0->data + p1, (size_t)(p2 - p1));"#,
+    },
+    Builtin {
+        name: "std/string:chars",
+        params: &[Type::Shared],
+        result: Type::List(Elem::Str),
+        fallible: false,
+        // 每个 UTF-8 字符一项；不合法的字节单独成一项，不丢内容。
+        body: r#"Ls out = {0}; size_t i = 0, n; int64_t c;
+while (i < p0->len) { n = zam_utf8_next(p0->data + i, p0->len - i, &c); if (!n) n = 1; pushLs(&out, own(p0->data + i, n)); i += n; }
+return out;"#,
+    },
+    Builtin {
+        name: "std/string:codepoints",
+        params: &[Type::Shared],
+        result: Type::List(Elem::Int),
+        fallible: false,
+        // 不合法的字节按 U+FFFD 计。
+        body: r#"Li out = {0}; size_t i = 0, n; int64_t c;
+while (i < p0->len) { n = zam_utf8_next(p0->data + i, p0->len - i, &c); if (!n) { n = 1; c = 0xFFFD; } pushLi(&out, c); i += n; }
+return out;"#,
+    },
+    Builtin {
+        name: "std/string:from_code",
+        params: &[Type::Int],
+        result: Type::Owned,
+        fallible: false,
+        body: r#"unsigned char text[4]; size_t n = zam_utf8_put(p0, text);
+if (!n) { fputs("zam: invalid code point\n", stderr); exit(1); }
+return own(text, n);"#,
+    },
+    Builtin {
+        name: "std/string:bytes",
+        params: &[Type::Shared],
+        result: Type::List(Elem::Int),
+        fallible: false,
+        body: "Li out = {0}; size_t i; for (i = 0; i < p0->len; i++) pushLi(&out, p0->data[i]); return out;",
+    },
+    Builtin {
+        name: "std/string:from_bytes",
+        params: &[Type::ListRef(Elem::Int, false)],
+        result: Type::Owned,
+        fallible: true,
+        body: r#"unsigned char *p = (unsigned char*)malloc(p0->len ? p0->len : 1); size_t i, n; int64_t c; S s;
+if (!p) zam_alloc_failed();
+for (i = 0; i < p0->len; i++) { if (p0->data[i] < 0 || p0->data[i] > 255) { free(p); return F_S_err(zam_message("byte out of range", NULL)); } p[i] = (unsigned char)p0->data[i]; }
+for (i = 0; i < p0->len; i += n) { n = zam_utf8_next(p + i, p0->len - i, &c); if (!n) { free(p); return F_S_err(zam_message("invalid UTF-8", NULL)); } }
+s.data = p; s.len = p0->len;
+return F_S_ok(s);"#,
+    },
+    Builtin {
+        name: "std/string:repeat",
+        params: &[Type::Shared, Type::Int],
+        result: Type::Owned,
+        fallible: false,
+        // 与 Python 一样，次数小于 1 得到空串。
+        body: r#"unsigned char *p; size_t i, count = p1 > 0 ? (size_t)p1 : 0; S s;
+if (p0->len && count > SIZE_MAX / p0->len) zam_alloc_failed();
+p = (unsigned char*)malloc(p0->len * count ? p0->len * count : 1);
+if (!p) zam_alloc_failed();
+for (i = 0; i < count; i++) if (p0->len) memcpy(p + i * p0->len, p0->data, p0->len);
+s.data = p; s.len = p0->len * count;
+return s;"#,
+    },
+    Builtin {
+        name: "std/string:count",
+        params: &[Type::Shared, Type::Shared],
+        result: Type::Int,
+        fallible: false,
+        // 不重叠地计数；空子串与 Python 一样算「字符数 + 1」。
+        body: r#"size_t i = 0, n = 0, step; int64_t c;
+if (!p1->len) { while (i < p0->len) { step = zam_utf8_next(p0->data + i, p0->len - i, &c); i += step ? step : 1; n++; } return (int64_t)n + 1; }
+while (i + p1->len <= p0->len) { if (memcmp(p0->data + i, p1->data, p1->len) == 0) { n++; i += p1->len; } else i++; }
+return (int64_t)n;"#,
+    },
+    Builtin {
+        name: "std/string:pad_left",
+        params: &[Type::Shared, Type::Int],
+        result: Type::Owned,
+        fallible: false,
+        // 按字符数补空格到 width，已经够宽就原样复制；用于对齐输出。
+        body: "return zam_pad(p0, p1, 1);",
+    },
+    Builtin {
+        name: "std/string:pad_right",
+        params: &[Type::Shared, Type::Int],
+        result: Type::Owned,
+        fallible: false,
+        body: "return zam_pad(p0, p1, 0);",
     },
     Builtin {
         name: "std/string:find",

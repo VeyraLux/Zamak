@@ -910,6 +910,12 @@ lang -> Zamak
 | `string.words(&s) -> [string]` | 按空白切分，跳过连续空白 |
 | `string.lines(&s) -> [string]` | 按行切分，去掉行尾 `\r`，末尾换行不产生空行 |
 | `string.join(&list, &sep) -> string` | 用分隔符连接字符串列表 |
+| `string.chars(&s) -> [string]` | 拆成字符，每个字符是一个字符串（`"你好"` 得到两项） |
+| `string.codepoints(&s) -> [i64]` / `string.from_code(n) -> string` | 字符与 Unicode 码点互转；`from_code` 遇到不合法的码点时程序终止 |
+| `string.bytes(&s) -> [i64]` / `string.from_bytes(&list) -> string!string` | 与 UTF-8 字节互转；字节超出 0–255 或不是合法 UTF-8 时 `from_bytes` 返回错误 |
+| `string.repeat(&s, n) -> string` | 重复 `n` 次，`n` 小于 1 得到空串 |
+| `string.count(&s, &sub) -> i64` | 不重叠地统计出现次数 |
+| `string.pad_left(&s, width)` / `string.pad_right(&s, width) -> string` | 按字符数补空格到 `width`，用来对齐输出（中文字符算一个字符，显示时占两格） |
 | `env.args() -> [string]` | 全部程序参数，不含程序名 |
 
 要点：

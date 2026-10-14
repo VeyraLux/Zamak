@@ -162,6 +162,8 @@ Import a module with `use std/<name>` and call `name.function(...)`. `println(x)
   - `slice(&s, start, end) -> string` (bytes `start..end`), `trim(&s) -> string`, `lower(&s) -> string`, `upper(&s) -> string`, `replace(&s, &from, &to) -> string`, `copy(&s) -> string`
   - `parse_i64(&s) -> i64!string` (decimal, optional sign, no surrounding spaces), `parse_f64(&s) -> f64!string` (decimal with optional fraction and exponent)
   - `split(&s, &sep) -> [string]` (keeps empty fields), `words(&s) -> [string]` (splits on whitespace), `lines(&s) -> [string]` (drops `\r`; no empty item after a final newline), `join(&list, &sep) -> string`
+  - `chars(&s) -> [string]` (one string per character), `codepoints(&s) -> [i64]`, `from_code(n) -> string`, `bytes(&s) -> [i64]`, `from_bytes(&list) -> string!string`
+  - `repeat(&s, n) -> string`, `count(&s, &sub) -> i64`, `pad_left(&s, width) -> string` and `pad_right(&s, width) -> string` (pad with spaces to `width` characters)
 
 ## Example
 
