@@ -720,11 +720,10 @@ fn main() -> !string:
 - `fail "empty input"`：产生错误并立即从当前函数返回，只能在声明了错误类型的函数中使用。
 - `parse(text)?`：成功时取得返回值，失败时立即从 `load` 返回同一错误。使用 `?` 的函数必须声明相同的错误类型。
 
-`main` 可以声明为 `-> !string`，表示不返回成功值，但可能失败。传播到 `main` 且未处理的错误会写入 stderr，程序以退出码 1 结束。将上例的 `"42"` 改为 `""` 后，`zam run` 的错误输出为：
+`main` 可以声明为 `-> !string`，表示不返回成功值，但可能失败。传播到 `main` 且未处理的错误会写入 stderr，程序以退出码 1 结束。将上例的 `"42"` 改为 `""` 后，`zam run` 在 stderr 输出下面一行，并以退出码 1 结束（`zam run` 原样带回程序的退出码）：
 
 ```text
 empty input
-zam: program failed: exit code: 1
 ```
 
 使用 `catch` 可以在调用处处理错误。以下 `parse` 与前例相同，仍是返回固定值的占位函数：
@@ -890,6 +889,9 @@ lang -> Zamak
 | --- | --- |
 | `env.arg_count() -> i64` | 程序参数个数，不含程序名 |
 | `env.arg(i) -> string!string` | 第 `i` 个参数，从 0 开始；越界返回错误 |
+| `env.var(&name) -> string!string` | 读取环境变量；没有设置时返回错误 |
+| `env.exit(code)` | 立即结束程序并返回退出码（0–255）；写在 `catch` 块末尾时不用再写 `return` |
+| `abs(x)`、`min(a, b)`、`max(a, b)` | 不用导入，整数和浮点数都能用；两个参数类型要相同 |
 | `fs.read(&path) -> string!string` | 读取整个文件；打不开或读取失败返回错误 |
 | `fs.write(&path, &text) -> !string` | 创建或覆盖文件并写入全部内容 |
 | `io.read_line(&mut line) -> bool!string` | 读一行到 `line`，去掉行尾的 `\n` 或 `\r\n`；输入结束时返回 `false` 并把 `line` 置空 |
@@ -1012,7 +1014,7 @@ error[ZM301]: use after move: name
 | `zam.toml: 系统找不到指定的文件` | 目录内没有 `zam.toml` | 用 `zam new` 建项目，或直接传单个 `.zm` 文件 |
 | `project name must be an identifier` | `zam new` 的目录名不是合法标识符 | 使用合法标识符，例如 `hello_app`；不要使用连字符或以数字开头 |
 | `<dir>: already exists` | 目标目录已存在 | 使用尚不存在的目标目录 |
-| `zam: program failed: exit code: 1` | 未处理的错误传播到 `main` | 检查错误信息和输入；需要处理时在调用处使用 `catch` |
+| 程序输出一行错误后以退出码 1 结束 | 未处理的错误传播到 `main` | 检查错误信息和输入；需要处理时在调用处使用 `catch` |
 | `cannot open <path>` | `fs.read`/`fs.write` 打不开文件 | 检查路径是否存在、是否是目录、是否有权限 |
 | `invalid integer: <text>` | `string.parse_i64` 的输入不是十进制整数 | 先用 `string.trim` 去掉空白，再解析 |
 | `+ mixes i64 and f64` | 整数和浮点数直接相加或比较 | 用 `f64(n)` 或 `i64(x)` 转换一边，整数字面量写成 `2.0` |
@@ -1033,7 +1035,7 @@ Zamak 0.1.0 的支持范围有限。编写程序时需注意以下限制：
 
 - `match` 只用于枚举，还不能匹配整数或字符串；尚不支持泛型、闭包和 trait/接口；`for` 支持整数区间 `a..b` 以及遍历 `&列表`、`&字典`。
 - 尚不提供包管理器、交互式执行环境（REPL）、文档生成工具或重构工具。
-- 标准库包括 `std/string`（`byte_len`、`char_len`、`equal`、`parse_i64`、`parse_f64`、`trim`、`byte_at`、`slice`、`find`、`find_from`、`starts_with`、`ends_with`、`contains`、`replace`、`lower`、`upper`、`copy`、`split`、`words`、`lines`、`join`）、`std/io`（`println`、`read_line`、`read_all`）、`std/fmt`（`println`、`fixed`）、`std/math`（见第 3 节）、`std/fs`（`read`、`write`）和 `std/env`（`arg_count`、`arg`、`args`），没有目录遍历、网络和时间函数。
+- 标准库包括 `std/string`（`byte_len`、`char_len`、`equal`、`parse_i64`、`parse_f64`、`trim`、`byte_at`、`slice`、`find`、`find_from`、`starts_with`、`ends_with`、`contains`、`replace`、`lower`、`upper`、`copy`、`split`、`words`、`lines`、`join`、`chars`、`codepoints`、`from_code`、`bytes`、`from_bytes`、`repeat`、`count`、`pad_left`、`pad_right`）、`std/io`（`println`、`read_line`、`read_all`）、`std/fmt`（`println`、`fixed`）、`std/math`（见第 3 节）、`std/fs`（`read`、`write`）和 `std/env`（`arg_count`、`arg`、`args`、`var`、`exit`），以及不用导入的 `abs`、`min`、`max`，没有目录遍历、网络和时间函数。
 - 错误类型只能是 `string`，没有错误堆栈。
 - 定长数组仅支持 `i64` 局部值；列表 `[T]` 的元素与字典 `{K: V}` 的值可以是 `i64`、`f64`、`bool`、`string` 或结构体，字典键只能是 `i64` 或 `string`；还没有嵌套容器（`[[i64]]`），元素字段里的列表不能再接下标。方法不能链式调用。
 - 所有权检查覆盖 `string`、结构体、列表和字典；尚不支持线程、`unsafe` 和外部函数接口（FFI）。

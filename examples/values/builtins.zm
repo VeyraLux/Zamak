@@ -1,0 +1,15 @@
+// 全局 abs/min/max 对整数和浮点数都能用；env.var 读环境变量，env.exit 指定退出码。
+use std/env
+
+fn main():
+    println(abs(-7))
+    println(abs(-2.5))
+    println(min(3, 9))
+    println(max(1.5, -4.0))
+    let low = min(max(42, 0), 10)
+    println(low)
+
+    let home = env.var("ZAM_DEMO_HOME") catch e:
+        println(e)
+        env.exit(3)
+    println("home is {home}")
