@@ -186,7 +186,7 @@ fn checker_rejects_map_misuse() {
         ("let m: {string: i64} = {}\n    println(m[1])", "mismatch"),
         (
             "let mut m: {string: i64} = {}\n    m.push(1)",
-            "maps support len, contains, get, remove and keys",
+            "maps support len, contains, get, remove, keys, values and clear",
         ),
         ("let m: {string: i64} = {}\n    println(m)", "cannot print"),
         (
@@ -202,8 +202,8 @@ fn checker_rejects_map_misuse() {
             "borrow escape",
         ),
         (
-            "let mut xs: [string] = [\"a\"]\n    xs.sort()",
-            "lists support len, push, pop and swap",
+            "let mut xs: [string] = [\"a\"]\n    xs.shuffle()",
+            "lists support len, push, pop, insert, remove",
         ),
     ] {
         let source = format!("fn take(s: &string): pass\nfn main():\n    {body}\n");
