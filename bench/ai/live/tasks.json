@@ -1,0 +1,73 @@
+[
+  {
+    "id": "sum",
+    "spec": "Read lines from standard input. Each non-blank line contains one integer, possibly negative and possibly surrounded by spaces. Print the sum of all the integers on one line. If a non-blank line is not a valid integer, print `invalid line N` (N is the 1-based line number) to standard error and exit with status 1 without printing anything to standard output.",
+    "tests": [
+      {"stdin": "3\n 4 \n\n-10\n", "stdout": "-3\n"},
+      {"stdin": "", "stdout": "0\n"},
+      {"stdin": "1\nx\n2\n", "stdout": "", "exit": 1}
+    ]
+  },
+  {
+    "id": "wordfreq",
+    "spec": "Read all of standard input and split it into words on whitespace (spaces, tabs, newlines). Lowercase each word (the input is ASCII). Print the 3 most frequent words, one per line, as `COUNT WORD`, sorted by count descending; break ties by which word first appeared earlier in the input. If there are fewer than 3 distinct words, print all of them. Print nothing for empty input.",
+    "tests": [
+      {"stdin": "the cat the dog The end cat\n", "stdout": "3 the\n2 cat\n1 dog\n"},
+      {"stdin": "b a b c a b d\n", "stdout": "3 b\n2 a\n1 c\n"},
+      {"stdin": "solo\n", "stdout": "1 solo\n"},
+      {"stdin": "", "stdout": ""}
+    ]
+  },
+  {
+    "id": "brackets",
+    "spec": "For each line of standard input, print `ok` if the brackets ( ) [ ] { } in that line are balanced and correctly nested, otherwise print `bad`. Ignore every other character. An empty line is `ok`.",
+    "tests": [
+      {"stdin": "(a[b]{c})\n([)]\n\n((\n}{\n", "stdout": "ok\nbad\nok\nbad\nbad\n"},
+      {"stdin": "x = {[1, 2], (3)}\n", "stdout": "ok\n"}
+    ]
+  },
+  {
+    "id": "rle",
+    "spec": "For each line of standard input, print its run-length encoding: every maximal run of one repeated character is written as that character followed by the run length, so `aaabccdd` becomes `a3b1c2d2`. An empty line prints an empty line. The input is ASCII.",
+    "tests": [
+      {"stdin": "aaabccdd\nx\n\nzzzzzzzzzzzz\n", "stdout": "a3b1c2d2\nx1\n\nz12\n"},
+      {"stdin": "abab\n", "stdout": "a1b1a1b1\n"}
+    ]
+  },
+  {
+    "id": "csvtotal",
+    "spec": "Standard input is CSV whose first line is the header `name,qty,price`, followed by rows such as `apple,3,25`. qty and price are non-negative integers; there are no quotes or spaces. Blank lines are ignored. For each distinct name, in order of first appearance, print `NAME TOTAL` where TOTAL is the sum of qty*price over that name's rows. Then print `TOTAL GRAND` where GRAND is the sum over all rows.",
+    "tests": [
+      {"stdin": "name,qty,price\napple,3,25\npear,1,40\napple,2,25\n", "stdout": "apple 125\npear 40\nTOTAL 165\n"},
+      {"stdin": "name,qty,price\n", "stdout": "TOTAL 0\n"},
+      {"stdin": "name,qty,price\n\nfig,10,7\n\n", "stdout": "fig 70\nTOTAL 70\n"}
+    ]
+  },
+  {
+    "id": "primes",
+    "spec": "The program receives one command-line argument N with 0 <= N <= 2000000. Print the number of primes less than or equal to N on the first line, and the largest such prime on the second line, or `none` if there is no such prime.",
+    "tests": [
+      {"args": ["10"], "stdout": "4\n7\n"},
+      {"args": ["1"], "stdout": "0\nnone\n"},
+      {"args": ["2"], "stdout": "1\n2\n"},
+      {"args": ["1000000"], "stdout": "78498\n999983\n"}
+    ]
+  },
+  {
+    "id": "reverse",
+    "spec": "Print the lines of standard input in reverse order. Within each printed line, reverse the order of its whitespace-separated words and join them with single spaces. A line with no words prints as an empty line.",
+    "tests": [
+      {"stdin": "one two three\n  hello   world \n\nlast\n", "stdout": "last\n\nworld hello\nthree two one\n"},
+      {"stdin": "a\n", "stdout": "a\n"}
+    ]
+  },
+  {
+    "id": "dedupe",
+    "spec": "Print each distinct line of standard input once, in order of first appearance; lines are compared exactly after removing a trailing carriage return. Then print `removed N`, where N is the number of duplicate lines that were skipped.",
+    "tests": [
+      {"stdin": "a\nb\na\nc\nb\na\n", "stdout": "a\nb\nc\nremoved 3\n"},
+      {"stdin": "", "stdout": "removed 0\n"},
+      {"stdin": "x\r\nx\n", "stdout": "x\nremoved 1\n"}
+    ]
+  }
+]
