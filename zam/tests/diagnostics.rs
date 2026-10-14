@@ -299,7 +299,7 @@ const REAL_SOURCE_CODES: &[(&str, &str, &str)] = &[
         "control_flow",
     ),
     (
-        "fn main() {\n    let x: f64 = 1\n}\n",
+        "fn main() {\n    let m: {bool: i64} = {}\n}\n",
         "ZM900",
         "unsupported",
     ),

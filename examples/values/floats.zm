@@ -1,0 +1,76 @@
+// 浮点数 f64：字面量、运算、比较、打印、转换、容器与 std/math。
+use std/fmt
+use std/math
+use std/string
+
+struct Circle {
+    radius: f64
+}
+
+fn area(c: Circle) -> f64 {
+    math.pi * c.radius * c.radius
+}
+
+// 均值与总体标准差。
+fn mean(xs: &[f64]) -> f64 {
+    let mut total = 0.0
+    for x in &xs {
+        total += x
+    }
+    total / f64(xs.len())
+}
+
+fn stddev(xs: &[f64]) -> f64 {
+    let m = mean(xs)
+    let mut sum = 0.0
+    for x in &xs {
+        sum += (x - m) * (x - m)
+    }
+    math.sqrt(sum / f64(xs.len()))
+}
+
+fn main() -> !string {
+    println(0.1 + 0.2)
+    println(7.0 / 2.0)
+    println(1e16)
+    println(2.5e-7)
+    println(-0.5 * 3.0)
+    println(1.0 / 0.0)
+    println(1.5 < 2.0)
+
+    let c = Circle { radius: 2.0 }
+    println("area {fmt.fixed(area(c), 3)}")
+
+    let mut scores: [f64] = [2.0, 4.0, 4.0, 4.0]
+    scores.push(5.0)
+    scores.push(5.0)
+    scores.push(7.0)
+    scores.push(9.0)
+    let mut low = math.inf
+    for s in &scores {
+        low = math.min(low, s)
+    }
+    println("mean {mean(&scores)} stddev {stddev(&scores)} min {low}")
+
+    let mut prices: {string: f64} = {}
+    prices["tea"] = 3.25
+    prices["cake"] = 4.5
+    prices["tea"] += 0.25
+    let total = prices["tea"] + prices.get("cake", 0.0)
+    println("total {fmt.fixed(total, 2)}")
+
+    // i64(x) 向零截断；四舍五入先用 math.round。
+    println(i64(9.99))
+    println(i64(math.round(9.5)))
+    println(f64(3) / 4.0)
+    println(math.pow(2.0, 10.0))
+    println(math.floor(-1.5))
+
+    let parsed = string.parse_f64("6.02e23")?
+    println(parsed)
+    let bad = string.parse_f64("1.2.3") catch e {
+        println(e)
+        return
+    }
+    println(bad)
+}

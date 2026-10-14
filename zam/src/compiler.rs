@@ -5,6 +5,8 @@ enum Token {
     Word(String),
     Text(String),
     Number(String),
+    // 已去掉分隔符、确认有限的浮点字面量文本，如 `1.5`、`2e-3`。
+    Float(String),
     Symbol(char),
     Newline,
 }
@@ -16,6 +18,7 @@ pub enum Type {
     Mutable,
     Unit,
     Int,
+    Float,
     Bool,
     Record(u64),
     ArrayInt(usize),
@@ -75,6 +78,7 @@ pub fn method_signature(receiver: Type, method: &str) -> Option<(bool, Vec<Type>
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Elem {
     Int,
+    Float,
     Bool,
     Str,
 }
@@ -82,6 +86,7 @@ impl Elem {
     pub fn ty(self) -> Type {
         match self {
             Elem::Int => Type::Int,
+            Elem::Float => Type::Float,
             Elem::Bool => Type::Bool,
             Elem::Str => Type::Owned,
         }
@@ -111,6 +116,7 @@ pub enum Expr {
     CharLen(Box<Expr>),
     StringEqual(Box<Expr>, Box<Expr>),
     Int(i64),
+    Float(f64),
     Bool(bool),
     Unary(char, Box<Expr>),
     Binary(String, Box<Expr>, Box<Expr>),
@@ -194,6 +200,8 @@ fn lex(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), String> {
     let mut lines = Vec::new();
     while let Some((c, (line, column))) = chars.next() {
         let before = tokens.len();
+        // 整数后面紧跟的 `.` 拆成单独的记号时，记下点自己的位置。
+        let mut split = None;
         let result: Result<(), String> = (|| {
             match c {
                 '\n' => tokens.push(Token::Newline),
@@ -278,7 +286,57 @@ fn lex(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), String> {
                     if number.ends_with('_') || number.contains("__") {
                         return Err("integer separators must occur between digits".into());
                     }
-                    tokens.push(Token::Number(number.replace('_', "")));
+                    let mut float = false;
+                    // `1.5` 是浮点数；`0..n` 的点后面不是数字，整数照旧，点交给区间。
+                    if chars.peek().is_some_and(|(c, _)| *c == '.') {
+                        let (_, dot) = chars.next().unwrap();
+                        if !chars.peek().is_some_and(|(c, _)| c.is_ascii_digit()) {
+                            tokens.push(Token::Number(number.replace('_', "")));
+                            tokens.push(Token::Symbol('.'));
+                            split = Some(dot);
+                            return Ok(());
+                        }
+                        float = true;
+                        number.push('.');
+                        while chars
+                            .peek()
+                            .is_some_and(|(c, _)| c.is_ascii_digit() || *c == '_')
+                        {
+                            number.push(chars.next().unwrap().0);
+                        }
+                    }
+                    if chars.peek().is_some_and(|(c, _)| matches!(c, 'e' | 'E')) {
+                        float = true;
+                        number.push(chars.next().unwrap().0);
+                        if chars.peek().is_some_and(|(c, _)| matches!(c, '+' | '-')) {
+                            number.push(chars.next().unwrap().0);
+                        }
+                        if !chars.peek().is_some_and(|(c, _)| c.is_ascii_digit()) {
+                            return Err(
+                                "expected digits in the f64 exponent, such as 1e9 or 2.5e-3".into(),
+                            );
+                        }
+                        while chars.peek().is_some_and(|(c, _)| c.is_ascii_digit()) {
+                            number.push(chars.next().unwrap().0);
+                        }
+                    }
+                    if !float {
+                        tokens.push(Token::Number(number.replace('_', "")));
+                        return Ok(());
+                    }
+                    let bytes = number.as_bytes();
+                    if (0..bytes.len()).any(|i| {
+                        bytes[i] == b'_'
+                            && !(bytes[i - 1].is_ascii_digit()
+                                && bytes.get(i + 1).is_some_and(u8::is_ascii_digit))
+                    }) {
+                        return Err("digit separators must occur between digits".into());
+                    }
+                    let text = number.replace('_', "");
+                    if !text.parse::<f64>().is_ok_and(f64::is_finite) {
+                        return Err("f64 literal is out of range".into());
+                    }
+                    tokens.push(Token::Float(text));
                 }
                 '(' | ')' | '{' | '}' | '[' | ']' | '/' | '.' | ':' | ',' | '=' | '&' | '-'
                 | '>' | '<' | '+' | '*' | '%' | '!' | '|' | ';' | '?' => {
@@ -292,6 +350,7 @@ fn lex(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), String> {
         if tokens.len() > before {
             lines.push((line, column));
         }
+        lines.extend(split);
     }
     lines.push(position);
     Ok((tokens, lines))
@@ -358,9 +417,12 @@ struct Parser {
 /// 没有调用的表达式：重复求值不会产生额外副作用（复合赋值的下标用它判断）。
 fn pure(expr: &Expr) -> bool {
     match expr {
-        Expr::Int(_) | Expr::Bool(_) | Expr::Text(_) | Expr::Variable(_) | Expr::Field(_, _) => {
-            true
-        }
+        Expr::Int(_)
+        | Expr::Float(_)
+        | Expr::Bool(_)
+        | Expr::Text(_)
+        | Expr::Variable(_)
+        | Expr::Field(_, _) => true,
         Expr::Format(segments) => segments.iter().all(pure),
         Expr::Unary(_, inner) | Expr::Index(_, inner) => pure(inner),
         Expr::Binary(_, left, right) => pure(left) && pure(right),
@@ -370,6 +432,15 @@ fn pure(expr: &Expr) -> bool {
 
 fn is_text(ty: Type) -> bool {
     matches!(ty, Type::Owned | Type::Shared | Type::Mutable)
+}
+
+/// 算术运算的结果类型：左操作数是 f64 就是 f64，否则按 i64 检查。
+pub fn numeric(ty: Type) -> Type {
+    if ty == Type::Float {
+        Type::Float
+    } else {
+        Type::Int
+    }
 }
 
 /// 只有函数尾部的调用才是隐式返回值：函数体的最后一条，以及尾部 if/else 分支的最后一条。
@@ -471,9 +542,14 @@ impl Parser {
             self.expect(':')?;
             let value = match self.word()?.as_str() {
                 "i64" => Elem::Int,
+                "f64" => Elem::Float,
                 "bool" => Elem::Bool,
                 "string" => Elem::Str,
-                _ => return Err("unsupported map value type; expected i64, bool or string".into()),
+                _ => {
+                    return Err(
+                        "unsupported map value type; expected i64, f64, bool or string".into(),
+                    )
+                }
             };
             self.expect('}')?;
             return Ok(match ty {
@@ -488,14 +564,13 @@ impl Parser {
             if !self.symbol(';') {
                 let elem = match element.as_str() {
                     "i64" => Elem::Int,
+                    "f64" => Elem::Float,
                     "bool" => Elem::Bool,
                     "string" => Elem::Str,
-                    _ => {
-                        return Err(
-                            "unsupported list element type; expected [i64], [bool] or [string]"
-                                .into(),
-                        )
-                    }
+                    _ => return Err(
+                        "unsupported list element type; expected [i64], [f64], [bool] or [string]"
+                            .into(),
+                    ),
                 };
                 self.expect(']')?;
                 return Ok(match ty {
@@ -530,6 +605,7 @@ impl Parser {
         match name.as_str() {
             "string" => Ok(ty),
             "i64" if ty == Type::Owned => Ok(Type::Int),
+            "f64" if ty == Type::Owned => Ok(Type::Float),
             "bool" if ty == Type::Owned => Ok(Type::Bool),
             _ if ty == Type::Owned
                 && name
@@ -541,7 +617,7 @@ impl Parser {
                 self.type_names.insert(id, name);
                 Ok(Type::Record(id))
             }
-            _ => Err("unsupported type; expected string, i64, bool or owned struct".into()),
+            _ => Err("unsupported type; expected string, i64, f64, bool or owned struct".into()),
         }
     }
     fn expr(&mut self) -> Result<Expr, String> {
@@ -601,6 +677,10 @@ impl Parser {
                         .map_err(|_| "i64 literal overflow")?,
                 ));
             }
+            if let Some(Token::Float(text)) = self.peek().cloned() {
+                self.take();
+                return Ok(Expr::Float(-text.parse::<f64>().expect("lexed float")));
+            }
             return Ok(Expr::Unary('-', Box::new(self.atom()?)));
         }
         if self.symbol('!') {
@@ -611,6 +691,10 @@ impl Parser {
             return Ok(Expr::Int(
                 number.parse().map_err(|_| "i64 literal overflow")?,
             ));
+        }
+        if let Some(Token::Float(text)) = self.peek().cloned() {
+            self.take();
+            return Ok(Expr::Float(text.parse().expect("lexed float")));
         }
         if self.keyword("if") {
             return self.if_value();
@@ -1096,7 +1180,7 @@ pub fn parse(source: &str) -> Result<Module, String> {
             let start = p.at();
             if p.keyword("struct") {
                 let name = p.word()?;
-                if matches!(name.as_str(), "string" | "i64" | "bool") {
+                if matches!(name.as_str(), "string" | "i64" | "f64" | "bool") {
                     return Err(format!("reserved type name {name}"));
                 }
                 if !name.starts_with(char::is_uppercase) {
@@ -1137,6 +1221,10 @@ pub fn parse(source: &str) -> Result<Module, String> {
                 return Err("expected use, struct or fn declaration".into());
             }
             let name = p.word()?;
+            // `i64(x)`、`f64(n)` 是内建的数值转换。
+            if matches!(name.as_str(), "i64" | "f64") {
+                return Err(format!("reserved type name {name}"));
+            }
             if module.structs.contains_key(&name) {
                 return Err(format!("duplicate declaration {name}"));
             }
@@ -1218,7 +1306,7 @@ pub fn encode(module: &Module) -> Vec<u8> {
         .map(|(name, structure)| (name, structure.public, &structure.fields))
         .collect();
     format!(
-        "ZAM-IR-17\n{declarations:?}\n{:?}\n{:?}\n{:?}\n",
+        "ZAM-IR-18\n{declarations:?}\n{:?}\n{:?}\n{:?}\n",
         module.type_names, module.imports, module.functions
     )
     .into_bytes()
@@ -1386,13 +1474,14 @@ impl Checker<'_> {
                 };
                 let elem = |ty| match ty {
                     Type::Int => Some(Elem::Int),
+                    Type::Float => Some(Elem::Float),
                     Type::Bool => Some(Elem::Bool),
                     Type::Owned | Type::Shared | Type::Mutable => Some(Elem::Str),
                     _ => None,
                 };
                 match (elem(self.ty(key)?), elem(self.ty(value)?)) {
                     (Some(key @ (Elem::Int | Elem::Str)), Some(value)) => Ok(Type::Map(key, value)),
-                    _ => Err("unsupported map literal; keys are i64 or string, values are i64, bool or string".into()),
+                    _ => Err("unsupported map literal; keys are i64 or string, values are i64, f64, bool or string".into()),
                 }
             }
             Expr::BorrowIndex(_, _, mutable) => Ok(if *mutable {
@@ -1404,6 +1493,7 @@ impl Checker<'_> {
             Expr::Text(_) => Ok(Type::Owned),
             Expr::Format(_) => Ok(Type::Owned),
             Expr::Int(_) | Expr::ByteLen(_) | Expr::CharLen(_) => Ok(Type::Int),
+            Expr::Float(_) => Ok(Type::Float),
             Expr::Bool(_) | Expr::StringEqual(_, _) => Ok(Type::Bool),
             Expr::Variable(name) => Ok(self.binding(name)?.ty),
             Expr::Borrow(_, mutable) => Ok(if *mutable {
@@ -1420,15 +1510,35 @@ impl Checker<'_> {
             Expr::Try(inner) => self.ty(inner),
             // `catch` 的成功路径同样拿到被调函数的成功值。
             Expr::Catch(inner, _, _) => self.ty(inner),
-            Expr::Unary(op, _) => Ok(if *op == '!' { Type::Bool } else { Type::Int }),
+            Expr::Unary('!', _) => Ok(Type::Bool),
+            Expr::Unary(_, value) => Ok(numeric(self.ty(value)?)),
             Expr::Binary(op, left, _) if op == "+" && is_text(self.ty(left)?) => Ok(Type::Owned),
-            Expr::Binary(op, _, _) => Ok(if matches!(op.as_str(), "+" | "-" | "*" | "/" | "%") {
-                Type::Int
+            Expr::Binary(op, left, _) => Ok(if matches!(op.as_str(), "+" | "-" | "*" | "/" | "%") {
+                numeric(self.ty(left)?)
             } else {
                 Type::Bool
             }),
             Expr::If(_, yes, _) => self.ty(yes),
         }
+    }
+    /// 二元运算两边一个是 i64、一个是 f64 时的报错：没有隐式转换。
+    fn mixed(&self, op: &str, left: &Expr, right: &Expr) -> Option<String> {
+        let types = (self.ty(left).ok()?, self.ty(right).ok()?);
+        if !matches!(types, (Type::Int, Type::Float) | (Type::Float, Type::Int)) {
+            return None;
+        }
+        let literal = |expr: &Expr| match expr {
+            Expr::Int(value) => Some(*value),
+            _ => None,
+        };
+        Some(match literal(left).or(literal(right)) {
+            Some(value) => format!(
+                "type mismatch: {op} mixes i64 and f64; write the integer {value} as {value}.0"
+            ),
+            None => format!(
+                "type mismatch: {op} mixes i64 and f64; convert one side with f64(n) or i64(x)"
+            ),
+        })
     }
     /// 字符串运算（`+`、比较）与插值读取的操作数：变量、字段与元素只读，临时值移入。
     fn text_operand(
@@ -1608,7 +1718,12 @@ impl Checker<'_> {
                     let ty = self.ty(segment)?;
                     if !matches!(
                         ty,
-                        Type::Owned | Type::Shared | Type::Mutable | Type::Int | Type::Bool
+                        Type::Owned
+                            | Type::Shared
+                            | Type::Mutable
+                            | Type::Int
+                            | Type::Float
+                            | Type::Bool
                     ) {
                         return Err("cannot interpolate this value".into());
                     }
@@ -1643,25 +1758,48 @@ impl Checker<'_> {
                 self.expr(expr, Type::Owned, loans)
             }
             Expr::Int(_) if expected == Type::Int => Ok(()),
+            Expr::Float(_) if expected == Type::Float => Ok(()),
             Expr::Bool(_) if expected == Type::Bool => Ok(()),
-            Expr::Variable(name) if matches!(expected, Type::Int | Type::Bool) => {
-                if self.binding(name)?.ty == expected {
-                    Ok(())
-                } else {
-                    Err("type mismatch".into())
+            Expr::Int(value) if expected == Type::Float => Err(format!(
+                "type mismatch: expected f64, found the integer {value}; write {value}.0"
+            )),
+            Expr::Float(_) if expected == Type::Int => {
+                Err("type mismatch: expected i64, found an f64 literal; convert with i64(x)".into())
+            }
+            Expr::Variable(name) if matches!(expected, Type::Int | Type::Float | Type::Bool) => {
+                match (self.binding(name)?.ty, expected) {
+                    (found, expected) if found == expected => Ok(()),
+                    (Type::Int, Type::Float) => Err(format!(
+                        "type mismatch: {name} is i64 but f64 is expected; convert with f64({name})"
+                    )),
+                    (Type::Float, Type::Int) => Err(format!(
+                        "type mismatch: {name} is f64 but i64 is expected; convert with i64({name})"
+                    )),
+                    _ => Err("type mismatch".into()),
                 }
             }
             Expr::Unary(op, value) => {
-                let ty = if *op == '!' { Type::Bool } else { Type::Int };
+                let ty = if *op == '!' {
+                    Type::Bool
+                } else {
+                    numeric(self.ty(value)?)
+                };
                 if expected != ty {
                     return Err("type mismatch".into());
                 }
                 self.expr(value, ty, loans)
             }
             Expr::Binary(op, left, right) => {
+                if let Some(error) = self.mixed(op, left, right) {
+                    return Err(error);
+                }
                 let ty = self.ty(expr)?;
                 if expected != ty {
-                    return Err("type mismatch".into());
+                    return Err(match (ty, expected) {
+                        (Type::Int, Type::Float) => "type mismatch: this i64 expression is used as f64; convert it with f64(...)".into(),
+                        (Type::Float, Type::Int) => "type mismatch: this f64 expression is used as i64; convert it with i64(...)".into(),
+                        _ => "type mismatch".into(),
+                    });
                 }
                 if matches!(op.as_str(), "&&" | "||") {
                     self.expr(left, Type::Bool, loans)?;
@@ -1681,10 +1819,10 @@ impl Checker<'_> {
                 let operand = if matches!(op.as_str(), "==" | "!=") {
                     self.ty(left)?
                 } else {
-                    Type::Int
+                    numeric(self.ty(left)?)
                 };
-                if !matches!(operand, Type::Int | Type::Bool) {
-                    return Err("comparison requires i64 or bool".into());
+                if !matches!(operand, Type::Int | Type::Float | Type::Bool) {
+                    return Err("comparison requires i64, f64, bool or string".into());
                 }
                 self.expr(left, operand, loans)?;
                 self.expr(right, operand, loans)

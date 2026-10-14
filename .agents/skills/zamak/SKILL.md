@@ -54,7 +54,8 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 
 - 函数：`fn f(a: i64, s: &string) -> i64 { ... }`；函数尾部的值表达式即返回值（函数体最后一条，或尾部 if/else 分支的最后一条），也可写 `return`；**循环体和非尾部分支末尾的调用只求值、不返回**；跨模块可见要写 `pub fn`。
 - 绑定：`let x = 1`、`let mut x = 1`、`let mut x: i64 = 1`。**不支持遮蔽**（同一作用域重名报错）；块内变量不能逃出块。
-- 类型：`i64`、`bool`、`string`、命名结构体、`[i64; N]`（定长，长度 1–1024，只能是局部值）、`[T]`（可增长列表，`T` 只能是 `i64`/`bool`/`string`，可作局部、参数、返回值、结构体字段）、`{K: V}`（字典，`K` 是 `i64`/`string`，`V` 是 `i64`/`bool`/`string`，用法同列表）。
+- 类型：`i64`、`f64`、`bool`、`string`、命名结构体、`[i64; N]`（定长，长度 1–1024，只能是局部值）、`[T]`（可增长列表，`T` 只能是 `i64`/`f64`/`bool`/`string`，可作局部、参数、返回值、结构体字段）、`{K: V}`（字典，`K` 是 `i64`/`string`，`V` 是 `i64`/`f64`/`bool`/`string`，用法同列表）。
+- 浮点 `f64`：字面量 `1.5`、`2e-3`、`1_000.5`（小数点两边都要有数字）；IEEE 754，`+ - * / %` 与比较不检查溢出，除零得 `inf`/`NaN`。**`i64` 与 `f64` 不隐式转换**：`x * 2` 要写 `x * 2.0`，变量用 `f64(n)` / `i64(x)`（向零截断，NaN 或越界终止程序）。`println`/插值输出最短可读回十进制（`0.1`、`2.0`、`1e16`、`2.5e-7`、`NaN`、`inf`）；`fmt.fixed(x, n)`（`use std/fmt`）保留 n 位小数；`string.parse_f64(&s) -> f64!string`。字典键不能是 `f64`。
 - 列表：空列表**必须标注类型** `let mut xs: [i64] = []`（不带标注的 `[1, 2]` 是定长数组）；`xs.len()`、`xs.push(v)`（字符串移入）、`xs.pop()`；`xs[i]` 读写（越界或空 `pop` 终止程序）；字符串元素**不能** `xs[i]` 取出，借用 `&xs[i]` 或 `string.copy(&xs[i])`；`for x in &xs` 遍历（字符串元素是只读借用），循环体内不能修改/移动 `xs`，要改就用 `for i in 0..xs.len()`；参数 `&[T]` / `&mut [T]`，传 `&xs` / `&mut xs`；`xs.swap(i, j)` 原地交换（字符串列表排序靠它）；方法接收者只能是变量或字段路径，**不能链式调用** `f().len()`。
 - 字典：字面量 `{"a": 1, "b": 2}`（逗号分隔，可分行），空字典**必须标注类型** `let mut m: {string: i64} = {}`；`m[k]` 读（键不存在**终止程序**）、`m[k] = v` 插入或替换；字符串键按只读借用传：`m[&name]`、`m["lit"]`、遍历得到的键直接 `m[k]`（owned 变量不加 `&` 会报 `expected explicit borrow`）；`m.len()`、`m.contains(k)`、`m.get(k, default)`（缺失返回 default，字符串值返回副本）、`m.remove(k) -> bool`、`m.keys() -> [K]`；`for k in &m` 按**插入顺序**遍历键，循环体内不能改 `m`；字符串值不能 `m[k]` 取出，用 `&m[k]` 或 `get`。计数惯用法：`counts[word] = counts.get(word, 0) + 1`。
 - 结构体：`struct P { name: string` 换行 `age: i64 }`（每行一个字段，无逗号）；字面量 `P { name: "a" age: 3 }`（**字段之间没有逗号**，可写一行也可分行）；字段读写 `p.name`、连续 `a.b.c`；支持整体移动、整体重新赋值、可变字段赋值；字符串字段自动释放。
@@ -63,18 +64,20 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 - 字符字面量 `'a'`、`'#'`、`'\n'`、`'\''`：值是 Unicode 码点（`i64`），与 `string.byte_at` 比较只用 ASCII 字符。
 - 字符串：UTF-8，转义 `\n \r \t \" \\`，插值 `"{name}"` / `"{p.name}"` / `"{a + b}"` / `"{xs[i]}"` / `"{f(x)}"`（变量、字段、元素只读不移动；花括号里不能有字符串字面量或花括号），字面大括号写 `{{` / `}}`。
 - 注释：`//` 与 `#`；**没有块注释**。
-- 模块：`use greeting`（同目录 `greeting.zm`，只能调用其 `pub fn`）、`use std/string`、`use std/io`、`use std/fmt`、`use std/fs`、`use std/env`；调用 `greeting.hello()`、`io.println("x")`；`println(...)` 无需导入。
+- 模块：`use greeting`（同目录 `greeting.zm`，只能调用其 `pub fn`）、`use std/string`、`use std/io`、`use std/fmt`、`use std/fs`、`use std/env`、`use std/math`；调用 `greeting.hello()`、`io.println("x")`；`println(...)` 无需导入。
 - 所有权：字符串赋值/传参是**移动**，移动后再用报错；借用只能作为参数（`&s`、`&mut s`），调用返回即结束；共享借用可多个，可变借用必须独占且要求可变所有者；借用参数不能移动、返回或存进局部变量。整数/布尔是拷贝。
 - 错误值：签名 `fn load(p: &string) -> i64!string`（成功 T / 失败 E）或 `-> !string`（只失败）；`fail "msg"` 产生错误并立即返回；`let v = load(&p)?` 失败时向调用方传播（当前函数签名必须带相同的 `!E`）；`load(&p) catch e { ... }` 就地处理（**不传播**，错误值只在块内可见，**块必须在所有路径 `return`**）；`fn main() -> !string` 允许，未捕获错误写 stderr 并以退出码 1 结束。当前只支持 `E = string`。
 - 标准库（`&string` 参数传 `&name`、已是借用的变量，或直接写字符串字面量/插值 `"x"`、`"{n}"`；owned 变量必须加 `&`）：
-  - `std/string`：`byte_len(&s) -> i64`、`char_len(&s) -> i64`（按 UTF-8 码点）、`equal(&a, &b) -> bool`、`parse_i64(&s) -> i64!string`（严格十进制，可带 `+`/`-`，不允许空白）、`trim(&s) -> string`、`find(&s, &needle) -> i64`（字节位置，找不到 -1）、`byte_at(&s, i) -> i64`、`slice(&s, start, end) -> string`（字节区间，越界或切在多字节字符中间会**终止程序**，与数组越界一样）、`find_from(&s, &needle, start) -> i64`、`starts_with`/`ends_with`/`contains(&s, &p) -> bool`、`replace(&s, &from, &to) -> string`、`lower`/`upper(&s) -> string`（仅 ASCII）、`copy(&s) -> string`、`split(&s, &sep) -> [string]`（保留空段）、`words(&s) -> [string]`、`lines(&s) -> [string]`（去 `\r`，末尾换行不产生空行）、`join(&list, &sep) -> string`。
+  - `std/string`：`byte_len(&s) -> i64`、`char_len(&s) -> i64`（按 UTF-8 码点）、`equal(&a, &b) -> bool`、`parse_i64(&s) -> i64!string`（严格十进制，可带 `+`/`-`，不允许空白）、`parse_f64(&s) -> f64!string`（十进制，可带小数点与指数，不接受空白、`inf`、`nan`）、`trim(&s) -> string`、`find(&s, &needle) -> i64`（字节位置，找不到 -1）、`byte_at(&s, i) -> i64`、`slice(&s, start, end) -> string`（字节区间，越界或切在多字节字符中间会**终止程序**，与数组越界一样）、`find_from(&s, &needle, start) -> i64`、`starts_with`/`ends_with`/`contains(&s, &p) -> bool`、`replace(&s, &from, &to) -> string`、`lower`/`upper(&s) -> string`（仅 ASCII）、`copy(&s) -> string`、`split(&s, &sep) -> [string]`（保留空段）、`words(&s) -> [string]`、`lines(&s) -> [string]`（去 `\r`，末尾换行不产生空行）、`join(&list, &sep) -> string`。
   - `std/io`：`print(&s)`（不换行）、`eprintln(&s)`（写 stderr）、`read_line(&mut line) -> bool!string`（去掉行尾 `\n`/`\r\n`，结束时返回 false；典型写法 `let mut line = ""` + `while io.read_line(&mut line)? { ... }`）、`read_all() -> string!string`。
   - `std/fs`：`read(&path) -> string!string`、`write(&path, &text) -> !string`（覆盖写）。
   - `std/env`：`arg_count() -> i64`、`arg(i) -> string!string`（不含程序名，从 0 开始）、`args() -> [string]`。
+  - `std/math`（参数都是 `f64`）：`sqrt`、`pow(x, y)`、`exp`、`log`（自然对数）、`log10`、`sin`、`cos`、`tan`、`atan`、`atan2(y, x)`、`floor`、`ceil`、`round`（远离零）、`trunc`、`abs`、`min(a, b)`、`max(a, b)`、`is_nan(x) -> bool`；常量 `math.pi`、`math.e`、`math.inf`（`project.rs` 解析时替换成字面量）。
+  - `std/fmt`：`fixed(x, digits) -> string`（digits 0–30，超出终止程序）；`println` 同全局。
   - `println` / `io.println` / `fmt.println` 打印字符串、整数或布尔值。
   - 可失败函数用 `?` 时当前函数要带 `!string`，所以读写文件的 `main` 一般写成 `fn main() -> !string`；`fs.write(&p, &t)?` 可以单独成一条语句。
-  - 标准库实现：`zam/src/native.rs` 的 `BUILTINS` 表（签名 + C 函数体，`p0`/`p1`… 是参数）和 `STD_PRELUDE`（共用 C 辅助）；`project.rs` 把 `std/*` 调用解析成 `std/<模块>:<函数>`，检查器按普通函数签名检查。新增函数只需在表里加一项，再升 `native-c-N`。列表的 C 侧是每种元素一组 `Li`/`Lb`/`Ls` 结构与 `push/pop/at/len/swap/drop/take` 函数（`list_helpers`），字典是 `M<键><值>`（如 `Msi`）一组 `set/at/has/getor/del/keys/len` 与插入顺序表 + 开放寻址下标表（`MAP_TEMPLATE`）。用到哪些容器由生成器记录在 `Generator.containers`（每个 `scalar()` 都登记类型）加上签名和结构体字段，函数体先生成、容器辅助后拼在前面。容器方法签名只在 `compiler::method_signature` 一处定义，检查器与生成器共用。
-- **尚未实现，不要写**：泛型、闭包、枚举、`match`、结构体元素的列表/字典、嵌套容器、`for k, v in &m`、方法链式调用、`for x in &mut xs`、浮点、元组、目录遍历、追加写文件、网络、时间、stderr 打印、包管理器、调试器、REPL、文档生成、线程、unsafe/FFI、块注释、`string` 以外的错误类型、整体结构体借用、单独移出 owned 字段。
+  - 标准库实现：`zam/src/native.rs` 的 `BUILTINS` 表（签名 + C 函数体，`p0`/`p1`… 是参数）和 `STD_PRELUDE`（共用 C 辅助）；`project.rs` 把 `std/*` 调用解析成 `std/<模块>:<函数>`，检查器按普通函数签名检查。新增函数只需在表里加一项，再升 `native-c-N`。列表的 C 侧是每种元素一组 `Li`/`Lf`/`Lb`/`Ls` 结构与 `push/pop/at/len/swap/drop/take` 函数（`list_helpers`），字典是 `M<键><值>`（如 `Msi`）一组 `set/at/has/getor/del/keys/len` 与插入顺序表 + 开放寻址下标表（`MAP_TEMPLATE`）。用到哪些容器由生成器记录在 `Generator.containers`（每个 `scalar()` 都登记类型）加上签名和结构体字段，函数体先生成、容器辅助后拼在前面。容器方法签名只在 `compiler::method_signature` 一处定义，检查器与生成器共用。
+- **尚未实现，不要写**：泛型、闭包、枚举、`match`、结构体元素的列表/字典、嵌套容器、`for k, v in &m`、方法链式调用、`for x in &mut xs`、`i64`/`f64` 隐式转换、整数版 `math.abs/min/max`、元组、目录遍历、追加写文件、网络、时间、包管理器、调试器、REPL、文档生成、线程、unsafe/FFI、块注释、`string` 以外的错误类型、整体结构体借用、单独移出 owned 字段。
 
 ## 常见诊断（照文本改代码）
 
@@ -85,6 +88,7 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 - `only string error types are supported for now` → 错误类型只能是 `string`。
 - 移动后使用、借用冲突/逃逸、不可变赋值、重复/缺失字段等都在 `zam check` 阶段报错。
 - `an empty list literal needs a type annotation` → 给 `[]` 加类型；`cannot move a string out of xs[..]` → 用 `&xs[i]` 或 `string.copy`；`xs is borrowed by an enclosing for loop` → 循环里改了正在遍历的列表或字典；`an empty map literal needs a type annotation` → 给 `{}` 加类型。
+- `type mismatch: * mixes i64 and f64` / `x is i64 but f64 is expected` → 整数字面量写成 `2.0`，变量用 `f64(n)` 或 `i64(x)` 转换；`zam: f64 value out of i64 range` → `i64(x)` 碰到 NaN 或越界。
 - 运行时（stderr，退出码 1）：`zam: list index out of bounds`、`zam: pop from empty list`、`zam: key not found` 直接终止；`cannot open <path>`、`invalid integer: <text>`、`argument index out of range` 是错误值，可 `catch`；`zam: string index out of bounds`、`zam: array index out of bounds`、`zam: integer arithmetic error` 是直接终止。
 - 人类可读诊断（stderr）：`error[ZM301]: <信息>`，下一行 `--> <文件>:<行>:<列>`，然后是源码行和 `^` 下划线（词法/语法错误只划记号，语义错误从语句起点划到行尾；中文按 2 格对齐），最后 `= help: <建议>`；多条之间空一行，结尾 `zam: N errors`。没有位置的错误仍是一行 `zam: <信息>`。列从 1 开始、按 Unicode 字符计数。**程序化处理一律用 `--json`**，别解析这段文本。
 - 实现：编译器内部错误仍是字符串 `line L, column C: 模块:函数: 信息`，多条用 `compiler::DIAGNOSTIC_SEPARATOR`（`\u{1e}`）拼接；`main.rs` 的 `diagnostics()` 拆开排序，`diagnostic()` 反解字段，`render()`/`underline()` 渲染。

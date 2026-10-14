@@ -126,7 +126,7 @@ fn new_project(directory: &Path, ai_template: bool) -> project::Result<()> {
     if ai_template {
         files.push((
             directory.join("AI.md"),
-            "# AI 工作循环\n\n1. 运行 `zam check --json <project>`。\n2. 根据 `file`、`line`、`column`、`function`、`code`、`category` 和 `suggestion` 定位最小修复。\n3. 修改后运行 `zam fmt <project>`，再重新检查。\n4. 通过后运行 `zam build <project>` 和 `zam run <project>`。\n\n语法错误只报第一条；类型与所有权错误每个函数各报一条，可以一轮修完再检查。保持每次修改小而明确。当前版本暂不支持浮点数、网络 I/O、泛型、枚举、闭包、线程和 FFI；可增长列表写作 `[i64]`/`[bool]`/`[string]`，字典写作 `{string: i64}` 等（空列表、空字典要标注类型），文件、标准输入与命令行参数见 `std/fs`、`std/io`、`std/env`。\n".to_string(),
+            "# AI 工作循环\n\n1. 运行 `zam check --json <project>`。\n2. 根据 `file`、`line`、`column`、`function`、`code`、`category` 和 `suggestion` 定位最小修复。\n3. 修改后运行 `zam fmt <project>`，再重新检查。\n4. 通过后运行 `zam build <project>` 和 `zam run <project>`。\n\n语法错误只报第一条；类型与所有权错误每个函数各报一条，可以一轮修完再检查。保持每次修改小而明确。当前版本暂不支持网络 I/O、泛型、枚举、闭包、线程和 FFI；浮点数是 `f64`（字面量 `1.5`，不和 `i64` 隐式转换，用 `f64(n)`、`i64(x)` 显式转换，数学函数见 `std/math`）；可增长列表写作 `[i64]`/`[f64]`/`[bool]`/`[string]`，字典写作 `{string: i64}` 等（空列表、空字典要标注类型），文件、标准输入与命令行参数见 `std/fs`、`std/io`、`std/env`。\n".to_string(),
         ));
         files.push((
             directory.join("README.md"),
@@ -303,6 +303,12 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
             "ZM509",
             "error_handling",
             Some("use `!string` or `T!string` for the error type"),
+        )
+    } else if message.contains("f64 literal is out of range") {
+        (
+            "ZM600",
+            "arithmetic",
+            Some("use an f64 literal no larger than 1.7976931348623157e308"),
         )
     } else if message.contains("literal overflow") {
         (
@@ -639,6 +645,11 @@ mod tests {
             ("cannot assign immutable value count", "ZM302"),
             ("unsupported type f64", "ZM900"),
             ("i64 literal overflow", "ZM600"),
+            ("f64 literal is out of range", "ZM600"),
+            (
+                "type mismatch: + mixes i64 and f64; convert one side with f64(n) or i64(x)",
+                "ZM200",
+            ),
         ] {
             let d = diagnostic("entry.zm", message);
             assert_eq!(d.code, code, "{message}");

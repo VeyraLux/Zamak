@@ -120,12 +120,13 @@ fn main() -> !string {
 }
 ```
 
-- **Types.** Zamak has `i64`, `bool`, `string` (UTF-8), named structs, fixed arrays `[i64; N]`, lists `[T]`, and maps `{K: V}`. List elements and map values can be `i64`, `bool`, or `string`, and map keys can be `i64` or `string`. A character literal such as `'#'` is an `i64` code point.
+- **Types.** Zamak has `i64`, `f64`, `bool`, `string` (UTF-8), named structs, fixed arrays `[i64; N]`, lists `[T]`, and maps `{K: V}`. List elements and map values can be `i64`, `f64`, `bool`, or `string`, and map keys can be `i64` or `string`. A character literal such as `'#'` is an `i64` code point.
+- **Numbers.** `f64` follows IEEE 754, so dividing by zero gives `inf` or `NaN`. Zamak never converts between `i64` and `f64` implicitly. Write `f64(n)` or `i64(x)`, where `i64(x)` truncates toward zero. `println` prints the shortest text that reads back as the same `f64`, such as `0.1` or `2.0`, and `fmt.fixed(x, 2)` rounds to two decimal places.
 - **Control flow.** Use `if`, `else if`, `else`, `while`, `break`, and `continue`. To choose a value, write `let v = if c { a } else { b }`. Loop over a range with `for i in 0..n`, over a list with `for x in &list`, and over map keys in insertion order with `for k in &map`.
 - **Errors.** A function that can fail returns `T!string` or `!string`. Use `fail` to return an error, `?` to pass it to the caller, and `catch e { ... }` to handle it in place.
 - **Modules.** Each file is a module. Import one with `use name`, and export items with `pub fn` and `pub struct`.
 - **Strings.** Join strings with `+`, compare them with `==` or `<`, and update variables with `+=`, `-=`, `*=`, `/=`, and `%=`. Interpolation accepts expressions such as `"{a + b}"` and `"{xs[0]}"`.
-- **Standard library.** `std/io` reads standard input and prints to standard output or standard error, `std/fs` reads and writes whole files, and `std/env` reads arguments. `std/string` measures, compares, parses, trims, searches, replaces, converts case, slices, splits, and joins strings.
+- **Standard library.** `std/io` reads standard input and prints to standard output or standard error, `std/fs` reads and writes whole files, and `std/env` reads arguments. `std/string` measures, compares, parses, trims, searches, replaces, converts case, slices, splits, and joins strings. `std/math` provides square roots, powers, logarithms, trigonometry, rounding, and the constants `math.pi`, `math.e`, and `math.inf`.
 
 The [tutorial](TUTORIAL.md) (in Chinese) covers every feature with runnable examples. For a larger program, see [examples/md2html](examples/md2html), a Markdown-to-HTML converter with four modules and about 270 lines. It handles headings, lists, quotes, fenced code, inline formatting, links, and HTML escaping. To run it:
 
@@ -156,7 +157,7 @@ For the list of error codes and the recommended loop for AI agents (check, make 
 
 ## Current limitations
 
-Zamak doesn't support floating-point numbers, generics, enums and `match`, closures, threads, a foreign function interface (FFI), lists or maps of structs, nested containers, networking, or directory listing yet. There's no package manager, language server, or read-eval-print loop (REPL) yet. When you use an unsupported construct, `zam check` reports a diagnostic instead of compiling incorrect code.
+Zamak doesn't support generics, enums and `match`, closures, threads, a foreign function interface (FFI), lists or maps of structs, nested containers, networking, or directory listing yet. There's no package manager, language server, or read-eval-print loop (REPL) yet. When you use an unsupported construct, `zam check` reports a diagnostic instead of compiling incorrect code.
 
 ## Editor and agent support
 

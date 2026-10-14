@@ -285,7 +285,7 @@ fn project_cache_execution_and_failures() {
         "fn main() { println(\"unterminated) }",
         "fn main() { println(\"x\") println(\"y\") }",
         "fn main() { println(\"{x}\") }",
-        "fn main() { let x = 1.5 }",
+        "fn main() { let x = 1.5e }",
         "fn main() {}\nfn main() {}",
         "fn other() {}",
         "use missing\nfn main() {}",

@@ -308,7 +308,12 @@ impl Analysis {
                     (None, None) => Interval::TOP,
                 }
             }
-            Expr::Field(_, _) | Expr::Text(_) | Expr::Borrow(_, _) | Expr::Bool(_) => Interval::TOP,
+            // f64 不参与整数区间推理。
+            Expr::Field(_, _)
+            | Expr::Text(_)
+            | Expr::Borrow(_, _)
+            | Expr::Bool(_)
+            | Expr::Float(_) => Interval::TOP,
         }
     }
     fn condition(&mut self, expr: &Expr, env: Env, collect: bool) -> (State, State) {

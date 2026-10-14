@@ -11,7 +11,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-25");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-26");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -292,7 +292,7 @@ impl Project {
             for import in &input.module.imports {
                 if !matches!(
                     import.as_str(),
-                    "std/io" | "std/fmt" | "std/string" | "std/fs" | "std/env"
+                    "std/io" | "std/fmt" | "std/string" | "std/fs" | "std/env" | "std/math"
                 ) && !self.modules.contains_key(import)
                 {
                     return Err(format!("{id}: missing module {import}"));
@@ -487,6 +487,33 @@ impl Project {
                     self.resolve_expr(module, locals, value)?;
                 }
             }
+            // `math.pi` 这类常量：别名指向 std/math 且不是局部变量时，直接换成字面量。
+            Expr::Field(root, name)
+                if !locals.contains(root.as_str())
+                    && self.modules[module]
+                        .module
+                        .imports
+                        .iter()
+                        .any(|path| path == "std/math" && root == "math") =>
+            {
+                *expr = Expr::Float(match name.as_str() {
+                    "pi" => std::f64::consts::PI,
+                    "e" => std::f64::consts::E,
+                    "inf" => f64::INFINITY,
+                    _ => {
+                        return Err(format!(
+                            "unknown variable math.{name}; std/math has the constants pi, e and inf"
+                        ))
+                    }
+                });
+            }
+            // `f64(n)`、`i64(x)`：数值转换，不需要导入。
+            Expr::Call(name, args) if matches!(name.as_str(), "f64" | "i64") => {
+                *name = format!("std/core:{name}");
+                for arg in args {
+                    self.resolve_expr(module, locals, arg)?;
+                }
+            }
             Expr::Call(name, args) => {
                 if matches!(
                     name.as_str(),
@@ -539,7 +566,7 @@ impl Project {
                     if locals.contains(root)
                         && (receiver.contains('.')
                             || !(imported
-                                || matches!(root, "io" | "fmt" | "string" | "fs" | "env")))
+                                || matches!(root, "io" | "fmt" | "string" | "fs" | "env" | "math")))
                     {
                         let mut args = std::mem::take(args);
                         for arg in &mut args {
