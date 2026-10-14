@@ -1,146 +1,153 @@
 // Fixed-size integer kernels. Intermediate and repeated checksums fit i64.
-fn gcd(a: i64, b: i64) -> i64 {
+fn gcd(a: i64, b: i64) -> i64:
     let mut x = a
     let mut y = b
-    while y != 0 {
+
+    while y != 0:
         let remainder = x % y
         x = y
         y = remainder
-    }
-    return x
-}
 
-fn gcd_batch(seed: i64) -> i64 {
+    return x
+
+fn gcd_batch(seed: i64) -> i64:
     let mut total = 0
     let mut i = 1
-    while i <= 20000 {
+
+    while i <= 20000:
         total = total + gcd(i * 17 + seed + 1, i * 13 + 7)
         i = i + 1
-    }
-    return total
-}
 
-fn prime_batch(seed: i64) -> i64 {
+    return total
+
+fn prime_batch(seed: i64) -> i64:
     let mut count = 0
     let mut n = 2
-    while n <= 10000 + seed {
+
+    while n <= 10000 + seed:
         let mut d = 2
         let mut prime = true
-        while d <= n / d {
-            if n % d == 0 {
+
+        while d <= n / d:
+            if n % d == 0:
                 prime = false
                 break
-            }
-            d = d + 1
-        }
-        if prime { count = count + 1 }
-        n = n + 1
-    }
-    return count
-}
 
-fn fibonacci_batch(seed: i64) -> i64 {
+            d = d + 1
+
+        if prime: count = count + 1
+        n = n + 1
+
+    return count
+
+fn fibonacci_batch(seed: i64) -> i64:
     let mut total = 0
     let mut i = 0
-    while i < 20000 + seed {
+
+    while i < 20000 + seed:
         let mut a = 0
         let mut b = 1
         let mut j = 0
-        while j < (i + seed) % 40 {
+
+        while j < (i + seed) % 40:
             let next = a + b
             a = b
             b = next
             j = j + 1
-        }
+
         total = total + a
         i = i + 1
-    }
-    return total
-}
 
-fn insertion_sort_batch(seed: i64) -> i64 {
+    return total
+
+fn insertion_sort_batch(seed: i64) -> i64:
     let mut values: [i64; 64] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     let mut i = 0
-    while i < 64 {
+
+    while i < 64:
         values[i] = (seed * 29 + i * 37 + 11) % 1009
         i = i + 1
-    }
+
     i = 1
-    while i < 64 {
+
+    while i < 64:
         let value = values[i]
         let mut j = i
-        while j > 0 && values[j - 1] > value {
+
+        while j > 0 and values[j - 1] > value:
             values[j] = values[j - 1]
             j = j - 1
-        }
+
         values[j] = value
         i = i + 1
-    }
+
     let mut total = 0
     i = 0
-    while i < 64 {
+
+    while i < 64:
         total = total + (i + 1) * values[i]
         i = i + 1
-    }
-    return total
-}
 
-fn binary_search_batch(seed: i64) -> i64 {
+    return total
+
+fn binary_search_batch(seed: i64) -> i64:
     let mut values: [i64; 64] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     let mut i = 0
-    while i < 64 {
+
+    while i < 64:
         values[i] = seed * 3 + i * 7
         i = i + 1
-    }
+
     let mut found = 0
     i = 0
-    while i < 128 {
+
+    while i < 128:
         let target = seed * 3 + ((i * 11 + 5) % 128) * 7
         let mut lo = 0
         let mut hi = 63
-        while lo <= hi {
+
+        while lo <= hi:
             let mid = (lo + hi) / 2
-            if values[mid] == target {
+
+            if values[mid] == target:
                 found = found + mid + 1
                 break
-            }
-            if values[mid] < target {
-                lo = mid + 1
-            } else {
-                hi = mid - 1
-            }
-        }
-        i = i + 1
-    }
-    return found
-}
 
-fn arithmetic_sum_batch(seed: i64) -> i64 {
+            if values[mid] < target:
+                lo = mid + 1
+            else:
+                hi = mid - 1
+
+        i = i + 1
+
+    return found
+
+fn arithmetic_sum_batch(seed: i64) -> i64:
     let mut total = 0
     let mut i = 0
-    while i < 512 {
+
+    while i < 512:
         total = total + (i + seed + 3) * (i * 5 - seed + 7)
         i = i + 1
-    }
-    return total
-}
 
-fn recurrence_batch(seed: i64) -> i64 {
+    return total
+
+fn recurrence_batch(seed: i64) -> i64:
     let mut a = seed + 1
     let mut b = seed + 3
     let mut total = 0
     let mut i = 0
-    while i < 50000 {
+
+    while i < 50000:
         let next = (a * 3 + b * 5 + 17) % 1000003
         a = b
         b = next
         total = total + a
         i = i + 1
-    }
-    return total
-}
 
-fn main() {
+    return total
+
+fn main():
     println(gcd_batch(0))
     println(prime_batch(0))
     println(fibonacci_batch(0))
@@ -148,4 +155,3 @@ fn main() {
     println(binary_search_batch(0))
     println(arithmetic_sum_batch(0))
     println(recurrence_batch(0))
-}

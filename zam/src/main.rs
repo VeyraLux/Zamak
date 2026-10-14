@@ -119,14 +119,14 @@ fn new_project(directory: &Path, ai_template: bool) -> project::Result<()> {
         ),
         (
             directory.join("src/main.zm"),
-            "fn main() {\n    println(\"hello from zamak\")\n}\n".to_string(),
+            "fn main():\n    println(\"hello from zamak\")\n".to_string(),
         ),
         (directory.join(".gitignore"), "build/\n".to_string()),
     ];
     if ai_template {
         files.push((
             directory.join("AI.md"),
-            "# AI 工作循环\n\n1. 运行 `zam check --json <project>`。\n2. 根据 `file`、`line`、`column`、`function`、`code`、`category` 和 `suggestion` 定位最小修复。\n3. 修改后运行 `zam fmt <project>`，再重新检查。\n4. 通过后运行 `zam build <project>` 和 `zam run <project>`。\n\n语法错误只报第一条；类型与所有权错误每个函数各报一条，可以一轮修完再检查。保持每次修改小而明确。当前版本暂不支持网络 I/O、泛型、闭包、线程和 FFI；枚举用 `match` 判断，分支要覆盖所有变体；浮点数是 `f64`（字面量 `1.5`，不和 `i64` 隐式转换，用 `f64(n)`、`i64(x)` 显式转换，数学函数见 `std/math`）；可增长列表写作 `[i64]`/`[f64]`/`[bool]`/`[string]`/`[Point]`，字典写作 `{string: i64}` 等（空列表、空字典要标注类型），结构体用 `&Point`/`&mut Point` 借用、不能复制，文件、标准输入与命令行参数见 `std/fs`、`std/io`、`std/env`。\n".to_string(),
+            "# AI 工作循环\n\n1. 运行 `zam check --json <project>`。\n2. 根据 `file`、`line`、`column`、`function`、`code`、`category` 和 `suggestion` 定位最小修复。\n3. 修改后运行 `zam fmt <project>`，再重新检查。\n4. 通过后运行 `zam build <project>` 和 `zam run <project>`。\n\n语法错误只报第一条；类型与所有权错误每个函数各报一条，可以一轮修完再检查。保持每次修改小而明确。代码块靠缩进（与 Python 相同）：`if`、`for`、`fn` 等块头以 `:` 结尾，块内多缩进 4 个空格，用 `elif` 而不是 `else if`，逻辑运算写 `and`、`or`、`not`，结构体字面量写成 `Point(x: 1, y: 2)`。当前版本暂不支持网络 I/O、泛型、闭包、线程和 FFI；枚举用 `match` 判断，分支要覆盖所有变体；浮点数是 `f64`（字面量 `1.5`，不和 `i64` 隐式转换，用 `f64(n)`、`i64(x)` 显式转换，数学函数见 `std/math`）；可增长列表写作 `[i64]`/`[f64]`/`[bool]`/`[string]`/`[Point]`，字典写作 `{string: i64}` 等（空列表、空字典要标注类型），结构体用 `&Point`/`&mut Point` 借用、不能复制，文件、标准输入与命令行参数见 `std/fs`、`std/io`、`std/env`。\n".to_string(),
         ));
         files.push((
             directory.join("README.md"),
@@ -146,7 +146,7 @@ fn new_project(directory: &Path, ai_template: bool) -> project::Result<()> {
 /// 就地重排缩进；只写真正变了的文件，改动过的路径打到 stderr（与构建进度一致）。
 fn format_sources(input: &Path) -> project::Result<()> {
     // 先解析一遍：语法就不成立的代码不格式化，免得把错误改得更难看。
-    let project = project::Project::load(input)?;
+    let project = project::Project::load_for_format(input)?;
     for path in project.module_paths() {
         let source =
             std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -386,6 +386,38 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
             "unsupported",
             Some("use a construct listed as supported in `zam --help` or the tutorial"),
         )
+    } else if message.contains("blocks are indented, not wrapped in braces") {
+        (
+            "ZM110",
+            "syntax",
+            Some("end the line with `:` instead of `{`, indent the block by 4 spaces, and delete the closing `}`"),
+        )
+    } else if message.contains("indentation contains a tab") {
+        (
+            "ZM110",
+            "syntax",
+            Some("run `zam fmt` to replace the tabs with spaces"),
+        )
+    } else if message.contains("indentation may have been lost") {
+        (
+            "ZM110",
+            "syntax",
+            Some("restore the indentation: indent every block 4 spaces under the line that ends with `:`"),
+        )
+    } else if message.contains("indent") {
+        (
+            "ZM110",
+            "syntax",
+            Some("indent the lines of a block 4 spaces deeper than the line ending with `:`, and line up lines of the same block"),
+        )
+    } else if message.contains("instead of `else if`") {
+        (
+            "ZM110",
+            "syntax",
+            Some("write `elif condition:` instead of `else if condition:`"),
+        )
+    } else if message.contains("was never closed") {
+        ("ZM110", "syntax", Some("add the matching closing bracket"))
     } else if message.contains("a single `=` assigns") {
         (
             "ZM110",
@@ -472,7 +504,7 @@ fn demo() -> project::Result<()> {
             std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
             std::fs::write(
                 dir.join("hello.zm"),
-                "fn main() { println(\"hello from zamak\") }",
+                "fn main(): println(\"hello from zamak\")\n",
             )
             .map_err(|e| e.to_string())?;
             project::Project::load(&dir.join("hello.zm"))?.build(&cache)?;

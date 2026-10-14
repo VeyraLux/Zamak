@@ -4,19 +4,19 @@ use std/string
 
 // 写一个 key=value 文件再读回来，用 find 与 slice 拆开。
 // 用法：zam run examples/io/notes.zm -- <输出文件>
-fn main() -> !string {
+fn main() -> !string:
     let path = env.arg(0)?
     let text = "name=扎马克"
     fs.write(&path, &text)?
     let back = fs.read(&path)?
     let separator = "="
     let at = string.find(&back, &separator)
-    if at < 0 {
+
+    if at < 0:
         fail "missing ="
-    }
+
     let key = string.slice(&back, 0, at)
     let value = string.slice(&back, at + 1, string.byte_len(&back))
     println(key)
     println(value)
     println(string.char_len(&value))
-}

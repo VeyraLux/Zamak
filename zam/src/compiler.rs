@@ -9,6 +9,9 @@ enum Token {
     Float(String),
     Symbol(char),
     Newline,
+    // 行首缩进变深 / 变浅一层。
+    Indent,
+    Dedent,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -233,223 +236,502 @@ type SourcePosition = (usize, usize);
 // 语句序列：每条语句带上它在源码中的起始位置，供语义错误定位。
 pub type Block = Vec<(Instruction, SourcePosition)>;
 
-fn lex(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), String> {
-    let mut position = (1, 1);
-    let mut chars = source
-        .chars()
-        .map(|c| {
-            let start = position;
-            if c == '\n' {
-                position = (position.0 + 1, 1);
-            } else {
-                position.1 += 1;
-            }
-            (c, start)
-        })
-        .peekable();
+/// 词法分析。括号外的每个逻辑行以 `Newline` 结束；行首缩进比上一层深时产生 `Indent`，
+/// 变浅时按缩进栈逐层产生 `Dedent`。括号里的换行和缩进不算，空行与只有注释的行跳过。
+/// 返回记号、每个记号的起始位置，以及整个文件是否几乎没有缩进（缺缩进时据此提示复制丢了缩进）。
+fn lex(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>, bool), String> {
+    let physical: Vec<&str> = source.split('\n').collect();
+    let count = physical.len();
     let mut tokens = Vec::new();
     let mut lines = Vec::new();
-    while let Some((c, (line, column))) = chars.next() {
-        let before = tokens.len();
-        // 整数后面紧跟的 `.` 拆成单独的记号时，记下点自己的位置。
-        let mut split = None;
-        let result: Result<(), String> = (|| {
-            match c {
-                '\n' => tokens.push(Token::Newline),
-                c if c.is_whitespace() => {}
-                '#' => {
-                    while chars.peek().is_some_and(|c| c.0 != '\n') {
-                        chars.next();
-                    }
+    let mut indents = vec![0usize];
+    // 还没闭合的括号：（括号字符, 位置）。括号层数就是它的长度。
+    let mut open: Vec<(char, SourcePosition)> = Vec::new();
+    let mut pending = false;
+    let (mut code, mut indented) = (0usize, 0usize);
+    for (index, raw) in physical.iter().enumerate() {
+        let line = index + 1;
+        let chars: Vec<char> = raw.trim_end_matches('\r').chars().collect();
+        let last = index + 1 == count;
+        let mut i = 0;
+        if open.is_empty() {
+            let start = chars
+                .iter()
+                .position(|c| !c.is_whitespace())
+                .unwrap_or(chars.len());
+            let rest = &chars[start..];
+            if rest.is_empty() || rest[0] == '#' || rest.starts_with(&['/', '/']) {
+                continue;
+            }
+            if let Some(tab) = chars[..start].iter().position(|c| *c == '\t') {
+                return Err(format!(
+                    "line {line}, column {}: indentation contains a tab; run `zam fmt` to replace tabs with spaces",
+                    tab + 1
+                ));
+            }
+            code += 1;
+            indented += usize::from(start > 0);
+            if start > *indents.last().unwrap() {
+                indents.push(start);
+                tokens.push(Token::Indent);
+                lines.push((line, start + 1));
+            } else {
+                while start < *indents.last().unwrap() {
+                    indents.pop();
+                    tokens.push(Token::Dedent);
+                    lines.push((line, start + 1));
                 }
-                '/' if chars.peek().is_some_and(|(c, _)| *c == '/') => {
-                    chars.next();
-                    while chars.peek().is_some_and(|c| c.0 != '\n') {
-                        chars.next();
-                    }
+                if start != *indents.last().unwrap() {
+                    return Err(format!(
+                        "line {line}, column {}: unindent does not match any outer indentation level",
+                        start + 1
+                    ));
                 }
+            }
+            i = start;
+        }
+        while i < chars.len() {
+            let c = chars[i];
+            let column = i + 1;
+            let error = |message: &str| format!("line {line}, column {column}: {message}");
+            let at = |j: usize| chars.get(j).copied();
+            let token = match c {
+                c if c.is_whitespace() => {
+                    i += 1;
+                    continue;
+                }
+                '#' => break,
+                '/' if at(i + 1) == Some('/') => break,
                 '"' => {
                     let mut text = String::new();
-                    let mut closed = false;
-                    while let Some((c, _)) = chars.next() {
-                        match c {
-                            '"' => {
-                                closed = true;
-                                break;
+                    let mut j = i + 1;
+                    loop {
+                        match at(j) {
+                            None => {
+                                return Err(error(if last {
+                                    "unterminated string literal"
+                                } else {
+                                    "newline in string literal"
+                                }))
                             }
-                            '\\' => text.push(match chars.next().map(|(c, _)| c) {
-                                Some('n') => '\n',
-                                Some('r') => '\r',
-                                Some('t') => '\t',
-                                Some('"') => '"',
-                                Some('\\') => '\\',
-                                _ => return Err("unsupported string escape".into()),
-                            }),
-                            '\n' | '\r' => return Err("newline in string literal".into()),
-                            c => text.push(c),
+                            Some('"') => break,
+                            Some('\\') => {
+                                text.push(match at(j + 1) {
+                                    Some('n') => '\n',
+                                    Some('r') => '\r',
+                                    Some('t') => '\t',
+                                    Some('"') => '"',
+                                    Some('\\') => '\\',
+                                    _ => return Err(error("unsupported string escape")),
+                                });
+                                j += 2;
+                            }
+                            Some(c) => {
+                                text.push(c);
+                                j += 1;
+                            }
                         }
                     }
-                    if !closed {
-                        return Err("unterminated string literal".into());
-                    }
-                    tokens.push(Token::Text(text));
+                    i = j + 1;
+                    Token::Text(text)
                 }
                 // 字符字面量 `'a'`：值是该字符的 Unicode 码点（i64），ASCII 字符等于 byte_at 读到的字节。
                 '\'' => {
                     let single = "character literal must contain exactly one character";
-                    let value = match chars.next().map(|(c, _)| c) {
-                        Some('\\') => match chars.next().map(|(c, _)| c) {
-                            Some('n') => '\n',
-                            Some('r') => '\r',
-                            Some('t') => '\t',
-                            Some('0') => '\0',
-                            Some('\\') => '\\',
-                            Some('\'') => '\'',
-                            Some('"') => '"',
-                            _ => return Err("unsupported character escape".into()),
-                        },
-                        Some('\'' | '\n' | '\r') | None => return Err(single.into()),
-                        Some(c) => c,
+                    let (value, width) = match at(i + 1) {
+                        Some('\\') => (
+                            match at(i + 2) {
+                                Some('n') => '\n',
+                                Some('r') => '\r',
+                                Some('t') => '\t',
+                                Some('0') => '\0',
+                                Some('\\') => '\\',
+                                Some('\'') => '\'',
+                                Some('"') => '"',
+                                _ => return Err(error("unsupported character escape")),
+                            },
+                            2,
+                        ),
+                        Some('\'') | None => return Err(error(single)),
+                        Some(c) => (c, 1),
                     };
-                    if chars.next().map(|(c, _)| c) != Some('\'') {
-                        return Err(single.into());
+                    if at(i + 1 + width) != Some('\'') {
+                        return Err(error(single));
                     }
-                    tokens.push(Token::Number(u32::from(value).to_string()));
+                    i += width + 2;
+                    Token::Number(u32::from(value).to_string())
                 }
                 c if c.is_ascii_alphabetic() || c == '_' => {
-                    let mut word = String::from(c);
-                    while chars
-                        .peek()
-                        .is_some_and(|(c, _)| c.is_ascii_alphanumeric() || *c == '_')
-                    {
-                        word.push(chars.next().unwrap().0);
+                    let mut j = i;
+                    while at(j).is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') {
+                        j += 1;
                     }
-                    tokens.push(Token::Word(word));
+                    let word = chars[i..j].iter().collect();
+                    i = j;
+                    Token::Word(word)
                 }
                 c if c.is_ascii_digit() => {
-                    let mut number = String::from(c);
-                    while chars
-                        .peek()
-                        .is_some_and(|(c, _)| c.is_ascii_digit() || *c == '_')
-                    {
-                        number.push(chars.next().unwrap().0);
-                    }
-                    if number.ends_with('_') || number.contains("__") {
-                        return Err("integer separators must occur between digits".into());
+                    let mut j = i;
+                    let digits = |j: &mut usize| {
+                        while at(*j).is_some_and(|c| c.is_ascii_digit() || c == '_') {
+                            *j += 1;
+                        }
+                    };
+                    digits(&mut j);
+                    let integer: String = chars[i..j].iter().collect();
+                    if integer.ends_with('_') || integer.contains("__") {
+                        return Err(error("integer separators must occur between digits"));
                     }
                     let mut float = false;
                     // `1.5` 是浮点数；`0..n` 的点后面不是数字，整数照旧，点交给区间。
-                    if chars.peek().is_some_and(|(c, _)| *c == '.') {
-                        let (_, dot) = chars.next().unwrap();
-                        if !chars.peek().is_some_and(|(c, _)| c.is_ascii_digit()) {
-                            tokens.push(Token::Number(number.replace('_', "")));
-                            tokens.push(Token::Symbol('.'));
-                            split = Some(dot);
-                            return Ok(());
-                        }
+                    if at(j) == Some('.') && at(j + 1).is_some_and(|c| c.is_ascii_digit()) {
                         float = true;
-                        number.push('.');
-                        while chars
-                            .peek()
-                            .is_some_and(|(c, _)| c.is_ascii_digit() || *c == '_')
-                        {
-                            number.push(chars.next().unwrap().0);
+                        j += 1;
+                        digits(&mut j);
+                    }
+                    if matches!(at(j), Some('e' | 'E')) {
+                        float = true;
+                        j += 1;
+                        if matches!(at(j), Some('+' | '-')) {
+                            j += 1;
+                        }
+                        if !at(j).is_some_and(|c| c.is_ascii_digit()) {
+                            return Err(error(
+                                "expected digits in the f64 exponent, such as 1e9 or 2.5e-3",
+                            ));
+                        }
+                        while at(j).is_some_and(|c| c.is_ascii_digit()) {
+                            j += 1;
                         }
                     }
-                    if chars.peek().is_some_and(|(c, _)| matches!(c, 'e' | 'E')) {
-                        float = true;
-                        number.push(chars.next().unwrap().0);
-                        if chars.peek().is_some_and(|(c, _)| matches!(c, '+' | '-')) {
-                            number.push(chars.next().unwrap().0);
-                        }
-                        if !chars.peek().is_some_and(|(c, _)| c.is_ascii_digit()) {
-                            return Err(
-                                "expected digits in the f64 exponent, such as 1e9 or 2.5e-3".into(),
-                            );
-                        }
-                        while chars.peek().is_some_and(|(c, _)| c.is_ascii_digit()) {
-                            number.push(chars.next().unwrap().0);
-                        }
-                    }
+                    let number: String = chars[i..j].iter().collect();
+                    i = j;
                     if !float {
-                        tokens.push(Token::Number(number.replace('_', "")));
-                        return Ok(());
+                        Token::Number(number.replace('_', ""))
+                    } else {
+                        let bytes = number.as_bytes();
+                        if (0..bytes.len()).any(|k| {
+                            bytes[k] == b'_'
+                                && !(bytes[k - 1].is_ascii_digit()
+                                    && bytes.get(k + 1).is_some_and(u8::is_ascii_digit))
+                        }) {
+                            return Err(error("digit separators must occur between digits"));
+                        }
+                        let text = number.replace('_', "");
+                        if !text.parse::<f64>().is_ok_and(f64::is_finite) {
+                            return Err(error("f64 literal is out of range"));
+                        }
+                        Token::Float(text)
                     }
-                    let bytes = number.as_bytes();
-                    if (0..bytes.len()).any(|i| {
-                        bytes[i] == b'_'
-                            && !(bytes[i - 1].is_ascii_digit()
-                                && bytes.get(i + 1).is_some_and(u8::is_ascii_digit))
-                    }) {
-                        return Err("digit separators must occur between digits".into());
-                    }
-                    let text = number.replace('_', "");
-                    if !text.parse::<f64>().is_ok_and(f64::is_finite) {
-                        return Err("f64 literal is out of range".into());
-                    }
-                    tokens.push(Token::Float(text));
                 }
                 '(' | ')' | '{' | '}' | '[' | ']' | '/' | '.' | ':' | ',' | '=' | '&' | '-'
                 | '>' | '<' | '+' | '*' | '%' | '!' | '|' | ';' | '?' => {
-                    tokens.push(Token::Symbol(c))
+                    match c {
+                        '(' | '[' | '{' => open.push((c, (line, column))),
+                        ')' | ']' | '}' => {
+                            open.pop();
+                        }
+                        _ => {}
+                    }
+                    i += 1;
+                    Token::Symbol(c)
                 }
-                _ => return Err(format!("unexpected character {c:?}")),
-            }
-            Ok(())
-        })();
-        result.map_err(|error| format!("line {line}, column {column}: {error}"))?;
-        if tokens.len() > before {
+                _ => return Err(error(&format!("unexpected character {c:?}"))),
+            };
+            tokens.push(token);
             lines.push((line, column));
+            pending = true;
         }
-        lines.extend(split);
+        if open.is_empty() && pending {
+            tokens.push(Token::Newline);
+            lines.push((line, chars.len() + 1));
+            pending = false;
+        }
     }
-    lines.push(position);
-    Ok((tokens, lines))
+    if let Some((c, (line, column))) = open.last() {
+        return Err(format!(
+            "line {line}, column {column}: '{c}' was never closed"
+        ));
+    }
+    let end = (
+        count,
+        physical[count - 1].trim_end_matches('\r').chars().count() + 1,
+    );
+    if pending {
+        tokens.push(Token::Newline);
+        lines.push(end);
+    }
+    while indents.len() > 1 {
+        indents.pop();
+        tokens.push(Token::Dedent);
+        lines.push(end);
+    }
+    lines.push(end);
+    Ok((tokens, lines, code >= 2 && indented * 10 <= code))
 }
 
-/// 只规范化空白：按大括号深度重排每行缩进、去掉行尾空白、统一结尾换行。
-/// 不重建 token，所以注释、字符串内容与行内空格原样保留，永远不会丢注释。
-/// ponytail: 未做行内空格重排与长行折行；需要时再从 token 流重建整行。
+/// 行首空白里的 Tab 展开成空格（补到下一个 4 的倍数）；行内其他位置的 Tab 不动。
+pub fn expand_tabs(source: &str) -> String {
+    source
+        .split('\n')
+        .map(|line| {
+            let mut out = String::new();
+            let mut column = 0;
+            let mut chars = line.chars().peekable();
+            while let Some(&c) = chars.peek() {
+                match c {
+                    ' ' => column += 1,
+                    '\t' => {
+                        let width = 4 - column % 4;
+                        out.push_str(&" ".repeat(width));
+                        column += width;
+                        chars.next();
+                        continue;
+                    }
+                    _ => break,
+                }
+                out.push(c);
+                chars.next();
+            }
+            out.extend(chars);
+            out
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// 一个逻辑行在格式化时需要的信息。
+struct Logical {
+    first: usize,
+    last: usize,
+    depth: usize,
+    head: String,
+    // 末尾是 `:` 且下一行缩进进去：后面跟着一个缩进块。
+    opens: bool,
+}
+
+/// 格式化：缩进统一成 4 个空格，括号里的续行按括号层数缩进，注释按上下文的层级缩进；
+/// 多行形式的 if/for/while/match 前后各留一个空行（块里第一条、前一行是注释、块结束处除外），
+/// 连续空行压成一个，顶层声明之间留一个空行。注释和字符串原样保留，换行风格不变。
 pub fn format(source: &str) -> Result<String, String> {
-    if source.is_empty() {
+    if source.trim().is_empty() {
         return Ok(String::new());
     }
-    let (tokens, positions) = lex(source)?;
     let newline = if source.contains("\r\n") {
         "\r\n"
     } else {
         "\n"
     };
-    let mut lines = Vec::new();
+    let text = expand_tabs(&source.replace("\r\n", "\n"));
+    parse(&text)?;
+    let (tokens, positions, _) = lex(&text)?;
+    let physical: Vec<&str> = text.split('\n').collect();
+    // 逻辑行：从 Indent/Dedent 之后的第一个记号到 Newline。
+    let mut logical: Vec<Logical> = Vec::new();
     let mut depth = 0usize;
-    let mut cursor = 0usize;
-    for (index, text) in source.lines().enumerate() {
-        let line = index + 1;
-        // 先消费严格在本行之前的 token，depth 即本行起点的深度。
-        while cursor < tokens.len() && positions[cursor].0 < line {
-            match tokens[cursor] {
-                Token::Symbol('{') => depth += 1,
-                Token::Symbol('}') => depth = depth.saturating_sub(1),
-                _ => {}
+    let mut start: Option<usize> = None;
+    for (i, token) in tokens.iter().enumerate() {
+        match token {
+            Token::Indent => depth += 1,
+            Token::Dedent => depth -= 1,
+            Token::Newline => {
+                let first = start.take().expect("logical line has tokens");
+                logical.push(Logical {
+                    first: positions[first].0 - 1,
+                    last: positions[i].0 - 1,
+                    depth,
+                    head: match &tokens[first] {
+                        Token::Word(word) => word.clone(),
+                        _ => String::new(),
+                    },
+                    opens: tokens.get(i + 1) == Some(&Token::Indent),
+                });
             }
-            cursor += 1;
+            _ => {
+                if start.is_none() {
+                    start = Some(i);
+                }
+            }
         }
-        let closes = cursor < tokens.len()
-            && positions[cursor].0 == line
-            && tokens[cursor] == Token::Symbol('}');
-        let indent = depth.saturating_sub(usize::from(closes));
-        let content = text.trim();
-        lines.push(if content.is_empty() {
-            String::new()
+    }
+    // 每个物理行属于哪个逻辑行，以及续行行首的括号层数（行首是闭括号时少一层）。
+    let mut owner: Vec<Option<usize>> = vec![None; physical.len()];
+    let mut nesting = vec![0usize; physical.len()];
+    let mut by_line: Vec<Vec<&Token>> = vec![Vec::new(); physical.len()];
+    for (i, token) in tokens.iter().enumerate() {
+        if !matches!(token, Token::Indent | Token::Dedent | Token::Newline) {
+            by_line[positions[i].0 - 1].push(token);
+        }
+    }
+    for (index, line) in logical.iter().enumerate() {
+        let mut bracket = 0usize;
+        for number in line.first..=line.last {
+            owner[number] = Some(index);
+            let closes = by_line[number]
+                .first()
+                .is_some_and(|t| matches!(t, Token::Symbol(')' | ']' | '}')));
+            nesting[number] = bracket.saturating_sub(usize::from(closes));
+            for token in &by_line[number] {
+                match token {
+                    Token::Symbol('(' | '[' | '{') => bracket += 1,
+                    Token::Symbol(')' | ']' | '}') => bracket = bracket.saturating_sub(1),
+                    _ => {}
+                }
+            }
+        }
+    }
+    #[derive(Clone, PartialEq)]
+    enum Entry {
+        Blank,
+        Comment(usize, String),
+        // 物理行文字、缩进层级、所属逻辑行、是否是逻辑行的第一行。
+        Code(usize, String, usize, bool),
+    }
+    let mut entries: Vec<Entry> = Vec::new();
+    // 每层缩进在原文里的列，用来给注释找层级。
+    let mut columns: Vec<usize> = vec![0];
+    let mut previous: Option<usize> = None;
+    for (number, raw) in physical.iter().enumerate() {
+        let trimmed = raw.trim();
+        if let Some(index) = owner[number] {
+            let line = &logical[index];
+            if number == line.first {
+                let column = raw.len() - raw.trim_start().len();
+                columns.truncate(line.depth);
+                columns.push(column);
+                previous = Some(index);
+                entries.push(Entry::Code(line.depth, trimmed.to_owned(), index, true));
+            } else if trimmed.is_empty() {
+                entries.push(Entry::Blank);
+            } else {
+                entries.push(Entry::Code(
+                    line.depth + nesting[number],
+                    trimmed.to_owned(),
+                    index,
+                    false,
+                ));
+            }
+            continue;
+        }
+        if trimmed.is_empty() {
+            entries.push(Entry::Blank);
+            continue;
+        }
+        // 注释行：紧跟块头时属于块；否则取原文列不超过它的最深一层，夹在前后两行的层级之间。
+        let next = (number..physical.len())
+            .find_map(|n| owner[n])
+            .map(|i| logical[i].depth);
+        let before = previous.map_or(0, |i| logical[i].depth);
+        let after = next.unwrap_or(0);
+        let column = raw.len() - raw.trim_start().len();
+        let level = if after > before {
+            after
         } else {
-            format!("{}{content}", " ".repeat(indent * 4))
-        });
+            (after..=before)
+                .rev()
+                .find(|&k| columns.get(k).is_some_and(|&c| c <= column))
+                .unwrap_or(after)
+        };
+        entries.push(Entry::Comment(level, trimmed.to_owned()));
     }
-    while lines.last().is_some_and(String::is_empty) {
-        lines.pop();
+    // 语句的范围：if 连同它的 elif/else，一直到下一条同层或更浅的语句之前。
+    let end_of = |index: usize| {
+        let depth = logical[index].depth;
+        let chain = logical[index].head == "if";
+        let mut end = index;
+        for (k, line) in logical.iter().enumerate().skip(index + 1) {
+            if line.depth < depth
+                || (line.depth == depth
+                    && !(chain && matches!(line.head.as_str(), "elif" | "else")))
+            {
+                break;
+            }
+            end = k;
+        }
+        end
+    };
+    let mut before_line: BTreeSet<usize> = BTreeSet::new();
+    // 语句结束的物理行 → 语句的层级；空行加在之后第一个不比它深的行前面（块内的尾注释留在块里）。
+    let mut after_line: BTreeMap<usize, usize> = BTreeMap::new();
+    for (index, line) in logical.iter().enumerate() {
+        if !matches!(line.head.as_str(), "if" | "for" | "while" | "match") {
+            continue;
+        }
+        let end = end_of(index);
+        if !(index..=end).any(|k| logical[k].opens) {
+            continue;
+        }
+        let first_in_block = index == 0 || logical[index - 1].depth < line.depth;
+        if !first_in_block {
+            before_line.insert(line.first);
+        }
+        let next = logical.get(end + 1);
+        if next.is_some_and(|next| next.depth == line.depth) {
+            after_line.insert(logical[end].last, line.depth);
+        }
     }
-    let mut formatted = lines.join(newline);
-    formatted.push_str(newline);
+    // 顶层声明之间（连续的 use 除外），空行放在声明前面紧挨着的注释之前。
+    let top: Vec<usize> = (0..logical.len())
+        .filter(|&i| logical[i].depth == 0)
+        .collect();
+    for pair in top.windows(2) {
+        let (a, b) = (&logical[pair[0]], &logical[pair[1]]);
+        if a.head == "use" && b.head == "use" {
+            continue;
+        }
+        before_line.insert(b.first);
+    }
+    let mut out: Vec<Entry> = Vec::new();
+    let mut pending: Option<usize> = None;
+    for (number, entry) in entries.into_iter().enumerate() {
+        if let Some(depth) = pending {
+            match &entry {
+                Entry::Blank => pending = None,
+                Entry::Comment(level, _) if *level > depth => {}
+                _ => {
+                    if out.last() != Some(&Entry::Blank) {
+                        out.push(Entry::Blank);
+                    }
+                    pending = None;
+                }
+            }
+        }
+        let wants_blank = before_line.contains(&number);
+        if wants_blank {
+            // 往回跳过紧挨着的注释，空行放在注释前面；前一行已经是注释时不加（顶层除外）。
+            let top_level = owner[number].is_some_and(|i| logical[i].depth == 0);
+            let mut at = out.len();
+            if top_level {
+                while at > 0 && matches!(out[at - 1], Entry::Comment(..)) {
+                    at -= 1;
+                }
+            }
+            if at > 0 && matches!(out[at - 1], Entry::Code(..)) {
+                out.insert(at, Entry::Blank);
+            }
+        }
+        if entry == Entry::Blank && (out.is_empty() || out.last() == Some(&Entry::Blank)) {
+            continue;
+        }
+        out.push(entry);
+        if let Some(&depth) = after_line.get(&number) {
+            pending = Some(depth);
+        }
+    }
+    while out.last() == Some(&Entry::Blank) {
+        out.pop();
+    }
+    let mut formatted = String::new();
+    for entry in &out {
+        match entry {
+            Entry::Blank => {}
+            Entry::Comment(level, text) | Entry::Code(level, text, _, _) => {
+                formatted.push_str(&"    ".repeat(*level));
+                formatted.push_str(text);
+            }
+        }
+        formatted.push_str(newline);
+    }
     Ok(formatted)
 }
 
@@ -463,8 +745,8 @@ struct Parser {
     result: Type,
     // 块末尾的调用被暂当作隐式返回值的语句位置；函数体解析完后由 `untail` 按尾部位置修正。
     implicit: BTreeSet<SourcePosition>,
-    // 正在解析 match 的被匹配值：`match Shape.Empty {` 里的 `{` 属于 match，不是结构体字面量。
-    scrutinee: bool,
+    // 整个文件几乎没有缩进：缺缩进块的报错里提示可能是复制时丢了缩进。
+    flat: bool,
 }
 
 /// 没有调用的表达式：重复求值不会产生额外副作用（复合赋值的下标用它判断）。
@@ -563,6 +845,9 @@ impl Parser {
     }
     fn word(&mut self) -> Result<String, String> {
         match self.take() {
+            Some(Token::Word(word)) if matches!(word.as_str(), "and" | "or" | "not") => Err(
+                format!("expected identifier, found the reserved word {word}"),
+            ),
             Some(Token::Word(word)) => Ok(word),
             token => Err(format!("expected identifier, found {token:?}")),
         }
@@ -572,15 +857,111 @@ impl Parser {
             self.take();
         }
     }
+    /// 语句之间：换行；以缩进块结尾的语句（上一个记号是 Dedent）后面不再有换行。
     fn separator(&mut self) -> Result<(), String> {
         match self.peek() {
-            None | Some(Token::Newline) | Some(Token::Symbol('}')) => {
-                self.newlines();
+            Some(Token::Newline) => {
+                self.take();
                 Ok(())
             }
+            None | Some(Token::Dedent) => Ok(()),
+            _ if self.ended_block() => Ok(()),
             token => Err(format!(
                 "expected newline between statements, found {token:?}"
             )),
+        }
+    }
+    /// 刚读完一个缩进块：后面的记号属于下一条语句，不能再接着当运算符读。
+    fn ended_block(&self) -> bool {
+        self.position > 0 && self.tokens[self.position - 1] == Token::Dedent
+    }
+    /// 块头末尾的冒号。
+    fn colon(&mut self, header: &str) -> Result<(), String> {
+        if self.symbol(':') {
+            return Ok(());
+        }
+        if self.peek() == Some(&Token::Symbol('{')) {
+            return Err(format!(
+                "expected ':' at the end of the {header} line; blocks are indented, not wrapped in braces"
+            ));
+        }
+        Err(format!(
+            "expected ':' at the end of the {header} line, found {:?}",
+            self.peek()
+        ))
+    }
+    /// 冒号之后换行、缩进进去的一块。
+    fn indent(&mut self, header: &str) -> Result<(), String> {
+        if self.peek() == Some(&Token::Indent) {
+            self.take();
+            return Ok(());
+        }
+        let mut message = format!("expected an indented block after the {header} line");
+        if self.flat {
+            message.push_str("; the indentation may have been lost when the code was copied");
+        }
+        Err(message)
+    }
+    /// 冒号之后：同一行写一条语句（`pass` 表示空），或者换行缩进写一块。
+    fn suite(&mut self, imports: &[String], result: Type, header: &str) -> Result<Block, String> {
+        self.colon(header)?;
+        let mut body = Vec::new();
+        if self.peek() != Some(&Token::Newline) {
+            let position = self.at();
+            if let Some(instruction) = self.statement(imports, result, Some(true))? {
+                body.push((instruction, position));
+            }
+            return Ok(body);
+        }
+        self.take();
+        self.indent(header)?;
+        while !matches!(self.peek(), Some(Token::Dedent) | None) {
+            let position = self.at();
+            if let Some(instruction) = self.statement(imports, result, None)? {
+                body.push((instruction, position));
+            }
+            self.separator()?;
+        }
+        self.take();
+        Ok(body)
+    }
+    /// 值位置的块头之后：同一行一个值，或换行缩进的一行值。
+    fn value_suite(&mut self, header: &str) -> Result<Expr, String> {
+        self.colon(header)?;
+        if self.peek() != Some(&Token::Newline) {
+            return self.expr();
+        }
+        self.take();
+        self.indent(header)?;
+        let value = self.expr();
+        let single = value.is_ok()
+            && self.peek() == Some(&Token::Newline)
+            && self.tokens.get(self.position + 1) == Some(&Token::Dedent);
+        if !single {
+            return Err(if header == "match arm" {
+                "expected a single value: a match expression arm holds a single value; compute it with let before the match, or write the match as a statement".into()
+            } else {
+                "expected a single value: an if expression branch holds a single value; compute it with let before the if".into()
+            });
+        }
+        self.take();
+        self.take();
+        value
+    }
+    fn symbol_dedent(&mut self) -> bool {
+        if self.peek() == Some(&Token::Dedent) {
+            self.take();
+            true
+        } else {
+            false
+        }
+    }
+    /// 单行分支后面的换行：下一行是 elif / else 时跳过它，接着读同一条 if。
+    fn continues_with(&mut self, words: &[&str]) {
+        if self.peek() == Some(&Token::Newline)
+            && matches!(self.tokens.get(self.position + 1), Some(Token::Word(w)) if words.contains(&w.as_str()))
+        {
+            self.take();
         }
     }
     /// 类型名：`i64`、`Point` 或跨模块的 `model.Point`。
@@ -708,14 +1089,33 @@ impl Parser {
     fn expr(&mut self) -> Result<Expr, String> {
         self.binary(0)
     }
+    /// 优先级从低到高：`or`、`and`、`not`、比较、加减、乘除。`not` 比比较运算松：
+    /// `not a == b` 是 `not (a == b)`，所以它不能出现在比较或算术运算的右边。
     fn binary(&mut self, minimum: u8) -> Result<Expr, String> {
-        let mut left = self.atom()?;
+        let mut left = if self.peek() == Some(&Token::Word("not".into())) {
+            if minimum > 3 {
+                return Err(
+                    "expected an operand: `not` cannot follow a comparison or arithmetic operator; wrap it in parentheses, such as a == (not b)"
+                        .into(),
+                );
+            }
+            self.take();
+            Expr::Unary('!', Box::new(self.binary(3)?))
+        } else {
+            self.atom()?
+        };
         loop {
+            if self.ended_block() {
+                break;
+            }
             let (op, priority, width) = match self.peek() {
+                Some(Token::Word(word)) if word == "and" => ("&&".to_owned(), 2, 1),
+                Some(Token::Word(word)) if word == "or" => ("||".to_owned(), 1, 1),
                 Some(Token::Symbol(c @ ('&' | '|')))
                     if self.tokens.get(self.position + 1) == Some(&Token::Symbol(*c)) =>
                 {
-                    (format!("{c}{c}"), if *c == '|' { 1 } else { 2 }, 2)
+                    let word = if *c == '&' { "and" } else { "or" };
+                    return Err(format!("expected `{word}` instead of `{c}{c}`"));
                 }
                 Some(Token::Symbol(c @ ('=' | '!' | '<' | '>'))) => {
                     let equal = self.tokens.get(self.position + 1) == Some(&Token::Symbol('='));
@@ -769,7 +1169,10 @@ impl Parser {
             return Ok(Expr::Unary('-', Box::new(self.atom()?)));
         }
         if self.symbol('!') {
-            return Ok(Expr::Unary('!', Box::new(self.atom()?)));
+            return Err(
+                "expected `not` instead of `!`; `!` only marks error types such as i64!string"
+                    .into(),
+            );
         }
         if let Some(Token::Number(number)) = self.peek().cloned() {
             self.take();
@@ -858,28 +1261,6 @@ impl Parser {
             name.push('.');
             name.push_str(&self.word()?);
         }
-        if name
-            .rsplit('.')
-            .next()
-            .is_some_and(|n| n.starts_with(char::is_uppercase))
-            && !self.scrutinee
-            && self.symbol('{')
-        {
-            self.newlines();
-            let mut fields = Vec::new();
-            while !self.symbol('}') {
-                let field = self.word()?;
-                self.expect(':')?;
-                fields.push((field, self.expr()?));
-                // 字段之间换行，或在同一行直接接下一个 `name:`（表达式后紧跟 `名字:` 不会有歧义）。
-                let next_field = matches!(self.peek(), Some(Token::Word(_)))
-                    && self.tokens.get(self.position + 1) == Some(&Token::Symbol(':'));
-                if !next_field {
-                    self.separator()?;
-                }
-            }
-            return Ok(Expr::Record(name, fields));
-        }
         if !self.symbol('(') {
             if self.symbol('[') {
                 let index = self.expr()?;
@@ -906,23 +1287,53 @@ impl Parser {
             }
             return Ok(Expr::Variable(name));
         }
-        let args = self.arguments()?;
-        // `Shape.Circle(1.0)`：点号后首字母大写的调用是枚举变体。
-        if let Some((enumeration, variant)) = name.rsplit_once('.') {
-            if variant.starts_with(char::is_uppercase) {
-                return Ok(Expr::Variant(enumeration.into(), variant.into(), args));
+        // 首字母大写的名字后面跟括号：`Point(x: 1, y: 2)` 是结构体字面量，
+        // `Shape.Circle(1.0)` 是枚举变体（按位置传值）。
+        if name
+            .rsplit('.')
+            .next()
+            .is_some_and(|n| n.starts_with(char::is_uppercase))
+        {
+            let named = matches!(self.peek(), Some(Token::Word(_)))
+                && self.tokens.get(self.position + 1) == Some(&Token::Symbol(':'));
+            if named {
+                let mut fields = Vec::new();
+                loop {
+                    let field = self.word()?;
+                    self.expect(':')?;
+                    fields.push((field, self.expr()?));
+                    if self.symbol(')') {
+                        break;
+                    }
+                    self.expect(',')?;
+                    if self.symbol(')') {
+                        break;
+                    }
+                }
+                return Ok(Expr::Record(name, fields));
             }
+            let args = self.arguments()?;
+            return match name.rsplit_once('.') {
+                Some((enumeration, variant)) => {
+                    Ok(Expr::Variant(enumeration.into(), variant.into(), args))
+                }
+                None if args.is_empty() => Ok(Expr::Record(name, Vec::new())),
+                None => Err(format!(
+                    "expected field names in the struct literal, such as {name}(x: 1, y: 2)"
+                )),
+            };
         }
+        let args = self.arguments()?;
         let call = Expr::Call(name, args);
         // `?` 只作用于调用；其他位置的 `?` 不是合法语法。
         if self.symbol('?') {
             return Ok(Expr::Try(Box::new(call)));
         }
-        // `call catch e { ... }` 就地处理错误，不传播。
+        // `call catch e: ...` 就地处理错误，不传播。
         if self.keyword("catch") {
             let binding = self.word()?;
             let imports = self.imports.clone();
-            let block = self.block(&imports, self.result)?;
+            let block = self.suite(&imports, self.result, "catch")?;
             return Ok(Expr::Catch(Box::new(call), binding, block));
         }
         Ok(call)
@@ -930,44 +1341,31 @@ impl Parser {
     /// 左括号之后的实参列表，读到右括号为止。
     fn arguments(&mut self) -> Result<Vec<Expr>, String> {
         let mut args = Vec::new();
-        if !self.symbol(')') {
-            loop {
-                args.push(self.expr()?);
-                if self.symbol(')') {
-                    break;
-                }
-                self.expect(',')?;
+        while !self.symbol(')') {
+            args.push(self.expr()?);
+            if self.symbol(')') {
+                break;
             }
+            self.expect(',')?;
         }
         Ok(args)
     }
-    /// `if` 出现在表达式位置：`if c { a } else if d { b } else { e }`，分支各是一个值。
+    /// `if` 出现在表达式位置：`if c: a elif d: b else: e`，分支各是一个值。
     fn if_value(&mut self) -> Result<Expr, String> {
         let condition = self.condition("if")?;
-        let yes = self.branch_value()?;
-        self.newlines();
-        if !self.keyword("else") {
-            return Err("expected else: an if expression needs an else branch".into());
-        }
-        let no = if self.keyword("if") {
+        let yes = self.value_suite("if")?;
+        self.continues_with(&["elif", "else"]);
+        let no = if self.keyword("elif") {
             self.if_value()?
+        } else if self.keyword("else") {
+            if self.peek() == Some(&Token::Word("if".into())) {
+                return Err("expected `elif` instead of `else if`".into());
+            }
+            self.value_suite("else")?
         } else {
-            self.branch_value()?
+            return Err("expected else: an if expression needs an else branch".into());
         };
         Ok(Expr::If(Box::new(condition), Box::new(yes), Box::new(no)))
-    }
-    fn branch_value(&mut self) -> Result<Expr, String> {
-        self.expect('{')?;
-        self.newlines();
-        let value = self.expr()?;
-        self.newlines();
-        if !self.symbol('}') {
-            return Err(
-                "expected }: an if expression branch holds a single value; compute it with let before the if"
-                    .into(),
-            );
-        }
-        Ok(value)
     }
     /// 插值里的 `{...}`：变量或字段路径照旧；其他内容按表达式解析（不能含字符串字面量）。
     fn literal(&mut self, text: &str) -> Result<Expr, String> {
@@ -978,9 +1376,12 @@ impl Parser {
         for segment in segments {
             parsed.push(match segment {
                 Expr::Call(source, _) => {
-                    let (tokens, lines) = lex(&source)
+                    let (tokens, lines, _) = lex(&source)
                         .map_err(|error| format!("in interpolation {{{source}}}: {error}"))?;
-                    let count = tokens.len();
+                    let count = tokens
+                        .iter()
+                        .position(|token| *token == Token::Newline)
+                        .unwrap_or(tokens.len());
                     let mut inner = Parser {
                         tokens,
                         lines,
@@ -989,7 +1390,7 @@ impl Parser {
                         imports: self.imports.clone(),
                         result: self.result,
                         implicit: BTreeSet::new(),
-                        scrutinee: false,
+                        flat: false,
                     };
                     let expr = inner
                         .expr()
@@ -1019,62 +1420,63 @@ impl Parser {
     }
     fn if_statement(&mut self, imports: &[String], result: Type) -> Result<Instruction, String> {
         let condition = self.condition("if")?;
-        let yes = self.block(imports, result)?;
-        let boundary = self.position;
-        self.newlines();
-        let no = if self.keyword("else") {
-            let position = self.at();
-            if self.keyword("if") {
-                vec![(self.if_statement(imports, result)?, position)]
-            } else {
-                self.block(imports, result)?
+        let yes = self.suite(imports, result, "if")?;
+        self.continues_with(&["elif", "else"]);
+        let position = self.at();
+        let no = if self.keyword("elif") {
+            vec![(self.if_statement(imports, result)?, position)]
+        } else if self.keyword("else") {
+            if self.peek() == Some(&Token::Word("if".into())) {
+                return Err("expected `elif` instead of `else if`".into());
             }
+            self.suite(imports, result, "else")?
         } else {
-            self.position = boundary;
             Vec::new()
         };
         Ok(Instruction::If(condition, yes, no))
     }
-
-    fn block(&mut self, imports: &[String], result: Type) -> Result<Block, String> {
-        self.expect('{')?;
-        self.newlines();
-        let mut body = Vec::new();
-        while self.peek() != Some(&Token::Symbol('}')) {
-            if self.peek().is_none() {
-                return Err("unterminated function block".into());
-            }
-            let position = self.at();
-            let instruction = self.statement(imports, result, None)?;
-            body.push((instruction, position));
-            self.separator()?;
-        }
-        self.take();
-        Ok(body)
-    }
-    /// 后面（跳过换行）紧跟 `}`：当前语句是代码块的最后一条。
+    /// 后面（跳过换行）就是块的结尾：当前语句是代码块的最后一条。
     fn at_end(&self) -> bool {
-        self.tokens[self.position..]
-            .iter()
-            .find(|token| **token != Token::Newline)
-            == Some(&Token::Symbol('}'))
+        matches!(
+            self.tokens[self.position..]
+                .iter()
+                .find(|token| **token != Token::Newline),
+            None | Some(Token::Dedent)
+        )
     }
-    /// 一条语句。`last` 指定它是不是所在代码块的最后一条（match 分支的单条语句总是）；
-    /// 为 `None` 时看后面是不是 `}`。
+    /// 一条语句；`pass` 没有指令。`last` 指定它是不是所在代码块的最后一条（写在块头同一行的
+    /// 语句总是）；为 `None` 时看后面是不是块的结尾。
     fn statement(
         &mut self,
         imports: &[String],
         result: Type,
         last: Option<bool>,
-    ) -> Result<Instruction, String> {
+    ) -> Result<Option<Instruction>, String> {
         let position = self.at();
-        Ok(if self.keyword("if") {
+        if self.keyword("pass") {
+            return Ok(None);
+        }
+        match self.peek() {
+            Some(Token::Indent) => {
+                return Err(
+                    "unexpected indent; indent only the lines inside a block that ends with ':'"
+                        .into(),
+                )
+            }
+            Some(Token::Word(word)) if word == "elif" || word == "else" => {
+                return Err(format!(
+                    "unexpected {word}: it must follow an if block at the same indentation"
+                ))
+            }
+            _ => {}
+        }
+        Ok(Some(if self.keyword("if") {
             self.if_statement(imports, result)?
         } else if self.keyword("match") {
             self.match_statement(imports, result)?
         } else if self.keyword("while") {
             let condition = self.condition("while")?;
-            let nested = self.block(imports, result)?;
+            let nested = self.suite(imports, result, "while")?;
             Instruction::While(condition, nested)
         } else if self.keyword("for") {
             let local = self.word()?;
@@ -1092,7 +1494,7 @@ impl Parser {
                     path.push('.');
                     path.push_str(&self.word()?);
                 }
-                let nested = self.block(imports, result)?;
+                let nested = self.suite(imports, result, "for")?;
                 Instruction::Each(local, path, nested)
             } else {
                 let start = self.expr()?;
@@ -1100,7 +1502,7 @@ impl Parser {
                     return Err("expected `..` in for range: for name in start..end, or iterate a list with for x in &items".into());
                 }
                 let end = self.expr()?;
-                let nested = self.block(imports, result)?;
+                let nested = self.suite(imports, result, "for")?;
                 Instruction::For(local, start, end, nested)
             }
         } else if self.keyword("break") {
@@ -1123,7 +1525,7 @@ impl Parser {
         } else if self.keyword("return") {
             let expr = if matches!(
                 self.peek(),
-                None | Some(Token::Newline) | Some(Token::Symbol('}'))
+                None | Some(Token::Newline | Token::Dedent | Token::Symbol(')' | ']' | ','))
             ) {
                 None
             } else {
@@ -1142,7 +1544,7 @@ impl Parser {
                     let value = self.expr()?;
                     let combined =
                         Expr::Binary(op.to_string(), Box::new(expr.clone()), Box::new(value));
-                    return Ok(match expr {
+                    return Ok(Some(match expr {
                             Expr::Variable(name) => Instruction::Assign(name, combined),
                             Expr::Field(local, field) => {
                                 Instruction::AssignField(local, field, combined)
@@ -1162,7 +1564,7 @@ impl Parser {
                                     "expected a variable, field or index before {op}="
                                 ))
                             }
-                    });
+                    }));
                 }
             }
             if let Expr::Field(local, field) = &expr {
@@ -1225,9 +1627,9 @@ impl Parser {
             } else {
                 Instruction::Return(Some(expr))
             }
-        })
+        }))
     }
-    /// `match` 的分支模式：`Circle(r)`、`Rect(w, _)`、`Shape.Empty` 或 `_`，后接 `=>`。
+    /// `match` 的分支模式：`Circle(r)`、`Rect(w, _)`、`Shape.Empty` 或 `_`，后接 `:`。
     fn pattern(&mut self) -> Result<Pattern, String> {
         let pattern = if self.keyword("_") {
             (None, Vec::new())
@@ -1251,60 +1653,50 @@ impl Parser {
             }
             (Some(variant), bindings)
         };
-        if !(self.symbol('=') && self.symbol('>')) {
-            return Err("expected => after the match pattern".into());
+        if self.peek() == Some(&Token::Symbol('='))
+            && self.tokens.get(self.position + 1) == Some(&Token::Symbol('>'))
+        {
+            return Err(
+                "expected ':' after the match pattern; arms are written Circle(r): value, not =>"
+                    .into(),
+            );
         }
         Ok(pattern)
     }
-    /// 语句形式的 match：分支是 `{ ... }` 代码块或一条语句。
-    /// match 的被匹配值：其中不解析结构体字面量。
-    fn scrutinee(&mut self) -> Result<Expr, String> {
-        let outer = std::mem::replace(&mut self.scrutinee, true);
-        let scrutinee = self.expr();
-        self.scrutinee = outer;
-        scrutinee
+    /// match 的分支在冒号后面换行缩进，每行一个分支。
+    fn arms(&mut self) -> Result<(), String> {
+        self.colon("match")?;
+        if self.peek() != Some(&Token::Newline) {
+            return Err("expected the match arms on the following lines, indented".into());
+        }
+        self.take();
+        self.indent("match")
     }
+    /// 语句形式的 match：分支是同一行的一条语句或缩进的一块。
     fn match_statement(&mut self, imports: &[String], result: Type) -> Result<Instruction, String> {
-        let scrutinee = self.scrutinee()?;
-        self.expect('{')?;
-        self.newlines();
+        let scrutinee = self.expr()?;
+        self.arms()?;
         let mut arms = Vec::new();
-        while !self.symbol('}') {
+        while !matches!(self.peek(), Some(Token::Dedent) | None) {
             let pattern = self.pattern()?;
-            let body = if self.peek() == Some(&Token::Symbol('{')) {
-                self.block(imports, result)?
-            } else {
-                let position = self.at();
-                vec![(self.statement(imports, result, Some(true))?, position)]
-            };
+            let body = self.suite(imports, result, "match arm")?;
             arms.push((pattern, body));
             self.separator()?;
         }
-        if arms.is_empty() {
-            return Err("expected at least one arm in the match".into());
-        }
+        self.take();
         Ok(Instruction::Match(scrutinee, arms))
     }
-    /// 表达式形式的 match：`let v = match s { A => 1  B(x) => x }`，每个分支一个值。
+    /// 表达式形式的 match：`let v = match s:` 下面每行一个 `Pattern: 值`。
     fn match_value(&mut self) -> Result<Expr, String> {
-        let scrutinee = self.scrutinee()?;
-        self.expect('{')?;
-        self.newlines();
+        let scrutinee = self.expr()?;
+        self.arms()?;
         let mut arms = Vec::new();
-        while !self.symbol('}') {
+        while !matches!(self.peek(), Some(Token::Dedent) | None) {
             let pattern = self.pattern()?;
-            if self.peek() == Some(&Token::Symbol('{')) {
-                return Err(
-                    "expected a value: a match expression arm holds a single value; compute it with let before the match, or write the match as a statement"
-                        .into(),
-                );
-            }
-            arms.push((pattern, self.expr()?));
+            arms.push((pattern, self.value_suite("match arm")?));
             self.separator()?;
         }
-        if arms.is_empty() {
-            return Err("expected at least one arm in the match".into());
-        }
+        self.take();
         Ok(Expr::Match(Box::new(scrutinee), arms))
     }
 }
@@ -1374,7 +1766,7 @@ fn literal(text: &str) -> Result<Expr, String> {
 }
 
 pub fn parse(source: &str) -> Result<Module, String> {
-    let (tokens, lines) = lex(source)?;
+    let (tokens, lines, flat) = lex(source)?;
     let mut p = Parser {
         tokens,
         lines,
@@ -1383,7 +1775,7 @@ pub fn parse(source: &str) -> Result<Module, String> {
         imports: Vec::new(),
         result: Type::Unit,
         implicit: BTreeSet::new(),
-        scrutinee: false,
+        flat,
     };
     let result = (|| {
         let mut module = Module {
@@ -1394,6 +1786,12 @@ pub fn parse(source: &str) -> Result<Module, String> {
         };
         p.newlines();
         while p.peek().is_some() {
+            if p.peek() == Some(&Token::Indent) {
+                return Err(
+                    "unexpected indent; top-level declarations start at the beginning of the line"
+                        .into(),
+                );
+            }
             if p.keyword("use") {
                 let mut path = p.word()?;
                 while p.symbol('/') {
@@ -1417,11 +1815,26 @@ pub fn parse(source: &str) -> Result<Module, String> {
                 if !name.starts_with(char::is_uppercase) {
                     return Err("struct names must start with an uppercase letter".into());
                 }
-                p.expect('{')?;
-                p.newlines();
+                p.colon("struct")?;
                 let mut fields = Vec::new();
                 let mut names = BTreeSet::new();
-                while !p.symbol('}') {
+                let block = p.peek() == Some(&Token::Newline);
+                if block {
+                    p.take();
+                    p.indent("struct")?;
+                }
+                loop {
+                    if block && matches!(p.peek(), Some(Token::Dedent) | None) {
+                        p.take();
+                        break;
+                    }
+                    if p.keyword("pass") {
+                        if !block {
+                            break;
+                        }
+                        p.separator()?;
+                        continue;
+                    }
                     let field = p.word()?;
                     if !names.insert(field.clone()) {
                         return Err(format!("duplicate field {name}.{field}"));
@@ -1435,6 +1848,9 @@ pub fn parse(source: &str) -> Result<Module, String> {
                         return Err("arrays are only supported as local values".into());
                     }
                     fields.push((field, ty));
+                    if !block {
+                        break;
+                    }
                     p.separator()?;
                 }
                 if module.functions.contains_key(&name)
@@ -1463,11 +1879,23 @@ pub fn parse(source: &str) -> Result<Module, String> {
                 if !name.starts_with(char::is_uppercase) {
                     return Err("enum names must start with an uppercase letter".into());
                 }
-                p.expect('{')?;
-                p.newlines();
+                p.colon("enum")?;
+                if p.keyword("pass") {
+                    return Err(format!("expected at least one variant in enum {name}"));
+                }
+                if p.peek() != Some(&Token::Newline) {
+                    return Err(format!(
+                        "expected the variants of enum {name} on the following lines, indented"
+                    ));
+                }
+                p.take();
+                p.indent("enum")?;
                 let mut fields = vec![("$tag".to_owned(), Type::Int)];
                 let mut variants: Vec<(String, usize, usize)> = Vec::new();
-                while !p.symbol('}') {
+                while !p.symbol_dedent() {
+                    if p.peek().is_none() {
+                        break;
+                    }
                     let variant = p.word()?;
                     if !variant.starts_with(char::is_uppercase) {
                         return Err("enum variant names must start with an uppercase letter".into());
@@ -1526,6 +1954,12 @@ pub fn parse(source: &str) -> Result<Module, String> {
                 return Err("expected use, struct, enum or fn declaration".into());
             }
             let name = p.word()?;
+            // 首字母大写的名字留给结构体与枚举：`Point(x: 1)` 是结构体字面量，不是调用。
+            if name.starts_with(char::is_uppercase) {
+                return Err(format!(
+                    "function names must start with a lowercase letter: {name}; uppercase names are for structs and enums"
+                ));
+            }
             // `i64(x)`、`f64(n)` 是内建的数值转换。
             if matches!(name.as_str(), "i64" | "f64") {
                 return Err(format!("reserved type name {name}"));
@@ -1572,7 +2006,8 @@ pub fn parse(source: &str) -> Result<Module, String> {
             };
             p.imports = module.imports.clone();
             p.result = result;
-            let mut body = p.block(&module.imports, result)?;
+            let imports = module.imports.clone();
+            let mut body = p.suite(&imports, result, "fn")?;
             untail(&mut body, true, &p.implicit);
             if module
                 .functions
@@ -1618,7 +2053,7 @@ pub fn encode(module: &Module) -> Vec<u8> {
         })
         .collect();
     format!(
-        "ZAM-IR-20\n{declarations:?}\n{:?}\n{:?}\n{:?}\n",
+        "ZAM-IR-21\n{declarations:?}\n{:?}\n{:?}\n{:?}\n",
         module.type_names, module.imports, module.functions
     )
     .into_bytes()
@@ -3136,32 +3571,146 @@ mod tests {
     use super::*;
 
     #[test]
-    fn format_reindents_but_keeps_comments_and_text() {
-        let source = "fn main() {\n//顶层注释\n let x =1\n if true {\n println(x) //行尾注释\n#井号注释\n }\n}\n";
+    fn format_reindents_to_four_spaces_and_keeps_comments_and_text() {
+        let source = "fn main():\n  //块里的注释\n  let x =1\n  if true:\n      println(x)  //行尾注释\n      #井号注释\n  let y = {\n  \"a\": 1,\n      }\n";
         assert_eq!(
             format(source).unwrap(),
-            "fn main() {\n    //顶层注释\n    let x =1\n    if true {\n        println(x) //行尾注释\n        #井号注释\n    }\n}\n"
+            "fn main():\n    //块里的注释\n    let x =1\n\n    if true:\n        println(x)  //行尾注释\n        #井号注释\n\n    let y = {\n        \"a\": 1,\n    }\n"
         );
     }
 
     #[test]
-    fn format_is_idempotent_and_keeps_line_endings() {
-        let source =
-            "fn main() {\r\n\tlet text = \"你好\"\r\nif true {\r\nprintln(&text)\r\n}\r\n}\r\n";
+    fn format_expands_tabs_and_keeps_line_endings() {
+        let source = "fn main():\r\n\tlet text = \"你好\"\r\n\tif true:\r\n\t\tprintln(&text)\r\n";
+        let once = format(source).unwrap();
+        assert_eq!(
+            once,
+            "fn main():\r\n    let text = \"你好\"\r\n\r\n    if true:\r\n        println(&text)\r\n"
+        );
+        assert_eq!(format(&once).unwrap(), once);
+        let unix = format(&source.replace("\r\n", "\n")).unwrap();
+        assert!(!unix.contains('\r'));
+        assert_eq!(format(&unix).unwrap(), unix);
+    }
+
+    #[test]
+    fn format_spaces_multi_line_statements_and_top_level_declarations() {
+        let source = "use std/io\nuse std/string\nstruct P:\n    x: i64\n// 说明\nfn f(n: i64) -> i64:\n    if n < 1: return n\n    let a = 1\n    while a < n:\n        a = a + 1\n    # 结束\n    for i in 0..n:\n        println(i)\n    if a > 1:\n        println(1)\n    elif a > 0:\n        println(2)\n    else:\n        println(3)\n\n\n    a\nfn main():\n    match f(3):\n        _: pass\n";
+        assert_eq!(
+            format(source).unwrap(),
+            "use std/io\nuse std/string\n\nstruct P:\n    x: i64\n\n// 说明\nfn f(n: i64) -> i64:\n    if n < 1: return n\n    let a = 1\n\n    while a < n:\n        a = a + 1\n\n    # 结束\n    for i in 0..n:\n        println(i)\n\n    if a > 1:\n        println(1)\n    elif a > 0:\n        println(2)\n    else:\n        println(3)\n\n    a\n\nfn main():\n    match f(3):\n        _: pass\n"
+        );
         let once = format(source).unwrap();
         assert_eq!(format(&once).unwrap(), once);
-        assert!(once.contains("\r\n") && !once.replace("\r\n", "").contains('\n'));
-        assert!(once.contains("\"你好\""));
+    }
 
-        let unix = source.replace("\r\n", "\n");
-        let trimmed = format(&format(&unix).unwrap()).unwrap();
-        assert_eq!(trimmed, format(&unix).unwrap());
-        assert!(!trimmed.contains('\r'));
+    /// AST 的调试输出去掉源码位置 `(行, 列)`，只比较结构。
+    fn shape(module: &Module) -> String {
+        let text = format!(
+            "{:?}{:?}{:?}{:?}",
+            module.structs, module.type_names, module.imports, module.functions
+        );
+        let chars: Vec<char> = text.chars().collect();
+        let mut out = String::new();
+        let mut i = 0;
+        while i < chars.len() {
+            // 位置是 `(数字, 数字)`；AST 里别的元组都带字符串或名字，不会这样匹配。
+            if chars[i] == '(' {
+                let mut j = i + 1;
+                while j < chars.len() && chars[j].is_ascii_digit() {
+                    j += 1;
+                }
+                if j > i + 1 && chars.get(j) == Some(&',') && chars.get(j + 1) == Some(&' ') {
+                    let mut k = j + 2;
+                    while k < chars.len() && chars[k].is_ascii_digit() {
+                        k += 1;
+                    }
+                    if k > j + 2 && chars.get(k) == Some(&')') {
+                        out.push_str("(_)");
+                        i = k + 1;
+                        continue;
+                    }
+                }
+            }
+            out.push(chars[i]);
+            i += 1;
+        }
+        out
+    }
+
+    /// 缩进决定代码块，所以缩进丢了的代码不能悄悄变成另一个程序：把示例与文档代码块的
+    /// 行首空白全部删掉之后，要么报错，要么解析出完全相同的 AST。
+    #[test]
+    fn stripping_indentation_never_changes_meaning() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut sources: Vec<(String, String)> = Vec::new();
+        fn walk(dir: &std::path::Path, out: &mut Vec<(String, String)>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    if path.file_name().is_some_and(|n| n != "build") {
+                        walk(&path, out);
+                    }
+                } else if path.extension().is_some_and(|e| e == "zm") {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    out.push((path.display().to_string(), text));
+                }
+            }
+        }
+        walk(&root.join("examples"), &mut sources);
+        walk(&root.join("bench/ai/live/solutions"), &mut sources);
+        for (doc, bare) in [
+            ("TUTORIAL.md", false),
+            ("README.md", false),
+            ("README.zh-CN.md", false),
+            (".agents/skills/zamak/SKILL.md", false),
+            ("bench/ai/live/zamak-reference.md", true),
+        ] {
+            let text = std::fs::read_to_string(root.join(doc)).unwrap();
+            let mut block: Option<String> = None;
+            for (number, line) in text.lines().enumerate() {
+                let fence = line.trim_end();
+                match &mut block {
+                    None if fence == "```zamak"
+                        || fence == "```zam"
+                        || (bare && fence == "```") =>
+                    {
+                        block = Some(String::new());
+                    }
+                    Some(body) if fence == "```" => {
+                        sources.push((format!("{doc}:{number}"), std::mem::take(body)));
+                        block = None;
+                    }
+                    Some(body) => {
+                        body.push_str(line);
+                        body.push('\n');
+                    }
+                    None => {}
+                }
+            }
+        }
+        let mut checked = 0;
+        for (name, source) in &sources {
+            let Ok(module) = parse(source) else { continue };
+            checked += 1;
+            let flat: String = source
+                .lines()
+                .map(|line| line.trim_start().to_owned() + "\n")
+                .collect();
+            if let Ok(stripped) = parse(&flat) {
+                assert_eq!(shape(&stripped), shape(&module), "{name}");
+            }
+        }
+        assert!(checked >= 60, "too few sources checked: {checked}");
     }
 
     #[test]
     fn format_drops_trailing_blank_lines_and_reports_broken_source() {
-        assert_eq!(format("fn main() {\n}\n\n\n").unwrap(), "fn main() {\n}\n");
-        assert!(format("fn main() {\nprintln(\"open\n}\n").is_err());
+        assert_eq!(
+            format("fn main(): pass\n\n\n").unwrap(),
+            "fn main(): pass\n"
+        );
+        assert!(format("fn main():\nprintln(\"open\n").is_err());
+        assert!(format("fn main():\nprintln(1)\n").is_err());
     }
 }

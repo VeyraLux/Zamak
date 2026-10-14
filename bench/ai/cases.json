@@ -1,14 +1,14 @@
 [
   {
     "id": "valid-control",
-    "source": "fn main() {\n    println(7)\n}\n",
+    "source": "fn main():\n    println(7)\n",
     "expected_code": null,
     "patches": [],
     "expected_output": "7\n"
   },
   {
     "id": "syntax-character",
-    "source": "fn main() {\n    println(@)\n}\n",
+    "source": "fn main():\n    println(@)\n",
     "expected_code": "ZM100",
     "patches": [
       { "find": "println(@)", "replace": "println(1)" }
@@ -17,7 +17,7 @@
   },
   {
     "id": "ownership-move",
-    "source": "fn main() {\n    let a = \"x\"\n    let b = a\n    println(a)\n}\n",
+    "source": "fn main():\n    let a = \"x\"\n    let b = a\n    println(a)\n",
     "expected_code": "ZM301",
     "patches": [
       { "find": "println(a)", "replace": "println(b)" }
@@ -26,16 +26,16 @@
   },
   {
     "id": "missing-return",
-    "source": "fn value() -> string {}\nfn main() { println(value()) }\n",
+    "source": "fn value() -> string: pass\nfn main(): println(value())\n",
     "expected_code": "ZM510",
     "patches": [
-      { "find": "fn value() -> string {}", "replace": "fn value() -> string {\n    return \"ok\"\n}" }
+      { "find": "fn value() -> string: pass", "replace": "fn value() -> string:\n    return \"ok\"" }
     ],
     "expected_output": "ok\n"
   },
   {
     "id": "type-mismatch",
-    "source": "fn main() {\n    let x: i64 = \"s\"\n}\n",
+    "source": "fn main():\n    let x: i64 = \"s\"\n",
     "expected_code": "ZM200",
     "patches": [
       { "find": "let x: i64 = \"s\"", "replace": "let x: i64 = 1" }
@@ -44,7 +44,7 @@
   },
   {
     "id": "immutable-assign",
-    "source": "fn main() {\n    let count = 1\n    count = 2\n    println(count)\n}\n",
+    "source": "fn main():\n    let count = 1\n    count = 2\n    println(count)\n",
     "expected_code": "ZM302",
     "patches": [
       { "find": "let count = 1", "replace": "let mut count = 1" }
@@ -53,7 +53,7 @@
   },
   {
     "id": "borrow-missing-ampersand",
-    "source": "fn take(text: &string) -> i64 {\n    return 1\n}\nfn main() {\n    let text = \"x\"\n    println(take(text))\n}\n",
+    "source": "fn take(text: &string) -> i64:\n    return 1\nfn main():\n    let text = \"x\"\n    println(take(text))\n",
     "expected_code": "ZM425",
     "patches": [
       { "find": "take(text)", "replace": "take(&text)" }
@@ -62,14 +62,14 @@
   },
   {
     "id": "unsupported-feature",
-    "source": "fn main() {\n    let m: {bool: i64} = {}\n}\n",
+    "source": "fn main():\n    let m: {bool: i64} = {}\n",
     "expected_code": "ZM900",
     "patches": [],
     "expected_output": ""
   },
   {
     "id": "array-bounds",
-    "source": "fn main() {\n    let a = [1, 2, 3]\n    println(a[5])\n}\n",
+    "source": "fn main():\n    let a = [1, 2, 3]\n    println(a[5])\n",
     "expected_code": "ZM406",
     "patches": [
       { "find": "println(a[5])", "replace": "println(a[2])" }
@@ -78,7 +78,7 @@
   },
   {
     "id": "literal-overflow",
-    "source": "fn main() {\n    let x = 9223372036854775808\n    println(x)\n}\n",
+    "source": "fn main():\n    let x = 9223372036854775808\n    println(x)\n",
     "expected_code": "ZM600",
     "patches": [
       { "find": "9223372036854775808", "replace": "9223372036854775807" }
@@ -87,27 +87,27 @@
   },
   {
     "id": "error-unhandled",
-    "source": "fn parse(text: &string) -> i64!string {\n    return 42\n}\n\nfn main() {\n    let text = \"42\"\n    let value = parse(&text)\n    println(value)\n}\n",
+    "source": "fn parse(text: &string) -> i64!string:\n    return 42\n\nfn main():\n    let text = \"42\"\n    let value = parse(&text)\n    println(value)\n",
     "expected_code": "ZM500",
     "patches": [
-      { "find": "fn main() {", "replace": "fn main() -> !string {" },
+      { "find": "fn main():", "replace": "fn main() -> !string:" },
       { "find": "let value = parse(&text)", "replace": "let value = parse(&text)?" }
     ],
     "expected_output": "42\n"
   },
   {
     "id": "error-type-not-string",
-    "source": "fn parse() -> i64!i64 {\n    return 42\n}\n\nfn main() -> !i64 {\n    let value = parse()?\n    println(value)\n}\n",
+    "source": "fn parse() -> i64!i64:\n    return 42\n\nfn main() -> !i64:\n    let value = parse()?\n    println(value)\n",
     "expected_code": "ZM509",
     "patches": [
-      { "find": "fn parse() -> i64!i64 {", "replace": "fn parse() -> i64!string {" },
-      { "find": "fn main() -> !i64 {", "replace": "fn main() -> !string {" }
+      { "find": "fn parse() -> i64!i64:", "replace": "fn parse() -> i64!string:" },
+      { "find": "fn main() -> !i64:", "replace": "fn main() -> !string:" }
     ],
     "expected_output": "42\n"
   },
   {
     "id": "unknown-function",
-    "source": "fn double(value: i64) -> i64 {\n    return value * 2\n}\n\nfn main() {\n    println(triple(21))\n}\n",
+    "source": "fn double(value: i64) -> i64:\n    return value * 2\n\nfn main():\n    println(triple(21))\n",
     "expected_code": "ZM201",
     "patches": [
       { "find": "println(triple(21))", "replace": "println(double(21))" }
@@ -116,7 +116,7 @@
   },
   {
     "id": "unknown-struct-field",
-    "source": "struct Point {\n    x: i64\n    y: i64\n}\n\nfn main() {\n    let p = Point {\n        x: 1\n        y: 2\n    }\n    println(p.z)\n}\n",
+    "source": "struct Point:\n    x: i64\n    y: i64\n\nfn main():\n    let p = Point(\n        x: 1,\n        y: 2,\n    )\n    println(p.z)\n",
     "expected_code": "ZM202",
     "patches": [
       { "find": "println(p.z)", "replace": "println(p.x)" }
@@ -125,7 +125,7 @@
   },
   {
     "id": "borrow-conflict",
-    "source": "fn combine(a: &string, b: &mut string) {\n    println(a)\n    b = \"changed\"\n}\n\nfn main() {\n    let mut message = \"hi\"\n    combine(&message, &mut message)\n}\n",
+    "source": "fn combine(a: &string, b: &mut string):\n    println(a)\n    b = \"changed\"\n\nfn main():\n    let mut message = \"hi\"\n    combine(&message, &mut message)\n",
     "expected_code": "ZM421",
     "patches": [
       { "find": "let mut message = \"hi\"", "replace": "let message = \"hi\"\n    let mut other = \"second\"" },
@@ -135,7 +135,7 @@
   },
   {
     "id": "borrow-immutable-mutable",
-    "source": "fn update(text: &mut string) {\n    text = \"changed\"\n    println(text)\n}\n\nfn main() {\n    let message = \"hi\"\n    update(&mut message)\n}\n",
+    "source": "fn update(text: &mut string):\n    text = \"changed\"\n    println(text)\n\nfn main():\n    let message = \"hi\"\n    update(&mut message)\n",
     "expected_code": "ZM424",
     "patches": [
       { "find": "let message = \"hi\"", "replace": "let mut message = \"hi\"" }
@@ -144,7 +144,7 @@
   },
   {
     "id": "borrow-type-mismatch",
-    "source": "fn show(text: &string) {\n    println(text)\n}\n\nfn main() {\n    let mut message = \"hi\"\n    show(&mut message)\n}\n",
+    "source": "fn show(text: &string):\n    println(text)\n\nfn main():\n    let mut message = \"hi\"\n    show(&mut message)\n",
     "expected_code": "ZM423",
     "patches": [
       { "find": "show(&mut message)", "replace": "show(&message)" }
@@ -153,7 +153,7 @@
   },
   {
     "id": "borrow-escape",
-    "source": "fn main() {\n    let message = \"hi\"\n    let stored = &message\n    println(stored)\n}\n",
+    "source": "fn main():\n    let message = \"hi\"\n    let stored = &message\n    println(stored)\n",
     "expected_code": "ZM422",
     "patches": [
       { "find": "let stored = &message", "replace": "let stored = message" }
@@ -163,8 +163,8 @@
   {
     "id": "multi-module-valid",
     "files": [
-      { "path": "main.zm", "source": "use greeting\nuse std/io\n\nfn main() {\n    greeting.hello()\n    io.println(\"main done\")\n}\n" },
-      { "path": "greeting.zm", "source": "pub fn hello() {\n    println(\"hello from zamak\")\n}\n" }
+      { "path": "main.zm", "source": "use greeting\nuse std/io\n\nfn main():\n    greeting.hello()\n    io.println(\"main done\")\n" },
+      { "path": "greeting.zm", "source": "pub fn hello():\n    println(\"hello from zamak\")\n" }
     ],
     "expected_code": null,
     "patches": [],
@@ -174,8 +174,8 @@
     "expected_location": { "file": "src/main.zm", "line": 5, "column": 5 },
     "id": "multi-module-borrow",
     "files": [
-      { "path": "main.zm", "source": "use greeting\n\nfn main() {\n    let message: string = \"hi\"\n    greeting.show(message)\n}\n" },
-      { "path": "greeting.zm", "source": "pub fn show(text: &string) {\n    println(text)\n}\n" }
+      { "path": "main.zm", "source": "use greeting\n\nfn main():\n    let message: string = \"hi\"\n    greeting.show(message)\n" },
+      { "path": "greeting.zm", "source": "pub fn show(text: &string):\n    println(text)\n" }
     ],
     "expected_code": "ZM425",
     "patches": [
@@ -186,8 +186,8 @@
   {
     "id": "multi-module-unknown",
     "files": [
-      { "path": "main.zm", "source": "use greeting\n\nfn main() {\n    greeting.nope()\n}\n" },
-      { "path": "greeting.zm", "source": "pub fn hello() {\n    println(\"hello from zamak\")\n}\n" }
+      { "path": "main.zm", "source": "use greeting\n\nfn main():\n    greeting.nope()\n" },
+      { "path": "greeting.zm", "source": "pub fn hello():\n    println(\"hello from zamak\")\n" }
     ],
     "expected_code": "ZM201",
     "patches": [
@@ -197,50 +197,50 @@
   },
   {
     "id": "missing-import",
-    "source": "fn main() {\n    let s = \"hi\"\n    println(string.byte_len(&s))\n}\n",
+    "source": "fn main():\n    let s = \"hi\"\n    println(string.byte_len(&s))\n",
     "expected_code": "ZM203",
     "expected_location": { "file": "main.zm", "line": 3, "column": 5 },
     "patches": [
-      { "find": "fn main() {", "replace": "use std/string\n\nfn main() {" }
+      { "find": "fn main():", "replace": "use std/string\n\nfn main():" }
     ],
     "expected_output": "2\n"
   },
   {
     "id": "catch-missing-import",
-    "source": "fn load() -> i64!string {\n    fail \"nope\"\n}\nfn main() {\n    let value = load() catch e {\n        println(missing.call())\n        return\n    }\n    println(value)\n}\n",
+    "source": "fn load() -> i64!string:\n    fail \"nope\"\nfn main():\n    let value = load() catch e:\n        println(missing.call())\n        return\n    println(value)\n",
     "expected_code": "ZM203",
-    "expected_location": { "file": "main.zm", "line": 6, "column": 9 },
+    "expected_location": { "file": "main.zm", "line": 5, "column": 9 },
     "patches": [{ "find": "missing.call()", "replace": "7" }],
     "expected_output": "7\n"
   },
   {
     "id": "multi-module-nested-catch",
     "files": [
-      { "path": "main.zm", "source": "use handler\nfn main() {\n    handler.run()\n}\n" },
-      { "path": "handler.zm", "source": "fn load() -> i64!string {\n    fail \"nope\"\n}\npub fn run() {\n    let value = load() catch e {\n        let inner = load() catch nested {\n            println(missing.call())\n            return\n        }\n        return\n    }\n    println(value)\n}\n" }
+      { "path": "main.zm", "source": "use handler\nfn main():\n    handler.run()\n" },
+      { "path": "handler.zm", "source": "fn load() -> i64!string:\n    fail \"nope\"\npub fn run():\n    let value = load() catch e:\n        let inner = load() catch nested:\n            println(missing.call())\n            return\n        return\n    println(value)\n" }
     ],
     "expected_code": "ZM203",
-    "expected_location": { "file": "src/handler.zm", "line": 7, "column": 13 },
+    "expected_location": { "file": "src/handler.zm", "line": 6, "column": 13 },
     "patches": [{ "find": "missing.call()", "replace": "7" }],
     "expected_output": "7\n"
   },
   {
     "id": "multi-module-struct-import",
     "files": [
-      { "path": "main.zm", "source": "fn main() {\n    let point = shapes.Point { x: 1 }\n    println(point.x)\n}\n" },
-      { "path": "shapes.zm", "source": "pub struct Point {\n    x: i64\n}\n" }
+      { "path": "main.zm", "source": "fn main():\n    let point = shapes.Point(x: 1)\n    println(point.x)\n" },
+      { "path": "shapes.zm", "source": "pub struct Point:\n    x: i64\n" }
     ],
     "expected_code": "ZM203",
     "expected_location": { "file": "src/main.zm", "line": 2, "column": 5 },
-    "patches": [{ "find": "fn main() {", "replace": "use shapes\nfn main() {" }],
+    "patches": [{ "find": "fn main():", "replace": "use shapes\nfn main():" }],
     "expected_output": "1\n"
   },
   {
     "id": "multi-module-ambiguous-import",
     "files": [
-      { "path": "main.zm", "source": "use one/foo\nuse two/foo\n\nfn main() {\n    println(foo.hello())\n}\n" },
-      { "path": "one/foo.zm", "source": "pub fn hello() -> i64 {\n    return 1\n}\n" },
-      { "path": "two/foo.zm", "source": "pub fn hello() -> i64 {\n    return 2\n}\n" }
+      { "path": "main.zm", "source": "use one/foo\nuse two/foo\n\nfn main():\n    println(foo.hello())\n" },
+      { "path": "one/foo.zm", "source": "pub fn hello() -> i64:\n    return 1\n" },
+      { "path": "two/foo.zm", "source": "pub fn hello() -> i64:\n    return 2\n" }
     ],
     "expected_code": "ZM203",
     "expected_location": { "file": "src/main.zm", "line": 5, "column": 5 },
@@ -249,16 +249,16 @@
   },
   {
     "id": "duplicate-function",
-    "source": "fn foo() -> i64 {\n    return 1\n}\n\nfn foo() -> i64 {\n    return 2\n}\n\nfn main() {\n    println(foo())\n}\n",
+    "source": "fn foo() -> i64:\n    return 1\n\nfn foo() -> i64:\n    return 2\n\nfn main():\n    println(foo())\n",
     "expected_code": "ZM204",
     "patches": [
-      { "find": "fn foo() -> i64 {\n    return 2\n}\n\n", "replace": "" }
+      { "find": "fn foo() -> i64:\n    return 2\n", "replace": "" }
     ],
     "expected_output": "1\n"
   },
   {
     "id": "unsupported-escape",
-    "source": "fn main() {\n    println(\"\\q\")\n}\n",
+    "source": "fn main():\n    println(\"\\q\")\n",
     "expected_code": "ZM101",
     "patches": [
       { "find": "\"\\q\"", "replace": "\"ok\"" }
@@ -267,7 +267,7 @@
   },
   {
     "id": "semicolon-statement",
-    "source": "fn main() {\n    println(\"hi\");\n}\n",
+    "source": "fn main():\n    println(\"hi\");\n",
     "expected_code": "ZM110",
     "patches": [
       { "find": "\"hi\");", "replace": "\"hi\")" }

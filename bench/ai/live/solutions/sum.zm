@@ -1,20 +1,20 @@
 use std/io
 use std/string
 
-fn main() -> !string {
+fn main() -> !string:
     let mut line = ""
     let mut number = 0
     let mut total = 0
-    while io.read_line(&mut line)? {
+
+    while io.read_line(&mut line)?:
         number = number + 1
         let text = string.trim(&line)
-        if string.byte_len(&text) == 0 {
+
+        if string.byte_len(&text) == 0:
             continue
-        }
-        let value = string.parse_i64(&text) catch e {
+
+        let value = string.parse_i64(&text) catch e:
             fail "invalid line {number}"
-        }
         total = total + value
-    }
+
     println(total)
-}

@@ -1,27 +1,25 @@
 use model
 
-struct Team {
+struct Team:
     leader: model.Person
-}
 
-fn team() -> Team {
-    Team { leader: model.create("team leader") }
-}
+fn team() -> Team:
+    Team(leader: model.create("team leader"))
 
-fn main() {
+fn main():
     let mut person: model.Person = model.birthday(model.create("Zamak"))
     person.name = "updated"
     person.age = person.age + 1
-    person.active = !person.active
+    person.active = not person.active
     println(person.name)
     let moved = person
     println(moved.age + 1)
     println(moved.active)
-    person = model.Person {
-        name: "new owner"
-        age: 7
-        active: false
-    }
+    person = model.Person(
+        name: "new owner",
+        age: 7,
+        active: false,
+    )
     println(person.age)
     let mut group = team()
     group.leader = model.create("replacement")
@@ -30,4 +28,3 @@ fn main() {
     let transferred = group
     println(transferred.leader.age)
     team()
-}

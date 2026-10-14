@@ -1,52 +1,52 @@
 // for 循环：区间左闭右开，起止各求值一次，循环变量只读。
-fn main() {
+fn main():
     // 0 + 1 + ... + 9
     let mut sum = 0
-    for i in 0..10 {
+
+    for i in 0..10:
         sum = sum + i
-    }
+
     println(sum)
 
     // 配合定长数组按下标遍历。
     let primes = [2, 3, 5, 7, 11]
     let mut product = 1
-    for i in 0..5 {
+
+    for i in 0..5:
         product = product * primes[i]
-    }
+
     println(product)
 
     // 上界在进入循环前求值一次，循环体改变量不影响次数。
     let mut n = 3
-    for i in 0..n {
+
+    for i in 0..n:
         n = n + 1
-    }
+
     println(n)
 
     // 空区间与负数起点。
-    for i in 5..2 {
+    for i in 5..2:
         println(i)
-    }
-    for i in -2..1 {
+
+    for i in -2..1:
         println(i)
-    }
 
     // 嵌套循环里的 continue 与 break 只影响当前这一层。
-    for row in 1..4 {
+    for row in 1..4:
         let label = "row {row}"
-        for column in 1..10 {
-            if column == row {
+
+        for column in 1..10:
+            if column == row:
                 continue
-            }
-            if column > 3 {
+
+            if column > 3:
                 break
-            }
+
             println(row * 10 + column)
-        }
+
         println(label)
-    }
 
     // 靠近 i64 上界也不会溢出。
-    for big in 9_223_372_036_854_775_805..9_223_372_036_854_775_807 {
+    for big in 9_223_372_036_854_775_805..9_223_372_036_854_775_807:
         println(big)
-    }
-}

@@ -47,14 +47,14 @@ error[ZM301]: use after move: name
 - `ZM500`：未处理的可失败调用；
 - `ZM509`：错误类型不是 `string`；
 - `ZM510`：缺失返回值；
-- `ZM511`：`match` 没有覆盖枚举的所有变体，或 `_` 之后还有分支；为缺的变体补分支，或在最后加 `_ =>`；
+- `ZM511`：`match` 没有覆盖枚举的所有变体，或 `_` 之后还有分支；为缺的变体补分支，或在最后加 `_:` 分支；
 - `ZM600`：整数算术安全错误，包括字面量超出 `i64` 范围；
 - `ZM900`：暂不支持的能力；
 - `ZM999`：尚未归类的工具错误，AI 应保留完整 `message` 并提交最小复现。
 
 ## 模板
 
-使用 `zam new demo --template ai` 生成带 `AI.md` 的项目。每轮只做一个局部修复；修复后重新运行 `check --json`，通过后再构建和执行。模板写明当前不支持的网络 I/O、泛型、闭包、线程和 FFI，以及 `i64` 与 `f64` 之间要显式转换，减少模型凭经验猜测语法的失败。
+使用 `zam new demo --template ai` 生成带 `AI.md` 的项目。每轮只做一个局部修复；修复后重新运行 `check --json`，通过后再构建和执行。模板写明代码块靠缩进、用 `elif` 和 `and`/`or`/`not`、结构体字面量的写法，当前不支持的网络 I/O、泛型、闭包、线程和 FFI，以及 `i64` 与 `f64` 之间要显式转换，减少模型凭经验猜测语法的失败。缩进相关的报错（`expected an indented block`、`unexpected indent`、`unindent does not match any outer indentation level`、Tab 缩进）都归 `ZM110`，建议里给出具体改法；Tab 缩进先运行 `zam fmt`。
 
 ## 离线评测
 

@@ -3,99 +3,92 @@
 use std/io
 use std/string
 
-enum Token {
+enum Token:
     Num(value: i64)
     Op(symbol: i64)
-}
 
-fn tokenize(line: &string) -> [Token]!string {
+fn tokenize(line: &string) -> [Token]!string:
     let mut tokens: [Token] = []
     let n = string.byte_len(line)
     let mut i = 0
-    while i < n {
+
+    while i < n:
         let c = string.byte_at(line, i)
-        if c == ' ' {
+
+        if c == ' ':
             i += 1
-        } else if c >= '0' && c <= '9' {
+        elif c >= '0' and c <= '9':
             let mut value = 0
-            while i < n && string.byte_at(line, i) >= '0' && string.byte_at(line, i) <= '9' {
+
+            while i < n and string.byte_at(line, i) >= '0' and string.byte_at(line, i) <= '9':
                 value = value * 10 + string.byte_at(line, i) - '0'
                 i += 1
-            }
+
             tokens.push(Token.Num(value))
-        } else if c == '+' || c == '-' || c == '*' || c == '/' {
+        elif c == '+' or c == '-' or c == '*' or c == '/':
             tokens.push(Token.Op(c))
             i += 1
-        } else {
+        else:
             fail "unexpected character at {i}"
-        }
-    }
-    tokens
-}
 
-fn number(token: &Token) -> i64!string {
-    match token {
-        Num(value) => value
-        Op(_) => fail "expected a number"
-    }
-}
+    tokens
+
+fn number(token: &Token) -> i64!string:
+    match token:
+        Num(value): value
+        Op(_): fail "expected a number"
 
 // 乘除先并进当前项，遇到加减再把当前项累加进总和。
-fn evaluate(tokens: &[Token]) -> i64!string {
-    if tokens.len() == 0 {
+fn evaluate(tokens: &[Token]) -> i64!string:
+    if tokens.len() == 0:
         fail "empty expression"
-    }
+
     let mut total = 0
     let mut term = number(&tokens[0])?
     let mut i = 1
-    while i < tokens.len() {
-        if i + 1 >= tokens.len() {
+
+    while i < tokens.len():
+        if i + 1 >= tokens.len():
             fail "missing number after operator"
-        }
+
         let next = number(&tokens[i + 1])?
-        match tokens[i] {
-            Op(symbol) => {
-                if symbol == '*' {
+
+        match tokens[i]:
+            Op(symbol):
+                if symbol == '*':
                     term *= next
-                } else if symbol == '/' {
-                    if next == 0 {
+                elif symbol == '/':
+                    if next == 0:
                         fail "division by zero"
-                    }
+
                     term /= next
-                } else if symbol == '+' {
+                elif symbol == '+':
                     total += term
                     term = next
-                } else {
+                else:
                     total += term
                     term = -next
-                }
-            }
-            Num(_) => fail "expected an operator"
-        }
-        i += 2
-    }
-    total + term
-}
+            Num(_): fail "expected an operator"
 
-fn calculate(line: &string) -> i64!string {
+        i += 2
+
+    total + term
+
+fn calculate(line: &string) -> i64!string:
     let tokens = tokenize(line)?
     evaluate(&tokens)?
-}
 
-fn report(text: &string) {
-    let value = calculate(text) catch e {
+fn report(text: &string):
+    let value = calculate(text) catch e:
         println("{text} -> error: {e}")
         return
-    }
     println("{text} = {value}")
-}
 
-fn main() -> !string {
+fn main() -> !string:
     let mut line = ""
-    while io.read_line(&mut line)? {
+
+    while io.read_line(&mut line)?:
         let text = string.trim(&line)
-        if string.byte_len(&text) > 0 {
+
+        if string.byte_len(&text) > 0:
             report(&text)
-        }
-    }
-}

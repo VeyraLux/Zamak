@@ -67,12 +67,12 @@ fn struct_lists_work_across_modules() {
     .unwrap();
     fs::write(
         root.join("src/shapes.zm"),
-        "pub struct Point {\n    x: i64\n    y: i64\n}\npub fn norm1(p: &Point) -> i64 {\n    p.x + p.y\n}\npub fn shift(p: &mut Point) {\n    p.x += 1\n}\n",
+        "pub struct Point:\n    x: i64\n    y: i64\npub fn norm1(p: &Point) -> i64:\n    p.x + p.y\npub fn shift(p: &mut Point):\n    p.x += 1\n",
     )
     .unwrap();
     fs::write(
         root.join("src/main.zm"),
-        "use shapes\nfn total(points: &[shapes.Point]) -> i64 {\n    let mut sum = 0\n    for p in &points {\n        sum += shapes.norm1(p)\n    }\n    sum\n}\nfn main() {\n    let mut points: [shapes.Point] = []\n    points.push(shapes.Point { x: 1 y: 2 })\n    points.push(shapes.Point { x: 3 y: 4 })\n    shapes.shift(&mut points[0])\n    println(total(&points))\n    println(points[0].x)\n}\n",
+        "use shapes\nfn total(points: &[shapes.Point]) -> i64:\n    let mut sum = 0\n    for p in &points:\n        sum += shapes.norm1(p)\n    sum\nfn main():\n    let mut points: [shapes.Point] = []\n    points.push(shapes.Point(x: 1, y: 2))\n    points.push(shapes.Point(x: 3, y: 4))\n    shapes.shift(&mut points[0])\n    println(total(&points))\n    println(points[0].x)\n",
     )
     .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_zam"))
@@ -96,11 +96,11 @@ fn checker_rejects_struct_list_misuse() {
             "owned field moves are not supported",
         ),
         (
-            "for it in &items {\n        it.qty = 1\n    }",
+            "for it in &items:\n        it.qty = 1",
             "cannot assign immutable value it; it is a shared borrow",
         ),
         (
-            "for it in &items {\n        items.push(Item { name: \"x\" qty: 1 })\n    }",
+            "for it in &items:\n        items.push(Item(name: \"x\", qty: 1))",
             "borrowed by an enclosing for loop",
         ),
         ("let r = &items[0]", "borrow escape"),
@@ -121,13 +121,13 @@ fn checker_rejects_struct_list_misuse() {
             "struct values cannot be copied",
         ),
         (
-            "let it = Item { name: \"x\" qty: 1 }\n    show(it)",
+            "let it = Item(name: \"x\", qty: 1)\n    show(it)",
             "expected explicit borrow of it",
         ),
         ("println(items[0].tags.len())", "unknown field tags"),
     ] {
         let source = format!(
-            "struct Item {{\n    name: string\n    qty: i64\n}}\nfn show(item: &Item) {{\n}}\nfn grow(item: &mut Item) {{\n}}\nfn both(a: &Item, b: &mut Item) {{\n}}\nfn main() {{\n    let mut items: [Item] = []\n    {body}\n}}\n"
+            "struct Item:\n    name: string\n    qty: i64\nfn show(item: &Item): pass\nfn grow(item: &mut Item): pass\nfn both(a: &Item, b: &mut Item): pass\nfn main():\n    let mut items: [Item] = []\n    {body}\n"
         );
         let output = case.run(&source);
         assert!(!output.status.success(), "accepted {source}");
@@ -136,19 +136,19 @@ fn checker_rejects_struct_list_misuse() {
     }
     for (source, message) in [
         (
-            "struct Item {\n    qty: i64\n}\nfn set(item: &Item) {\n    item.qty = 1\n}\nfn main() {\n}\n",
+            "struct Item:\n    qty: i64\nfn set(item: &Item):\n    item.qty = 1\nfn main(): pass\n",
             "it is a shared borrow",
         ),
         (
-            "struct Item {\n    qty: i64\n}\nfn copy(item: &Item) -> Item {\n    item\n}\nfn main() {\n}\n",
+            "struct Item:\n    qty: i64\nfn copy(item: &Item) -> Item:\n    item\nfn main(): pass\n",
             "cannot move borrowed value item",
         ),
         (
-            "struct Item {\n    qty: i64\n}\nstruct Holder {\n    item: &Item\n}\nfn main() {\n}\n",
+            "struct Item:\n    qty: i64\nstruct Holder:\n    item: &Item\nfn main(): pass\n",
             "structs cannot store references",
         ),
         (
-            "struct Item {\n    qty: i64\n}\nfn main() {\n    let r: &Item = Item { qty: 1 }\n}\n",
+            "struct Item:\n    qty: i64\nfn main():\n    let r: &Item = Item(qty: 1)\n",
             "borrow escape",
         ),
     ] {

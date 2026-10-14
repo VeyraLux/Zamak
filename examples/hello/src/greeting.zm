@@ -1,3 +1,2 @@
-pub fn hello() {
+pub fn hello():
     println("hello from zamak")
-}

@@ -2,53 +2,56 @@ use std/string
 use html
 
 // 行内格式：`代码`、**粗体**、*强调*、[文字](链接)。其余文本转义后原样输出。
-pub fn render(text: &string) -> string {
+pub fn render(text: &string) -> string:
     let mut out: [string] = []
     let size = string.byte_len(text)
     let mut plain = 0
     let mut i = 0
-    while i < size {
+
+    while i < size:
         let byte = string.byte_at(text, i)
         let mut next = i + 1
-        if byte == '`' {
+
+        if byte == '`':
             let close = string.find_from(text, "`", i + 1)
-            if close > i + 1 {
+
+            if close > i + 1:
                 flush(text, plain, i, &mut out)
                 let code = string.slice(text, i + 1, close)
                 let safe = html.escape(&code)
                 out.push("<code>{safe}</code>")
                 next = close + 1
                 plain = next
-            }
-        } else if byte == '*' && i + 1 < size && string.byte_at(text, i + 1) == '*' {
+        elif byte == '*' and i + 1 < size and string.byte_at(text, i + 1) == '*':
             let mut close = string.find_from(text, "**", i + 2)
             // `***` 结尾时，前一个 `*` 属于里面的强调，粗体取最后两个。
-            while close > 0 && close + 2 < size && string.byte_at(text, close + 2) == '*' {
+            while close > 0 and close + 2 < size and string.byte_at(text, close + 2) == '*':
                 close = close + 1
-            }
-            if close > i + 2 {
+
+            if close > i + 2:
                 flush(text, plain, i, &mut out)
                 let inner = string.slice(text, i + 2, close)
                 let body = render(&inner)
                 out.push("<strong>{body}</strong>")
                 next = close + 2
                 plain = next
-            }
-        } else if byte == '*' {
+        elif byte == '*':
             let close = string.find_from(text, "*", i + 1)
-            if close > i + 1 {
+
+            if close > i + 1:
                 flush(text, plain, i, &mut out)
                 let inner = string.slice(text, i + 1, close)
                 let body = render(&inner)
                 out.push("<em>{body}</em>")
                 next = close + 1
                 plain = next
-            }
-        } else if byte == '[' {
+        elif byte == '[':
             let middle = string.find_from(text, "](", i + 1)
-            if middle > i {
+
+            if middle > i:
                 let close = string.find_from(text, ")", middle + 2)
-                if close > middle {
+
+                if close > middle:
                     flush(text, plain, i, &mut out)
                     let label = string.slice(text, i + 1, middle)
                     let target = string.slice(text, middle + 2, close)
@@ -57,19 +60,14 @@ pub fn render(text: &string) -> string {
                     out.push("<a href=\"{href}\">{body}</a>")
                     next = close + 1
                     plain = next
-                }
-            }
-        }
+
         i = next
-    }
+
     flush(text, plain, size, &mut out)
     string.join(&out, "")
-}
 
 // 把 [from, to) 之间还没处理的普通文本转义后放进输出。
-fn flush(text: &string, from: i64, to: i64, out: &mut [string]) {
-    if to > from {
+fn flush(text: &string, from: i64, to: i64, out: &mut [string]):
+    if to > from:
         let piece = string.slice(text, from, to)
         out.push(html.escape(&piece))
-    }
-}

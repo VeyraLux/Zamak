@@ -2,29 +2,28 @@
 use std/io
 use std/string
 
-struct P {
+struct P:
     name: string
     age: i64
-}
 
-fn label(n: i64) -> string {
-    if n < 0 { "negative" } else if n == 0 { "zero" } else { "positive" }
-}
+fn label(n: i64) -> string:
+    if n < 0: "negative"
+    elif n == 0: "zero"
+    else: "positive"
 
-fn main() {
+fn main():
     let a = 7
     let b = 3
-    let max = if a > b { a } else { b }
+    let max = if a > b: a else: b
     println(max)
     println(label(-2))
     println(label(0))
-    let word = if max > 5 {
+    let word = if max > 5:
         "big"
-    } else {
+    else:
         "small"
-    }
     println(word)
-    println(if a == 7 { "seven" } else { "other" })
+    println(if a == 7: "seven" else: "other")
 
     let mut total = 10
     total += 5
@@ -41,7 +40,7 @@ fn main() {
     let mut counts: {string: i64} = {"a": 1}
     counts["a"] += 1
     println(counts["a"])
-    let mut p = P { name: "ann" age: 30 }
+    let mut p = P(name: "ann", age: 30)
     p.age += 1
     println(p.age)
 
@@ -67,4 +66,3 @@ fn main() {
     io.print("here\n")
     io.eprintln("to stderr {a}")
     println(p.name + "!")
-}

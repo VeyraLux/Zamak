@@ -18,7 +18,7 @@ fn for_ranges_run_once_per_counter_and_reject_misuse() {
     );
     // Start before end, each evaluated once; owned values in the body are freed per trip,
     // including on continue, and a returning body leaves the loop early.
-    let result = case.run("fn lo() -> i64 {\nprintln(\"lo\")\nreturn 0\n}\nfn hi() -> i64 {\nprintln(\"hi\")\nreturn 3\n}\nfn first(limit: i64) -> i64 {\nfor i in 0..limit {\nif i * i > 5 {\nreturn i\n}\n}\nreturn -1\n}\nfn main() {\nfor i in lo()..hi() {\nlet line = \"trip {i}\"\nif i == 1 {\ncontinue\n}\nprintln(line)\n}\nprintln(first(10))\nprintln(first(2))\n}\n");
+    let result = case.run("fn lo() -> i64:\n    println(\"lo\")\n    return 0\nfn hi() -> i64:\n    println(\"hi\")\n    return 3\nfn first(limit: i64) -> i64:\n    for i in 0..limit:\n        if i * i > 5:\n            return i\n    return -1\nfn main():\n    for i in lo()..hi():\n        let line = \"trip {i}\"\n        if i == 1:\n            continue\n        println(line)\n    println(first(10))\n    println(first(2))\n");
     assert!(
         result.status.success(),
         "{}",
@@ -30,26 +30,26 @@ fn for_ranges_run_once_per_counter_and_reject_misuse() {
     );
     for (source, error) in [
         (
-            "fn main() {\nfor i in 0..3 {\ni = 1\n}\n}",
+            "fn main():\n    for i in 0..3:\n        i = 1",
             "cannot assign immutable value i",
         ),
         (
-            "fn main() {\nlet i = 0\nfor i in 0..3 {}\n}",
+            "fn main():\n    let i = 0\n    for i in 0..3: pass",
             "duplicate binding i",
         ),
         (
-            "fn main() {\nfor i in 0..3 {}\nprintln(i)\n}",
+            "fn main():\n    for i in 0..3: pass\n    println(i)",
             "unknown variable i",
         ),
-        ("fn main() {\nfor i in 0..\"x\" {}\n}", "type mismatch"),
-        ("fn main() {\nfor i 0..3 {}\n}", "expected `in`"),
-        ("fn main() {\nfor i in 3 {}\n}", "expected `..`"),
+        ("fn main():\n    for i in 0..\"x\": pass", "type mismatch"),
+        ("fn main():\n    for i 0..3: pass", "expected `in`"),
+        ("fn main():\n    for i in 3: pass", "expected `..`"),
         (
-            "fn main() {\nlet s = \"x\"\nfor i in 0..3 {\nlet t = s\n}\n}",
+            "fn main():\n    let s = \"x\"\n    for i in 0..3:\n        let t = s",
             "loop moves",
         ),
         (
-            "fn main() {\nlet s = \"x\"\nfor i in 0..3 {\nlet t = s\nbreak\n}\n}",
+            "fn main():\n    let s = \"x\"\n    for i in 0..3:\n        let t = s\n        break",
             "loop jump moves",
         ),
     ] {
@@ -86,22 +86,22 @@ fn control_flow_and_path_ownership() {
     assert!(String::from_utf8_lossy(&result.stdout)
         .ends_with("3628800\n6\nbranch\nfirst\nnext\nnext\nnext\n"));
     for (source, error) in [
-        ("fn main() {\nlet a = \"x\"\nif true { let b = a }\nprintln(a)\n}", "use after move"),
-        ("fn main() {\nlet a = \"x\"\nwhile true { let b = a }\n}", "loop moves"),
-        ("fn main() {\nif true { let x = 1 }\nprintln(x)\n}", "unknown variable"),
-        ("fn main() { if 1 {} }", "type mismatch"),
-        ("fn eat(s: string) -> bool { return true }\nfn main() {\nlet a = \"x\"\nlet flag = false && eat(a)\nprintln(a)\n}", "use after move"),
-        ("fn main() { println(1 && true) }", "type mismatch"),
-        ("fn main() { if true {} println(1) }", "newline"),
-        ("fn f() -> i64 { if true { return 1 } }\nfn main() {}", "missing"),
-        ("fn main() {\nif true { return } else { return }\nprintln(1)\n}", "unreachable"),
-        ("fn eat(s: string) -> bool { return true }\nfn main() {\nlet a = \"x\"\nwhile eat(a) {}\n}", "use after move"),
+        ("fn main():\n    let a = \"x\"\n    if true: let b = a\n    println(a)", "use after move"),
+        ("fn main():\n    let a = \"x\"\n    while true: let b = a", "loop moves"),
+        ("fn main():\n    if true: let x = 1\n    println(x)", "unknown variable"),
+        ("fn main():\n    if 1: pass", "type mismatch"),
+        ("fn eat(s: string) -> bool: return true\nfn main():\n    let a = \"x\"\n    let flag = false and eat(a)\n    println(a)", "use after move"),
+        ("fn main(): println(1 and true)", "type mismatch"),
+        ("fn main():\n    if true: pass println(1)", "newline"),
+        ("fn f() -> i64:\n    if true: return 1\nfn main(): pass", "missing"),
+        ("fn main():\n    if true: return\n    else: return\n    println(1)", "unreachable"),
+        ("fn eat(s: string) -> bool: return true\nfn main():\n    let a = \"x\"\n    while eat(a): pass", "use after move"),
     ] {
         fs::write(&file, source).unwrap(); let result = invoke("check");
         assert!(!result.status.success(), "accepted {source}");
         assert!(String::from_utf8_lossy(&result.stderr).contains(error), "{}", String::from_utf8_lossy(&result.stderr));
     }
-    fs::write(&file, "fn f(flag: bool) {\nlet a = \"live\"\nif flag {\nlet b = a\nreturn\n}\nprintln(a)\n}\nfn main() {\nf(false)\nf(true)\nif true { let x = 1 } else { let x = 2 }\nlet x = 3\nprintln(x)\n}").unwrap();
+    fs::write(&file, "fn f(flag: bool):\n    let a = \"live\"\n    if flag:\n        let b = a\n        return\n    println(a)\nfn main():\n    f(false)\n    f(true)\n    if true: let x = 1\n    else: let x = 2\n    let x = 3\n    println(x)").unwrap();
     let result = invoke("run");
     assert!(
         result.status.success(),
@@ -109,7 +109,7 @@ fn control_flow_and_path_ownership() {
         String::from_utf8_lossy(&result.stderr)
     );
     assert!(String::from_utf8_lossy(&result.stdout).ends_with("live\n3\n"));
-    fs::write(&file, "fn probe() -> bool {\nprintln(99)\nreturn true\n}\nfn main() {\nprintln(false && (1 / 0 == 0))\nprintln(true || (1 / 0 == 0))\nprintln(true && probe())\nprintln(false || probe())\nprintln(true || false && false)\n}\n").unwrap();
+    fs::write(&file, "fn probe() -> bool:\n    println(99)\n    return true\nfn main():\n    println(false and (1 / 0 == 0))\n    println(true or (1 / 0 == 0))\n    println(true and probe())\n    println(false or probe())\n    println(true or false and false)\n").unwrap();
     let result = invoke("run");
     assert!(
         result.status.success(),
@@ -118,7 +118,7 @@ fn control_flow_and_path_ownership() {
     );
     assert!(String::from_utf8_lossy(&result.stdout)
         .ends_with("false\ntrue\n99\ntrue\n99\ntrue\ntrue\n"));
-    fs::write(&file, "fn classify(n: i64) -> string {\nif n < 0 { return \"negative\" } else if n == 0 { return \"zero\" } else if n == 1 { return \"one\" } else { return \"many\" }\n}\nfn show(n: i64) {\nlet s = \"live\"\nif n < 0 { let moved = s\nreturn } else if n == 0 { let moved = s\nreturn }\nprintln(s)\n}\nfn main() {\nprintln(classify(-1))\nprintln(classify(0))\nprintln(classify(1))\nprintln(classify(2))\nshow(-1)\nshow(0)\nshow(2)\n}\n").unwrap();
+    fs::write(&file, "fn classify(n: i64) -> string:\n    if n < 0: return \"negative\"\n    elif n == 0: return \"zero\"\n    elif n == 1: return \"one\"\n    else: return \"many\"\nfn show(n: i64):\n    let s = \"live\"\n    if n < 0:\n        let moved = s\n        return\n    elif n == 0:\n        let moved = s\n        return\n    println(s)\nfn main():\n    println(classify(-1))\n    println(classify(0))\n    println(classify(1))\n    println(classify(2))\n    show(-1)\n    show(0)\n    show(2)\n").unwrap();
     let result = invoke("run");
     assert!(
         result.status.success(),
@@ -128,17 +128,17 @@ fn control_flow_and_path_ownership() {
     assert!(String::from_utf8_lossy(&result.stdout).ends_with("negative\nzero\none\nmany\nlive\n"));
     for (source, error) in [
         (
-            "fn main() {\nlet s = \"x\"\nif false {} else if true { let moved = s }\nprintln(s)\n}",
+            "fn main():\n    let s = \"x\"\n    if false: pass\n    elif true: let moved = s\n    println(s)",
             "use after move",
         ),
         (
-            "fn f() -> i64 { if true { return 1 } else if false { return 2 } }\nfn main() {}",
+            "fn f() -> i64:\n    if true: return 1\n    elif false: return 2\nfn main(): pass",
             "missing",
         ),
-        ("fn main() { if true {} else if 1 {} }", "type mismatch"),
+        ("fn main():\n    if true: pass\n    elif 1: pass", "type mismatch"),
         (
-            "fn main() { if true {} else if false {} println(1) }",
-            "newline",
+            "fn main():\n    if true: pass\n    else if false: pass",
+            "expected `elif` instead of `else if`",
         ),
     ] {
         fs::write(&file, source).unwrap();
@@ -150,7 +150,7 @@ fn control_flow_and_path_ownership() {
             String::from_utf8_lossy(&result.stderr)
         );
     }
-    fs::write(&file, "fn main() {\nlet mut n = 0\nwhile n < 5 {\nn = n + 1\nif n == 2 { continue }\nif n == 4 { break }\nprintln(n)\n}\n}\n").unwrap();
+    fs::write(&file, "fn main():\n    let mut n = 0\n    while n < 5:\n        n = n + 1\n        if n == 2: continue\n        if n == 4: break\n        println(n)\n").unwrap();
     let result = invoke("run");
     assert!(
         result.status.success(),
@@ -158,7 +158,7 @@ fn control_flow_and_path_ownership() {
         String::from_utf8_lossy(&result.stderr)
     );
     assert!(String::from_utf8_lossy(&result.stdout).ends_with("1\n3\n"));
-    fs::write(&file, "fn main() {\nlet mut i = 0\nlet mut outer = \"outer\"\nwhile i < 3 {\nlet inner = \"inner\"\ni = i + 1\nif i == 1 { continue }\nprintln(inner)\nif i == 2 { break }\n}\nprintln(outer)\n}\n").unwrap();
+    fs::write(&file, "fn main():\n    let mut i = 0\n    let mut outer = \"outer\"\n    while i < 3:\n        let inner = \"inner\"\n        i = i + 1\n        if i == 1: continue\n        println(inner)\n        if i == 2: break\n    println(outer)\n").unwrap();
     let result = invoke("run");
     assert!(
         result.status.success(),
@@ -175,10 +175,10 @@ fn control_flow_and_path_ownership() {
     );
     assert!(String::from_utf8_lossy(&result.stdout).ends_with("2\n3\n1\n2\n2\n2\n3\n3\n"));
     for source in [
-        "fn main() { break }",
-        "fn main() { continue }",
-        "fn main() { let x = \"x\" while true { let y = x break println(y) } }",
-        "fn main() { while true { continue println(1) } }",
+        "fn main(): break",
+        "fn main(): continue",
+        "fn main():\n    let x = \"x\"\n    while true:\n        let y = x break\n        println(y)",
+        "fn main():\n    while true:\n        continue println(1)",
     ] {
         fs::write(&file, source).unwrap();
         assert!(!invoke("check").status.success(), "accepted {source}");
@@ -194,17 +194,17 @@ fn single_equals_in_condition_suggests_double_equals() {
     let file = root.join("main.zm");
     for (source, keyword, column) in [
         (
-            "fn main() {\n    let score = 60\n    if score = 60 {\n        println(1)\n    }\n}\n",
+            "fn main():\n    let score = 60\n    if score = 60:\n        println(1)\n",
             "if",
             14,
         ),
         (
-            "fn main() {\n    let mut n = 0\n    while n = 3 {\n        n += 1\n    }\n}\n",
+            "fn main():\n    let mut n = 0\n    while n = 3:\n        n += 1\n",
             "while",
             13,
         ),
         (
-            "fn main() {\n    let x = 1\n    let s = if x = 1 { 2 } else { 3 }\n}\n",
+            "fn main():\n    let x = 1\n    let s = if x = 1: 2 else: 3\n",
             "if",
             18,
         ),

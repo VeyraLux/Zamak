@@ -71,45 +71,39 @@ fn loop_bound_reuse_preserves_mutations_and_control_flow() {
     write_source(
         &workspace,
         r#"
-fn boundary() -> i64 {
+fn boundary() -> i64:
     println(99)
     return 2
-}
-fn main() {
+fn main():
     let seed = 3
     let mut index = 0
-    while index < (seed + 2) % 7 {
+    while index < (seed + 2) % 7:
         index = index + 1
-        if index == 2 { continue }
-        if index == 4 { break }
+        if index == 2: continue
+        if index == 4: break
         println(index)
-    }
     println(index)
     let mut bound = 4
     index = 0
-    while index < bound + 1 {
-        if index == 1 { bound = 1 }
+    while index < bound + 1:
+        if index == 1: bound = 1
         index = index + 1
-    }
     println(index)
     bound = 4
     index = 0
-    while index < bound + 1 {
+    while index < bound + 1:
         let mut once = 0
-        while once < 1 {
+        while once < 1:
             bound = 0
             once = once + 1
-        }
         index = index + 1
-    }
     println(index)
     index = 0
-    while index < boundary() + 0 { index = index + 1 }
+    while index < boundary() + 0: index = index + 1
     println(index)
     index = 0
-    while false && index < 1 / 0 { index = index + 1 }
+    while false and index < 1 / 0: index = index + 1
     println(index)
-}
 "#,
     );
     let output = workspace.invoke("run");
@@ -130,7 +124,7 @@ fn loop_bounds_preserve_first_evaluation_errors() {
     for condition in ["0 < 1 / 0", "0 < 9223372036854775807 + 1"] {
         write_source(
             &workspace,
-            &format!("fn main() {{ while {condition} {{ println(7) }} }}"),
+            &format!("fn main():\n    while {condition}: println(7)"),
         );
         let output = workspace.invoke("run");
         assert!(!output.status.success(), "accepted {condition}");
@@ -140,10 +134,9 @@ fn loop_bounds_preserve_first_evaluation_errors() {
     write_source(
         &workspace,
         r#"
-fn left() -> i64!string { fail "left first" }
-fn main() -> !string {
-    while left()? < 1 / 0 { println(7) }
-}
+fn left() -> i64!string: fail "left first"
+fn main() -> !string:
+    while left()? < 1 / 0: println(7)
 "#,
     );
     let output = workspace.invoke("run");
@@ -157,11 +150,11 @@ fn main() -> !string {
 fn common_case_rejections_and_runtime_overflow() {
     let workspace = TempWorkspace::new();
     for source in [
-        "fn main() { let values: [i64; 3] = [1, 2] }",
-        "fn main() { let values = [1, 2]\nprintln(values[2]) }",
-        "fn main() { let values = [1, 2]\nprintln(values[-1]) }",
-        "fn main() { let mut values = [1, 2]\nvalues[0] = true }",
-        "fn main() { println(1 == true) }",
+        "fn main(): let values: [i64; 3] = [1, 2]",
+        "fn main():\n    let values = [1, 2]\n    println(values[2])",
+        "fn main():\n    let values = [1, 2]\n    println(values[-1])",
+        "fn main():\n    let mut values = [1, 2]\n    values[0] = true",
+        "fn main(): println(1 == true)",
     ] {
         write_source(&workspace, source);
         assert!(
@@ -175,10 +168,7 @@ fn common_case_rejections_and_runtime_overflow() {
         "9223372036854775807 * 2",
         "-9223372036854775808 - 1",
     ] {
-        write_source(
-            &workspace,
-            &format!("fn main() {{ println({expression}) }}"),
-        );
+        write_source(&workspace, &format!("fn main(): println({expression})"));
         let output = workspace.invoke("run");
         assert!(!output.status.success(), "accepted {expression}");
         assert!(

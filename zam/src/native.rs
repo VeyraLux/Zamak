@@ -3312,7 +3312,7 @@ mod tests {
     #[test]
     fn interval_proofs_select_raw_arithmetic_and_array_accesses() {
         let mut module = crate::compiler::parse(
-            "fn main() {\nlet mut a = [0, 0, 0, 0]\nlet mut i = 0\nwhile i < 4 {\na[i] = i * 2\nprintln(a[i])\ni = i + 1\n}\n}",
+            "fn main():\n    let mut a = [0, 0, 0, 0]\n    let mut i = 0\n    while i < 4:\n        a[i] = i * 2\n        println(a[i])\n        i = i + 1",
         )
         .unwrap();
         let function = module.functions.remove("main").unwrap();
@@ -3333,7 +3333,7 @@ mod tests {
     #[test]
     fn for_ranges_emit_c_loops_without_redundant_checks() {
         let mut module = crate::compiler::parse(
-            "fn main() {\nlet mut a = [0, 0, 0, 0]\nfor i in 0..4 {\na[i] = i * 2\nprintln(a[i])\nprintln(i + 1)\n}\n}",
+            "fn main():\n    let mut a = [0, 0, 0, 0]\n    for i in 0..4:\n        a[i] = i * 2\n        println(a[i])\n        println(i + 1)",
         )
         .unwrap();
         let function = module.functions.remove("main").unwrap();
@@ -3407,7 +3407,7 @@ mod tests {
     }
     #[test]
     fn bounded_scalar_specialization_keeps_generic_checks_and_deterministic_output() {
-        let module = scalar_module("fn accum(seed: i64) -> i64 {\nlet mut acc = seed\nlet mut i = 0\nwhile i < 512 {\nacc = (acc * 31 + i) % 1000003\ni = i + 1\n}\nacc\n}\nfn main() {\nlet mut seed = 0\nwhile seed < 8 {\nprintln(accum(seed))\nseed = seed + 1\n}\n}");
+        let module = scalar_module("fn accum(seed: i64) -> i64:\n    let mut acc = seed\n    let mut i = 0\n    while i < 512:\n        acc = (acc * 31 + i) % 1000003\n        i = i + 1\n    acc\nfn main():\n    let mut seed = 0\n    while seed < 8:\n        println(accum(seed))\n        seed = seed + 1");
         let source = generate(&module, "case:main", "case");
         assert_eq!(source, generate(&module.clone(), "case:main", "case"));
         let symbol = "f636173653a616363756d";
@@ -3429,7 +3429,7 @@ mod tests {
     }
     #[test]
     fn bounded_arithmetic_sum_specialization_proves_entire_512_iteration_body() {
-        let module = scalar_module("fn sum(seed: i64) -> i64 {\nlet mut total = 0\nlet mut i = 0\nwhile i < 512 {\ntotal = total + (i + seed + 3) * (i * 5 - seed + 7)\ni = i + 1\n}\nreturn total\n}\nfn main() {\nlet mut r = 0\nwhile r < 8 {\nprintln(sum(r % 8))\nr = r + 1\n}\n}");
+        let module = scalar_module("fn sum(seed: i64) -> i64:\n    let mut total = 0\n    let mut i = 0\n    while i < 512:\n        total = total + (i + seed + 3) * (i * 5 - seed + 7)\n        i = i + 1\n    return total\nfn main():\n    let mut r = 0\n    while r < 8:\n        println(sum(r % 8))\n        r = r + 1");
         let source = generate(&module, "case:main", "case");
         let specialized = source
             .split_once("static int64_t f636173653a73756d_spec0(int64_t p0) {\n")
@@ -3442,15 +3442,15 @@ mod tests {
     }
     #[test]
     fn recursive_callees_and_unknown_inputs_remain_generic() {
-        let module = scalar_module("fn a(n: i64) -> i64 {\nif n < 1 { return n }\nb(n - 1)\n}\nfn b(n: i64) -> i64 { a(n) }\nfn unknown() -> i64 { 2 }\nfn add(n: i64) -> i64 { n + 1 }\nfn main() {\nprintln(a(2))\nprintln(add(unknown()))\n}");
+        let module = scalar_module("fn a(n: i64) -> i64:\n    if n < 1: return n\n    b(n - 1)\nfn b(n: i64) -> i64: a(n)\nfn unknown() -> i64: 2\nfn add(n: i64) -> i64: n + 1\nfn main():\n    println(a(2))\n    println(add(unknown()))");
         assert!(!generate(&module, "case:main", "case").contains("_spec"));
     }
     #[test]
     fn specialization_caps_reuse_and_nested_calls_stay_generic() {
         let calls = (0..12)
-            .map(|i| format!("println(add({i}))\n"))
+            .map(|i| format!("    println(add({i}))\n"))
             .collect::<String>();
-        let module = scalar_module(&format!("fn inner(n: i64) -> i64 {{ n + 1 }}\nfn add(n: i64) -> i64 {{ inner(n) }}\nfn main() {{\n{calls}println(add(0))\n}}"));
+        let module = scalar_module(&format!("fn inner(n: i64) -> i64: n + 1\nfn add(n: i64) -> i64: inner(n)\nfn main():\n{calls}    println(add(0))"));
         let symbols = module
             .functions
             .keys()

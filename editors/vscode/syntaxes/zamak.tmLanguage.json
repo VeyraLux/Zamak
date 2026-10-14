@@ -59,7 +59,11 @@
       "patterns": [
         {
           "name": "keyword.control.zamak",
-          "match": "\\b(?:if|else|while|for|in|break|continue|return|catch|match)\\b"
+          "match": "\\b(?:if|elif|else|while|for|in|break|continue|return|catch|match|pass)\\b"
+        },
+        {
+          "name": "keyword.operator.logical.zamak",
+          "match": "\\b(?:and|or|not)\\b"
         },
         {
           "name": "keyword.other.zamak",
@@ -115,15 +119,15 @@
       "patterns": [
         {
           "name": "keyword.operator.arrow.zamak",
-          "match": "->|=>"
+          "match": "->"
         },
         {
           "name": "keyword.operator.comparison.zamak",
           "match": "<=|>=|==|!=|<|>"
         },
         {
-          "name": "keyword.operator.logical.zamak",
-          "match": "&&|\\|\\||!"
+          "name": "keyword.operator.error-type.zamak",
+          "match": "!"
         },
         {
           "name": "keyword.operator.assignment.zamak",

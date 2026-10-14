@@ -1,63 +1,61 @@
 use std/fmt
 use std/string
 
-fn factorial(n: i64) -> i64 {
+fn factorial(n: i64) -> i64:
     let mut value = n
     let mut result = 1
-    while value > 1 {
+
+    while value > 1:
         result = result * value
         value = value - 1
-    }
-    return result
-}
 
-fn fibonacci(n: i64) -> i64 {
+    return result
+
+fn fibonacci(n: i64) -> i64:
     let mut index = 0
     let mut previous = 0
     let mut current = 1
-    while index < n {
+
+    while index < n:
         let next = previous + current
         previous = current
         current = next
         index = index + 1
-    }
-    return previous
-}
 
-fn gcd(a: i64, b: i64) -> i64 {
+    return previous
+
+fn gcd(a: i64, b: i64) -> i64:
     let mut left = a
     let mut right = b
-    while right != 0 {
+
+    while right != 0:
         let remainder = left % right
         left = right
         right = remainder
-    }
+
     return left
-}
 
-fn lcm(a: i64, b: i64) -> i64 {
+fn lcm(a: i64, b: i64) -> i64:
     return a / gcd(a, b) * b
-}
 
-fn greet(text: &string) -> string {
+fn greet(text: &string) -> string:
     return "问候：{text}"
-}
 
-fn is_prime(n: i64) -> bool {
-    if n < 2 {
+fn is_prime(n: i64) -> bool:
+    if n < 2:
         return false
-    }
-    let mut divisor = 2
-    while divisor * divisor <= n {
-        if n % divisor == 0 {
-            return false
-        }
-        divisor = divisor + 1
-    }
-    return true
-}
 
-fn main() {
+    let mut divisor = 2
+
+    while divisor * divisor <= n:
+        if n % divisor == 0:
+            return false
+
+        divisor = divisor + 1
+
+    return true
+
+fn main():
     println(factorial(0))
     println(factorial(1))
     println(factorial(10))
@@ -75,29 +73,32 @@ fn main() {
 
     let mut values: [i64; 6] = [5, 1, 4, 2, 8, 0]
     let mut outer = 0
-    while outer < 6 {
+
+    while outer < 6:
         let mut inner = 0
-        while inner < 5 - outer {
-            if values[inner] > values[inner + 1] {
+
+        while inner < 5 - outer:
+            if values[inner] > values[inner + 1]:
                 let temporary = values[inner]
                 values[inner] = values[inner + 1]
                 values[inner + 1] = temporary
-            }
+
             inner = inner + 1
-        }
+
         outer = outer + 1
-    }
+
     println(values[0])
     println(values[5])
     let mut target = 4
     let mut position = -1
     let mut index = 0
-    while index < 6 {
-        if values[index] == target {
+
+    while index < 6:
+        if values[index] == target:
             position = index
-        }
+
         index = index + 1
-    }
+
     println(position)
 
     let name = "世界"
@@ -105,4 +106,3 @@ fn main() {
     println(string.char_len(&name))
     fmt.println(greet(&name))
     println(name)
-}

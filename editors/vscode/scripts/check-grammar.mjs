@@ -50,13 +50,32 @@ for (const group of Object.keys(grammar.repository)) {
     errors.push(`repository group #${group} is never included`);
   }
 }
-const keywords = ['catch', 'fail', 'struct', 'i64', 'string', 'println', 'while', 'for', 'pub'];
+const keywords = ['catch', 'fail', 'struct', 'enum', 'match', 'elif', 'pass', 'and', 'or', 'not', 'i64', 'f64', 'string', 'println', 'while', 'for', 'pub'];
 const repository = JSON.stringify(grammar.repository);
 for (const keyword of keywords) {
   if (!repository.includes(keyword)) errors.push(`grammar does not mention ${keyword}`);
 }
 if (config.comments?.blockComment) errors.push('block comments are not part of the language');
 if (config.comments?.lineComment !== '//') errors.push(`lineComment must be //, got ${config.comments?.lineComment}`);
+// 代码块靠缩进：冒号结尾的行之后要自动缩进，折叠按缩进（offSide）。
+if (config.folding?.offSide !== true) errors.push('folding.offSide must be true for an indentation-based language');
+for (const [name, pattern] of [
+  ['increaseIndentPattern', config.indentationRules?.increaseIndentPattern],
+  ['decreaseIndentPattern', config.indentationRules?.decreaseIndentPattern],
+]) {
+  try {
+    new RegExp(pattern);
+  } catch (error) {
+    errors.push(`${name} /${pattern}/ -> ${error.message}`);
+  }
+}
+const increase = new RegExp(config.indentationRules?.increaseIndentPattern ?? '$^');
+for (const line of ['fn main():', '    if n < 1:  // note', 'struct Point:', '        Circle(r):']) {
+  if (!increase.test(line)) errors.push(`increaseIndentPattern should match ${JSON.stringify(line)}`);
+}
+for (const line of ['    let x: i64 = 1', '// comment:', '    # note:']) {
+  if (increase.test(line)) errors.push(`increaseIndentPattern should not match ${JSON.stringify(line)}`);
+}
 
 console.log(`json files parsed: ${Object.keys(files).length}, regexes compiled: ${regexes}, repository groups: ${Object.keys(grammar.repository).length}`);
 if (errors.length) {

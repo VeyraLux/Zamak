@@ -50,17 +50,17 @@ fn fixture(root: &Path) {
     .unwrap();
     fs::write(
         root.join("src/main.zm"),
-        "use greet\nuse std/io\nfn main() {\ngreet.hello()\nio.println(\"世界\")\n}\n",
+        "use greet\nuse std/io\nfn main():\n    greet.hello()\n    io.println(\"世界\")\n",
     )
     .unwrap();
     fs::write(
         root.join("src/greet.zm"),
-        "pub fn hello() { println(\"hello\") }\n",
+        "pub fn hello(): println(\"hello\")\n",
     )
     .unwrap();
     fs::write(
         root.join("src/unused.zm"),
-        "pub struct Unused { value: i64 }\nfn quiet() {}\n",
+        "pub struct Unused:\n    value: i64\nfn quiet(): pass\n",
     )
     .unwrap();
 }
@@ -80,7 +80,7 @@ fn bounded_call_changes_invalidate_only_their_native_unit() {
     fixture(&root);
     let source = |seed| {
         format!(
-            "use greet\nfn twice(x: i64) -> i64 {{ return x * 2 }}\nfn main() {{\ngreet.hello()\nprintln(twice({seed}))\n}}\n"
+            "use greet\nfn twice(x: i64) -> i64: return x * 2\nfn main():\n    greet.hello()\n    println(twice({seed}))\n"
         )
     };
     fs::write(root.join("src/main.zm"), source(7)).unwrap();
@@ -142,7 +142,7 @@ fn project_cache_execution_and_failures() {
     assert_eq!(run, "hello\n世界\n");
     fs::write(
         b.join("src/greet.zm"),
-        "pub fn hello() { println(\"changed\") }\n",
+        "pub fn hello(): println(\"changed\")\n",
     )
     .unwrap();
     let changed = progress(&invoke(&b, &cache, "build"));
@@ -156,18 +156,14 @@ fn project_cache_execution_and_failures() {
         "changed\n世界\n"
     );
 
-    fs::write(
-        b.join("src/greet.zm"),
-        "pub fn hello(x: i64) { println(x) }\n",
-    )
-    .unwrap();
+    fs::write(b.join("src/greet.zm"), "pub fn hello(x: i64): println(x)\n").unwrap();
     assert!(
         !invoke(&b, &cache, "build").status.success(),
         "stale interface must not be accepted"
     );
     fs::write(
         b.join("src/main.zm"),
-        "use greet\nfn main() { greet.hello(7) }\n",
+        "use greet\nfn main(): greet.hello(7)\n",
     )
     .unwrap();
     let interface = progress(&invoke(&b, &cache, "build"));
@@ -180,7 +176,7 @@ fn project_cache_execution_and_failures() {
 
     fs::write(
         b.join("src/unused.zm"),
-        "pub struct Unused { value: bool }\nfn quiet() {}\n",
+        "pub struct Unused:\n    value: bool\nfn quiet(): pass\n",
     )
     .unwrap();
     let unrelated = progress(&invoke(&b, &cache, "build"));
@@ -191,7 +187,7 @@ fn project_cache_execution_and_failures() {
     );
     fs::write(
         b.join("src/main.zm"),
-        "use unused\nfn main() {\nlet p = unused.Unused { value: true }\nprintln(p.value)\n}\n",
+        "use unused\nfn main():\n    let p = unused.Unused(value: true)\n    println(p.value)\n",
     )
     .unwrap();
     let record = progress(&invoke(&b, &cache, "build"));
@@ -202,7 +198,7 @@ fn project_cache_execution_and_failures() {
     );
     fs::write(
         b.join("src/unused.zm"),
-        "pub struct Unused { value: i64 }\nfn quiet() {}\n",
+        "pub struct Unused:\n    value: i64\nfn quiet(): pass\n",
     )
     .unwrap();
     assert!(
@@ -211,7 +207,7 @@ fn project_cache_execution_and_failures() {
     );
     fs::write(
         b.join("src/main.zm"),
-        "use unused\nfn main() {\nlet p = unused.Unused { value: 9 }\nprintln(p.value)\n}\n",
+        "use unused\nfn main():\n    let p = unused.Unused(value: 9)\n    println(p.value)\n",
     )
     .unwrap();
     let layout = progress(&invoke(&b, &cache, "build"));
@@ -219,27 +215,27 @@ fn project_cache_execution_and_failures() {
     assert_eq!(layout.matches("OBJECT HIT").count(), 2);
     assert_eq!(successful(invoke(&artifact(&layout), &cache, "run")), "9\n");
 
-    fs::write(b.join("src/unused.zm"), "pub struct Unused { value: i64 }\npub fn make() -> Unused { Unused { value: 11 } }\npub fn relay(p: Unused) -> Unused { p }\nfn quiet() {}\n").unwrap();
-    fs::write(b.join("src/main.zm"), "use unused\nfn main() {\nlet p: unused.Unused = unused.relay(unused.make())\nprintln(p.value)\n}\n").unwrap();
+    fs::write(b.join("src/unused.zm"), "pub struct Unused:\n    value: i64\npub fn make() -> Unused: Unused(value: 11)\npub fn relay(p: Unused) -> Unused: p\nfn quiet(): pass\n").unwrap();
+    fs::write(b.join("src/main.zm"), "use unused\nfn main():\n    let p: unused.Unused = unused.relay(unused.make())\n    println(p.value)\n").unwrap();
     let passing = progress(&invoke(&b, &cache, "build"));
     assert_eq!(
         successful(invoke(&artifact(&passing), &cache, "run")),
         "11\n"
     );
-    fs::write(b.join("src/unused.zm"), "struct Unused { value: i64 }\npub fn make() -> Unused { Unused { value: 11 } }\npub fn relay(p: Unused) -> Unused { p }\nfn quiet() {}\n").unwrap();
+    fs::write(b.join("src/unused.zm"), "struct Unused:\n    value: i64\npub fn make() -> Unused: Unused(value: 11)\npub fn relay(p: Unused) -> Unused: p\nfn quiet(): pass\n").unwrap();
     assert!(
         !invoke(&b, &cache, "check").status.success(),
         "private named types must not be accessible via annotations"
     );
 
-    fs::write(b.join("src/unused.zm"), "pub struct Unused { value: i64 }\npub fn make() -> Unused { Unused { value: 11 } }\nfn quiet() {}\n").unwrap();
-    fs::write(b.join("src/main.zm"), "use unused\nstruct Wrapper { item: unused.Unused }\nfn main() {\nlet mut w = Wrapper { item: unused.make() }\nw.item = unused.make()\nprintln(12)\n}\n").unwrap();
+    fs::write(b.join("src/unused.zm"), "pub struct Unused:\n    value: i64\npub fn make() -> Unused: Unused(value: 11)\nfn quiet(): pass\n").unwrap();
+    fs::write(b.join("src/main.zm"), "use unused\nstruct Wrapper:\n    item: unused.Unused\nfn main():\n    let mut w = Wrapper(item: unused.make())\n    w.item = unused.make()\n    println(12)\n").unwrap();
     let nested = progress(&invoke(&b, &cache, "build"));
     assert_eq!(
         successful(invoke(&artifact(&nested), &cache, "run")),
         "12\n"
     );
-    fs::write(b.join("src/unused.zm"), "pub struct Unused { value: bool }\npub fn make() -> Unused { Unused { value: true } }\nfn quiet() {}\n").unwrap();
+    fs::write(b.join("src/unused.zm"), "pub struct Unused:\n    value: bool\npub fn make() -> Unused: Unused(value: true)\nfn quiet(): pass\n").unwrap();
     let nested_layout = progress(&invoke(&b, &cache, "build"));
     assert_eq!(nested_layout.matches("OBJECT MISS").count(), 2);
     assert_eq!(nested_layout.matches("OBJECT HIT").count(), 1);
@@ -281,15 +277,15 @@ fn project_cache_execution_and_failures() {
     );
 
     for source in [
-        "fn main() { missing() }",
-        "fn main() { println(\"unterminated) }",
-        "fn main() { println(\"x\") println(\"y\") }",
-        "fn main() { println(\"{x}\") }",
-        "fn main() { let x = 1.5e }",
-        "fn main() {}\nfn main() {}",
-        "fn other() {}",
-        "use missing\nfn main() {}",
-        "use std/nope\nfn main() {}",
+        "fn main(): missing()",
+        "fn main(): println(\"unterminated)",
+        "fn main(): println(\"x\") println(\"y\")",
+        "fn main(): println(\"{x}\")",
+        "fn main(): let x = 1.5e",
+        "fn main(): pass\nfn main(): pass",
+        "fn other(): pass",
+        "use missing\nfn main(): pass",
+        "use std/nope\nfn main(): pass",
     ] {
         let path = workspace.0.join("bad.zm");
         fs::write(&path, source).unwrap();
@@ -298,12 +294,12 @@ fn project_cache_execution_and_failures() {
             "accepted {source}"
         );
     }
-    fs::write(a.join("src/greet.zm"), "fn hello() {}\n").unwrap();
+    fs::write(a.join("src/greet.zm"), "fn hello(): pass\n").unwrap();
     assert!(
         !invoke(&a, &cache, "check").status.success(),
         "private function must not be exported"
     );
-    fs::write(a.join("src/greet.zm"), "use main\npub fn hello() {}\n").unwrap();
+    fs::write(a.join("src/greet.zm"), "use main\npub fn hello(): pass\n").unwrap();
     assert!(
         !invoke(&a, &cache, "check").status.success(),
         "dependency cycles must be rejected"
@@ -348,7 +344,7 @@ fn object_bytes_ignore_linked_cache_paths() {
     #[cfg(unix)]
     std::os::unix::fs::symlink(&real, &linked).unwrap();
     let source = root.join("main.zm");
-    fs::write(&source, "fn main() {\nprintln(\"linked\")\n}\n").unwrap();
+    fs::write(&source, "fn main():\n    println(\"linked\")\n").unwrap();
     let mut objects = Vec::new();
     for name in ["first", "second"] {
         let cache = linked.join(name);

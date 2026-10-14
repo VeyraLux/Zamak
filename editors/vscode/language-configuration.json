@@ -20,5 +20,22 @@
     ["(", ")"],
     ["\"", "\""]
   ],
-  "wordPattern": "([A-Za-z_][A-Za-z0-9_]*)"
+  "wordPattern": "([A-Za-z_][A-Za-z0-9_]*)",
+  "indentationRules": {
+    "increaseIndentPattern": "^\\s*[^#/\\s].*:\\s*((//|#).*)?$",
+    "decreaseIndentPattern": "^\\s*(elif|else)\\b.*:\\s*((//|#).*)?$"
+  },
+  "onEnterRules": [
+    {
+      "beforeText": "^\\s*[^#/\\s].*:\\s*((//|#).*)?$",
+      "action": { "indent": "indent" }
+    },
+    {
+      "beforeText": "^\\s*(return|break|continue|pass|fail)\\b.*$",
+      "action": { "indent": "outdent" }
+    }
+  ],
+  "folding": {
+    "offSide": true
+  }
 }

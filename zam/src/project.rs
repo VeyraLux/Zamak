@@ -11,7 +11,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-28");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-29");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -107,7 +107,14 @@ fn is_source(path: &Path) -> bool {
     path.extension().is_some_and(|ext| ext == "zm")
 }
 
-fn scan(dir: &Path, base: &Path, modules: &mut BTreeMap<String, Input>) -> Result<()> {
+type Parse = fn(&str) -> std::result::Result<compiler::Module, String>;
+
+fn scan(
+    dir: &Path,
+    base: &Path,
+    modules: &mut BTreeMap<String, Input>,
+    parse: Parse,
+) -> Result<()> {
     for item in fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))? {
         let item = item.map_err(|e| e.to_string())?;
         let kind = item.file_type().map_err(|e| e.to_string())?;
@@ -119,7 +126,7 @@ fn scan(dir: &Path, base: &Path, modules: &mut BTreeMap<String, Input>) -> Resul
             ));
         }
         if kind.is_dir() {
-            scan(&path, base, modules)?;
+            scan(&path, base, modules, parse)?;
         } else if is_source(&path) {
             let id = path
                 .strip_prefix(base)
@@ -133,8 +140,7 @@ fn scan(dir: &Path, base: &Path, modules: &mut BTreeMap<String, Input>) -> Resul
             }
             let source =
                 fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-            let module =
-                compiler::parse(&source).map_err(|e| format!("{}: {e}", path.display()))?;
+            let module = parse(&source).map_err(|e| format!("{}: {e}", path.display()))?;
             if modules
                 .insert(
                     id.clone(),
@@ -163,10 +169,20 @@ pub fn identifier(name: &str) -> bool {
 
 impl Project {
     pub fn load(input: &Path) -> Result<Self> {
+        Self::load_with(input, compiler::parse)
+    }
+
+    /// `zam fmt` 用：行首 Tab 先展开再解析，Tab 缩进的文件也能被格式化。
+    pub fn load_for_format(input: &Path) -> Result<Self> {
+        Self::load_with(input, |source| {
+            compiler::parse(&compiler::expand_tabs(source))
+        })
+    }
+
+    fn load_with(input: &Path, parse: Parse) -> Result<Self> {
         if is_source(input) {
             let source = fs::read_to_string(input).map_err(|e| e.to_string())?;
-            let module =
-                compiler::parse(&source).map_err(|e| format!("{}: {e}", input.display()))?;
+            let module = parse(&source).map_err(|e| format!("{}: {e}", input.display()))?;
             return Ok(Self {
                 name: "main".into(),
                 root: input.parent().unwrap_or(Path::new(".")).into(),
@@ -228,7 +244,7 @@ impl Project {
         let root = manifest.parent().unwrap_or(Path::new(".")).to_owned();
         let base = root.join(module_path);
         let mut modules = BTreeMap::new();
-        scan(&base, &base, &mut modules)?;
+        scan(&base, &base, &mut modules, parse)?;
         if !modules.contains_key(&entry) {
             return Err(format!("missing entry module {entry}"));
         }
@@ -488,6 +504,16 @@ impl Project {
                         .filter(|p| p.rsplit('/').next() == Some(alias))
                         .collect();
                     if imports.len() != 1 {
+                        if self.modules[module]
+                            .module
+                            .structs
+                            .get(alias)
+                            .is_some_and(|s| !s.variants.is_empty())
+                        {
+                            return Err(format!(
+                                "type mismatch: {alias}.{short} is an enum variant; pass its values by position, such as {alias}.{short}(1.0)"
+                            ));
+                        }
                         return Err("missing or ambiguous struct import".into());
                     }
                     (imports[0].as_str(), short)
@@ -649,11 +675,25 @@ impl Project {
                 self.resolve_expr(module, locals, no)?;
             }
             // 枚举名按结构体名解析成限定名。
-            Expr::Variant(name, _, args) => {
+            Expr::Variant(name, variant, args) => {
                 let mut constructor = Expr::Record(name.clone(), Vec::new());
-                self.resolve_expr(module, locals, &mut constructor)?;
-                if let Expr::Record(qualified, _) = constructor {
-                    *name = qualified;
+                match self.resolve_expr(module, locals, &mut constructor) {
+                    Ok(()) => {
+                        if let Expr::Record(qualified, _) = constructor {
+                            *name = qualified;
+                        }
+                    }
+                    // `model.Empty()`：没有字段的跨模块结构体，写法和无载荷的变体一样。
+                    Err(error) => {
+                        let mut record = Expr::Record(format!("{name}.{variant}"), Vec::new());
+                        if !args.is_empty()
+                            || self.resolve_expr(module, locals, &mut record).is_err()
+                        {
+                            return Err(error);
+                        }
+                        *expr = record;
+                        return Ok(());
+                    }
                 }
                 for arg in args {
                     self.resolve_expr(module, locals, arg)?;

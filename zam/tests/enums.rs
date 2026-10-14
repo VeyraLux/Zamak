@@ -41,67 +41,51 @@ fn calculator_example_runs() {
 fn enums_in_fields_maps_and_control_flow() {
     let case = Case::new("enums", "fields");
     let output = case.run(
-        r#"enum Status {
+        r#"enum Status:
     Open
     Done(by: string)
-}
-struct Task {
+struct Task:
     title: string
     status: Status
-}
-fn label(s: &Status) -> string {
-    match s {
-        Open => "open"
-        Done(by) => "done by {by}"
-    }
-}
-fn main() {
+fn label(s: &Status) -> string:
+    match s:
+        Open: "open"
+        Done(by): "done by {by}"
+fn main():
     let mut tasks: [Task] = []
-    tasks.push(Task { title: "a" status: Status.Open })
-    tasks.push(Task { title: "b" status: Status.Done("ann") })
-    tasks.push(Task { title: "c" status: Status.Open })
+    tasks.push(Task(title: "a", status: Status.Open))
+    tasks.push(Task(title: "b", status: Status.Done("ann")))
+    tasks.push(Task(title: "c", status: Status.Open))
     tasks[2].status = Status.Done("bob")
     let mut done = 0
-    for i in 0..tasks.len() {
-        match tasks[i].status {
-            Open => {
+    for i in 0..tasks.len():
+        match tasks[i].status:
+            Open:
                 continue
-            }
-            Done(_) => {
+            Done(_):
                 done += 1
-            }
-        }
-    }
     println(done)
-    for t in &tasks {
+    for t in &tasks:
         println("{t.title}: {label(&t.status)}")
-    }
     let mut owners: {string: Status} = {}
     owners["x"] = Status.Done("cid")
     println(label(&owners["x"]))
     let name = "kept"
-    let moved = match owners["x"] {
-        Done(by) => by == "cid"
-        Open => false
-    }
+    let moved = match owners["x"]:
+        Done(by): by == "cid"
+        Open: false
     println(moved)
     println(name)
     let mut n = 0
-    while true {
-        match Status.Open {
-            Open => {
+    while true:
+        match Status.Open:
+            Open:
                 n += 1
-                if n == 3 {
+                if n == 3:
                     break
-                }
-            }
-            _ => {
+            _:
                 return
-            }
-        }
-    }
     println(n)
-}
 "#,
     );
     assert_eq!(
@@ -115,29 +99,31 @@ fn main() {
 fn checker_rejects_enum_misuse() {
     let case = Case::new("enums", "reject");
     for (body, message) in [
-        ("match s {\n        Circle(r) => println(r)\n    }", "match on Shape does not cover Rect, Label, Empty"),
-        ("match s {\n        _ => println(1)\n        Empty => println(2)\n    }", "unreachable match arm after _"),
-        ("match s {\n        Empty => println(1)\n        Empty => println(2)\n        _ => println(3)\n    }", "duplicate match arm Empty"),
-        ("match s {\n        Square(x) => println(1)\n        _ => println(2)\n    }", "unknown variant Square of Shape"),
-        ("match s {\n        Rect(w) => println(w)\n        _ => println(2)\n    }", "Shape.Rect has 2 field(s), but the pattern binds 1"),
-        ("match s {\n        Rect(w, w) => println(w)\n        _ => println(2)\n    }", "duplicate binding w"),
-        ("let r = 1\n    match s {\n        Circle(r) => println(r)\n        _ => println(2)\n    }", "duplicate binding r"),
+        ("match s:\n        Circle(r): println(r)", "match on Shape does not cover Rect, Label, Empty"),
+        ("match s:\n        _: println(1)\n        Empty: println(2)", "unreachable match arm after _"),
+        ("match s:\n        Empty: println(1)\n        Empty: println(2)\n        _: println(3)", "duplicate match arm Empty"),
+        ("match s:\n        Square(x): println(1)\n        _: println(2)", "unknown variant Square of Shape"),
+        ("match s:\n        Rect(w): println(w)\n        _: println(2)", "Shape.Rect has 2 field(s), but the pattern binds 1"),
+        ("match s:\n        Rect(w, w): println(w)\n        _: println(2)", "duplicate binding w"),
+        ("let r = 1\n    match s:\n        Circle(r): println(r)\n        _: println(2)", "duplicate binding r"),
         ("let t = Shape.Triangle(1.0)", "unknown variant Triangle of Shape"),
         ("let t = Shape.Circle()", "argument count mismatch for Shape.Circle"),
         ("let t = Shape.Circle(1)", "found the integer 1; write 1.0"),
-        ("let t = Shape { r: 1.0 }", "Shape is an enum"),
+        ("let t = Shape(r: 1.0)", "Shape is an enum"),
         ("let t = Point.Origin", "Point is a struct, not an enum"),
-        ("match 5 {\n        _ => println(1)\n    }", "match requires an enum value"),
-        ("match s {\n        _ => {\n            s = Shape.Empty\n        }\n    }", "borrowed by an enclosing for loop"),
-        ("match s {\n        Label(t) => {\n            let owned = t\n        }\n        _ => println(1)\n    }", "borrow escape"),
+        ("match 5:\n        _: println(1)", "match requires an enum value"),
+        ("match s:\n        _:\n            s = Shape.Empty", "borrowed by an enclosing for loop"),
+        ("match s:\n        Label(t):\n            let owned = t\n        _: println(1)", "borrow escape"),
         ("println(s.r)", "unknown field r"),
         ("println(s)", "cannot print"),
-        ("let a = s\n    match s {\n        _ => println(1)\n    }", "use after move: s"),
-        ("let x = match s {\n        Circle(r) => {\n            r\n        }\n        _ => 0.0\n    }", "a match expression arm holds a single value"),
-        ("let x = match s {\n        Circle(r) => r\n        _ => 1\n    }", "found the integer 1; write 1.0"),
+        ("let a = s\n    match s:\n        _: println(1)", "use after move: s"),
+        ("let x = match s:\n        Circle(r):\n            let y = r\n            y\n        _: 0.0", "a match expression arm holds a single value"),
+        ("match s:\n        Circle(r) => println(r)\n        _ => println(0)", "arms are written Circle(r): value, not =>"),
+        ("match s: _: println(1)", "expected the match arms on the following lines"),
+        ("let x = match s:\n        Circle(r): r\n        _: 1", "found the integer 1; write 1.0"),
     ] {
         let source = format!(
-            "enum Shape {{\n    Circle(r: f64)\n    Rect(w: f64, h: f64)\n    Label(text: string)\n    Empty\n}}\nstruct Point {{\n    x: i64\n}}\nfn main() {{\n    let mut s = Shape.Circle(1.0)\n    {body}\n}}\n"
+            "enum Shape:\n    Circle(r: f64)\n    Rect(w: f64, h: f64)\n    Label(text: string)\n    Empty\nstruct Point:\n    x: i64\nfn main():\n    let mut s = Shape.Circle(1.0)\n    {body}\n"
         );
         let output = case.run(&source);
         assert!(!output.status.success(), "accepted {source}");
@@ -146,23 +132,23 @@ fn checker_rejects_enum_misuse() {
     }
     for (source, message) in [
         (
-            "enum Empty {\n}\nfn main() {\n}\n",
+            "enum Empty: pass\nfn main(): pass\n",
             "expected at least one variant in enum Empty",
         ),
         (
-            "enum Bad {\n    lower\n}\nfn main() {\n}\n",
+            "enum Bad:\n    lower\nfn main(): pass\n",
             "enum variant names must start with an uppercase letter",
         ),
         (
-            "enum Bad {\n    A\n    A\n}\nfn main() {\n}\n",
+            "enum Bad:\n    A\n    A\nfn main(): pass\n",
             "duplicate variant Bad.A",
         ),
         (
-            "enum Bad {\n    A(x: &string)\n}\nfn main() {\n}\n",
+            "enum Bad:\n    A(x: &string)\nfn main(): pass\n",
             "enums cannot store references",
         ),
         (
-            "enum List {\n    Cons(tail: List)\n    Nil\n}\nfn main() {\n}\n",
+            "enum List:\n    Cons(tail: List)\n    Nil\nfn main(): pass\n",
             "recursive struct layout",
         ),
     ] {

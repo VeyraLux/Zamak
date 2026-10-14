@@ -1,26 +1,27 @@
 use std/io
 use std/string
 
-fn main() -> !string {
+fn main() -> !string:
     let text = io.read_all()?
     let lines = string.lines(&text)
     let mut totals: {string: i64} = {}
     let mut grand = 0
-    for i in 1..lines.len() {
+
+    for i in 1..lines.len():
         let row = string.trim(&lines[i])
-        if string.byte_len(&row) == 0 {
+
+        if string.byte_len(&row) == 0:
             continue
-        }
+
         let fields = string.split(&row, ",")
         let qty = string.parse_i64(&fields[1])?
         let price = string.parse_i64(&fields[2])?
         let amount = qty * price
         totals[&fields[0]] = totals.get(&fields[0], 0) + amount
         grand = grand + amount
-    }
-    for name in &totals {
+
+    for name in &totals:
         let total = totals[name]
         println("{name} {total}")
-    }
+
     println("TOTAL {grand}")
-}

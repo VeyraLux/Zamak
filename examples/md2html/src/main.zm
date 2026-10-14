@@ -5,13 +5,13 @@ use blocks
 
 // 把 Markdown 转成 HTML 片段：给了文件就读文件，否则读标准输入。
 // 用法：zam run examples/md2html -- examples/md2html/sample.md
-fn main() -> !string {
+fn main() -> !string:
     let args = env.args()
     let mut text = ""
-    if args.len() > 0 {
+
+    if args.len() > 0:
         text = fs.read(&args[0])?
-    } else {
+    else:
         text = io.read_all()?
-    }
+
     println(blocks.render(&text))
-}

@@ -23,16 +23,15 @@ function New-Template([string]$dir, [int]$modules) {
     & $zam new $project *> $null
     if ($LASTEXITCODE -ne 0) { throw "zam new failed for $project" }
     for ($i = 1; $i -le $modules; $i++) {
-        Set-Content -Path (Join-Path $project "src\m$i.zm") -Value "pub fn value() -> i64 {`n    return $i`n}`n" -NoNewline
+        Set-Content -Path (Join-Path $project "src\m$i.zm") -Value "pub fn value() -> i64:`n    return $i`n" -NoNewline
     }
     $main = @()
     for ($i = 1; $i -le $modules; $i++) { $main += "use m$i" }
     $main += ''
-    $main += 'fn main() {'
+    $main += 'fn main():'
     $main += '    let mut total = 0'
     for ($i = 1; $i -le $modules; $i++) { $main += "    total = total + m$i.value()" }
     $main += '    println(total)'
-    $main += '}'
     Set-Content -Path (Join-Path $project 'src\main.zm') -Value (($main -join "`n") + "`n") -NoNewline
     return $project
 }
@@ -142,7 +141,7 @@ for ($rep = 1; $rep -le $Repetitions; $rep++) {
     if ($check.ExitCode -ne 0) { throw "check failed in repetition $rep" }
 
     # 实现编辑：改叶子模块的函数体，接口不变，只应重编该模块。
-    Set-Content -Path (Join-Path $project 'src\m1.zm') -Value "pub fn value() -> i64 {`n    return 2`n}`n" -NoNewline
+    Set-Content -Path (Join-Path $project 'src\m1.zm') -Value "pub fn value() -> i64:`n    return 2`n" -NoNewline
     $leaf = Invoke-Zam $project $cacheDir @('build', '.') "rep$rep-leaf"
     if ($leaf.ExitCode -ne 0) { throw "leaf edit build failed in repetition $rep" }
     if ($leaf.ObjectMiss -ne 1 -or $leaf.ObjectHit -ne $Modules) { throw 'leaf edit expected 1 object miss and all remaining hits' }
@@ -150,7 +149,7 @@ for ($rep = 1; $rep -le $Repetitions; $rep++) {
     $null = Test-BuildArtifact $leaf $project ($expected + 1) "rep$rep-leaf"
 
     # 接口编辑：重命名 m2 的导出函数并同步调用方，应重编 m2 与 main。
-    Set-Content -Path (Join-Path $project 'src\m2.zm') -Value "pub fn value2() -> i64 {`n    return 2`n}`n" -NoNewline
+    Set-Content -Path (Join-Path $project 'src\m2.zm') -Value "pub fn value2() -> i64:`n    return 2`n" -NoNewline
     $mainPath = Join-Path $project 'src\main.zm'
     Set-Content -Path $mainPath -Value ((Get-Content $mainPath -Raw).Replace('m2.value()', 'm2.value2()')) -NoNewline
     $signature = Invoke-Zam $project $cacheDir @('build', '.') "rep$rep-signature"
