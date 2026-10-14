@@ -70,11 +70,41 @@ static int64_t checked_index(int64_t index, size_t length) {
 #ifdef _WIN32
 #include <io.h>
 #include <fcntl.h>
+__declspec(dllimport) int __stdcall GetConsoleMode(void *, unsigned long *);
+__declspec(dllimport) int __stdcall WriteConsoleW(void *, const void *, unsigned long, unsigned long *, void *);
+__declspec(dllimport) int __stdcall MultiByteToWideChar(unsigned int, unsigned long, const char *, int, wchar_t *, int);
 #endif
 static void output_mode(void) {
 #ifdef _WIN32
     if (_setmode(_fileno(stdout), _O_BINARY) == -1) exit(1);
 #endif
+}
+// Windows 控制台按本地代码页（中文系统是 936）解释字节，直接写 UTF-8 会乱码。输出目标是
+// 控制台时先转成 UTF-16 再用 WriteConsoleW；重定向到文件或管道时照常写原始 UTF-8 字节。
+// ponytail: 控制台输入仍按本地代码页读入；交互式读中文需要时改用 ReadConsoleW。
+static int zam_write(FILE *f, const unsigned char *p, size_t n) {
+#ifdef _WIN32
+    void *console = (void*)_get_osfhandle(_fileno(f));
+    unsigned long mode, done;
+    if (n && n <= INT_MAX && GetConsoleMode(console, &mode)) {
+        int count = MultiByteToWideChar(65001, 0, (const char*)p, (int)n, NULL, 0), at = 0, chunk;
+        wchar_t *wide;
+        if (count <= 0 || fflush(f) == EOF) return 0;
+        wide = (wchar_t*)malloc((size_t)count * sizeof(wchar_t));
+        if (!wide) { fputs("zam: allocation failed\n", stderr); exit(1); }
+        MultiByteToWideChar(65001, 0, (const char*)p, (int)n, wide, count);
+        while (at < count) {
+            chunk = count - at < 8192 ? count - at : 8192;
+            // 不把代理对拆到两次写入里。
+            if (chunk > 1 && at + chunk < count && wide[at + chunk - 1] >= 0xD800 && wide[at + chunk - 1] <= 0xDBFF) chunk--;
+            if (!WriteConsoleW(console, wide + at, (unsigned long)chunk, &done, NULL) || !done) { free(wide); return 0; }
+            at += (int)done;
+        }
+        free(wide);
+        return 1;
+    }
+#endif
+    return !n || fwrite(p, 1, n, f) == n;
 }
 typedef struct { unsigned char *data; size_t len; } S;
 static S own(const unsigned char *p, size_t n) {
@@ -95,11 +125,11 @@ static int string_compare(S *a, S *b) {
     return a->len < b->len ? -1 : a->len > b->len;
 }
 static void print(S *s) {
-    if ((s->len && fwrite(s->data, 1, s->len, stdout) != s->len) || fputc('\n', stdout) == EOF) exit(1);
+    if (!zam_write(stdout, s->data, s->len) || fputc('\n', stdout) == EOF) exit(1);
 }
 // ponytail: 未捕获的错误只写 stderr 并以退出码 1 结束；不做栈回溯，错误值本身就是全部信息。
 static void uncaught_error(S *s) {
-    if (s->len && fwrite(s->data, 1, s->len, stderr) != s->len) exit(1);
+    if (!zam_write(stderr, s->data, s->len)) exit(1);
     if (fputc('\n', stderr) == EOF) exit(1);
 }
 static S copy(S *s) { return own(s->data, s->len); }
@@ -456,7 +486,7 @@ return F_double_ok(value);"#,
         params: &[Type::Shared],
         result: Type::Unit,
         fallible: false,
-        body: "if (p0->len && fwrite(p0->data, 1, p0->len, stdout) != p0->len) exit(1);",
+        body: "if (!zam_write(stdout, p0->data, p0->len)) exit(1);",
     },
     Builtin {
         name: "std/io:eprintln",
@@ -464,7 +494,7 @@ return F_double_ok(value);"#,
         result: Type::Unit,
         fallible: false,
         body: r#"fflush(stdout);
-if ((p0->len && fwrite(p0->data, 1, p0->len, stderr) != p0->len) || fputc('\n', stderr) == EOF) exit(1);"#,
+if (!zam_write(stderr, p0->data, p0->len) || fputc('\n', stderr) == EOF) exit(1);"#,
     },
     Builtin {
         name: "std/io:read_line",
