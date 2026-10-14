@@ -40,8 +40,8 @@ fn main() -> !string {
 
 ## Ownership and borrowing
 
-- Assigning or passing a `string`, struct, list or map moves it; using it afterwards is an error. `i64` and `bool` are copied.
-- Parameters typed `&string`, `&[T]`, `&{K: V}` borrow read-only; `&mut string`, `&mut [T]`, `&mut {K: V}` borrow mutably. At the call site write `&x` or `&mut x` (the owner must be `let mut` for `&mut`). Borrows only exist for the duration of a call: they cannot be stored in variables, struct fields, or returned.
+- Assigning or passing a `string`, struct, list or map moves it; using it afterwards is an error. `i64`, `f64` and `bool` are copied.
+- Parameters typed `&string`, `&[T]`, `&{K: V}`, `&Point` borrow read-only; `&mut string`, `&mut [T]`, `&mut {K: V}`, `&mut Point` borrow mutably. At the call site write `&x` or `&mut x` (the owner must be `let mut` for `&mut`). Borrows only exist for the duration of a call: they cannot be stored in variables, struct fields, or returned.
 - A `&string` parameter also accepts a string literal or interpolation directly: `string.find(&s, ",")`.
 - Inside a function, a parameter that is already a borrow is passed on without `&`: `fn f(s: &string) { g(s) }`.
 
@@ -89,16 +89,17 @@ Fields are one per line without commas; struct literals list fields without comm
 
 ## Lists `[T]`
 
-`T` is `i64`, `bool` or `string`.
+`T` is `i64`, `f64`, `bool`, `string` or a struct.
 
 - `let mut xs: [i64] = []` (an empty list needs a type annotation), `let xs: [string] = ["a", "b"]`.
 - `xs.len()`, `xs.push(v)`, `xs.pop()` (removes and returns the last element), `xs.swap(i, j)`.
-- `xs[i]` reads an `i64`/`bool` element and `xs[i] = v` writes. A string element cannot be taken out with `xs[i]`; pass `&xs[i]` to a `&string` parameter or copy it with `string.copy(&xs[i])`.
+- `xs[i]` reads an `i64`/`f64`/`bool` element and `xs[i] = v` writes. A string element cannot be taken out with `xs[i]`; pass `&xs[i]` to a `&string` parameter or copy it with `string.copy(&xs[i])`.
+- Struct elements: read and write fields with `xs[i].field` (also `+=`), pass `&xs[i]` / `&mut xs[i]` to `&Point` / `&mut Point` parameters, pass `&xs[i].name` to a `&string` parameter, call `xs[i].tags.push(v)`. `for p in &xs` gives a read-only `&Point`. Structs are never copied: `let p = xs[i]` is an error; use `xs.pop()` to take the last one out, `xs.swap(i, j)` to reorder, and `xs[i] = Point { ... }` to replace. `xs[i].tags[j]` is not supported.
 - Methods are called on variables or fields only, never on call results: write `let parts = string.split(&s, ",")` then `parts.len()`.
 
 ## Maps `{K: V}`
 
-`K` is `i64` or `string`; `V` is `i64`, `bool` or `string`.
+`K` is `i64` or `string`; `V` is `i64`, `f64`, `bool`, `string` or a struct (maps of structs have no `get`; use `m.contains(k)` then `m[k].field`).
 
 - `let mut m: {string: i64} = {}` (an empty map needs a type annotation), `let m = {"a": 1, "b": 2}`.
 - `m[k]` reads (stops the program if the key is missing); `m[k] = v` inserts or replaces.

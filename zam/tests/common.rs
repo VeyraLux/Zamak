@@ -31,6 +31,26 @@ impl Case {
             .output()
             .unwrap()
     }
+
+    /// 同 `run`，并把 `input` 写进程序的标准输入。
+    #[allow(dead_code)]
+    pub fn run_with_input(&self, source: &str, input: &[u8]) -> Output {
+        use std::io::Write;
+        use std::process::Stdio;
+        let file = self.root.join("main.zm");
+        fs::write(&file, source).unwrap();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_zam"))
+            .arg("run")
+            .arg(file)
+            .env("ZAMAK_CACHE_DIR", self.root.join("cache"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(input).unwrap();
+        child.wait_with_output().unwrap()
+    }
 }
 
 impl Drop for Case {

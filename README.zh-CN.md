@@ -29,12 +29,12 @@ Zamak 是为频繁构建和多 worktree 协作设计的语言原型，改完代�
 | --- | --- |
 | 命令行 | `check`、`build`、`run`、`fmt`、`new`、`demo`；检查与构建支持 JSON 诊断 |
 | 数值 | `i64`（溢出与除零在运行时检查）、`f64`（IEEE 754）、`bool`；`f64(n)`、`i64(x)` 显式转换 |
-| 集合 | 定长 `[i64; N]`、可增长列表 `[i64]`/`[f64]`/`[bool]`/`[string]`、字典 `{K: V}`（键为 `i64` 或 `string`） |
+| 集合 | 定长 `[i64; N]`、可增长列表 `[T]`、字典 `{K: V}`；元素与值可以是标量、字符串或结构体，键为 `i64` 或 `string` |
 | 标准库 | 文件读写、标准输入、命令行参数、整数与浮点数解析；`std/math` 的平方根、幂、三角、取整等函数；`fmt.fixed` 按位数格式化；字符串的长度、比较、查找、替换、大小写转换、裁剪、切片、切分与连接；`println` |
 | 错误处理 | `T!string`、`fail`、`?` 传播、`catch` 处理 |
 | 编辑器 | VS Code 语法高亮、括号与引号配对 |
 
-尚未支持结构体元素的列表与字典、网络 I/O、目录遍历、泛型、枚举与 `match`、闭包、线程及 FFI，也还没有包管理器、语言服务器、REPL 和文档生成工具。安装方式见 [预览版说明](PREVIEW.md)。
+尚未支持嵌套容器、网络 I/O、目录遍历、泛型、枚举与 `match`、闭包、线程及 FFI，也还没有包管理器、语言服务器、REPL 和文档生成工具。安装方式见 [预览版说明](PREVIEW.md)。
 
 ## 快速运行
 
@@ -145,7 +145,7 @@ fn main() {
 
 ## 当前语法范围
 
-- 函数：`fn`、`pub fn`。参数和返回值可以是 `i64`、`f64`、`bool`、`string`、结构体、列表和字典，省略返回类型表示没有返回值；参数还可以是借用 `&string`、`&mut string`、`&[T]`、`&mut [T]`、`&{K: V}`、`&mut {K: V}`。
+- 函数：`fn`、`pub fn`。参数和返回值可以是 `i64`、`f64`、`bool`、`string`、结构体、列表和字典，省略返回类型表示没有返回值；参数还可以是借用 `&string`、`&mut string`、`&[T]`、`&mut [T]`、`&{K: V}`、`&mut {K: V}`、`&Point`、`&mut Point`。
 - 错误值：签名写成 `T!E`（成功返回 T，失败返回 E）或 `!E`（只有失败）。`fail expr` 产生错误值并立即返回；`call?` 在失败时把错误传给调用方，成功时得到 T，要求当前函数签名也带 `!E`。`main` 可以是 `-> !E`，未捕获的错误写 stderr 并以退出码 1 结束。`call catch e { ... }` 就地处理错误，不向外传播：错误值是 string，只在代码块里可见，代码块要在所有路径上 `return` 或 `fail`。当前只支持 `E = string`。示例：`zam run examples/values/errors.zm`、`zam run examples/values/catch.zm`。
 - `let name = expr`、`let mut name = expr`、可选类型标注，以及可变绑定的重新赋值。整数、浮点数和布尔值复制；字符串、结构体、列表和字典移动。
 - 十进制整数可以在数字之间加单个 `_` 分隔符（如 `1_000_000`），放在首尾或连续使用会报错。整数算术 `+ - * / %`、比较 `== != < <= > >=`、布尔相等比较、单目 `- !` 和括号。表达式与参数从左到右求值；溢出、除零及 `i64::MIN / -1` 在运行时返回错误。
@@ -157,13 +157,14 @@ fn main() {
 - `println(expr)` 打印字符串、整数、浮点数或布尔值；打印变量时不移动变量。导入 `std/io` 或 `std/fmt` 后可以使用相应的命名空间。
 - 导入 `std/string` 后，`string.byte_len(&text) -> i64` 返回 UTF-8 字节数，`string.char_len(&text) -> i64` 按 UTF-8 码点计数（一个汉字算一个字符，续字节不计），`string.equal(&a, &b) -> bool` 按字节比较内容；它们只做共享借用，不移动字符串，共享借用参数可以直接转传。`&string` 参数接受共享借用，也接受字符串字面量与插值（借用一个只活到语句结束的临时字符串，例如 `string.split(&csv, ",")`）；不接受 owned 变量（要写 `&name`）或可变借用。示例：`zam run examples/values/strings.zm`。
 - 文件、标准输入与命令行参数：`fs.read(&path) -> string!string`、`fs.write(&path, &text) -> !string`；`io.print(&text)`（不换行）、`io.eprintln(&text)`（写到 stderr）、`io.read_line(&mut line) -> bool!string`（去掉行尾 `\n`/`\r\n`，输入结束返回 `false`）、`io.read_all() -> string!string`；`env.arg_count() -> i64`、`env.arg(i) -> string!string`（不含程序名，`zam run <file> -- a b` 把 `--` 之后的参数传给程序）。字符串还有 `string.parse_i64(&s) -> i64!string`、`string.find_from(&s, &needle, start)`、`string.starts_with/ends_with/contains`、`string.replace(&s, &from, &to)`、`string.lower/upper`（仅 ASCII）、`string.trim(&s) -> string`、`string.find(&s, &needle) -> i64`（找不到为 -1）、`string.byte_at(&s, i) -> i64` 与 `string.slice(&s, start, end) -> string`；后两者按字节计位置，越界或切在多字节字符中间时与数组越界一样终止程序。路径与参数按 UTF-8 处理，Windows 通过 `_wfopen` 与 `GetCommandLineW` 支持中文路径和参数。这些函数照常参与类型、借用与错误值检查，C 实现只发射到用到它们的目标文件里。示例：`examples/io/wc.zm`（行、词、字节计数）、`examples/io/sum.zm`（逐行求和）、`examples/io/notes.zm`（写入、读回并拆分 `key=value`）。
-- 可增长列表 `[T]`：元素为 `i64`、`f64`、`bool` 或 `string`，可以作局部变量、参数（`[T]` 移交所有权，`&[T]` / `&mut [T]` 调用帧借用）、返回值和结构体字段。空列表需要类型标注（`let mut xs: [i64] = []`），不带标注的 `[1, 2]` 仍是定长数组。方法有 `xs.len()`、`xs.push(v)`（字符串移入列表）、`xs.pop()` 和 `xs.swap(i, j)`（原地交换，字符串列表靠它排序而不复制字符串）。`xs[i]` 读写元素，越界或对空列表 `pop` 时终止程序。字符串元素不能经 `xs[i]` 移出，可以借用 `&xs[i]`，或用 `string.copy(&xs[i])` 复制。`for x in &xs` 遍历时，整数与布尔按值得到，字符串是只读借用；循环期间列表被冻结，不能修改、移动或独占借用。方法接收者只能是变量或字段路径（`bag.items.push(x)`），不支持链式调用；`a.b(...)` 中的 `a` 是当前函数声明过的局部名时才是方法调用，否则按模块调用解析。配套标准库：`string.split/words/lines` 返回 `[string]`，`string.join(&list, &sep)`，`string.copy(&s)`，`env.args()`。C 侧每种元素类型生成一组 `L*` 结构与函数，只发射到用到它的目标文件。示例：`examples/collections/stats.zm`（读入整数、排序、统计）、`examples/collections/tac.zm`（倒序输出并找最长单词）。
-- 字典 `{K: V}`：键为 `i64` 或 `string`，值为 `i64`、`f64`、`bool` 或 `string`；可以作局部、参数（`{K: V}` 移交，`&{K: V}` / `&mut {K: V}` 借用）、返回值和结构体字段。字面量写作 `{"amy": 30, "bob": 25}`（逗号分隔，可分行），空字典需要类型标注 `let mut m: {string: i64} = {}`。`m[k]` 读取（键不存在时终止程序，`zam: key not found`），`m[k] = v` 插入或替换；字符串键以只读借用传入（`m[&name]`、`m["a"]`，或遍历得到的键 `m[k]`），新键插入时复制一份。方法有 `len()`、`contains(k)`、`get(k, default)`（不存在时返回 `default`；字符串值返回副本）、`remove(k) -> bool`、`keys() -> [K]`。`for k in &m` 按插入顺序遍历键，期间字典被冻结。字符串值不能经 `m[k]` 移出，可以借用 `&m[k]` 或用 `get`。实现是插入顺序表加开放寻址下标表：遍历顺序确定，与哈希无关；删除留墓碑，重建下标表时压实。哈希不带随机种子，不适合直接处理不可信输入的大规模键集合。示例：`examples/collections/wordfreq.zm`（词频统计，按次数稳定排序）。
+- 可增长列表 `[T]`：元素为 `i64`、`f64`、`bool`、`string` 或结构体，可以作局部变量、参数（`[T]` 移交所有权，`&[T]` / `&mut [T]` 调用帧借用）、返回值和结构体字段。空列表需要类型标注（`let mut xs: [i64] = []`），不带标注的 `[1, 2]` 仍是定长数组。方法有 `xs.len()`、`xs.push(v)`（字符串移入列表）、`xs.pop()` 和 `xs.swap(i, j)`（原地交换，字符串列表靠它排序而不复制字符串）。`xs[i]` 读写元素，越界或对空列表 `pop` 时终止程序。字符串元素不能经 `xs[i]` 移出，可以借用 `&xs[i]`，或用 `string.copy(&xs[i])` 复制。`for x in &xs` 遍历时，整数与布尔按值得到，字符串是只读借用；循环期间列表被冻结，不能修改、移动或独占借用。方法接收者只能是变量或字段路径（`bag.items.push(x)`），不支持链式调用；`a.b(...)` 中的 `a` 是当前函数声明过的局部名时才是方法调用，否则按模块调用解析。配套标准库：`string.split/words/lines` 返回 `[string]`，`string.join(&list, &sep)`，`string.copy(&s)`，`env.args()`。C 侧每种元素类型生成一组 `L*` 结构与函数，只发射到用到它的目标文件。示例：`examples/collections/stats.zm`（读入整数、排序、统计）、`examples/collections/tac.zm`（倒序输出并找最长单词）。
+- 字典 `{K: V}`：键为 `i64` 或 `string`，值为 `i64`、`f64`、`bool`、`string` 或结构体；可以作局部、参数（`{K: V}` 移交，`&{K: V}` / `&mut {K: V}` 借用）、返回值和结构体字段。字面量写作 `{"amy": 30, "bob": 25}`（逗号分隔，可分行），空字典需要类型标注 `let mut m: {string: i64} = {}`。`m[k]` 读取（键不存在时终止程序，`zam: key not found`），`m[k] = v` 插入或替换；字符串键以只读借用传入（`m[&name]`、`m["a"]`，或遍历得到的键 `m[k]`），新键插入时复制一份。方法有 `len()`、`contains(k)`、`get(k, default)`（不存在时返回 `default`；字符串值返回副本）、`remove(k) -> bool`、`keys() -> [K]`。`for k in &m` 按插入顺序遍历键，期间字典被冻结。字符串值不能经 `m[k]` 移出，可以借用 `&m[k]` 或用 `get`。实现是插入顺序表加开放寻址下标表：遍历顺序确定，与哈希无关；删除留墓碑，重建下标表时压实。哈希不带随机种子，不适合直接处理不可信输入的大规模键集合。示例：`examples/collections/wordfreq.zm`（词频统计，按次数稳定排序）。
 - 展示程序 `examples/md2html`：约 270 行、4 个模块的 Markdown 转 HTML 工具，支持标题、段落、有序/无序列表、引用、围栏代码块、分隔线，以及行内代码、粗体、强调、链接与 HTML 转义。运行 `zam run examples/md2html -- examples/md2html/sample.md`；期望输出 `sample.html` 由 `zam/tests/showcase.rs` 核对。
 - 字符串支持 UTF-8，以及 `\n`、`\r`、`\t`、`\"` 和 `\\` 转义。字符字面量 `'a'`、`'\n'`、`'\''` 的值是该字符的 Unicode 码点（`i64`），可以直接和 `string.byte_at` 的结果比较 ASCII 字符。
 - 字符串字面量支持插值：`"{name}"` 拼接当前作用域里的变量或字段（`{person.name}`），支持 `string`、`&string`、`&mut string`、`i64`、`f64`、`bool`。插值只读取，不移动，也不修改借用内容，插值后原变量仍可使用；字面大括号写作 `{{` 和 `}}`。花括号里也可以写表达式，例如 `"{a + b}"`、`"{xs[0]}"`、`"{string.upper(&name)}"`，从左到右求值；表达式里不能再出现字符串字面量或花括号。示例：`zam run examples/values/format.zm`。
 - `if condition { ... } else { ... }`、`while condition { ... }`，条件要是 `bool`；`for name in start..end { ... }` 遍历左闭右开的整数区间，`start` 与 `end` 进入循环前按顺序各求值一次，循环变量是只读 `i64`，只在循环体内可见（`zam run examples/control/loops.zm`）；支持 `&&`/`||` 短路求值。块内变量不能逃出块；`else if` 链按嵌套分支处理返回与所有权合并。支持 `break`/`continue`，跳转后同一代码块中的语句不可达，嵌套循环只影响当前循环；暂不支持遮蔽仍在作用域内的绑定。
-- `struct` / `pub struct`：名称首字母大写，字段支持 `string`、`i64`、`f64`、`bool`、owned 命名结构体、列表和字典，每行一个字段。用 `Person { ... }` 或 `model.Person { ... }` 按名初始化全部字段，字段之间不写逗号，可以写在一行。可以读取整数/布尔字段，也可以直接打印字符串字段（不移动）。支持可变结构体字段赋值、整体移动、整体重新赋值和字符串字段自动释放；替换字符串字段时先计算新值，再释放旧值。重复/缺失字段、借用字段和移动后使用会报错。支持 owned 结构体作函数参数、返回值和变量类型标注（跨模块用 `model.Person`）；传参及返回转移整体所有权，未使用的返回值会自动释放。嵌套 owned 结构体支持构造、字段整体替换及递归释放；直接/间接递归布局会报错。支持连续字段访问（如 `a.b.c`）：读取标量、不移动地打印字符串、替换可变根绑定下的字段；路径上的每一层都检查类型、字段名称和根绑定有效性。字符串字段支持调用帧借用（如 `&person.name`、`&mut person.name`，可嵌套），独占借用要求根绑定可变。冲突按根结构体保守检查，不允许同时独占借用不同字段；借用字段时不能移动根结构体。暂不支持单独移出 owned 字段和整体结构体借用。示例：`zam run examples/structs`。
+- `struct` / `pub struct`：名称首字母大写，字段支持 `string`、`i64`、`f64`、`bool`、owned 命名结构体、列表和字典，每行一个字段。用 `Person { ... }` 或 `model.Person { ... }` 按名初始化全部字段，字段之间不写逗号，可以写在一行。可以读取整数/布尔字段，也可以直接打印字符串字段（不移动）。支持可变结构体字段赋值、整体移动、整体重新赋值和字符串字段自动释放；替换字符串字段时先计算新值，再释放旧值。重复/缺失字段、借用字段和移动后使用会报错。支持 owned 结构体作函数参数、返回值和变量类型标注（跨模块用 `model.Person`）；传参及返回转移整体所有权，未使用的返回值会自动释放。嵌套 owned 结构体支持构造、字段整体替换及递归释放；直接/间接递归布局会报错。支持连续字段访问（如 `a.b.c`）：读取标量、不移动地打印字符串、替换可变根绑定下的字段；路径上的每一层都检查类型、字段名称和根绑定有效性。字符串字段支持调用帧借用（如 `&person.name`、`&mut person.name`，可嵌套），独占借用要求根绑定可变。冲突按根结构体保守检查，不允许同时独占借用不同字段；借用字段时不能移动根结构体。整个结构体也能按调用帧借用：参数写 `&Point` 或 `&mut Point`，实参写 `&p`、`&mut p`；已经是借用的参数直接转传，`&mut` 借用可以改字段或整体赋值，共享借用不能写，借用的结构体不能移出。暂不支持单独移出 owned 字段。示例：`zam run examples/structs`。
+- 结构体列表与字典：`[Point]`、`{string: Point}`（跨模块写 `[model.Point]`），`push` 移入、`pop` 移出、`swap` 交换整个元素。`xs[i].f` 读写元素字段（可以复合赋值，下标里不能调用函数），`&xs[i]`、`&mut xs[i]` 借用元素，`&xs[i].name` 借用元素的字段，`xs[i].tags.push(v)` 调用元素字段上的容器方法，`xs[i] = Point { ... }` 整体替换（先释放旧值）。`for p in &xs` 得到只读借用 `&Point`。结构体不能复制：`let p = xs[i]` 报错，结构体值的字典不支持 `get`。C 侧所有类型先前置声明，再按依赖定义（列表与字典本体只含指针，结构体按按值字段排序，字典条目最后），释放函数先给原型，所以 `struct Node { children: [Node] }` 这样经由列表的递归也能编译（`examples/structs/tree.zm`）。示例：`zam run examples/structs/elements.zm`、`zam run examples/collections/gradebook.zm < examples/collections/grades.txt`。
 - 换行分隔语句；支持 `#` 和 `//` 单行注释。
 
 ### 所有权与借用
@@ -187,7 +188,7 @@ fn main() {
 
 ## 缓存行为
 
-缓存默认放在用户目录 `.zam/cache`，可用 `ZAMAK_CACHE_DIR` 指定。模块键包含源码字节、依赖名称与递归依赖哈希、Zamak 编译器/IR 版本（当前 IR-18）、操作系统和架构，不含项目绝对路径。相同源码从不同目录构建时共享模块产物。
+缓存默认放在用户目录 `.zam/cache`，可用 `ZAMAK_CACHE_DIR` 指定。模块键包含源码字节、依赖名称与递归依赖哈希、Zamak 编译器/IR 版本（当前 IR-19）、操作系统和架构，不含项目绝对路径。相同源码从不同目录构建时共享模块产物。
 
 修改依赖会使该模块和传递依赖它的模块失效，独立模块继续命中缓存。当前仍对全部源码执行解析和检查，并比较缓存产物内容；缓存验证以正确性优先，还没有实现只读接口的语义增量分析。
 

@@ -275,7 +275,10 @@ impl Analysis {
                 }
                 Interval::TOP
             }
-            Expr::Method(_, method, values) => {
+            Expr::Method(_, method, values) | Expr::ElementMethod(_, _, _, method, values) => {
+                if let Expr::ElementMethod(_, index, _, _, _) = expr {
+                    self.expr(index, env, collect);
+                }
                 for value in values {
                     self.expr(value, env, collect);
                 }
@@ -286,7 +289,7 @@ impl Analysis {
                     Interval::TOP
                 }
             }
-            Expr::BorrowIndex(_, index, _) => {
+            Expr::BorrowIndex(_, index, _, _) | Expr::IndexField(_, index, _) => {
                 self.expr(index, env, collect);
                 Interval::TOP
             }
@@ -415,6 +418,10 @@ impl Analysis {
                     safe_index(&env, name, range),
                     collect,
                 );
+                self.expr(value, &env, collect);
+            }
+            Instruction::AssignIndexField(_, index, _, value) => {
+                self.expr(index, &env, collect);
                 self.expr(value, &env, collect);
             }
             Instruction::AssignField(_, _, expr)
@@ -691,7 +698,8 @@ fn expression_cost(expr: &Expr) -> Option<i128> {
         | Expr::ByteLen(inner)
         | Expr::CharLen(inner)
         | Expr::Index(_, inner)
-        | Expr::BorrowIndex(_, inner, _) => expression_cost(inner)?,
+        | Expr::IndexField(_, inner, _)
+        | Expr::BorrowIndex(_, inner, _, _) => expression_cost(inner)?,
         Expr::Binary(_, a, b) | Expr::StringEqual(a, b) => {
             expression_cost(a)? + expression_cost(b)?
         }
@@ -710,6 +718,11 @@ fn expression_cost(expr: &Expr) -> Option<i128> {
         | Expr::Format(values) => values
             .iter()
             .try_fold(0, |cost, value| Some(cost + expression_cost(value)?))?,
+        Expr::ElementMethod(_, index, _, _, values) => values
+            .iter()
+            .try_fold(expression_cost(index)?, |cost, value| {
+                Some(cost + expression_cost(value)?)
+            })?,
         _ => 0,
     };
     Some(1 + children)
@@ -730,7 +743,8 @@ fn body_cost(block: &Block, writes: &mut BTreeMap<String, usize>) -> Option<i128
                 *writes.entry(name.clone()).or_default() += 1;
                 expression_cost(expr)?
             }
-            Instruction::AssignIndex(name, index, value) => {
+            Instruction::AssignIndex(name, index, value)
+            | Instruction::AssignIndexField(name, index, _, value) => {
                 *writes.entry(name.clone()).or_default() += 1;
                 expression_cost(index)? + expression_cost(value)?
             }
