@@ -24,7 +24,7 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 | 默认 C 工具链 | MSVC：`vswhere` 找带 `VC.Tools.x86.x64` 组件的 VS / Build Tools，直接调 `Hostx64\x64` 下的 `cl.exe`/`link.exe`；找不到就依次用 PATH 上的 `gcc`、`clang`（本机有 MinGW gcc：`C:\ProgramData\mingw64\mingw64\bin`） | 依次 `cc`、`clang`、`gcc`（例如装 `build-essential`） | 同 Linux（Xcode Command Line Tools 的 Apple clang，`xcode-select --install`） |
 | 换编译器 | 设 `CC=gcc`（MinGW）改走 GNU 后端 | 设 `CC=clang` 等 | 同 Linux |
 | 产物 | `build/<name>-<hash>.exe` | `build/<name>-<hash>`，无后缀，权限 0755 | 同 Linux |
-| 同键同字节 | `.obj` + `/Brepro` + `/d2pathmap` | `.o` + `-ffile-prefix-map=<临时目录>=.` | 同 Linux |
+| 同键同字节 | `.obj` + `/Brepro` + `/d2pathmap`；MinGW 链接加 `-Wl,--no-insert-timestamp`（否则 PE 头带链接时间，重链接报 corrupt cache entry） | `.o` + `-ffile-prefix-map=<临时目录>=.` | 同 Linux |
 | 缓存目录 | `%USERPROFILE%\.zam\cache` | `$HOME/.zam/cache` | 同 Linux |
 | 额外缓存 | MSVC 环境一次性捕获到 `%TEMP%\zam-msvc-<hash>.txt`，按 `vcvars64.bat` 的大小和修改时间失效 | 无 | 无 |
 | 验证 | 本机 + CI `windows-latest` | 本机 WSL2（见下）+ CI `ubuntu-latest` | 只有 CI `macos-latest`，本机无法验证 |
