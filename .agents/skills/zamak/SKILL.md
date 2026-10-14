@@ -28,6 +28,7 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 | 缓存目录 | `%USERPROFILE%\.zam\cache` | `$HOME/.zam/cache` | 同 Linux |
 | 额外缓存 | MSVC 环境一次性捕获到 `%TEMP%\zam-msvc-<hash>.txt`，按 `vcvars64.bat` 的大小和修改时间失效 | 无 | 无 |
 | 验证 | 本机 + CI `windows-latest` | 本机 WSL2（见下）+ CI `ubuntu-latest` | 只有 CI `macos-latest`，本机无法验证 |
+| 控制台中文 | 输出走 `WriteConsoleW`、输入走 `ReadConsoleW`（`zam_write`、`zam_stdin_getc`），重定向时照常读写 UTF-8 字节；改动后跑 `pwsh -File tools/check-console-input.ps1`（真控制台里注入中文按键） | 终端本身是 UTF-8 | 同 Linux |
 
 - `CC` 必须是单个 GNU 风格的编译器程序：不能带参数、不能是 MSVC `cl`；在 Windows 上也不能是 `.bat`（`.bat` 会被当成 MSVC 的 vcvars 脚本）。要加 sanitizer 之类的参数，就写一个包装脚本再把 `CC` 指过去（Unix）。
 - 缓存键包含 `OS` 与 `ARCH`，同一缓存目录被多个平台共用时不会混用产物。
