@@ -1,12 +1,14 @@
 use crate::compiler::{
-    bitwise, borrow_of, field_path, method_signature, numeric, overload, record_id, record_order,
-    terminates, Block, Elem, Expr, Instruction, Module, Pattern, Type,
+    bitwise, borrow_of, compound, field_path, method_signature, numeric, overload, record_id,
+    record_order, terminates, Block, Elem, Expr, Instruction, Module, Pattern, Type, COPY,
 };
 use crate::project::Result;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Command;
 
+#[path = "native_values.rs"]
+mod native_values;
 #[path = "native_ranges.rs"]
 mod ranges;
 
@@ -1121,6 +1123,8 @@ struct Generator<'a> {
     error: Option<Type>,
     // 函数体里出现过的列表与字典类型，用来决定发射哪些容器辅助函数。
     containers: Containers,
+    // 用到了复合值的复制、相等或打印：这个目标文件要带上 native_values 生成的函数。
+    values: bool,
 }
 /// 用到的容器：`(元素, None)` 是列表，`(键, Some(值))` 是字典。
 type Containers = std::collections::BTreeSet<(Elem, Option<Elem>)>;
@@ -1489,6 +1493,7 @@ impl Generator<'_> {
                     result: self.result,
                     error: self.error,
                     containers: Containers::new(),
+                    values: false,
                 }
                 .ty(value)
             }
@@ -1534,6 +1539,7 @@ impl Generator<'_> {
                     Type::Shared
                 }
             }
+            Expr::Call(name, args) if name == COPY => self.value_type(&args[0]),
             Expr::Call(name, args) => self.module.functions[self.callee(name, args)].result,
             Expr::Try(inner) => self.ty(inner),
             Expr::Catch(inner, _, _) => self.ty(inner),
@@ -1868,6 +1874,12 @@ impl Generator<'_> {
                 for segment in segments {
                     let part = match segment {
                         Expr::Text(text) => self.literal(text),
+                        _ if compound(self.value_type(segment)) => {
+                            let ty = self.value_type(segment);
+                            let pointer = self.operand(segment);
+                            self.values = true;
+                            native_values::text_call(ty, &pointer)
+                        }
                         Expr::Variable(name) => {
                             let pointer = self.pointer(name);
                             self.text_of(pointer, self.ty(segment))
@@ -1984,6 +1996,19 @@ impl Generator<'_> {
                 )
             }
             Expr::Binary(op, left, right)
+                if matches!(op.as_str(), "==" | "!=") && compound(self.value_type(left)) =>
+            {
+                let ty = self.value_type(left);
+                let a = self.operand(left);
+                let b = self.operand(right);
+                self.values = true;
+                let test = native_values::equal(ty, &a, &b);
+                self.scalar(
+                    &if op == "==" { test } else { format!("!{test}") },
+                    Type::Bool,
+                )
+            }
+            Expr::Binary(op, left, right)
                 if is_text(self.ty(left))
                     && matches!(op.as_str(), "+" | "==" | "!=" | "<" | "<=" | ">" | ">=") =>
             {
@@ -2072,6 +2097,12 @@ impl Generator<'_> {
             }
             Expr::Variable(name) => self.temporary(&format!("take({})", self.pointer(name))),
             Expr::Borrow(name, _) => self.pointer(name),
+            Expr::Call(name, args) if name == COPY => {
+                let ty = self.value_type(&args[0]);
+                let pointer = self.operand(&args[0]);
+                self.values |= compound(ty);
+                self.call_value(&native_values::copy(ty, &pointer), ty)
+            }
             Expr::Call(name, args) => {
                 let name = self.callee(name, args);
                 let result = self.module.functions[name].result;
@@ -2300,6 +2331,37 @@ impl Generator<'_> {
             self.temporary(&format!("take(&{temp}.value)"))
         } else {
             self.scalar(&format!("{temp}.value"), result)
+        }
+    }
+    /// 只读使用一个值时它的 owned 类型：借用换成被借用的类型。
+    fn value_type(&self, expr: &Expr) -> Type {
+        let ty = match expr {
+            Expr::Borrow(path, _) => self.place_ty(path),
+            Expr::BorrowIndex(path, _, field, _) => self.element_ty(path, field),
+            _ => self.ty(expr),
+        };
+        ty.borrowable().map_or(ty, |(owned, _)| owned)
+    }
+    /// 只读使用一个值的指针：变量、字段、元素直接取地址，其他表达式先求值成临时值。
+    fn operand(&mut self, expr: &Expr) -> String {
+        match expr {
+            Expr::Variable(name) | Expr::Borrow(name, _) => self.pointer(name),
+            Expr::Field(local, field) => format!("&{}", self.field(local, field)),
+            Expr::Index(local, index) if self.place_ty(local).container().is_some() => self.expr(
+                &Expr::BorrowIndex(local.clone(), index.clone(), String::new(), false),
+            ),
+            Expr::IndexField(local, index, field) => self.expr(&Expr::BorrowIndex(
+                local.clone(),
+                index.clone(),
+                field.clone(),
+                false,
+            )),
+            Expr::BorrowIndex(_, _, _, _) => self.expr(expr),
+            _ => {
+                let ty = self.value_type(expr);
+                let value = self.expr_as(expr, ty);
+                format!("&{value}")
+            }
         }
     }
     /// 被调函数的实际名字：`abs`/`min`/`max` 按第一个参数的类型选版本。
@@ -2557,6 +2619,13 @@ impl Generator<'_> {
                         drop_fn(ty),
                         take_fn(ty)
                     ));
+                }
+                Instruction::Print(expr) if compound(self.value_type(expr)) => {
+                    let ty = self.value_type(expr);
+                    let pointer = self.operand(expr);
+                    self.values = true;
+                    let text = self.temporary(&native_values::text_call(ty, &pointer));
+                    self.code.push_str(&format!("print(&{text});\n"));
                 }
                 Instruction::Print(expr) => {
                     let ty = self.ty(expr);
@@ -2890,7 +2959,9 @@ fn specialization_plan(
             let Expr::Call(callee, _) = expr else {
                 return;
             };
-            let target = &module.functions[callee];
+            let Some(target) = module.functions.get(callee) else {
+                return;
+            };
             if callee.split_once(':').unwrap().0 != unit
                 || cyclic.contains(callee)
                 || target.result != Type::Int
@@ -2990,9 +3061,8 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
         if name.split_once(':').unwrap().0 == unit {
             needed.insert(name.clone());
             visit_exprs(&function.body, &mut |expr| match expr {
-                Expr::Call(name, _) => {
-                    needed.insert(name.clone());
-                    // 重载的内建函数两个版本都带上，按参数类型调用其中一个。
+                // `copy` 不在函数表里；重载的内建函数两个版本都带上，按参数类型调用其中一个。
+                Expr::Call(name, _) if name != COPY => {
                     for ty in [Type::Int, Type::Float] {
                         needed.insert(overload(name, Some(ty)).to_owned());
                     }
@@ -3022,6 +3092,7 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
     }
     // 列表与字典的 C 辅助按用到的类型生成：签名、结构体字段，以及函数体里出现过的每个值。
     let mut containers = Containers::new();
+    let mut values = false;
     for name in &needed {
         let function = &module.functions[name];
         for (_, ty) in &function.params {
@@ -3076,6 +3147,7 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
             result: function.result,
             error: function.error,
             containers: Containers::new(),
+            values: false,
         };
         for (i, (param, ty)) in function.params.iter().enumerate() {
             let local = format!("p{i}");
@@ -3093,6 +3165,7 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
         }
         bodies.push_str("}\n");
         containers.extend(g.containers);
+        values |= g.values;
     }
     // 结构体与容器互相引用（结构体字段是列表，列表元素是结构体），收集到不再增加为止。
     loop {
@@ -3193,6 +3266,9 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
             }
         }
         source.push_str(&format!("memset(p,0,sizeof(*p)); }}\nstatic R{id} takeR{id}(R{id} *p) {{ R{id} v=*p; memset(p,0,sizeof(*p)); return v; }}\n"));
+    }
+    if values {
+        source.push_str(&native_values::functions(module, &records, &lists, &maps));
     }
     // 失败函数的结果结构体与构造器；调用点只读 ok 相符的那一半。
     let mut fallible: Vec<Type> = Vec::new();

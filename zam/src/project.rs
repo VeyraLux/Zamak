@@ -662,9 +662,9 @@ impl Project {
                     self.resolve_expr(module, locals, arg)?;
                 }
             }
-            // `abs`/`min`/`max`：与 Python 一样是全局内建函数；本模块自己定义了同名函数时用自己的。
+            // `abs`/`min`/`max`/`copy`：全局内建函数；本模块自己定义了同名函数时用自己的。
             Expr::Call(name, args)
-                if matches!(name.as_str(), "abs" | "min" | "max")
+                if matches!(name.as_str(), "abs" | "min" | "max" | "copy")
                     && self.resolve(module, name).is_err() =>
             {
                 *name = format!("std/core:{name}");

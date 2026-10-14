@@ -31,6 +31,7 @@ fn main() -> !string:
 - Integer literals may use `_` between digits: `1_000_000`. Character literals like `'a'`, `'#'`, `'\n'`, `'\''` are `i64` Unicode code points (useful with `string.byte_at`).
 - Operators: `+ - * / %`, `== != < <= > >=`, unary `-`, parentheses. Logical operators are the words `and`, `or`, `not`, as in Python: `if a > 0 and not done:`. They short-circuit, and their precedence from lowest to highest is `or`, `and`, `not`, comparisons. `&&`, `||` and prefix `!` are errors; `!` only appears in error types such as `i64!string`. Bitwise operators on `i64`: `& | ^ ~ << >>` with Python's precedence (`x & 1 == 1` is `(x & 1) == 1`); shift counts must be 0 to 63. Integer literals may be written `0xFF`, `0b1010`, `0o17`. Compound assignment `+= -= *= /= %= &= |= ^= <<= >>=` works on variables, fields and elements. On strings, `+` concatenates (`a + b` makes a new string and moves neither side) and `== != < <= > >=` compare contents. Strings and integers cannot be mixed: `"n=" + 1` is an error; use interpolation.
 - Integer overflow, division by zero, and out-of-range indexes stop the program with an error.
+- Structs, enums, lists and maps support `==` and `!=` (field by field; maps ignore order) and can be printed with `println(x)` or `"{x}"`, which shows `Point(x: 1, y: 2)`, `Shape.Circle(1.5)`, `[1, 2]`, `{"a": 1}` with strings quoted. `copy(&x)` makes a deep copy of a string, list, map, struct or enum. Comparing, printing and copying never move the value.
 
 ## Floats
 
@@ -123,7 +124,7 @@ let area = match s:
 - One variant per line; variant names start with an uppercase letter. Build values with positional arguments: `Shape.Rect(1.0, 2.0)`, `Shape.Empty`.
 - `match` arms are `Variant(a, b): ...` (bind data by position, `_` skips one) or `_: ...` as the last arm, one arm per line. Arms must cover every variant or end with `_`.
 - As a statement, an arm is one statement on the same line or an indented block; as a value (`let x = match ...`), each arm is one expression.
-- `match` borrows the value: numbers and booleans are copied into the bindings, strings and structs are read-only borrows. Enums cannot be compared with `==` or printed; use `match`.
+- `match` borrows the value: numbers and booleans are copied into the bindings, strings and structs are read-only borrows. Enums compare with `==` (same variant and equal data); use `match` to read the data.
 - Enums move like structs and can be stored in lists, maps and struct fields, or borrowed as `&Shape`.
 
 ## Lists `[T]`
@@ -134,7 +135,7 @@ let area = match s:
 - `xs.len()`, `xs.push(v)`, `xs.pop()` (removes and returns the last element), `xs.insert(i, v)`, `xs.remove(i)` (removes and returns element `i`), `xs.swap(i, j)`, `xs.reverse()`, `xs.clear()`, `xs.extend(ys)` (moves all of `ys` to the end).
 - For `i64`, `f64`, `bool` and `string` elements: `xs.sort()` (ascending, stable), `xs.contains(v)`, `xs.index_of(v)` (-1 when absent), `xs.slice(a, b)` (a new list of elements `a..b`). String arguments are borrows: `names.contains("amy")`.
 - `xs[i]` reads an `i64`/`f64`/`bool` element and `xs[i] = v` writes. A string element cannot be taken out with `xs[i]`; pass `&xs[i]` to a `&string` parameter or copy it with `string.copy(&xs[i])`.
-- Struct elements: read and write fields with `xs[i].field` (also `+=`), pass `&xs[i]` / `&mut xs[i]` to `&Point` / `&mut Point` parameters, pass `&xs[i].name` to a `&string` parameter, call `xs[i].tags.push(v)`. `for p in &xs` gives a read-only `&Point`. Structs are never copied: `let p = xs[i]` is an error; use `xs.pop()` to take the last one out, `xs.swap(i, j)` to reorder, and `xs[i] = Point(...)` to replace. `xs[i].tags[j]` is not supported.
+- Struct elements: read and write fields with `xs[i].field` (also `+=`), pass `&xs[i]` / `&mut xs[i]` to `&Point` / `&mut Point` parameters, pass `&xs[i].name` to a `&string` parameter, call `xs[i].tags.push(v)`. `for p in &xs` gives a read-only `&Point`. Structs move on assignment: `let p = xs[i]` is an error; write `copy(&xs[i])` for an independent copy, `xs.pop()` to take the last one out, `xs.swap(i, j)` to reorder, and `xs[i] = Point(...)` to replace. `xs[i].tags[j]` is not supported.
 - Methods are called on variables or fields only, never on call results: write `let parts = string.split(&s, ",")` then `parts.len()`.
 
 ## Maps `{K: V}`

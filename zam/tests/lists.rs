@@ -176,7 +176,10 @@ fn checker_rejects_list_misuse() {
             "unknown function xs.shuffle",
         ),
         ("let n = 1\n    println(n.len())", "has no method len"),
-        ("let xs: [i64] = [1]\n    println(xs)", "cannot print"),
+        (
+            "let xs = [1, 2]\n    println(xs)",
+            "cannot print void or a fixed array",
+        ),
         (
             "let xs: [i64] = [1]\n    let ys = xs\n    println(xs.len())",
             "use after move: xs",
