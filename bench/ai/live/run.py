@@ -238,6 +238,9 @@ def main():
     parser.add_argument('--zam', default=shutil.which('zam') or 'zam')
     parser.add_argument('--verify-solutions', action='store_true')
     args = parser.parse_args()
+    # Builds run inside per-trial directories, so a relative compiler path must be made absolute.
+    if os.sep in args.zam or '/' in args.zam:
+        args.zam = str(Path(args.zam).resolve())
     if args.verify_solutions:
         verify_solutions(args.zam)
     base, key = credentials(args.provider)

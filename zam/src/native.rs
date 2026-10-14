@@ -87,6 +87,12 @@ static int64_t byte_len(S *s) { if ((uintmax_t)s->len > INT64_MAX) arithmetic_er
 // ponytail: 按 UTF-8 续字节计数，不校验编码合法性；非法字节按其起始字节计一个字符。
 static int64_t char_len(S *s) { int64_t n = 0; for (size_t i = 0; i < s->len; i++) { if ((s->data[i] & 0xC0) != 0x80) n++; } return n; }
 static int string_equal(S *a, S *b) { return a->len == b->len && (!a->len || memcmp(a->data,b->data,a->len) == 0); }
+static int string_compare(S *a, S *b) {
+    size_t n = a->len < b->len ? a->len : b->len;
+    int c = n ? memcmp(a->data, b->data, n) : 0;
+    if (c) return c < 0 ? -1 : 1;
+    return a->len < b->len ? -1 : a->len > b->len;
+}
 static void print(S *s) {
     if ((s->len && fwrite(s->data, 1, s->len, stdout) != s->len) || fputc('\n', stdout) == EOF) exit(1);
 }
@@ -277,6 +283,21 @@ pub struct Builtin {
     body: &'static str,
 }
 const BUILTINS: &[Builtin] = &[
+    Builtin {
+        name: "std/io:print",
+        params: &[Type::Shared],
+        result: Type::Unit,
+        fallible: false,
+        body: "if (p0->len && fwrite(p0->data, 1, p0->len, stdout) != p0->len) exit(1);",
+    },
+    Builtin {
+        name: "std/io:eprintln",
+        params: &[Type::Shared],
+        result: Type::Unit,
+        fallible: false,
+        body: r#"fflush(stdout);
+if ((p0->len && fwrite(p0->data, 1, p0->len, stderr) != p0->len) || fputc('\n', stderr) == EOF) exit(1);"#,
+    },
     Builtin {
         name: "std/io:read_line",
         params: &[Type::Mutable],
@@ -614,6 +635,9 @@ fn note(set: &mut Containers, ty: Type) {
         _ => {}
     }
 }
+fn is_text(ty: Type) -> bool {
+    matches!(ty, Type::Owned | Type::Shared | Type::Mutable)
+}
 fn elem_of(ty: Type) -> Elem {
     match ty {
         Type::Int => Elem::Int,
@@ -871,12 +895,28 @@ impl Generator<'_> {
                     Type::Int
                 }
             }
+            Expr::Binary(op, left, _) if op == "+" && is_text(self.ty(left)) => Type::Owned,
             Expr::Binary(op, _, _) => {
                 if matches!(op.as_str(), "+" | "-" | "*" | "/" | "%") {
                     Type::Int
                 } else {
                     Type::Bool
                 }
+            }
+            Expr::If(_, yes, _) => self.ty(yes),
+        }
+    }
+    /// 字符串操作数的只读指针：变量、字段与元素直接取地址，其他表达式先求值成临时串。
+    fn text_value(&mut self, expr: &Expr) -> String {
+        match expr {
+            Expr::Variable(name) | Expr::Borrow(name, _) => self.pointer(name),
+            Expr::Field(local, field) => format!("&{}", self.field(local, field)),
+            Expr::Index(local, index) => {
+                self.expr(&Expr::BorrowIndex(local.clone(), index.clone(), false))
+            }
+            _ => {
+                let value = self.expr(expr);
+                format!("&{value}")
             }
         }
     }
@@ -1127,9 +1167,9 @@ impl Generator<'_> {
             }
             Expr::Text(text) => self.temporary(&self.literal(text)),
             Expr::Format(segments) => {
-                let mut parts = Vec::with_capacity(segments.len());
+                let mut name: Option<String> = None;
                 for segment in segments {
-                    parts.push(match segment {
+                    let part = match segment {
                         Expr::Text(text) => self.literal(text),
                         Expr::Variable(name) => {
                             let pointer = self.pointer(name);
@@ -1145,16 +1185,40 @@ impl Generator<'_> {
                             };
                             self.text_of(target, ty)
                         }
-                        _ => unreachable!("interpolation only produces text and field paths"),
-                    });
+                        _ => {
+                            let ty = self.ty(segment);
+                            if is_text(ty) {
+                                let pointer = self.text_value(segment);
+                                format!("copy({pointer})")
+                            } else {
+                                let value = self.expr(segment);
+                                self.text_of(value, ty)
+                            }
+                        }
+                    };
+                    // 每段求值后立刻拼接，保持从左到右的顺序。
+                    match &name {
+                        None => name = Some(self.temporary(&part)),
+                        Some(name) => self
+                            .code
+                            .push_str(&format!("{name} = cat({name}, {part});\n")),
+                    }
                 }
-                let mut parts = parts.into_iter();
-                let name = self.temporary(&parts.next().expect("interpolation has segments"));
-                for part in parts {
-                    self.code
-                        .push_str(&format!("{name} = cat({name}, {part});\n"));
+                name.expect("interpolation has segments")
+            }
+            Expr::If(condition, yes, no) => {
+                let ty = self.ty(expr);
+                let condition = self.expr(condition);
+                let result = self.scalar("{0}", ty);
+                self.code.push_str(&format!("if ({condition}) {{\n"));
+                self.branch_into(&result, yes, ty);
+                self.code.push_str("} else {\n");
+                self.branch_into(&result, no, ty);
+                self.code.push_str("}\n");
+                if owned(ty) {
+                    self.owners.push((result.clone(), ty));
                 }
-                name
+                result
             }
             Expr::Int(value) => self.scalar(
                 &if *value == i64::MIN {
@@ -1178,6 +1242,18 @@ impl Generator<'_> {
                     },
                     ty,
                 )
+            }
+            Expr::Binary(op, left, right)
+                if is_text(self.ty(left))
+                    && matches!(op.as_str(), "+" | "==" | "!=" | "<" | "<=" | ">" | ">=") =>
+            {
+                let a = self.text_value(left);
+                let b = self.text_value(right);
+                if op == "+" {
+                    self.temporary(&format!("cat(copy({a}), copy({b}))"))
+                } else {
+                    self.scalar(&format!("(string_compare({a}, {b}) {op} 0)"), Type::Bool)
+                }
             }
             Expr::Binary(op, left, right) => {
                 let ty = self.ty(expr);
@@ -1302,6 +1378,17 @@ impl Generator<'_> {
                 self.result_value(&temp, result)
             }
         }
+    }
+    /// if 表达式的一个分支：求值、把结果移进 `target`，再释放分支里的临时值。
+    fn branch_into(&mut self, target: &str, expr: &Expr, ty: Type) {
+        let start = self.owners.len();
+        let value = self.expr_as(expr, ty);
+        let value = self.moved(&value, ty);
+        self.code.push_str(&format!("{target} = {value};\n"));
+        for (name, ty) in &self.owners[start..] {
+            self.code.push_str(&format!("{}(&{name});\n", drop_fn(*ty)));
+        }
+        self.owners.truncate(start);
     }
     // 从结果结构体里取出成功值；Unit 没有值，返回空串。
     fn result_value(&mut self, temp: &str, result: Type) -> String {
@@ -1538,7 +1625,7 @@ impl Generator<'_> {
                     }
                     let pointer = match expr {
                         Expr::Variable(name) | Expr::Borrow(name, _) => self.pointer(name),
-                        Expr::BorrowIndex(_, _, _) => self.expr(expr),
+                        Expr::BorrowIndex(_, _, _) | Expr::Index(_, _) => self.text_value(expr),
                         Expr::Field(local, field) => format!("&{}", self.field(local, field)),
                         _ => {
                             let value = self.expr(expr);
@@ -1719,6 +1806,11 @@ fn visit_exprs<'a>(body: &'a Block, visit: &mut impl FnMut(&'a Expr)) {
                     expr(key, visit);
                     expr(value, visit);
                 }
+            }
+            Expr::If(condition, yes, no) => {
+                expr(condition, visit);
+                expr(yes, visit);
+                expr(no, visit);
             }
             _ => {}
         }

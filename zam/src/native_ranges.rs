@@ -297,6 +297,17 @@ impl Analysis {
                 }
                 Interval::TOP
             }
+            Expr::If(condition, yes, no) => {
+                // Each branch sees the facts its condition establishes.
+                let (yes_env, no_env) = self.condition(condition, env.clone(), collect);
+                let a = yes_env.map(|env| self.expr(yes, &env, collect));
+                let b = no_env.map(|env| self.expr(no, &env, collect));
+                match (a, b) {
+                    (Some(a), Some(b)) => a.join(b),
+                    (Some(value), None) | (None, Some(value)) => value,
+                    (None, None) => Interval::TOP,
+                }
+            }
             Expr::Field(_, _) | Expr::Text(_) | Expr::Borrow(_, _) | Expr::Bool(_) => Interval::TOP,
         }
     }
@@ -685,6 +696,9 @@ fn expression_cost(expr: &Expr) -> Option<i128> {
         Expr::MapLit(entries) => entries.iter().try_fold(0, |cost, (key, value)| {
             Some(cost + expression_cost(key)? + expression_cost(value)?)
         })?,
+        Expr::If(condition, yes, no) => {
+            expression_cost(condition)? + expression_cost(yes)? + expression_cost(no)?
+        }
         Expr::Call(_, values)
         | Expr::Method(_, _, values)
         | Expr::Array(values)

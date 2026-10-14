@@ -122,6 +122,8 @@ pub enum Expr {
     Method(String, String, Vec<Expr>),
     // `{k: v, ...}` 字典字面量；空字典需要类型标注。
     MapLit(Vec<(Expr, Expr)>),
+    // `if c { a } else { b }` 作为值：每个分支是单个表达式，必须有 else。
+    If(Box<Expr>, Box<Expr>, Box<Expr>),
 }
 
 #[derive(Clone, Debug)]
@@ -353,6 +355,23 @@ struct Parser {
     implicit: BTreeSet<SourcePosition>,
 }
 
+/// 没有调用的表达式：重复求值不会产生额外副作用（复合赋值的下标用它判断）。
+fn pure(expr: &Expr) -> bool {
+    match expr {
+        Expr::Int(_) | Expr::Bool(_) | Expr::Text(_) | Expr::Variable(_) | Expr::Field(_, _) => {
+            true
+        }
+        Expr::Format(segments) => segments.iter().all(pure),
+        Expr::Unary(_, inner) | Expr::Index(_, inner) => pure(inner),
+        Expr::Binary(_, left, right) => pure(left) && pure(right),
+        _ => false,
+    }
+}
+
+fn is_text(ty: Type) -> bool {
+    matches!(ty, Type::Owned | Type::Shared | Type::Mutable)
+}
+
 /// 只有函数尾部的调用才是隐式返回值：函数体的最后一条，以及尾部 if/else 分支的最后一条。
 /// 循环体与非尾部分支里的末尾调用只求值、不返回（否则 `while c { f() }` 会在第一轮就返回）。
 /// `catch` 代码块必须返回，保持原样。
@@ -548,6 +567,12 @@ impl Parser {
                         if equal { 2 } else { 1 },
                     )
                 }
+                // `x += 1` 里的 `+=` 是复合赋值，不是二元运算。
+                Some(Token::Symbol('+' | '-' | '*' | '/' | '%'))
+                    if self.tokens.get(self.position + 1) == Some(&Token::Symbol('=')) =>
+                {
+                    break
+                }
                 Some(Token::Symbol(c @ ('+' | '-'))) => (c.to_string(), 4, 1),
                 Some(Token::Symbol(c @ ('*' | '/' | '%'))) => (c.to_string(), 5, 1),
                 _ => break,
@@ -587,6 +612,9 @@ impl Parser {
                 number.parse().map_err(|_| "i64 literal overflow")?,
             ));
         }
+        if self.keyword("if") {
+            return self.if_value();
+        }
         if self.keyword("true") {
             return Ok(Expr::Bool(true));
         }
@@ -595,7 +623,7 @@ impl Parser {
         }
         if let Some(Token::Text(text)) = self.peek().cloned() {
             self.take();
-            return literal(&text);
+            return self.literal(&text);
         }
         if self.symbol('{') {
             // 字典字面量：`{k: v, k2: v2}`，条目之间用逗号，可以分行写。
@@ -707,6 +735,71 @@ impl Parser {
         }
         Ok(call)
     }
+    /// `if` 出现在表达式位置：`if c { a } else if d { b } else { e }`，分支各是一个值。
+    fn if_value(&mut self) -> Result<Expr, String> {
+        let condition = self.expr()?;
+        let yes = self.branch_value()?;
+        self.newlines();
+        if !self.keyword("else") {
+            return Err("expected else: an if expression needs an else branch".into());
+        }
+        let no = if self.keyword("if") {
+            self.if_value()?
+        } else {
+            self.branch_value()?
+        };
+        Ok(Expr::If(Box::new(condition), Box::new(yes), Box::new(no)))
+    }
+    fn branch_value(&mut self) -> Result<Expr, String> {
+        self.expect('{')?;
+        self.newlines();
+        let value = self.expr()?;
+        self.newlines();
+        if !self.symbol('}') {
+            return Err(
+                "expected }: an if expression branch holds a single value; compute it with let before the if"
+                    .into(),
+            );
+        }
+        Ok(value)
+    }
+    /// 插值里的 `{...}`：变量或字段路径照旧；其他内容按表达式解析（不能含字符串字面量）。
+    fn literal(&mut self, text: &str) -> Result<Expr, String> {
+        let Expr::Format(segments) = literal(text)? else {
+            return literal(text);
+        };
+        let mut parsed = Vec::with_capacity(segments.len());
+        for segment in segments {
+            parsed.push(match segment {
+                Expr::Call(source, _) => {
+                    let (tokens, lines) = lex(&source)
+                        .map_err(|error| format!("in interpolation {{{source}}}: {error}"))?;
+                    let count = tokens.len();
+                    let mut inner = Parser {
+                        tokens,
+                        lines,
+                        position: 0,
+                        type_names: BTreeMap::new(),
+                        imports: self.imports.clone(),
+                        result: self.result,
+                        implicit: BTreeSet::new(),
+                    };
+                    let expr = inner
+                        .expr()
+                        .map_err(|error| format!("in interpolation {{{source}}}: {error}"))?;
+                    if inner.position != count {
+                        return Err(format!(
+                            "unsupported interpolation {{{source}}}: expected one expression"
+                        ));
+                    }
+                    self.type_names.extend(inner.type_names);
+                    expr
+                }
+                other => other,
+            });
+        }
+        Ok(Expr::Format(parsed))
+    }
     fn if_statement(&mut self, imports: &[String], result: Type) -> Result<Instruction, String> {
         let condition = self.expr()?;
         let yes = self.block(imports, result)?;
@@ -803,6 +896,40 @@ impl Parser {
                 Instruction::Fail(self.expr()?)
             } else {
                 let expr = self.expr()?;
+                if let Some(Token::Symbol(op @ ('+' | '-' | '*' | '/' | '%'))) =
+                    self.peek().cloned()
+                {
+                    if self.tokens.get(self.position + 1) == Some(&Token::Symbol('=')) {
+                        // `x op= e` 等价于 `x = x op e`；下标里不能有调用，保证只求值一次的语义。
+                        self.position += 2;
+                        let value = self.expr()?;
+                        let combined =
+                            Expr::Binary(op.to_string(), Box::new(expr.clone()), Box::new(value));
+                        body.push((
+                            match expr {
+                                Expr::Variable(name) => Instruction::Assign(name, combined),
+                                Expr::Field(local, field) => {
+                                    Instruction::AssignField(local, field, combined)
+                                }
+                                Expr::Index(local, index) if pure(&index) => {
+                                    Instruction::AssignIndex(local, *index, combined)
+                                }
+                                Expr::Index(_, _) => return Err(
+                                    "unsupported compound assignment index: it must not call functions; bind it with let first"
+                                        .into(),
+                                ),
+                                _ => {
+                                    return Err(format!(
+                                        "expected a variable, field or index before {op}="
+                                    ))
+                                }
+                            },
+                            position,
+                        ));
+                        self.separator()?;
+                        continue;
+                    }
+                }
                 if let Expr::Field(local, field) = &expr {
                     if self.symbol('=') {
                         Instruction::AssignField(local.clone(), field.clone(), self.expr()?)
@@ -902,19 +1029,21 @@ fn literal(text: &str) -> Result<Expr, String> {
                     }
                 }
                 let path = inner.trim();
-                let valid = !path.is_empty()
-                    && path.split('.').all(|part| {
-                        part.starts_with(|c: char| c.is_alphabetic() || c == '_')
-                            && part.chars().all(|c| c.is_alphanumeric() || c == '_')
-                    });
-                if !valid {
-                    return Err(format!(
-                        "unsupported interpolation {{{inner}}}: expected a variable or field path"
-                    ));
+                if path.is_empty() {
+                    return Err("empty {} in string literal; write {{}} for literal braces".into());
                 }
-                segments.push(match path.split_once('.') {
-                    Some((root, field)) => Expr::Field(root.into(), field.into()),
-                    None => Expr::Variable(path.into()),
+                let simple = path.split('.').all(|part| {
+                    part.starts_with(|c: char| c.is_alphabetic() || c == '_')
+                        && part.chars().all(|c| c.is_alphanumeric() || c == '_')
+                });
+                segments.push(if !simple {
+                    // 由 Parser::literal 按表达式解析。
+                    Expr::Call(path.into(), Vec::new())
+                } else {
+                    match path.split_once('.') {
+                        Some((root, field)) => Expr::Field(root.into(), field.into()),
+                        None => Expr::Variable(path.into()),
+                    }
                 });
             }
             '}' => return Err("unmatched } in string literal".into()),
@@ -1089,7 +1218,7 @@ pub fn encode(module: &Module) -> Vec<u8> {
         .map(|(name, structure)| (name, structure.public, &structure.fields))
         .collect();
     format!(
-        "ZAM-IR-16\n{declarations:?}\n{:?}\n{:?}\n{:?}\n",
+        "ZAM-IR-17\n{declarations:?}\n{:?}\n{:?}\n{:?}\n",
         module.type_names, module.imports, module.functions
     )
     .into_bytes()
@@ -1292,11 +1421,32 @@ impl Checker<'_> {
             // `catch` 的成功路径同样拿到被调函数的成功值。
             Expr::Catch(inner, _, _) => self.ty(inner),
             Expr::Unary(op, _) => Ok(if *op == '!' { Type::Bool } else { Type::Int }),
+            Expr::Binary(op, left, _) if op == "+" && is_text(self.ty(left)?) => Ok(Type::Owned),
             Expr::Binary(op, _, _) => Ok(if matches!(op.as_str(), "+" | "-" | "*" | "/" | "%") {
                 Type::Int
             } else {
                 Type::Bool
             }),
+            Expr::If(_, yes, _) => self.ty(yes),
+        }
+    }
+    /// 字符串运算（`+`、比较）与插值读取的操作数：变量、字段与元素只读，临时值移入。
+    fn text_operand(
+        &mut self,
+        expr: &Expr,
+        loans: &mut BTreeMap<String, Type>,
+    ) -> Result<(), String> {
+        match expr {
+            Expr::Variable(name) if is_text(self.binding(name)?.ty) => Ok(()),
+            Expr::Field(_, _) if self.ty(expr)? == Type::Owned => Ok(()),
+            Expr::Borrow(_, _) => self.expr(expr, Type::Shared, &mut loans.clone()),
+            Expr::Index(local, index) if self.ty(expr)? == Type::Owned => self.expr(
+                &Expr::BorrowIndex(local.clone(), index.clone(), false),
+                Type::Shared,
+                &mut loans.clone(),
+            ),
+            _ if self.ty(expr)? == Type::Owned => self.expr(expr, Type::Owned, loans),
+            _ => Err("type mismatch: expected a string".into()),
         }
     }
     fn expr(
@@ -1454,13 +1604,36 @@ impl Checker<'_> {
             }
             Expr::Format(segments) if expected == Type::Owned => {
                 for segment in segments {
-                    // 插值只读取变量，不移动；未支持的类型在检查阶段拒绝。
+                    // 插值只读取变量、字段与元素，不移动；其他表达式求值后插入。
+                    let ty = self.ty(segment)?;
                     if !matches!(
-                        self.ty(segment)?,
+                        ty,
                         Type::Owned | Type::Shared | Type::Mutable | Type::Int | Type::Bool
                     ) {
                         return Err("cannot interpolate this value".into());
                     }
+                    match segment {
+                        Expr::Text(_) | Expr::Variable(_) | Expr::Field(_, _) => {}
+                        _ if is_text(ty) => self.text_operand(segment, loans)?,
+                        _ => self.expr(segment, ty, &mut loans.clone())?,
+                    }
+                }
+                Ok(())
+            }
+            Expr::If(condition, yes, no) => {
+                if expected.is_reference() || matches!(expected, Type::ArrayInt(_) | Type::Unit) {
+                    return Err(
+                        "type mismatch: an if expression produces an owned value, not a borrow or fixed array"
+                            .into(),
+                    );
+                }
+                self.expr(condition, Type::Bool, loans)?;
+                let before = self.locals.clone();
+                self.expr(yes, expected, &mut loans.clone())?;
+                let after_yes = std::mem::replace(&mut self.locals, before);
+                self.expr(no, expected, &mut loans.clone())?;
+                for (name, binding) in &mut self.locals {
+                    binding.live &= after_yes.get(name).is_none_or(|other| other.live);
                 }
                 Ok(())
             }
@@ -1498,6 +1671,12 @@ impl Checker<'_> {
                         binding.live &= before[name].live;
                     }
                     return Ok(());
+                }
+                let comparison = matches!(op.as_str(), "==" | "!=" | "<" | "<=" | ">" | ">=");
+                if (op == "+" || comparison) && is_text(self.ty(left)?) {
+                    // 字符串拼接与比较：两边都只读，不移动变量。
+                    self.text_operand(left, loans)?;
+                    return self.text_operand(right, loans);
                 }
                 let operand = if matches!(op.as_str(), "==" | "!=") {
                     self.ty(left)?
@@ -1923,6 +2102,8 @@ impl Checker<'_> {
                         self.binding(local)?;
                     } else if let Expr::Field(_, _) = expr {
                         self.ty(expr)?;
+                    } else if matches!(expr, Expr::Index(_, _)) && ty == Type::Owned {
+                        self.text_operand(expr, &mut loans)?;
                     } else if let Expr::BorrowIndex(_, _, mutable) = expr {
                         self.expr(
                             expr,

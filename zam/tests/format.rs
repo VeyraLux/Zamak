@@ -20,7 +20,8 @@ fn string_interpolation_reads_without_moving() {
     assert!(String::from_utf8_lossy(&output.stdout)
         .ends_with("你好，Zamak！x=7 true 原点\n字面大括号 {x} 与 {}\nZamak\nZamak\nZamak\n"));
     for source in [
-        "fn main() { println(\"{1}\") }",
+        "fn main() { println(\"{}\") }",
+        "fn main() { println(\"{1 +}\") }",
         "fn main() { let n = 1\nprintln(\"{n.y}\") }",
         "fn main() { println(\"a={name}\") }",
         "fn main() { println(\"{name\") }",
@@ -29,7 +30,6 @@ fn string_interpolation_reads_without_moving() {
         "use std/fmt\nfn main() { let s = \"x\"\nlet t = s\nfmt.println(\"{s}\") }",
         "struct P { x: i64 }\nfn main() { let p = P { x: 1 }\nprintln(\"{p}\") }",
         "fn main() { let s = \"x\"\nlet n: i64 = \"v={s}\" }",
-        "use std/fmt\nfn main() { let s = \"x\"\nfmt.println(\"{&s}\") }",
     ] {
         fs::write(&path, source).unwrap();
         assert!(!invoke("check").status.success(), "accepted {source}");
