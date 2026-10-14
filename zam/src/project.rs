@@ -11,7 +11,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-27");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-28");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -461,6 +461,12 @@ impl Project {
                     self.resolve_body(module, locals, nested)?;
                     None
                 }
+                Instruction::Match(scrutinee, arms) => {
+                    for (_, body) in arms {
+                        self.resolve_body(module, locals, body)?;
+                    }
+                    Some(scrutinee)
+                }
                 Instruction::Break | Instruction::Continue => None,
             };
             if let Some(expr) = expr {
@@ -520,6 +526,23 @@ impl Project {
                         ))
                     }
                 });
+            }
+            // `Shape.Empty`、`model.Shape.Empty`：没有载荷的枚举变体，写法和字段访问一样。
+            Expr::Field(root, field)
+                if !locals.contains(root.as_str())
+                    && field
+                        .rsplit('.')
+                        .next()
+                        .is_some_and(|v| v.starts_with(char::is_uppercase)) =>
+            {
+                let full = format!("{root}.{field}");
+                let (path, variant) = full.rsplit_once('.').expect("field path");
+                let mut constructor = Expr::Record(path.to_owned(), Vec::new());
+                if self.resolve_expr(module, locals, &mut constructor).is_ok() {
+                    if let Expr::Record(qualified, _) = constructor {
+                        *expr = Expr::Variant(qualified, variant.to_owned(), Vec::new());
+                    }
+                }
             }
             // `f64(n)`、`i64(x)`：数值转换，不需要导入。
             Expr::Call(name, args) if matches!(name.as_str(), "f64" | "i64") => {
@@ -624,6 +647,23 @@ impl Project {
                 self.resolve_expr(module, locals, condition)?;
                 self.resolve_expr(module, locals, yes)?;
                 self.resolve_expr(module, locals, no)?;
+            }
+            // 枚举名按结构体名解析成限定名。
+            Expr::Variant(name, _, args) => {
+                let mut constructor = Expr::Record(name.clone(), Vec::new());
+                self.resolve_expr(module, locals, &mut constructor)?;
+                if let Expr::Record(qualified, _) = constructor {
+                    *name = qualified;
+                }
+                for arg in args {
+                    self.resolve_expr(module, locals, arg)?;
+                }
+            }
+            Expr::Match(scrutinee, arms) => {
+                self.resolve_expr(module, locals, scrutinee)?;
+                for (_, value) in arms {
+                    self.resolve_expr(module, locals, value)?;
+                }
             }
             Expr::Unary(_, value)
             | Expr::ByteLen(value)
@@ -938,6 +978,14 @@ fn declared(body: &Block, names: &mut BTreeSet<String>) {
                 expr(yes, names);
                 expr(no, names);
             }
+            Expr::Variant(_, _, values) => values.iter().for_each(|value| expr(value, names)),
+            Expr::Match(scrutinee, arms) => {
+                expr(scrutinee, names);
+                for ((_, bindings), value) in arms {
+                    names.extend(bindings.iter().cloned());
+                    expr(value, names);
+                }
+            }
             Expr::Unary(_, inner)
             | Expr::Try(inner)
             | Expr::ByteLen(inner)
@@ -987,6 +1035,13 @@ fn declared(body: &Block, names: &mut BTreeSet<String>) {
             Instruction::Each(name, _, nested) => {
                 names.insert(name.clone());
                 declared(nested, names);
+            }
+            Instruction::Match(scrutinee, arms) => {
+                expr(scrutinee, names);
+                for ((_, bindings), body) in arms {
+                    names.extend(bindings.iter().cloned());
+                    declared(body, names);
+                }
             }
             Instruction::Return(None) | Instruction::Break | Instruction::Continue => {}
         }

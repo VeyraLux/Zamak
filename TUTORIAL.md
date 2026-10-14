@@ -623,6 +623,49 @@ fn main() {
 - 结构体不能复制，所以 `let t = tasks[0]` 会报错。拿走元素用 `pop`，整体替换写 `tasks[0] = Task { ... }`，排序用 `tasks.swap(i, j)`。结构体值的字典不支持 `get`，先用 `contains` 判断，再读 `m[k].field`。
 - 元素字段里的列表不能再接下标（`tasks[0].tags[1]`），把 `&tasks[0].tags` 传给函数处理。
 
+### 枚举与 match
+
+```zamak
+enum Shape {
+    Circle(r: f64)
+    Rect(w: f64, h: f64)
+    Empty
+}
+
+fn area(s: &Shape) -> f64 {
+    match s {
+        Circle(r) => 3.14 * r * r
+        Rect(w, h) => w * h
+        Empty => 0.0
+    }
+}
+
+fn main() {
+    let shapes: [Shape] = [Shape.Circle(1.0), Shape.Rect(2.0, 3.0), Shape.Empty]
+    for s in &shapes {
+        let name = match s {
+            Circle(_) => "circle"
+            Rect(_, _) => "rect"
+            _ => "empty"
+        }
+        println("{name}: {area(s)}")
+    }
+}
+```
+
+```text
+circle: 3.14
+rect: 6.0
+empty: 0.0
+```
+
+- `enum` 每行声明一个变体，变体名首字母大写。带数据的变体写成 `Circle(r: f64)`，数据可以是数字、布尔、字符串、结构体、列表或字典。
+- 构造时按位置传值：`Shape.Circle(1.0)`；没有数据的变体写 `Shape.Empty`。跨模块写 `shapes.Shape.Circle(1.0)`。
+- `match` 按变体分支，`Circle(r) =>` 按位置绑定数据，`_` 表示不绑定。分支要覆盖所有变体，或在最后写 `_ =>` 兜底，否则检查报 `ZM511`。
+- 分支可以是一条语句，也可以是 `{ ... }` 代码块。写成 `let name = match s { ... }` 时，每个分支是一个值。
+- `match` 不移动被匹配的值：数字和布尔数据按值绑定，字符串、结构体等数据是只读借用。分支里不能修改或移走被匹配的变量。
+- 枚举和结构体一样赋值时移动，可以放进列表、字典和结构体字段，也能用 `&Shape` 借用。枚举不能用 `==` 比较，判断变体用 `match`。
+
 ## 第 10 节：所有权与借用
 
 ```zamak
@@ -1005,7 +1048,7 @@ error[ZM301]: use after move: name
 
 Zamak 0.1.0 的支持范围有限。编写程序时需注意以下限制：
 
-- 尚不支持 `switch`/`match`、枚举、泛型、闭包和 trait/接口；`for` 支持整数区间 `a..b` 以及遍历 `&列表`、`&字典`。
+- `match` 只用于枚举，还不能匹配整数或字符串；尚不支持泛型、闭包和 trait/接口；`for` 支持整数区间 `a..b` 以及遍历 `&列表`、`&字典`。
 - 尚不提供包管理器、交互式执行环境（REPL）、文档生成工具或重构工具。
 - 标准库包括 `std/string`（`byte_len`、`char_len`、`equal`、`parse_i64`、`parse_f64`、`trim`、`byte_at`、`slice`、`find`、`find_from`、`starts_with`、`ends_with`、`contains`、`replace`、`lower`、`upper`、`copy`、`split`、`words`、`lines`、`join`）、`std/io`（`println`、`read_line`、`read_all`）、`std/fmt`（`println`、`fixed`）、`std/math`（见第 3 节）、`std/fs`（`read`、`write`）和 `std/env`（`arg_count`、`arg`、`args`），没有目录遍历、网络和时间函数。
 - 错误类型只能是 `string`，没有错误堆栈。
@@ -1023,7 +1066,7 @@ Zamak 0.1.0 的支持范围有限。编写程序时需注意以下限制：
 | `examples/hello/` | 多模块项目、`use`、`io.println` |
 | `examples/ownership/` | `&string`、`&mut string`、移动 |
 | `examples/structs/` | 结构体声明、字段赋值、嵌套、跨模块类型、结构体列表与借用 |
-| `examples/control/` | 条件、`while`、`break`/`continue`、函数 |
+| `examples/control/` | 条件、`while`、`break`/`continue`、函数、枚举与 `match` |
 | `examples/values/` | 变量、运算符、浮点数与 `std/math`、字符串、数组、格式化、错误值、`catch` |
 
 集成测试位于 `zam/tests/`。其中 `tutorial.rs` 检查本教程的 Zamak 代码块，`errors.rs` 覆盖 `T!string`、`fail`、`?`、`catch` 的成功与失败路径，`source_format.rs` 覆盖 `zam fmt` 的行为。验证新的写法时，可以先保存为独立 `.zm` 文件并运行 `zam check 文件名.zm`；需要确认运行行为时再使用 `zam run`。

@@ -1,0 +1,97 @@
+// 枚举与 match：变体构造、语句与表达式两种 match、借用载荷、枚举的列表与临时值。
+use std/fmt
+
+enum Shape {
+    Circle(r: f64)
+    Rect(w: f64, h: f64)
+    Label(text: string)
+    Empty
+}
+
+enum Token {
+    Num(value: i64)
+    Op(symbol: string)
+    End
+}
+
+fn area(s: &Shape) -> f64 {
+    match s {
+        Circle(r) => 3.0 * r * r
+        Rect(w, h) => w * h
+        _ => 0.0
+    }
+}
+
+fn describe(s: &Shape) -> string {
+    let text = match s {
+        Circle(r) => "circle {r}"
+        Rect(w, h) => "rect {w}x{h}"
+        Label(t) => "label {t}"
+        Empty => "empty"
+    }
+    text
+}
+
+fn eval(tokens: &[Token]) -> i64 {
+    let mut total = 0
+    let mut sign = 1
+    for t in &tokens {
+        match t {
+            Num(v) => {
+                total += sign * v
+            }
+            Op(s) => {
+                if s == "-" {
+                    sign = -1
+                } else {
+                    sign = 1
+                }
+            }
+            End => {
+                return total
+            }
+        }
+    }
+    total
+}
+
+fn make(n: i64) -> Shape {
+    if n == 0 {
+        return Shape.Empty
+    }
+    Shape.Circle(f64(n))
+}
+
+fn main() {
+    let shapes: [Shape] = [Shape.Circle(1.0), Shape.Rect(2.0, 3.5), Shape.Label("hi"), Shape.Empty]
+    for s in &shapes {
+        println("{describe(s)} -> {fmt.fixed(area(s), 2)}")
+    }
+    let mut tokens: [Token] = []
+    tokens.push(Token.Num(10))
+    tokens.push(Token.Op("-"))
+    tokens.push(Token.Num(3))
+    tokens.push(Token.Op("+"))
+    tokens.push(Token.Num(5))
+    tokens.push(Token.End)
+    tokens.push(Token.Num(100))
+    println(eval(&tokens))
+    let m = make(2)
+    println(describe(&m))
+    match make(0) {
+        Empty => println("made empty")
+        _ => println("made something")
+    }
+    let mut current = Shape.Label("first")
+    current = Shape.Rect(1.0, 1.0)
+    println(area(&current))
+    let n = match current {
+        Rect(w, _) => i64(w) + 1
+        _ => 0
+    }
+    println(n)
+    match shapes[2] {
+        Label(t) => println(t)
+        _ => println("?")
+    }
+}

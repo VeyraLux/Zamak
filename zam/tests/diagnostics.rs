@@ -299,6 +299,16 @@ const REAL_SOURCE_CODES: &[(&str, &str, &str)] = &[
         "control_flow",
     ),
     (
+        "enum Light {\n    Red\n    Green\n}\nfn main() {\n    let l = Light.Red\n    match l {\n        Red => println(1)\n    }\n}\n",
+        "ZM511",
+        "control_flow",
+    ),
+    (
+        "enum Light {\n    Red\n}\nfn main() {\n    let l = Light.Blue\n}\n",
+        "ZM201",
+        "name",
+    ),
+    (
         "fn main() {\n    let m: {bool: i64} = {}\n}\n",
         "ZM900",
         "unsupported",

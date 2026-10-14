@@ -18,7 +18,7 @@ fn main() -> !string {
 
 ## Values and bindings
 
-- Types: `i64`, `f64`, `bool`, `string` (UTF-8, owned), structs, lists `[T]`, maps `{K: V}`. There are no chars, tuples, enums, generics or closures.
+- Types: `i64`, `f64`, `bool`, `string` (UTF-8, owned), structs, lists `[T]`, maps `{K: V}`. There are no chars, tuples, generics or closures.
 - `let x = 1`, `let mut x = 1`, `let mut x: i64 = 1`. Only `let mut` bindings can be reassigned. A name cannot be declared twice in the same function scope chain (no shadowing).
 - Integer literals may use `_` between digits: `1_000_000`. Character literals like `'a'`, `'#'`, `'\n'`, `'\''` are `i64` Unicode code points (useful with `string.byte_at`).
 - Operators: `+ - * / %`, `== != < <= > >=`, `&& || !`, unary `-`, parentheses. Compound assignment `+= -= *= /= %=` works on variables, fields and elements. On strings, `+` concatenates (`a + b` makes a new string and moves neither side) and `== != < <= > >=` compare contents. Strings and integers cannot be mixed: `"n=" + 1` is an error; use interpolation.
@@ -86,6 +86,28 @@ let p = Point { x: 1 y: 2 }
 ```
 
 Fields are one per line without commas; struct literals list fields without commas. Read and assign fields with `p.x`.
+
+## Enums and match
+
+```
+enum Shape {
+    Circle(r: f64)
+    Rect(w: f64, h: f64)
+    Empty
+}
+let s = Shape.Circle(2.0)
+let area = match s {
+    Circle(r) => 3.14 * r * r
+    Rect(w, h) => w * h
+    Empty => 0.0
+}
+```
+
+- One variant per line, no commas between variants; variant names start with an uppercase letter. Build values with positional arguments: `Shape.Rect(1.0, 2.0)`, `Shape.Empty`.
+- `match` arms are `Variant(a, b) => ...` (bind data by position, `_` skips one) or `_ => ...` as the last arm. Arms must cover every variant or end with `_`.
+- As a statement, an arm is one statement or a `{ ... }` block; as a value (`let x = match ...`), each arm is one expression.
+- `match` borrows the value: numbers and booleans are copied into the bindings, strings and structs are read-only borrows. Enums cannot be compared with `==` or printed; use `match`.
+- Enums move like structs and can be stored in lists, maps and struct fields, or borrowed as `&Shape`.
 
 ## Lists `[T]`
 
