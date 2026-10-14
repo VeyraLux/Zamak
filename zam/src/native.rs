@@ -1,6 +1,7 @@
 use crate::compiler::{
-    bitwise, borrow_of, compound, field_path, method_signature, numeric, overload, record_id,
-    record_order, terminates, Block, Elem, Expr, Instruction, Module, Pattern, Type, COPY,
+    bitwise, borrow_of, compound, each_bindings, field_path, method_signature, numeric, overload,
+    record_id, record_order, terminates, Block, Elem, Expr, Instruction, Module, Pattern, Type,
+    COPY,
 };
 use crate::project::Result;
 use std::collections::BTreeMap;
@@ -2480,11 +2481,11 @@ impl Generator<'_> {
                     let value = self.expr_as(expr, ty);
                     self.locals.insert(name.clone(), (value, ty));
                 }
-                Instruction::Each(name, path, nested) => {
+                Instruction::Each(name, second, path, mutable, nested) => {
                     let container = self.place_ty(path).container().expect("checked loop");
                     let borrowed = match container {
-                        Type::List(elem) => Type::ListRef(elem, false),
-                        Type::Map(key, value) => Type::MapRef(key, value, false),
+                        Type::List(elem) => Type::ListRef(elem, *mutable),
+                        Type::Map(key, value) => Type::MapRef(key, value, *mutable),
                         _ => unreachable!(),
                     };
                     // 循环体不能修改被遍历的容器（检查器冻结了根绑定），长度与存储整轮不变。
@@ -2494,28 +2495,53 @@ impl Generator<'_> {
                     self.code.push_str(&format!(
                         "for (size_t {index} = 0; {index} < {handle}->len; {index}++) {{\n"
                     ));
-                    // 列表取元素；字典按插入顺序取键，跳过已删除的项。
-                    let (elem, access) = match container {
-                        Type::List(elem) => (elem, format!("{handle}->data[{index}]")),
-                        Type::Map(key, _) => {
+                    // 列表取（下标与）元素；字典按插入顺序取键（与值），跳过已删除的项。
+                    let accesses = match container {
+                        Type::List(_) => vec![
+                            format!("(int64_t){index}"),
+                            format!("{handle}->data[{index}]"),
+                        ],
+                        Type::Map(_, _) => {
                             self.code.push_str(&format!(
                                 "if (!{handle}->entries[{index}].live) continue;\n"
                             ));
-                            (key, format!("{handle}->entries[{index}].key"))
+                            vec![
+                                format!("{handle}->entries[{index}].key"),
+                                format!("{handle}->entries[{index}].value"),
+                            ]
                         }
                         _ => unreachable!(),
                     };
-                    let ty = elem.item();
-                    let item = if ty.is_reference() {
-                        self.scalar(&format!("&{access}"), ty)
+                    let types =
+                        each_bindings(container, second.is_some(), *mutable).expect("checked loop");
+                    // 一个名字的列表遍历只绑定元素；其余情况按顺序对应。
+                    let accesses = if matches!(container, Type::List(_)) && second.is_none() {
+                        &accesses[1..]
                     } else {
-                        self.scalar(&access, ty)
+                        &accesses[..]
                     };
-                    self.locals.insert(name.clone(), (item, ty));
+                    let names: Vec<&String> = std::iter::once(name).chain(second).collect();
+                    for ((name, (ty, alias)), access) in names.iter().zip(types).zip(accesses) {
+                        let item = if alias {
+                            // 可赋值的标量别名：读写都经过元素的地址。
+                            let pointer = format!("v{}", self.next);
+                            self.next += 1;
+                            self.code
+                                .push_str(&format!("{} *{pointer} = &{access};\n", ctype(ty)));
+                            format!("(*{pointer})")
+                        } else if ty.is_reference() {
+                            self.scalar(&format!("&{access}"), ty)
+                        } else {
+                            self.scalar(access, ty)
+                        };
+                        self.locals.insert((*name).clone(), (item, ty));
+                    }
                     self.loops.push(self.owners.len());
                     self.block(nested, result_type);
                     self.loops.pop();
-                    self.locals.remove(name);
+                    for name in names {
+                        self.locals.remove(name);
+                    }
                     self.code.push_str("}\n");
                 }
                 Instruction::AssignIndex(local, index, expr)
@@ -2768,7 +2794,7 @@ impl Generator<'_> {
                 }
                 Instruction::While(_, nested)
                 | Instruction::For(_, _, _, nested)
-                | Instruction::Each(_, _, nested) => Self::loop_mutations(nested, mutated),
+                | Instruction::Each(_, _, _, _, nested) => Self::loop_mutations(nested, mutated),
                 Instruction::Match(_, arms) => {
                     for (_, body) in arms {
                         Self::loop_mutations(body, mutated);
@@ -2889,7 +2915,7 @@ fn visit_exprs<'a>(body: &'a Block, visit: &mut impl FnMut(&'a Expr)) {
                 expr(end, visit);
                 visit_exprs(body, visit);
             }
-            Instruction::Each(_, _, body) => visit_exprs(body, visit),
+            Instruction::Each(_, _, _, _, body) => visit_exprs(body, visit),
             Instruction::Match(scrutinee, arms) => {
                 expr(scrutinee, visit);
                 for (_, body) in arms {

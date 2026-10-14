@@ -1,0 +1,42 @@
+// 遍历的几种写法：带下标、键值成对、用 &mut 原地修改元素。
+
+struct Item:
+    name: string
+    qty: i64
+
+fn main():
+    let words: [string] = ["zero", "one", "two"]
+
+    for i, word in &words:
+        println("{i}: {word}")
+
+    let mut prices = {"tea": 3.5, "cake": 4.0}
+
+    for name, price in &prices:
+        println("{name} costs {price}")
+
+    for name, price in &mut prices:
+        price *= 2.0
+
+    println(prices)
+
+    let mut counts: [i64] = [1, 2, 3]
+
+    for n in &mut counts:
+        n = n * 10
+
+    println(counts)
+
+    let mut names: [string] = ["amy", "bob"]
+
+    for i, name in &mut names:
+        name = "{i}-{name}"
+
+    println(names)
+
+    let mut items: [Item] = [Item(name: "pen", qty: 1), Item(name: "cup", qty: 5)]
+
+    for item in &mut items:
+        item.qty += 1
+
+    println(items)

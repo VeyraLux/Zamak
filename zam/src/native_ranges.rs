@@ -488,8 +488,12 @@ impl Analysis {
                         flow.merge(self.block(body, opaque(&env, bindings), collect))
                     });
             }
-            Instruction::Each(name, _, body) => {
+            Instruction::Each(name, second, _, _, body) => {
                 // Elements are opaque here; the loop may run any number of times.
+                let mut env = env;
+                if let Some(second) = second {
+                    env.remove(second);
+                }
                 return self.loop_flow(Head::Range(name, Interval::TOP), body, env, collect);
             }
             Instruction::For(name, start, end, body) => {
@@ -759,7 +763,7 @@ fn body_cost(block: &Block, writes: &mut BTreeMap<String, usize>) -> Option<i128
             Instruction::Continue
             | Instruction::While(_, _)
             | Instruction::For(_, _, _, _)
-            | Instruction::Each(_, _, _)
+            | Instruction::Each(_, _, _, _, _)
             | Instruction::Match(_, _) => return None,
             Instruction::Let(_, _, _, expr)
             | Instruction::Print(expr)
@@ -863,7 +867,7 @@ fn forget_mutations(block: &Block, env: &mut Env) {
             }
             Instruction::While(_, body)
             | Instruction::For(_, _, _, body)
-            | Instruction::Each(_, _, body) => forget_mutations(body, env),
+            | Instruction::Each(_, _, _, _, body) => forget_mutations(body, env),
             Instruction::Match(_, arms) => {
                 for (_, body) in arms {
                     forget_mutations(body, env);

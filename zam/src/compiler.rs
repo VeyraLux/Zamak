@@ -106,6 +106,34 @@ pub fn terminates(expr: &Expr) -> bool {
     matches!(expr, Expr::Call(name, _) if name == "std/env:exit")
 }
 
+/// `for` 遍历容器时各个名字的（类型, 能否直接赋值）。`&mut` 时元素可改：字符串与结构体元素是
+/// `&mut` 借用，整数、浮点、布尔元素是可赋值的别名（写它就是写元素）。检查器与生成器共用。
+pub fn each_bindings(
+    container: Type,
+    pair: bool,
+    mutable: bool,
+) -> Result<Vec<(Type, bool)>, String> {
+    let item = |elem: Elem| match (elem, mutable) {
+        (Elem::Str, true) => (Type::Mutable, false),
+        (Elem::Record(id), true) => (Type::RecordRef(id, true), false),
+        (_, true) => (elem.ty(), true),
+        _ => (elem.item(), false),
+    };
+    Ok(match (container, pair) {
+        (Type::List(elem), false) => vec![item(elem)],
+        (Type::List(elem), true) => vec![(Type::Int, false), item(elem)],
+        (Type::Map(..), false) if mutable => {
+            return Err(
+                "for k in &mut m cannot change keys; write for k, v in &mut m to change the values"
+                    .into(),
+            )
+        }
+        (Type::Map(key, _), false) => vec![(key.item(), false)],
+        (Type::Map(key, value), true) => vec![(key.item(), false), item(value)],
+        _ => unreachable!("container type"),
+    })
+}
+
 /// 容器方法的签名：(是否独占借用接收者, 参数类型, 结果类型)。检查器与代码生成共用。
 pub fn method_signature(receiver: Type, method: &str) -> Option<(bool, Vec<Type>, Type)> {
     Some(match (receiver.container()?, method) {
@@ -260,8 +288,10 @@ pub enum Instruction {
     While(Expr, Block),
     // `for name in start..end`：区间左闭右开，起止只求值一次，循环变量是不可变的 i64。
     For(String, Expr, Expr, Block),
-    // `for x in &items`：循环期间列表被冻结（不能修改或移走），字符串元素以共享借用绑定。
-    Each(String, String, Block),
+    // `for x in &items` / `for i, x in &items` / `for k, v in &m`，`&mut` 时第二个（或唯一的）
+    // 名字可以改元素：（第一个名字, 第二个名字, 容器路径, 是否 &mut, 循环体）。
+    // 循环期间容器被冻结（不能增删或移走），字符串与结构体元素以借用绑定。
+    Each(String, Option<String>, String, bool, Block),
     // `match s { ... }` 语句：分支是代码块或单条语句；匹配期间被匹配的位置冻结。
     Match(Expr, Vec<(Pattern, Block)>),
     Break,
@@ -1015,7 +1045,7 @@ fn untail(body: &mut Block, tail: bool, implicit: &BTreeSet<SourcePosition>) {
             }
             Instruction::While(_, nested)
             | Instruction::For(_, _, _, nested)
-            | Instruction::Each(_, _, nested) => untail(nested, false, implicit),
+            | Instruction::Each(_, _, _, _, nested) => untail(nested, false, implicit),
             _ => {}
         }
     }
@@ -1712,22 +1742,28 @@ impl Parser {
             Instruction::While(condition, nested)
         } else if self.keyword("for") {
             let local = self.word()?;
+            let second = if self.symbol(',') {
+                Some(self.word()?)
+            } else {
+                None
+            };
             if !self.keyword("in") {
                 return Err("expected `in` after the for loop variable".into());
             }
             if self.symbol('&') {
-                if self.keyword("mut") {
-                    return Err(
-                        "unsupported for loop over &mut; index with for i in 0..items.len()".into(),
-                    );
-                }
+                let mutable = self.keyword("mut");
                 let mut path = self.word()?;
                 while self.symbol('.') {
                     path.push('.');
                     path.push_str(&self.word()?);
                 }
                 let nested = self.suite(imports, result, "for")?;
-                Instruction::Each(local, path, nested)
+                Instruction::Each(local, second, path, mutable, nested)
+            } else if second.is_some() {
+                return Err(
+                    "two loop variables need a borrowed list or map: for i, x in &items or for k, v in &m"
+                        .into(),
+                );
             } else {
                 let start = self.expr()?;
                 if !(self.symbol('.') && self.symbol('.')) {
@@ -2327,7 +2363,7 @@ pub fn encode(module: &Module) -> Vec<u8> {
         .map(|(name, constant)| (name, constant.public, &constant.value))
         .collect();
     format!(
-        "ZAM-IR-23\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
+        "ZAM-IR-24\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
         module.type_names, module.imports, module.functions
     )
     .into_bytes()
@@ -3548,23 +3584,27 @@ impl<'a> Checker<'a> {
                     self.expr(condition, Type::Bool, &mut BTreeMap::new())?;
                     returned = false;
                 }
-                Instruction::Each(local, path, nested) => {
-                    // 列表遍历元素，字典遍历键（插入顺序）。
-                    let elem = match self.container(path, false, &loans)? {
-                        Type::List(elem) | Type::Map(elem, _) => elem,
-                        _ => unreachable!("container type"),
-                    };
-                    if self.locals.contains_key(local) {
-                        return Err(format!("duplicate binding {local}"));
+                Instruction::Each(local, second, path, mutable, nested) => {
+                    // 列表遍历元素（两个名字时先是下标），字典遍历键（两个名字时还有值），都按插入顺序。
+                    let names = each_bindings(
+                        self.container(path, *mutable, &loans)?,
+                        second.is_some(),
+                        *mutable,
+                    )?;
+                    let bound: Vec<&String> = std::iter::once(local).chain(second).collect();
+                    for (name, (ty, assignable)) in bound.iter().zip(names) {
+                        if self.locals.contains_key(*name) {
+                            return Err(format!("duplicate binding {name}"));
+                        }
+                        self.locals.insert(
+                            (*name).clone(),
+                            Binding {
+                                ty,
+                                mutable: assignable,
+                                live: true,
+                            },
+                        );
                     }
-                    self.locals.insert(
-                        local.clone(),
-                        Binding {
-                            ty: elem.item(),
-                            mutable: false,
-                            live: true,
-                        },
-                    );
                     let before = self.locals.clone();
                     let root = path.split('.').next().unwrap_or(path).to_owned();
                     self.loops.push((before.clone(), Expr::Bool(true)));
@@ -3582,7 +3622,9 @@ impl<'a> Checker<'a> {
                         }
                     }
                     self.locals = before;
-                    self.locals.remove(local);
+                    for name in bound {
+                        self.locals.remove(name);
+                    }
                     returned = false;
                 }
                 Instruction::Match(scrutinee, arms) => {
