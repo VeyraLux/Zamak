@@ -426,6 +426,32 @@ fn lex(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>, bool), String> 
                     i = j;
                     Token::Word(word)
                 }
+                // `0xFF`、`0b1010`、`0o17`：与 Python 一样的进制前缀，数字之间可以有单个 `_`。
+                // 记号里存十进制文本，后面按普通整数处理（超出 i64 照常报溢出）。
+                '0' if matches!(at(i + 1), Some('x' | 'X' | 'b' | 'B' | 'o' | 'O')) => {
+                    let radix = match at(i + 1) {
+                        Some('x' | 'X') => 16,
+                        Some('b' | 'B') => 2,
+                        _ => 8,
+                    };
+                    let mut j = i + 2;
+                    while at(j).is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') {
+                        j += 1;
+                    }
+                    let text: String = chars[i + 2..j].iter().collect();
+                    if text.starts_with('_') || text.ends_with('_') || text.contains("__") {
+                        return Err(error("integer separators must occur between digits"));
+                    }
+                    let digits = text.replace('_', "");
+                    let value = u128::from_str_radix(&digits, radix).map_err(|_| {
+                        error(&format!(
+                            "invalid base-{radix} integer literal {}",
+                            chars[i..j].iter().collect::<String>()
+                        ))
+                    })?;
+                    i = j;
+                    Token::Number(value.to_string())
+                }
                 c if c.is_ascii_digit() => {
                     let mut j = i;
                     let digits = |j: &mut usize| {
@@ -481,7 +507,7 @@ fn lex(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>, bool), String> 
                     }
                 }
                 '(' | ')' | '{' | '}' | '[' | ']' | '/' | '.' | ':' | ',' | '=' | '&' | '-'
-                | '>' | '<' | '+' | '*' | '%' | '!' | '|' | ';' | '?' => {
+                | '>' | '<' | '+' | '*' | '%' | '!' | '|' | ';' | '?' | '^' | '~' => {
                     match c {
                         '(' | '[' | '{' => open.push((c, (line, column))),
                         ')' | ']' | '}' => {
@@ -829,6 +855,11 @@ fn is_text(ty: Type) -> bool {
 }
 
 /// 算术运算的结果类型：左操作数是 f64 就是 f64，否则按 i64 检查。
+/// 位运算：只用于 i64，结果也是 i64。
+pub fn bitwise(op: &str) -> bool {
+    matches!(op, "&" | "|" | "^" | "<<" | ">>")
+}
+
 pub fn numeric(ty: Type) -> Type {
     if ty == Type::Float {
         Type::Float
@@ -1145,8 +1176,22 @@ impl Parser {
     fn expr(&mut self) -> Result<Expr, String> {
         self.binary(0)
     }
-    /// 优先级从低到高：`or`、`and`、`not`、比较、加减、乘除。`not` 比比较运算松：
-    /// `not a == b` 是 `not (a == b)`，所以它不能出现在比较或算术运算的右边。
+    /// 当前位置是不是复合赋值 `op=`：返回运算符和要跳过的记号数。
+    fn compound(&self) -> Option<(String, usize)> {
+        let at = |offset: usize| match self.tokens.get(self.position + offset) {
+            Some(Token::Symbol(c)) => Some(*c),
+            _ => None,
+        };
+        match (at(0)?, at(1), at(2)) {
+            (c @ ('+' | '-' | '*' | '/' | '%' | '&' | '|' | '^'), Some('='), _) => {
+                Some((c.to_string(), 2))
+            }
+            (c @ ('<' | '>'), Some(d), Some('=')) if c == d => Some((format!("{c}{c}"), 3)),
+            _ => None,
+        }
+    }
+    /// 优先级与 Python 相同，从低到高：`or`、`and`、`not`、比较、`|`、`^`、`&`、移位、加减、乘除。
+    /// `not` 比比较运算松：`not a == b` 是 `not (a == b)`，所以它不能出现在比较或算术运算的右边。
     fn binary(&mut self, minimum: u8) -> Result<Expr, String> {
         let mut left = if self.peek() == Some(&Token::Word("not".into())) {
             if minimum > 3 {
@@ -1164,14 +1209,23 @@ impl Parser {
             if self.ended_block() {
                 break;
             }
+            // `x += 1`、`x <<= 2` 里的运算符是复合赋值，不是二元运算。
+            if self.compound().is_some() {
+                break;
+            }
+            let next = self.tokens.get(self.position + 1);
             let (op, priority, width) = match self.peek() {
                 Some(Token::Word(word)) if word == "and" => ("&&".to_owned(), 2, 1),
                 Some(Token::Word(word)) if word == "or" => ("||".to_owned(), 1, 1),
-                Some(Token::Symbol(c @ ('&' | '|')))
-                    if self.tokens.get(self.position + 1) == Some(&Token::Symbol(*c)) =>
-                {
+                Some(Token::Symbol(c @ ('&' | '|'))) if next == Some(&Token::Symbol(*c)) => {
                     let word = if *c == '&' { "and" } else { "or" };
                     return Err(format!("expected `{word}` instead of `{c}{c}`"));
+                }
+                Some(Token::Symbol('|')) => ("|".to_owned(), 4, 1),
+                Some(Token::Symbol('^')) => ("^".to_owned(), 5, 1),
+                Some(Token::Symbol('&')) => ("&".to_owned(), 6, 1),
+                Some(Token::Symbol(c @ ('<' | '>'))) if next == Some(&Token::Symbol(*c)) => {
+                    (format!("{c}{c}"), 7, 2)
                 }
                 Some(Token::Symbol(c @ ('=' | '!' | '<' | '>'))) => {
                     let equal = self.tokens.get(self.position + 1) == Some(&Token::Symbol('='));
@@ -1184,14 +1238,8 @@ impl Parser {
                         if equal { 2 } else { 1 },
                     )
                 }
-                // `x += 1` 里的 `+=` 是复合赋值，不是二元运算。
-                Some(Token::Symbol('+' | '-' | '*' | '/' | '%'))
-                    if self.tokens.get(self.position + 1) == Some(&Token::Symbol('=')) =>
-                {
-                    break
-                }
-                Some(Token::Symbol(c @ ('+' | '-'))) => (c.to_string(), 4, 1),
-                Some(Token::Symbol(c @ ('*' | '/' | '%'))) => (c.to_string(), 5, 1),
+                Some(Token::Symbol(c @ ('+' | '-'))) => (c.to_string(), 8, 1),
+                Some(Token::Symbol(c @ ('*' | '/' | '%'))) => (c.to_string(), 9, 1),
                 _ => break,
             };
             if priority < minimum {
@@ -1223,6 +1271,9 @@ impl Parser {
                 return Ok(Expr::Float(-text.parse::<f64>().expect("lexed float")));
             }
             return Ok(Expr::Unary('-', Box::new(self.atom()?)));
+        }
+        if self.symbol('~') {
+            return Ok(Expr::Unary('~', Box::new(self.atom()?)));
         }
         if self.peek() == Some(&Token::Symbol('!')) {
             return Err(
@@ -1593,13 +1644,13 @@ impl Parser {
             Instruction::Fail(self.expr()?)
         } else {
             let expr = self.expr()?;
-            if let Some(Token::Symbol(op @ ('+' | '-' | '*' | '/' | '%'))) = self.peek().cloned() {
-                if self.tokens.get(self.position + 1) == Some(&Token::Symbol('=')) {
+            if let Some((op, width)) = self.compound() {
+                {
                     // `x op= e` 等价于 `x = x op e`；下标里不能有调用，保证只求值一次的语义。
-                    self.position += 2;
+                    self.position += width;
                     let value = self.expr()?;
                     let combined =
-                        Expr::Binary(op.to_string(), Box::new(expr.clone()), Box::new(value));
+                        Expr::Binary(op.clone(), Box::new(expr.clone()), Box::new(value));
                     return Ok(Some(match expr {
                             Expr::Variable(name) => Instruction::Assign(name, combined),
                             Expr::Field(local, field) => {
@@ -2109,7 +2160,7 @@ pub fn encode(module: &Module) -> Vec<u8> {
         })
         .collect();
     format!(
-        "ZAM-IR-21\n{declarations:?}\n{:?}\n{:?}\n{:?}\n",
+        "ZAM-IR-22\n{declarations:?}\n{:?}\n{:?}\n{:?}\n",
         module.type_names, module.imports, module.functions
     )
     .into_bytes()
@@ -2528,8 +2579,10 @@ impl<'a> Checker<'a> {
             // `catch` 的成功路径同样拿到被调函数的成功值。
             Expr::Catch(inner, _, _) => self.ty(inner),
             Expr::Unary('!', _) => Ok(Type::Bool),
+            Expr::Unary('~', _) => Ok(Type::Int),
             Expr::Unary(_, value) => Ok(numeric(self.ty(value)?)),
             Expr::Binary(op, left, _) if op == "+" && is_text(self.ty(left)?) => Ok(Type::Owned),
+            Expr::Binary(op, _, _) if bitwise(op) => Ok(Type::Int),
             Expr::Binary(op, left, _) => Ok(if matches!(op.as_str(), "+" | "-" | "*" | "/" | "%") {
                 numeric(self.ty(left)?)
             } else {
@@ -2902,17 +2955,32 @@ impl<'a> Checker<'a> {
                 }
             }
             Expr::Unary(op, value) => {
-                let ty = if *op == '!' {
-                    Type::Bool
-                } else {
-                    numeric(self.ty(value)?)
+                let ty = match op {
+                    '!' => Type::Bool,
+                    '~' => Type::Int,
+                    _ => numeric(self.ty(value)?),
                 };
+                if *op == '~' && self.ty(value)? != Type::Int {
+                    return Err("type mismatch: ~ requires an i64 operand".into());
+                }
                 if expected != ty {
                     return Err("type mismatch".into());
                 }
                 self.expr(value, ty, loans)
             }
             Expr::Binary(op, left, right) => {
+                if bitwise(op) {
+                    if self.ty(left)? != Type::Int || self.ty(right)? != Type::Int {
+                        return Err(format!(
+                            "type mismatch: {op} requires i64 operands; combine conditions with and, or, not"
+                        ));
+                    }
+                    if expected != Type::Int {
+                        return Err("type mismatch".into());
+                    }
+                    self.expr(left, Type::Int, loans)?;
+                    return self.expr(right, Type::Int, loans);
+                }
                 if let Some(error) = self.mixed(op, left, right) {
                     return Err(error);
                 }

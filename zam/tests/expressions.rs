@@ -186,3 +186,43 @@ fn global_numeric_builtins_exit_and_env() {
         assert!(stderr.contains(message), "{source}: {stderr}");
     }
 }
+
+/// 位运算与进制字面量：Python 的优先级，移位量越界在运行时报错，只用于 i64。
+#[test]
+fn bitwise_operators_and_radix_literals() {
+    let case = Case::new("expressions", "bits");
+    let source = include_str!("../../examples/values/bits.zm");
+    assert_eq!(
+        stdout(&case.run(source)),
+        "280\n4294967295\n8\n15\n6\n-1\n1024\n-4\n24\ntrue\n8\n64\n64\ntrue\n"
+    );
+    let output = case.run("fn main():\n    println(1 << 63)\n    println(-1 >> 63)\n    println(-9223372036854775807 - 1 >> 1)\n    println(0x7FFF_FFFF_FFFF_FFFF)\n    println(-0x8000000000000000)\n    let mut x = 5\n    x &= 4\n    x >>= 1\n    println(x)\n");
+    assert_eq!(
+        stdout(&output),
+        "-9223372036854775808\n-1\n-4611686018427387904\n9223372036854775807\n-9223372036854775808\n2\n"
+    );
+    for (body, message) in [
+        ("println(1 << 64)", "zam: integer arithmetic error"),
+        (
+            "let n = -1\n    println(8 >> n)",
+            "zam: integer arithmetic error",
+        ),
+        ("println(true & false)", "requires i64 operands"),
+        ("println(1.5 | 1)", "requires i64 operands"),
+        ("println(~1.0)", "~ requires an i64 operand"),
+        ("println(0x)", "invalid base-16 integer literal"),
+        ("println(0b102)", "invalid base-2 integer literal"),
+        (
+            "println(0x_1)",
+            "integer separators must occur between digits",
+        ),
+        ("println(0xFFFF_FFFF_FFFF_FFFF)", "i64 literal overflow"),
+        ("println(true && false)", "expected `and` instead of `&&`"),
+    ] {
+        let source = format!("fn main():\n    {body}\n");
+        let output = case.run(&source);
+        assert!(!output.status.success(), "accepted {source}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(message), "{source}: {stderr}");
+    }
+}
