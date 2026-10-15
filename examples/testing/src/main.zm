@@ -1,0 +1,6 @@
+// zam test examples/testing 运行所有 test_ 开头的函数；zam run 照常运行 main。
+use stats
+
+fn main() -> !string:
+    let xs: [f64] = [2.0, 4.0]
+    println(stats.mean(&xs)?)

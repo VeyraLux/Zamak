@@ -1814,6 +1814,8 @@ struct Parser {
     type_params: Vec<String>,
     // 正在解析的泛型结构体或枚举的类型参数：方法的 self 是 `Owner[T]`。
     owner_generics: Vec<String>,
+    // 源码各行：`assert` 失败时把条件原文写进报错。
+    text: Vec<String>,
 }
 
 /// match 的一个分支：枚举变体、字面量（`1 | 2`、`"a"`、`true`）或 `_`。
@@ -1899,6 +1901,22 @@ impl Parser {
     fn at(&self) -> SourcePosition {
         self.lines[self.position.min(self.lines.len() - 1)]
     }
+    /// 从第 `start` 个记号到当前位置之前的源码原文（跨行时只取第一行）。
+    fn snippet(&self, start: usize) -> String {
+        let (line, column) = self.lines[start];
+        let Some(text) = self.text.get(line.wrapping_sub(1)) else {
+            return String::new();
+        };
+        let chars: Vec<char> = text.chars().collect();
+        let from = column.saturating_sub(1).min(chars.len());
+        let to = match self.lines.get(self.position) {
+            Some((end_line, end_column)) if *end_line == line => {
+                end_column.saturating_sub(1).clamp(from, chars.len())
+            }
+            _ => chars.len(),
+        };
+        chars[from..to].iter().collect::<String>().trim().to_owned()
+    }
     fn peek(&self) -> Option<&Token> {
         self.tokens.get(self.position)
     }
@@ -1932,9 +1950,11 @@ impl Parser {
     }
     fn word(&mut self) -> Result<String, String> {
         match self.take() {
-            Some(Token::Word(word)) if matches!(word.as_str(), "and" | "or" | "not") => Err(
-                format!("expected identifier, found the reserved word {word}"),
-            ),
+            Some(Token::Word(word)) if matches!(word.as_str(), "and" | "or" | "not" | "assert") => {
+                Err(format!(
+                    "expected identifier, found the reserved word {word}"
+                ))
+            }
             Some(Token::Word(word)) => Ok(word),
             token => Err(format!("expected identifier, found {token:?}")),
         }
@@ -2932,6 +2952,7 @@ impl Parser {
                         temps: 0,
                         type_params: self.type_params.clone(),
                         owner_generics: Vec::new(),
+                        text: Vec::new(),
                     };
                     let expr = inner
                         .expr()
@@ -3105,6 +3126,48 @@ impl Parser {
         } else if self.keyword("fail") {
             // `fail e` 在声明了错误类型的函数里返回错误值。
             Instruction::Fail(self.expr()?)
+        } else if self.keyword("assert") {
+            // `assert 条件` / `assert 条件, 说明`：展开成 `if not 条件: 报错并退出`。报错带条件原文；
+            // `a == b` 两边是变量、字段、元素或字面量时再显示两边的值（只在失败时求第二次）。
+            let (line, _) = self.lines[self.position - 1];
+            let start = self.position;
+            let condition = self.expr()?;
+            let text = self.snippet(start);
+            let mut parts = vec![Expr::Text(format!(":{line}: assertion failed: {text}"))];
+            if self.symbol(',') {
+                parts.push(Expr::Text(": ".into()));
+                parts.push(self.expr()?);
+            }
+            if let Expr::Binary(op, left, right) = &condition {
+                let plain = |expr: &Expr| {
+                    matches!(
+                        expr,
+                        Expr::Variable(_)
+                            | Expr::Field(_, _)
+                            | Expr::Index(_, _)
+                            | Expr::IndexField(_, _, _)
+                            | Expr::Int(_)
+                            | Expr::Float(_)
+                            | Expr::Bool(_)
+                            | Expr::Text(_)
+                    )
+                };
+                if matches!(op.as_str(), "==" | "!=") && plain(left) && plain(right) {
+                    parts.push(Expr::Text("\n  left:  ".into()));
+                    parts.push((**left).clone());
+                    parts.push(Expr::Text("\n  right: ".into()));
+                    parts.push((**right).clone());
+                }
+            }
+            let at = self.lines[start];
+            Instruction::If(
+                Expr::Unary('!', Box::new(condition)),
+                vec![(
+                    Instruction::Call(Expr::Call("$assert".into(), vec![Expr::Format(parts)])),
+                    at,
+                )],
+                Vec::new(),
+            )
         } else {
             let expr = self.expr()?;
             if let Some((op, width)) = self.compound() {
@@ -3527,6 +3590,7 @@ pub fn parse(source: &str) -> Result<Module, String> {
         temps: 0,
         type_params: Vec::new(),
         owner_generics: Vec::new(),
+        text: source.lines().map(str::to_owned).collect(),
     };
     let result = (|| {
         let mut module = Module {
@@ -5917,9 +5981,12 @@ pub fn check(module: &Module, entry: &str) -> Result<(), String> {
         .map(|(name, _)| name.clone())
         .collect();
     record_order(module, &concrete)?;
-    let main = module.functions.get(entry).ok_or("missing main function")?;
-    if !main.params.is_empty() || main.result != Type::Unit {
-        return Err("main must have no parameters or return value".into());
+    // `zam test` 不需要 main：入口传空串。
+    if !entry.is_empty() {
+        let main = module.functions.get(entry).ok_or("missing main function")?;
+        if !main.params.is_empty() || main.result != Type::Unit {
+            return Err("main must have no parameters or return value".into());
+        }
     }
     let mut errors = Vec::new();
     for (name, function) in &module.functions {

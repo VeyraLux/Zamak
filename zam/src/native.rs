@@ -707,6 +707,17 @@ return F_double_ok(value);"#,
         fallible: false,
         body: "if (!zam_write(stdout, p0->data, p0->len)) exit(1);",
     },
+    // `assert` 失败：报错写 stderr，退出码 1。
+    Builtin {
+        name: "std/core:assert_failed",
+        params: &[Type::Shared],
+        result: Type::Unit,
+        fallible: false,
+        body: r#"fflush(stdout);
+zam_write(stderr, p0->data, p0->len);
+fputc('\n', stderr);
+exit(1);"#,
+    },
     Builtin {
         name: "std/io:eprintln",
         params: &[Type::Shared],
@@ -3603,7 +3614,13 @@ fn specialization_plan(
     }
     (plans, versions)
 }
-pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
+#[cfg(test)]
+fn generate(module: &Module, entry: &str, unit: &str) -> String {
+    generate_with(module, entry, unit, &[])
+}
+
+/// `tests` 不为空时生成测试程序：入口模块的 C `main` 按第一个参数的名字只运行那一个测试函数。
+pub fn generate_with(module: &Module, entry: &str, unit: &str, tests: &[String]) -> String {
     let symbols: BTreeMap<_, _> = module
         .functions
         .keys()
@@ -3714,7 +3731,11 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
         }
     }
     if entry.split_once(':').unwrap().0 == unit {
-        needed.insert(entry.into());
+        if tests.is_empty() {
+            needed.insert(entry.into());
+        } else {
+            needed.extend(tests.iter().cloned());
+        }
     }
     for name in &needed {
         let function = &module.functions[name];
@@ -3734,7 +3755,13 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
     let mut containers = Containers::new();
     // 入口在这个目标文件里且错误是结构体或枚举：未捕获时要按 println 的格式打印它。
     let mut values = entry.split_once(':').unwrap().0 == unit
-        && module.functions[entry].error.is_some_and(compound);
+        && if tests.is_empty() {
+            module.functions[entry].error.is_some_and(compound)
+        } else {
+            tests
+                .iter()
+                .any(|test| module.functions[test].error.is_some_and(compound))
+        };
     for name in &needed {
         let function = &module.functions[name];
         for (_, ty) in &function.params {
@@ -4056,7 +4083,38 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
         source.push_str(definition);
     }
     source.push_str(&bodies);
-    if entry.split_once(':').unwrap().0 == unit {
+    if entry.split_once(':').unwrap().0 == unit && !tests.is_empty() {
+        // 测试程序：`程序 模块:test_x` 只运行这一个测试；失败的 assert 与运行时错误都以非零退出。
+        source.push_str("int zam_argc;\nchar **zam_argv;\n");
+        let mut dispatch = String::new();
+        for test in tests {
+            let function = &module.functions[test];
+            let call = match function.error {
+                None => format!("{}();", symbols[test]),
+                Some(error) => {
+                    let structure = fallible_name(function.result, Some(error));
+                    let report = if error == Type::Owned {
+                        "uncaught_error(&r.error);".to_owned()
+                    } else {
+                        format!(
+                            "S text = {}; uncaught_error(&text);",
+                            native_values::text_call(error, "&r.error")
+                        )
+                    };
+                    format!(
+                        "{structure} r = {}(); if (!r.ok) {{ {report} return 1; }}",
+                        symbols[test]
+                    )
+                }
+            };
+            dispatch.push_str(&format!(
+                "if (strcmp(argv[1], \"{test}\") == 0) {{ {call} return fflush(stdout) == EOF ? 1 : 0; }}\n"
+            ));
+        }
+        source.push_str(&format!(
+            "int main(int argc, char **argv) {{ if (argc < 2) return 2; zam_argc = argc - 1; zam_argv = argv + 1; output_mode();\n{dispatch}return 2; }}\n"
+        ));
+    } else if entry.split_once(':').unwrap().0 == unit {
         // argv 留给 std/env（Unix）；Windows 下 std/env 改读 GetCommandLineW 以拿到 UTF-8。
         source.push_str("int zam_argc;\nchar **zam_argv;\n");
         if let Some(error) = module.functions[entry].error {

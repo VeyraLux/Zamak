@@ -305,11 +305,44 @@ impl Project {
     }
 
     pub fn check(&self) -> Result<()> {
-        self.modules[&self.entry]
-            .module
-            .functions
-            .get("main")
-            .ok_or("entry module requires fn main()")?;
+        self.check_with(false)
+    }
+
+    /// 测试函数：各模块里名字以 `test_` 开头的函数（`模块:test_x`），按名字排序。
+    pub fn tests(&self) -> Result<Vec<String>> {
+        let mut tests = Vec::new();
+        for (id, input) in &self.modules {
+            for (name, function) in &input.module.functions {
+                if !name.starts_with("test_") {
+                    continue;
+                }
+                if !function.params.is_empty()
+                    || function.result != compiler::Type::Unit
+                    || !function.generics.is_empty()
+                {
+                    return Err(self.located(
+                        id,
+                        function.position,
+                        format!(
+                            "test function {name} must take no parameters and return nothing, such as fn {name}():"
+                        ),
+                    ));
+                }
+                tests.push(format!("{id}:{name}"));
+            }
+        }
+        Ok(tests)
+    }
+
+    /// 测试时不要求 `fn main()`。
+    fn check_with(&self, testing: bool) -> Result<()> {
+        if !testing {
+            self.modules[&self.entry]
+                .module
+                .functions
+                .get("main")
+                .ok_or("entry module requires fn main()")?;
+        }
         for (id, input) in &self.modules {
             for import in &input.module.imports {
                 if !matches!(
@@ -326,7 +359,11 @@ impl Project {
             self.key(id, &mut keys, &mut BTreeSet::new())?;
         }
         // 检查时可能推断出新的元组类型（`let t = (1, "a")`）：重新链接后再检查，直到不再出现新的。
-        let entry = format!("{}:main", self.entry);
+        let entry = if testing {
+            String::new()
+        } else {
+            format!("{}:main", self.entry)
+        };
         // 泛型函数的新副本同理：副本里再调用泛型函数时会生成更多副本，直到不再增加。
         let result = loop {
             let counts = || {
@@ -876,6 +913,17 @@ impl Project {
                     self.resolve_expr(module, locals, arg)?;
                 }
             }
+            // `assert` 展开出的报错调用：报错前面补上模块文件路径。
+            Expr::Call(name, args) if name == "$assert" => {
+                *name = "std/core:assert_failed".into();
+                if let Some(Expr::Format(parts)) = args.first_mut() {
+                    let path = self.modules[module].path.display().to_string();
+                    parts.insert(0, Expr::Text(path));
+                }
+                for arg in args {
+                    self.resolve_expr(module, locals, arg)?;
+                }
+            }
             // `abs`/`min`/`max`/`copy`：全局内建函数；本模块自己定义了同名函数时用自己的。
             Expr::Call(name, args)
                 if matches!(name.as_str(), "abs" | "min" | "max" | "copy")
@@ -1069,9 +1117,73 @@ impl Project {
     }
 
     pub fn build(&self, cache: &Path) -> Result<PathBuf> {
+        self.build_with(cache, &[])
+    }
+
+    /// `zam test`：编出测试程序，每个测试单独起一个进程运行（一个测试崩溃不影响其他），
+    /// 打印每个测试的结果与失败输出。返回失败的个数。
+    pub fn test(&self, cache: &Path, filter: Option<&str>) -> Result<usize> {
+        let tests = self.tests()?;
+        let label = |test: &str| {
+            let (module, name) = test.split_once(':').expect("qualified test name");
+            if module == self.entry {
+                name.to_owned()
+            } else {
+                format!("{}.{name}", module.replace('/', "."))
+            }
+        };
+        let selected: Vec<&String> = tests
+            .iter()
+            .filter(|test| filter.is_none_or(|filter| label(test).contains(filter)))
+            .collect();
+        if selected.is_empty() {
+            println!("no tests found; name test functions test_..., such as fn test_add():");
+            return Ok(0);
+        }
+        let artifact = self.build_with(cache, &tests)?;
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let results = std::sync::Mutex::new(vec![None; selected.len()]);
+        std::thread::scope(|scope| {
+            for _ in 0..jobs().min(selected.len()) {
+                scope.spawn(|| loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(test) = selected.get(index) else {
+                        break;
+                    };
+                    let result = run_test(&artifact, test);
+                    results.lock().expect("test results")[index] = Some(result);
+                });
+            }
+        });
+        let results = results.into_inner().expect("test results");
+        let mut failures = Vec::new();
+        for (test, result) in selected.iter().zip(results) {
+            let (passed, output) = result.expect("every test ran");
+            println!(
+                "test {} ... {}",
+                label(test),
+                if passed { "ok" } else { "FAILED" }
+            );
+            if !passed {
+                failures.push((label(test), output));
+            }
+        }
+        for (name, output) in &failures {
+            println!("\n---- {name} ----\n{}", output.trim_end());
+        }
+        println!(
+            "\ntest result: {}. {} passed; {} failed",
+            if failures.is_empty() { "ok" } else { "FAILED" },
+            selected.len() - failures.len(),
+            failures.len()
+        );
+        Ok(failures.len())
+    }
+
+    fn build_with(&self, cache: &Path, tests: &[String]) -> Result<PathBuf> {
         let build_started = Instant::now();
         let check_started = Instant::now();
-        self.check()?;
+        self.check_with(!tests.is_empty())?;
         let check_ms = check_started.elapsed().as_secs_f64() * 1000.0;
         let key_started = Instant::now();
         let mut keys = BTreeMap::new();
@@ -1124,7 +1236,7 @@ impl Project {
                     .map(|id| {
                         let (linked, entry, identity) = (&linked, &entry, &identity);
                         scope.spawn(move || -> Result<(String, String, Option<Vec<u8>>)> {
-                            let source = native::generate(linked, entry, id);
+                            let source = native::generate_with(linked, entry, id, tests);
                             let key = hash(&[
                                 VERSION.as_bytes(),
                                 source.as_bytes(),
@@ -1226,10 +1338,11 @@ impl Project {
             build_started.elapsed().as_secs_f64() * 1000.0
         );
         let suffix = if cfg!(windows) { ".exe" } else { "" };
-        let artifact = self
-            .root
-            .join("build")
-            .join(format!("{}-{app_key}{suffix}", self.name));
+        let artifact = self.root.join("build").join(format!(
+            "{}-{}{app_key}{suffix}",
+            self.name,
+            if tests.is_empty() { "" } else { "test-" }
+        ));
         atomic_write(&artifact, &bytes)?;
         #[cfg(unix)]
         {
@@ -1239,6 +1352,59 @@ impl Project {
         }
         eprintln!("OUTPUT {}", artifact.display());
         Ok(artifact)
+    }
+}
+
+/// 运行一个测试：（是否通过, 合并后的 stdout 与 stderr）。超过 60 秒算失败并结束进程。
+fn run_test(artifact: &Path, test: &str) -> (bool, String) {
+    use std::io::Read;
+    let child = std::process::Command::new(artifact)
+        .arg(test)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn();
+    let mut child = match child {
+        Ok(child) => child,
+        Err(error) => return (false, format!("cannot start the test program: {error}")),
+    };
+    let mut stdout = child.stdout.take().expect("piped stdout");
+    let mut stderr = child.stderr.take().expect("piped stderr");
+    let out = std::thread::spawn(move || {
+        let mut text = Vec::new();
+        let _ = stdout.read_to_end(&mut text);
+        text
+    });
+    let err = std::thread::spawn(move || {
+        let mut text = Vec::new();
+        let _ = stderr.read_to_end(&mut text);
+        text
+    });
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if started.elapsed().as_secs() >= 60 => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(5)),
+            Err(_) => break None,
+        }
+    };
+    let mut output = String::from_utf8_lossy(&out.join().unwrap_or_default()).into_owned();
+    output.push_str(&String::from_utf8_lossy(&err.join().unwrap_or_default()));
+    match status {
+        Some(status) if status.success() => (true, output),
+        Some(status) => {
+            output.push_str(&format!("(exit status {})", status.code().unwrap_or(-1)));
+            (false, output)
+        }
+        None => {
+            output.push_str("(timed out after 60 seconds)");
+            (false, output)
+        }
     }
 }
 

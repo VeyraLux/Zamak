@@ -37,6 +37,7 @@ fn execute() -> project::Result<()> {
     }
     let valid_shape = match args.first().map(String::as_str) {
         Some("check" | "build" | "fmt" | "run") => matches!(args.len(), 1..=2),
+        Some("test") => matches!(args.len(), 1..=3),
         Some("new") => {
             args.len() == 2
                 || (args.len() == 4 && args[2] == "--template" && args[3] == "ai")
@@ -49,7 +50,9 @@ fn execute() -> project::Result<()> {
     let option_as_path = args.get(1).is_some_and(|arg| arg.starts_with('-'));
     let missing_command = raw_args.first().is_some_and(|arg| arg == "--json");
     if !valid_shape || option_as_path || missing_command {
-        return Err("usage: zam <check|build|run|fmt|new> [project|file] [--template ai]".into());
+        return Err(
+            "usage: zam <check|build|run|test|fmt|new> [project|file] [--template ai]".into(),
+        );
     }
     let input = Path::new(args.get(1).map(String::as_str).unwrap_or("."));
     if json {
@@ -79,6 +82,14 @@ fn execute() -> project::Result<()> {
         }
         Some("build") => { project::Project::load(input)?.build(&project::cache_dir())?; }
         Some("fmt") => format_sources(input)?,
+        // `zam test [project|file] [名字里的一段]`：运行 test_ 开头的函数，有失败时退出码非零。
+        Some("test") => {
+            let project = project::Project::load(input)?;
+            let failed = project.test(&project::cache_dir(), args.get(2).map(String::as_str))?;
+            if failed > 0 {
+                return Err(format!("{failed} test(s) failed"));
+            }
+        }
         Some("new") if args.len() == 2 => new_project(input, false)?,
         Some("new") if args.len() == 4 && args[2] == "--template" && args[3] == "ai" => {
             new_project(input, true)?
@@ -94,8 +105,8 @@ fn execute() -> project::Result<()> {
         }
         Some("demo") if args.len() == 1 => demo()?,
         Some("--version") | Some("-V") => println!("{}", env!("CARGO_PKG_VERSION")),
-        None | Some("--help") | Some("-h") => println!("zam {}\n  zam check [project|file]\n  zam build [project|file]\n  zam fmt [project|file]\n  zam run [project|file|artifact] [-- args...]\n  zam new <directory> [--template ai]\n  zam check --json [project|file]\n  zam build --json [project|file]\n  zam demo\n  zam --version", env!("CARGO_PKG_VERSION")),
-        _ => return Err("usage: zam <check|build|run|fmt|new> [project|file]".into()),
+        None | Some("--help") | Some("-h") => println!("zam {}\n  zam check [project|file]\n  zam build [project|file]\n  zam fmt [project|file]\n  zam run [project|file|artifact] [-- args...]\n  zam test [project|file] [filter]\n  zam new <directory> [--template ai]\n  zam check --json [project|file]\n  zam build --json [project|file]\n  zam demo\n  zam --version", env!("CARGO_PKG_VERSION")),
+        _ => return Err("usage: zam <check|build|run|test|fmt|new> [project|file]".into()),
     }
     Ok(())
 }
@@ -333,6 +344,14 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
             "ZM406",
             "bounds",
             Some("ensure the index is within the declared array length"),
+        )
+    } else if message.starts_with("test function ") || message.contains(": test function ") {
+        (
+            "ZM200",
+            "type",
+            Some(
+                "declare tests as fn test_name(): or fn test_name() -> !string: with no parameters",
+            ),
         )
     } else if message.contains("cannot be used as a value")
         || message.contains("function values cannot")
