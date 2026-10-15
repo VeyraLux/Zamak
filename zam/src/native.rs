@@ -136,6 +136,7 @@ static void print(S *s) {
 }
 // ponytail: 未捕获的错误只写 stderr 并以退出码 1 结束；不做栈回溯，错误值本身就是全部信息。
 static void uncaught_error(S *s) {
+    fflush(stdout);
     if (!zam_write(stderr, s->data, s->len)) exit(1);
     if (fputc('\n', stderr) == EOF) exit(1);
 }
@@ -1200,15 +1201,19 @@ fn float_literal(value: f64) -> String {
         format!("({value:?})")
     }
 }
-// 失败函数的结果结构体：ok=1 时 value 有效，ok=0 时 error 有效。
-fn fallible_name(ty: Type) -> String {
-    format!("F_{}", ctype(ty))
+// 失败函数的结果结构体：ok=1 时 value 有效，ok=0 时 error 有效。错误是字符串时名字只看成功类型
+// （`F_int64_t`），是结构体或枚举时再带上错误类型（`F_int64_t_R123`）。
+fn fallible_name(ty: Type, error: Option<Type>) -> String {
+    match error {
+        None | Some(Type::Owned) => format!("F_{}", ctype(ty)),
+        Some(error) => format!("F_{}_{}", ctype(ty), ctype(error)),
+    }
 }
-fn fallible_ok(ty: Type) -> String {
-    format!("{}_ok", fallible_name(ty))
+fn fallible_ok(ty: Type, error: Option<Type>) -> String {
+    format!("{}_ok", fallible_name(ty, error))
 }
-fn fallible_err(ty: Type) -> String {
-    format!("{}_err", fallible_name(ty))
+fn fallible_err(ty: Type, error: Option<Type>) -> String {
+    format!("{}_err", fallible_name(ty, error))
 }
 /// 结构体、列表与字典：有按类型生成的 `drop`/`take`，移走时不能当字符串处理。
 fn aggregate(ty: Type) -> bool {
@@ -2223,18 +2228,20 @@ impl Generator<'_> {
                 let (name, args) = self.call_target(inner).expect("checked ? operand");
                 let (name, args) = (&name, &args);
                 let result = self.module.functions[name].result;
+                let error = self.module.functions[name].error;
                 let call = self.raw_call(name, args, None);
-                let structure = fallible_name(result);
+                let structure = fallible_name(result, error);
                 let temp = format!("v{}", self.next);
                 self.next += 1;
                 self.code
                     .push_str(&format!("{structure} {temp} = {call};\n"));
                 // 失败：先把当前作用域的值都释放掉，再构造同样形状的错误结果返回。
                 self.code.push_str(&format!("if (!{temp}.ok) {{\n"));
-                let outer = fallible_err(self.result);
+                let outer = fallible_err(self.result, self.error);
+                let take = take_fn(error.expect("checked fallible call"));
                 self.cleanup();
                 self.code
-                    .push_str(&format!("return {outer}(take(&{temp}.error));\n}}\n"));
+                    .push_str(&format!("return {outer}({take}(&{temp}.error));\n}}\n"));
                 if result == Type::Unit {
                     return String::new();
                 }
@@ -2244,8 +2251,11 @@ impl Generator<'_> {
                 let (name, args) = self.call_target(inner).expect("checked catch operand");
                 let (name, args) = (&name, &args);
                 let result = self.module.functions[name].result;
+                let error = self.module.functions[name]
+                    .error
+                    .expect("checked fallible call");
                 let call = self.raw_call(name, args, None);
-                let structure = fallible_name(result);
+                let structure = fallible_name(result, Some(error));
                 let temp = format!("v{}", self.next);
                 self.next += 1;
                 self.code
@@ -2253,12 +2263,17 @@ impl Generator<'_> {
                 self.code.push_str(&format!("if (!{temp}.ok) {{\n"));
                 let local = format!("v{}", self.next);
                 self.next += 1;
-                let previous = self
-                    .locals
-                    .insert(binding.clone(), (local.clone(), Type::Owned));
-                self.code
-                    .push_str(&format!("S {local} = take(&{temp}.error);\n"));
-                self.owners.push((local, Type::Owned));
+                let previous = self.locals.insert(binding.clone(), (local.clone(), error));
+                self.code.push_str(&format!(
+                    "{} {local} = {}(&{temp}.error);\n",
+                    ctype(error),
+                    take_fn(error)
+                ));
+                note(&mut self.containers, error);
+                if let Some(id) = record_of(error) {
+                    self.records.insert(id);
+                }
+                self.owners.push((local, error));
                 // 代码块在所有路径上都 return（检查器保证），所以出块只需要清账本。
                 self.block(block, self.result);
                 self.owners.pop();
@@ -2849,7 +2864,7 @@ impl Generator<'_> {
                     self.cleanup();
                     if self.error.is_some() {
                         // 失败函数：成功值要包进结果结构体。
-                        let ok = fallible_ok(result_type);
+                        let ok = fallible_ok(result_type, self.error);
                         self.code.push_str(&if expr.is_some() {
                             format!("return {ok}(result);\n")
                         } else {
@@ -2890,12 +2905,18 @@ impl Generator<'_> {
                         .push_str(&format!("memset(&{value}, 0, sizeof {value});\n"));
                 }
                 Instruction::Fail(expr) => {
-                    let value = self.expr(expr);
-                    self.code
-                        .push_str(&format!("S failure = take(&{value});\n"));
+                    let error = self.error.expect("checked fail");
+                    let value = self.expr_as(expr, error);
+                    self.code.push_str(&format!(
+                        "{} failure = {}(&{value});\n",
+                        ctype(error),
+                        take_fn(error)
+                    ));
                     self.cleanup();
-                    self.code
-                        .push_str(&format!("return {}(failure);\n", fallible_err(self.result)));
+                    self.code.push_str(&format!(
+                        "return {}(failure);\n",
+                        fallible_err(self.result, self.error)
+                    ));
                     returned = true;
                 }
             }
@@ -3226,7 +3247,7 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
         format!(
             "{} {}({})",
             if function.error.is_some() {
-                fallible_name(function.result)
+                fallible_name(function.result, function.error)
             } else {
                 ctype(function.result)
             },
@@ -3289,6 +3310,7 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
             .iter()
             .map(|(_, ty)| ty)
             .chain(std::iter::once(&function.result))
+            .chain(function.error.iter())
         {
             if let Some(id) = record_of(*ty) {
                 records.insert(record_name(id));
@@ -3297,7 +3319,9 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
     }
     // 列表与字典的 C 辅助按用到的类型生成：签名、结构体字段，以及函数体里出现过的每个值。
     let mut containers = Containers::new();
-    let mut values = false;
+    // 入口在这个目标文件里且错误是结构体或枚举：未捕获时要按 println 的格式打印它。
+    let mut values = entry.split_once(':').unwrap().0 == unit
+        && module.functions[entry].error.is_some_and(compound);
     for name in &needed {
         let function = &module.functions[name];
         for (_, ty) in &function.params {
@@ -3367,7 +3391,10 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
         bodies.push_str(&g.code);
         if function.error.is_some() && !returned && function.result == Type::Unit {
             // 失败函数返回 Unit 时也要显式给出成功值。
-            bodies.push_str(&format!("return {}();\n", fallible_ok(Type::Unit)));
+            bodies.push_str(&format!(
+                "return {}();\n",
+                fallible_ok(Type::Unit, function.error)
+            ));
         }
         bodies.push_str("}\n");
         containers.extend(g.containers);
@@ -3494,38 +3521,44 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
         source.push_str(&native_values::functions(module, &records, &lists, &maps));
     }
     // 失败函数的结果结构体与构造器；调用点只读 ok 相符的那一半。
-    let mut fallible: Vec<Type> = Vec::new();
+    let mut fallible: Vec<(Type, Option<Type>)> = Vec::new();
     for name in &needed {
-        let result = module.functions[name].result;
-        if module.functions[name].error.is_some() && !fallible.contains(&result) {
-            fallible.push(result);
+        let function = &module.functions[name];
+        let key = (
+            function.result,
+            function.error.filter(|e| *e != Type::Owned),
+        );
+        if function.error.is_some() && !fallible.contains(&key) {
+            fallible.push(key);
         }
     }
-    for ty in &fallible {
-        let structure = fallible_name(*ty);
+    for (ty, error) in &fallible {
+        let (ty, error) = (*ty, *error);
+        let structure = fallible_name(ty, error);
+        let error_type = ctype(error.unwrap_or(Type::Owned));
         source.push_str(&format!(
-            "typedef struct {{ int ok; {}S error; }} {structure};\n",
-            if *ty == Type::Unit {
+            "typedef struct {{ int ok; {}{error_type} error; }} {structure};\n",
+            if ty == Type::Unit {
                 String::new()
             } else {
-                format!("{} value; ", ctype(*ty))
+                format!("{} value; ", ctype(ty))
             }
         ));
-        if *ty == Type::Unit {
+        if ty == Type::Unit {
             source.push_str(&format!(
                 "static {structure} {}(void) {{ {structure} r = {{0}}; r.ok = 1; return r; }}\n",
-                fallible_ok(*ty)
+                fallible_ok(ty, error)
             ));
         } else {
             source.push_str(&format!(
                 "static {structure} {}({} value) {{ {structure} r = {{0}}; r.ok = 1; r.value = value; return r; }}\n",
-                fallible_ok(*ty),
-                ctype(*ty)
+                fallible_ok(ty, error),
+                ctype(ty)
             ));
         }
         source.push_str(&format!(
-            "static {structure} {}(S error) {{ {structure} r = {{0}}; r.error = error; return r; }}\n",
-            fallible_err(*ty)
+            "static {structure} {}({error_type} error) {{ {structure} r = {{0}}; r.error = error; return r; }}\n",
+            fallible_err(ty, error)
         ));
     }
     let mut prelude = false;
@@ -3549,10 +3582,20 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
     if entry.split_once(':').unwrap().0 == unit {
         // argv 留给 std/env（Unix）；Windows 下 std/env 改读 GetCommandLineW 以拿到 UTF-8。
         source.push_str("int zam_argc;\nchar **zam_argv;\n");
-        if module.functions[entry].error.is_some() {
-            let structure = fallible_name(module.functions[entry].result);
+        if let Some(error) = module.functions[entry].error {
+            let structure = fallible_name(module.functions[entry].result, Some(error));
+            // 未捕获的错误写到 stderr：字符串原样，结构体与枚举按 println 的格式。
+            let report = if error == Type::Owned {
+                "uncaught_error(&r.error); drop(&r.error);".to_owned()
+            } else {
+                format!(
+                    "S text = {}; uncaught_error(&text); drop(&text); {}(&r.error);",
+                    native_values::text_call(error, "&r.error"),
+                    drop_fn(error)
+                )
+            };
             source.push_str(&format!(
-                "int main(int argc, char **argv) {{ zam_argc = argc; zam_argv = argv; output_mode(); {structure} r = {}(); if (!r.ok) {{ uncaught_error(&r.error); drop(&r.error); return 1; }} return fflush(stdout) == EOF ? 1 : 0; }}\n",
+                "int main(int argc, char **argv) {{ zam_argc = argc; zam_argv = argv; output_mode(); {structure} r = {}(); if (!r.ok) {{ {report} return 1; }} return fflush(stdout) == EOF ? 1 : 0; }}\n",
                 symbols[entry]
             ));
         } else {

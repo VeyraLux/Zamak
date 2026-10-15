@@ -1,0 +1,52 @@
+// 自定义错误类型：错误可以是枚举或结构体，catch 里用 match 分情况处理，? 照常向上传。
+use std/string
+
+enum ConfigError:
+    Missing(key: string)
+    BadNumber(key: string, text: string)
+    OutOfRange(key: string, value: i64)
+
+struct Config:
+    port: i64
+    workers: i64
+
+fn lookup(pairs: &{string: string}, key: &string) -> string!ConfigError:
+    if not pairs.contains(key):
+        fail ConfigError.Missing(string.copy(key))
+
+    string.copy(&pairs[key])
+
+fn number(pairs: &{string: string}, key: &string, low: i64, high: i64) -> i64!ConfigError:
+    let text = lookup(pairs, key)?
+    let value = string.parse_i64(&text) catch e:
+        fail ConfigError.BadNumber(string.copy(key), text)
+
+    if value < low or value > high:
+        fail ConfigError.OutOfRange(string.copy(key), value)
+
+    value
+
+fn load(pairs: &{string: string}) -> Config!ConfigError:
+    Config(port: number(pairs, "port", 1, 65535)?, workers: number(pairs, "workers", 1, 64)?)
+
+fn describe(error: &ConfigError) -> string:
+    match error:
+        Missing(key): "missing {key}"
+        BadNumber(key, text): "{key} is not a number: {text}"
+        OutOfRange(key, value): "{key} out of range: {value}"
+
+fn main() -> !ConfigError:
+    let good = {"port": "8080", "workers": "4"}
+    let config = load(&good)?
+    println("port {config.port}, {config.workers} workers")
+
+    let samples: [{string: string}] = [{"port": "80"}, {"port": "eighty", "workers": "2"}, {"port": "99999", "workers": "2"}]
+
+    for sample in &samples:
+        load(sample) catch e:
+            println(describe(&e))
+            continue
+
+    let broken = {"workers": "2"}
+    let last = load(&broken)?
+    println(last.port)

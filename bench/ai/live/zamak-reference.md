@@ -88,7 +88,8 @@ else:
 - A function that can fail declares `-> T!string` (returns T or an error message) or `-> !string` (only fails).
 - `fail "message"` returns an error. Interpolation works: `fail "bad line {n}"`.
 - `call()?` returns the error to the caller (the current function must also be declared `!string`).
-- `call() catch e:` handles the error in place; `e` is the message string; the block must end every path with `return` or `fail`.
+- `call() catch e:` handles the error in place; `e` is the error value; the block must end every path with `return` or `fail` (or `break`/`continue` inside a loop).
+- The error type can also be a struct or an enum: `fn parse(t: &string) -> i64!ParseError`, `fail ParseError.Empty`, and `match e:` inside `catch`. `?` only passes an error to a function with the same error type; convert others in a `catch` block.
 
 ```
 let value = string.parse_i64(&text) catch e:

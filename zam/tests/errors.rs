@@ -123,3 +123,67 @@ fn catch_blocks() {
     }
     fs::remove_file(path).unwrap();
 }
+
+/// 错误类型可以是枚举或结构体：fail 构造、catch 里 match、? 只在同一种错误之间传递，
+/// main 未捕获时按 println 的格式写到 stderr。
+#[test]
+fn custom_error_types() {
+    let dir = std::env::temp_dir().join(format!("zam-errors-custom-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |name: &str, source: &str| {
+        let file = dir.join(name);
+        std::fs::write(&file, source).unwrap();
+        std::process::Command::new(env!("CARGO_BIN_EXE_zam"))
+            .arg("run")
+            .arg(&file)
+            .env("ZAMAK_CACHE_DIR", dir.join("cache"))
+            .output()
+            .unwrap()
+    };
+    let output = run(
+        "config.zm",
+        include_str!("../../examples/values/custom_errors.zm"),
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "port 8080, 4 workers\nmissing workers\nport is not a number: eighty\nport out of range: 99999\n"
+    );
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .replace("\r\n", "\n")
+        .ends_with("\nConfigError.Missing(\"port\")\n"));
+    let output = run(
+        "struct.zm",
+        "struct Fault:\n    code: i64\n    text: string\nfn risky(n: i64) -> i64!Fault:\n    if n > 2: fail Fault(code: n, text: \"too big\")\n    n * 10\nfn main():\n    for i in 1..5:\n        let v = risky(i) catch e:\n            println(\"{e.code}: {e.text}\")\n            break\n        println(v)\n",
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "10\n20\n3: too big\n"
+    );
+    for (source, message) in [
+        (
+            "enum E:\n    Bad\nuse std/fs\nfn f() -> !E:\n    let t = fs.read(\"x\")?\nfn main(): pass\n",
+            "? cannot propagate the error of std/fs:read",
+        ),
+        (
+            "enum E:\n    Bad\nfn f() -> !E:\n    fail \"text\"\nfn main(): pass\n",
+            "mismatch",
+        ),
+        ("fn f() -> i64!i64: 1\nfn main(): pass\n", "unsupported error type"),
+        (
+            "enum E:\n    Bad\nfn f() -> !E: fail E.Bad\nfn g() -> !string:\n    f()?\nfn main(): pass\n",
+            "? cannot propagate the error of",
+        ),
+    ] {
+        let output = run("bad.zm", source);
+        assert!(!output.status.success(), "accepted {source}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(message), "{source}: {stderr}");
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}

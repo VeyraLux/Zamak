@@ -304,11 +304,11 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
             "error_handling",
             Some("handle the call with `?` or a `catch` block"),
         )
-    } else if message.contains("only string error types") {
+    } else if message.contains("unsupported error type") {
         (
             "ZM509",
             "error_handling",
-            Some("use `!string` or `T!string` for the error type"),
+            Some("use a string, a struct or an enum as the error type, such as `T!string` or `T!ParseError`"),
         )
     } else if message.contains("f64 literal is out of range") {
         (

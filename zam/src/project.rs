@@ -11,7 +11,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-39");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-40");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -368,6 +368,10 @@ impl Project {
                 }
                 self.resolve_type(id, &mut function.result)
                     .map_err(|error| self.located(id, position, error))?;
+                if let Some(error) = &mut function.error {
+                    self.resolve_type(id, error)
+                        .map_err(|error| self.located(id, position, error))?;
+                }
                 let mut locals: BTreeSet<String> = function
                     .params
                     .iter()

@@ -725,7 +725,7 @@ fn main() -> !string:
 
 错误处理语法：
 
-- `i64!string`：成功返回 `i64`，失败返回 `string` 错误信息。
+- `i64!string`：成功返回 `i64`，失败返回 `string` 错误信息。错误类型也可以是自己定义的枚举或结构体，比如 `-> Config!ConfigError`，`fail ConfigError.Missing(key)` 构造错误，`catch e:` 里用 `match e` 分情况处理（见 `examples/values/custom_errors.zm`）。
 - `fail "empty input"`：产生错误并立即从当前函数返回，只能在声明了错误类型的函数中使用。
 - `parse(text)?`：成功时取得返回值，失败时立即从 `load` 返回同一错误。使用 `?` 的函数必须声明相同的错误类型。
 
@@ -1018,7 +1018,7 @@ error[ZM301]: use after move: name
 | `? cannot propagate the error of main:f from this function` | 当前函数未声明错误类型，或错误类型不一致 | 函数签名写 `-> T!string` |
 | `fail requires a function that declares an error type` | 在不可失败的函数里用了 `fail` | 给函数加 `!string` |
 | `catch block for f must return a value` | `catch` 块存在未返回的路径 | 确保所有路径都从当前函数 `return` |
-| `only string error types are supported for now` | 用了 `!i64` 之类的错误类型 | 改成 `!string` |
+| `unsupported error type` | 用了 `!i64` 之类的错误类型 | 错误类型用 `string`、结构体或枚举 |
 | `entry must be a .zm file` | `zam.toml` 的入口后缀不对 | 改成 `.zm` |
 | `zam.toml: 系统找不到指定的文件` | 目录内没有 `zam.toml` | 用 `zam new` 建项目，或直接传单个 `.zm` 文件 |
 | `project name must be an identifier` | `zam new` 的目录名不是合法标识符 | 使用合法标识符，例如 `hello_app`；不要使用连字符或以数字开头 |
@@ -1045,7 +1045,7 @@ Zamak 0.1.0 的支持范围有限。编写程序时需注意以下限制：
 - `match` 匹配枚举变体，或者整数、字符、字符串、布尔字面量（`1 | 2 | 3:`、`"go":`），还不支持区间和守卫条件；尚不支持泛型、闭包和 trait/接口；`for` 支持整数区间 `a..b` 以及遍历 `&列表`、`&字典`。
 - 尚不提供包管理器、交互式执行环境（REPL）、文档生成工具或重构工具。
 - 标准库包括 `std/string`（`byte_len`、`char_len`、`equal`、`parse_i64`、`parse_f64`、`trim`、`byte_at`、`slice`、`find`、`find_from`、`starts_with`、`ends_with`、`contains`、`replace`、`lower`、`upper`、`copy`、`split`、`words`、`lines`、`join`、`chars`、`codepoints`、`from_code`、`bytes`、`from_bytes`、`repeat`、`count`、`pad_left`、`pad_right`）、`std/io`（`println`、`read_line`、`read_all`）、`std/fmt`（`println`、`fixed`）、`std/math`（见第 3 节）、`std/fs`（`read`、`write`）和 `std/env`（`arg_count`、`arg`、`args`、`var`、`exit`），以及不用导入的 `abs`、`min`、`max`，没有目录遍历、网络和时间函数。
-- 错误类型只能是 `string`，没有错误堆栈。
+- 错误类型可以是 `string`、结构体或枚举，没有错误堆栈。
 - 定长数组仅支持 `i64` 局部值；列表 `[T]` 的元素与字典 `{K: V}` 的值可以是 `i64`、`f64`、`bool`、`string` 或结构体，字典键只能是 `i64` 或 `string`；还没有嵌套容器（`[[i64]]`），元素字段里的列表不能再接下标。调用结果上可以接着调用方法。
 - 所有权检查覆盖 `string`、结构体、列表和字典；尚不支持线程、`unsafe` 和外部函数接口（FFI）。
 - 编辑器支持为 VS Code 扩展（`editors/vscode/`）：语法高亮、冒号后自动缩进、按缩进折叠；没有语言服务器、补全和调试器。
