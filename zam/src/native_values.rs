@@ -41,7 +41,9 @@ static void zam_show_str(S *out, S *s) {
 /// 复制一份 `*ptr`：标量按值，字符串与复合值深复制。
 pub fn copy(ty: Type, ptr: &str) -> String {
     match ty {
-        Type::Int | Type::Float | Type::Bool => format!("(*{ptr})"),
+        Type::Int | Type::Float | Type::Bool | Type::Func(_) | Type::FuncRef(_) => {
+            format!("(*{ptr})")
+        }
         Type::Owned => format!("copy({ptr})"),
         _ => format!("copy{}({ptr})", ctype(ty)),
     }
@@ -51,6 +53,10 @@ pub fn copy(ty: Type, ptr: &str) -> String {
 pub fn equal(ty: Type, a: &str, b: &str) -> String {
     match ty {
         Type::Int | Type::Float | Type::Bool => format!("(*{a} == *{b})"),
+        // 函数值：同一个函数、同一个环境才相等。
+        Type::Func(_) | Type::FuncRef(_) => {
+            format!("(({a})->call == ({b})->call && ({a})->env == ({b})->env)")
+        }
         Type::Owned => format!("string_equal({a}, {b})"),
         _ => format!("eq{}({a}, {b})", ctype(ty)),
     }
@@ -63,6 +69,7 @@ fn show(ty: Type, out: &str, ptr: &str) -> String {
         Type::Float => format!("zam_show_f64({out}, *{ptr});"),
         Type::Bool => format!("zam_show_bool({out}, *{ptr});"),
         Type::Owned => format!("zam_show_str({out}, {ptr});"),
+        Type::Func(_) | Type::FuncRef(_) => format!("(void){ptr}; {}", text(out, "<fn>")),
         _ => format!("show{}({out}, {ptr});", ctype(ty)),
     }
 }

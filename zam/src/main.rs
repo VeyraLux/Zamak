@@ -334,6 +334,27 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
             "bounds",
             Some("ensure the index is within the declared array length"),
         )
+    } else if message.contains("cannot be used as a value")
+        || message.contains("function values cannot")
+        || message.contains("argument count mismatch")
+    {
+        (
+            "ZM200",
+            "type",
+            Some("match the function type: the same parameter count and types, and no !E"),
+        )
+    } else if message.contains("is already declared") {
+        (
+            "ZM204",
+            "name",
+            Some("rename the parameter; Zamak does not allow shadowing"),
+        )
+    } else if message.contains("anonymous fn holds one expression") {
+        (
+            "ZM110",
+            "syntax",
+            Some("keep fn(...): on one line, or declare a named fn and pass its name"),
+        )
     } else if message.contains("cannot infer ")
         || message.contains("type argument")
         || message.contains("is not generic")

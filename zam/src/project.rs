@@ -11,7 +11,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-43");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-44");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -458,6 +458,16 @@ impl Project {
             Type::Record(id) | Type::RecordRef(id, _) => self.resolve_record(module, id),
             Type::List(elem) | Type::ListRef(elem, _) => self.resolve_elem(module, elem),
             Type::Map(_, value) | Type::MapRef(_, value, _) => self.resolve_elem(module, value),
+            // 函数类型：参数与结果限定后重新登记，得到新的编号。
+            Type::Func(id) | Type::FuncRef(id) => {
+                let (mut params, mut result) = compiler::func_sig(*id);
+                for param in &mut params {
+                    self.resolve_type(module, param)?;
+                }
+                self.resolve_type(module, &mut result)?;
+                *id = compiler::func_type(params, result);
+                Ok(())
+            }
             _ => Ok(()),
         }
     }
@@ -726,6 +736,54 @@ impl Project {
             return Ok(());
         }
         match expr {
+            // `f(x)`：f 是局部的函数值。
+            Expr::Call(name, args) if !name.contains('.') && locals.contains(name.as_str()) => {
+                let mut args = std::mem::take(args);
+                for arg in &mut args {
+                    self.resolve_expr(module, locals, arg)?;
+                }
+                *expr = Expr::Apply(name.clone(), args);
+            }
+            // 不是局部名、也不是常量的 `double`：本模块的函数当值用。
+            Expr::Variable(name)
+                if !locals.contains(name.as_str())
+                    && self.modules[module]
+                        .module
+                        .functions
+                        .contains_key(name.as_str()) =>
+            {
+                *expr = Expr::FnRef(self.resolve(module, name)?);
+            }
+            // `util.double`：导入模块的函数当值用。
+            Expr::Field(root, field)
+                if !locals.contains(root.as_str())
+                    && !field.contains('.')
+                    && field.starts_with(|c: char| c.is_lowercase())
+                    && self.modules[module]
+                        .module
+                        .imports
+                        .iter()
+                        .any(|path| path.rsplit('/').next() == Some(root.as_str()))
+                    && self.resolve(module, &format!("{root}.{field}")).is_ok() =>
+            {
+                *expr = Expr::FnRef(self.resolve(module, &format!("{root}.{field}"))?);
+            }
+            Expr::Lambda(params, result, body) => {
+                for (_, ty) in params.iter_mut() {
+                    if let Some(ty) = ty {
+                        self.resolve_type(module, ty)?;
+                    }
+                }
+                if let Some(result) = result {
+                    self.resolve_type(module, result)?;
+                }
+                self.resolve_body(module, locals, body)?;
+            }
+            Expr::Apply(_, args) => {
+                for arg in args {
+                    self.resolve_expr(module, locals, arg)?;
+                }
+            }
             Expr::Record(name, fields) => {
                 let (target, short) = if let Some((alias, short)) = name.split_once('.') {
                     let imports: Vec<_> = self.modules[module]
@@ -1246,6 +1304,11 @@ fn native_cached(
 fn declared(body: &Block, names: &mut BTreeSet<String>) {
     fn expr(value: &Expr, names: &mut BTreeSet<String>) {
         match value {
+            Expr::Lambda(params, _, body) => {
+                names.extend(params.iter().map(|(name, _)| name.clone()));
+                declared(body, names);
+            }
+            Expr::Apply(_, values) => values.iter().for_each(|value| expr(value, names)),
             Expr::Catch(inner, binding, block) => {
                 names.insert(binding.clone());
                 declared(block, names);

@@ -1,8 +1,9 @@
 use crate::compiler::{
-    bitwise, borrow_of, compound, constructed, each_bindings, field_path, instance, instance_of,
-    linked_tuple, method_args, method_signature, nest, nested, numeric, overload, record_id,
-    record_method, record_order, terminates, tuple_fields, Block, Elem, Expr, Instruction, Module,
-    Pattern, Receiver, Type, COPY,
+    bitwise, borrow_of, captured_view, compound, constructed, copied, each_bindings, expr_roots,
+    field_function, field_path, func_sig, func_type, instance_of, instance_with, lambda_body,
+    lambda_prints, linked_tuple, method_args, method_signature, nest, nested, numeric, overload,
+    record_id, record_method, record_order, terminates, tuple_fields, Block, Elem, Expr,
+    Instruction, Module, Pattern, Receiver, Type, COPY,
 };
 use crate::project::Result;
 use std::collections::BTreeMap;
@@ -1134,6 +1135,12 @@ struct Generator<'a> {
     // 正按目标类型生成的表达式（地址）与目标类型：`Option.None` 这类构造只能从期望类型得知
     // 类型实参，检查器用的是同一个期望类型。只对这一个表达式生效，不传给子表达式。
     hint: Option<(usize, Type)>,
+    // 用到的函数类型：每个生成一个 `F<id>` 结构体（函数指针 + 环境指针）。
+    funcs: std::collections::BTreeSet<u64>,
+    // 提到函数体外面的定义：匿名函数与具名函数当值用时的包装函数，（名字, 定义）。
+    lifted: Vec<(String, String)>,
+    // 匿名函数的 C 名字前缀：所在函数的符号。
+    prefix: String,
 }
 /// 用到的容器：`(元素, None)` 是列表，`(键, Some(值))` 是字典。
 type Containers = std::collections::BTreeSet<(Elem, Option<Elem>)>;
@@ -1188,9 +1195,9 @@ fn record_of(ty: Type) -> Option<u64> {
         _ => None,
     }
 }
-/// 按值传递、不需要释放的标量。
+/// 按值传递、不需要释放的值：数字、布尔与函数值。
 fn by_value(ty: Type) -> bool {
-    matches!(ty, Type::Int | Type::Float | Type::Bool)
+    copied(ty)
 }
 /// C 里的 f64 字面量：Rust 的 Debug 输出是能精确读回的最短十进制，C 也认这种写法。
 fn float_literal(value: f64) -> String {
@@ -1517,6 +1524,7 @@ fn ctype(ty: Type) -> String {
         Type::ListRef(elem, _) => return format!("{}*", list_suffix(elem)),
         Type::Map(key, value) => return map_name(key, value),
         Type::MapRef(key, value, _) => return format!("{}*", map_name(key, value)),
+        Type::Func(id) | Type::FuncRef(id) => return format!("F{id}"),
         Type::Owned => "S",
         Type::Shared | Type::Mutable => "S*",
         Type::Int => "int64_t",
@@ -1527,9 +1535,251 @@ fn ctype(ty: Type) -> String {
     }
     .into()
 }
-impl Generator<'_> {
+impl<'a> Generator<'a> {
+    /// 同一个模块与符号表上的空白生成器：求匿名函数体的类型、生成提出去的函数。
+    fn sub(&self, locals: BTreeMap<String, (String, Type)>, result: Type) -> Generator<'a> {
+        Generator {
+            module: self.module,
+            symbols: self.symbols,
+            locals,
+            owners: Vec::new(),
+            loops: Vec::new(),
+            proofs: ranges::Proofs::default(),
+            call_targets: BTreeMap::new(),
+            code: String::new(),
+            next: 0,
+            result,
+            error: None,
+            containers: Containers::new(),
+            values: false,
+            records: Default::default(),
+            hint: None,
+            funcs: Default::default(),
+            lifted: Vec::new(),
+            prefix: String::new(),
+        }
+    }
+    /// 匿名函数捕获的外层变量：函数体里用到、又是当前局部变量的名字。
+    fn captures(&self, params: &[(String, Option<Type>)], body: &Block) -> Vec<String> {
+        let mut roots = std::collections::BTreeSet::new();
+        expr_roots(lambda_body(body), &mut roots);
+        roots
+            .into_iter()
+            .filter(|name| self.locals.contains_key(name) && !params.iter().any(|(p, _)| p == name))
+            .collect()
+    }
+    /// 没有期望类型时匿名函数的类型：参数用标注（或 `known`），返回类型用标注或函数体的类型。
+    fn lambda_type(
+        &self,
+        params: &[(String, Option<Type>)],
+        result: Option<Type>,
+        body: &Block,
+        known: Option<Vec<Type>>,
+    ) -> Option<u64> {
+        let types: Vec<Type> = match known {
+            Some(types) => types,
+            None => params.iter().map(|(_, ty)| *ty).collect::<Option<_>>()?,
+        };
+        let result = match result {
+            Some(result) => result,
+            None if lambda_prints(body) => Type::Unit,
+            None => {
+                let mut locals = BTreeMap::new();
+                for name in self.captures(params, body) {
+                    let ty = captured_view(self.locals[&name].1).ok()?;
+                    locals.insert(name, (String::new(), ty));
+                }
+                for ((name, _), ty) in params.iter().zip(&types) {
+                    locals.insert(name.clone(), (String::new(), *ty));
+                }
+                let sub = self.sub(locals, Type::Unit);
+                let ty = sub.ty(lambda_body(body));
+                ty.borrowable().map_or(ty, |(owned, _)| owned)
+            }
+        };
+        Some(func_type(types, result))
+    }
+    /// 具名函数当值用：生成（一次）转调它的包装函数，第一个参数是用不到的环境。
+    fn function_value(&mut self, name: &str) -> String {
+        let function = &self.module.functions[name];
+        let id = func_type(
+            function.params.iter().map(|(_, ty)| *ty).collect(),
+            function.result,
+        );
+        let symbol = &self.symbols[name];
+        let wrapper = format!("{symbol}_value");
+        if !self.lifted.iter().any(|(key, _)| *key == wrapper) {
+            let params: Vec<String> = function
+                .params
+                .iter()
+                .enumerate()
+                .map(|(i, (_, ty))| format!(", {} a{i}", ctype(*ty)))
+                .collect();
+            let args: Vec<String> = (0..function.params.len())
+                .map(|i| format!("a{i}"))
+                .collect();
+            let call = format!("{symbol}({})", args.join(", "));
+            let body = if function.result == Type::Unit {
+                format!("{call};")
+            } else {
+                format!("return {call};")
+            };
+            self.lifted.push((
+                wrapper.clone(),
+                format!(
+                    "static {} {wrapper}(void *env{}) {{ (void)env; {body} }}\n",
+                    ctype(function.result),
+                    params.concat()
+                ),
+            ));
+        }
+        self.scalar(&format!("{{ {wrapper}, NULL }}"), Type::Func(id))
+    }
+    /// 匿名函数：函数体提成一个静态函数，捕获的变量放进栈上的环境结构体（存它们的地址）。
+    fn lambda(&mut self, params: &[(String, Option<Type>)], body: &Block, ty: Type) -> String {
+        let (Type::Func(id) | Type::FuncRef(id)) = ty else {
+            unreachable!("function type")
+        };
+        let (types, result) = func_sig(id);
+        let name = format!("{}_fn{}", self.prefix, self.next);
+        self.next += 1;
+        let captures = self.captures(params, body);
+        let mut locals = BTreeMap::new();
+        let mut fields = Vec::new();
+        let mut inits = Vec::new();
+        for (index, capture) in captures.iter().enumerate() {
+            let (local, ty) = self.locals[capture].clone();
+            let view = captured_view(ty).expect("checked capture");
+            if by_value(ty) {
+                // 数字、布尔与函数：存地址，读的时候解引用，看到的是调用时的当前值。
+                fields.push(format!("{} *c{index};", ctype(ty)));
+                inits.push(format!("&{local}"));
+                locals.insert(capture.clone(), (format!("(*e->c{index})"), ty));
+            } else if ty.is_reference() {
+                fields.push(format!("{} c{index};", ctype(view)));
+                inits.push(local);
+                locals.insert(capture.clone(), (format!("e->c{index}"), view));
+            } else {
+                fields.push(format!("{} c{index};", ctype(view)));
+                inits.push(format!("&{local}"));
+                locals.insert(capture.clone(), (format!("e->c{index}"), view));
+            }
+        }
+        let mut g = self.sub(BTreeMap::new(), result);
+        g.prefix = name.clone();
+        let mut header = Vec::new();
+        for (i, ((param, _), ty)) in params.iter().zip(&types).enumerate() {
+            let local = format!("a{i}");
+            if owned(*ty) {
+                g.owners.push((local.clone(), *ty));
+            }
+            header.push(format!(", {} {local}", ctype(*ty)));
+            g.locals.insert(param.clone(), (local, *ty));
+        }
+        g.locals.extend(locals);
+        if result == Type::Unit {
+            g.block(body, Type::Unit);
+        } else {
+            let value = g.expr_as(lambda_body(body), result);
+            let value = g.moved(&value, result);
+            g.code
+                .push_str(&format!("{} result = {value};\n", ctype(result)));
+        }
+        g.cleanup();
+        if result != Type::Unit {
+            g.code.push_str("return result;\n");
+        }
+        let environment = if captures.is_empty() {
+            "(void)envp;\n".to_owned()
+        } else {
+            format!("struct {name}_env *e = envp;\n")
+        };
+        let mut definition = String::new();
+        if !captures.is_empty() {
+            definition.push_str(&format!("struct {name}_env {{ {} }};\n", fields.join(" ")));
+        }
+        definition.push_str(&format!(
+            "static {} {name}(void *envp{}) {{\n{environment}{}}}\n",
+            ctype(result),
+            header.concat(),
+            g.code
+        ));
+        self.containers.extend(g.containers);
+        self.values |= g.values;
+        self.records.extend(g.records);
+        self.funcs.extend(g.funcs);
+        self.lifted.extend(g.lifted);
+        self.lifted.push((name.clone(), definition));
+        if captures.is_empty() {
+            return self.scalar(&format!("{{ {name}, NULL }}"), ty);
+        }
+        let environment = format!("v{}", self.next);
+        self.next += 1;
+        self.code.push_str(&format!(
+            "struct {name}_env {environment} = {{ {} }};\n",
+            inits.join(", ")
+        ));
+        self.scalar(&format!("{{ {name}, &{environment} }}"), ty)
+    }
+    /// 调用函数值：`f.call(f.env, 实参...)`。`path` 是局部变量或结构体里的函数字段。
+    fn apply(&mut self, path: &str, args: &[Expr]) -> String {
+        let (Type::Func(id) | Type::FuncRef(id)) = self.place_ty(path) else {
+            unreachable!("checked function value")
+        };
+        let function = match path.split_once('.') {
+            Some((root, field)) => self.field(root, field),
+            None => self.locals[path].0.clone(),
+        };
+        let (params, result) = func_sig(id);
+        let mut values = vec![format!("{function}.env")];
+        for (arg, ty) in args.iter().zip(params) {
+            values.push(self.argument(arg, ty));
+        }
+        self.call_value(&format!("{function}.call({})", values.join(", ")), result)
+    }
+    /// `p.on_click(x)`：调用结构体里的函数字段。
+    fn field_call(&self, expr: &Expr) -> Option<(String, Vec<Expr>)> {
+        let Expr::Method(path, method, args) = expr else {
+            return None;
+        };
+        let root = path.split('.').next().unwrap_or(path);
+        if !self.locals.contains_key(root) {
+            return None;
+        }
+        field_function(&self.module.structs, self.place_ty(path), method)?;
+        Some((format!("{path}.{method}"), args.clone()))
+    }
     fn ty(&self, expr: &Expr) -> Type {
         match expr {
+            Expr::Lambda(..)
+                if self
+                    .hint
+                    .is_some_and(|(at, _)| at == expr as *const Expr as usize) =>
+            {
+                self.hint.expect("hint").1
+            }
+            Expr::Lambda(params, result, body) => Type::Func(
+                self.lambda_type(params, *result, body, None)
+                    .expect("checked anonymous fn"),
+            ),
+            Expr::FnRef(name) => {
+                let function = &self.module.functions[name];
+                Type::Func(func_type(
+                    function.params.iter().map(|(_, ty)| *ty).collect(),
+                    function.result,
+                ))
+            }
+            Expr::Apply(path, _) => match self.place_ty(path) {
+                Type::Func(id) | Type::FuncRef(id) => func_sig(id).1,
+                _ => unreachable!("checked function value"),
+            },
+            Expr::Method(..) if self.field_call(expr).is_some() => {
+                let (path, _) = self.field_call(expr).expect("field call");
+                match self.place_ty(&path) {
+                    Type::Func(id) | Type::FuncRef(id) => func_sig(id).1,
+                    _ => unreachable!("checked function field"),
+                }
+            }
             _ if self.record_call(expr) => {
                 let (name, _) = self.call_target(expr).expect("record method");
                 self.module.functions[&name].result
@@ -1568,6 +1818,9 @@ impl Generator<'_> {
                     values: false,
                     records: Default::default(),
                     hint: None,
+                    funcs: Default::default(),
+                    lifted: Vec::new(),
+                    prefix: String::new(),
                 }
                 .ty(value)
             }
@@ -1664,6 +1917,9 @@ impl Generator<'_> {
     }
     fn scalar(&mut self, value: &str, ty: Type) -> String {
         note(&mut self.containers, ty);
+        if let Type::Func(id) | Type::FuncRef(id) = ty {
+            self.funcs.insert(id);
+        }
         if let Some(id) = record_of(ty) {
             self.records.insert(id);
         }
@@ -1730,7 +1986,7 @@ impl Generator<'_> {
             let value = self.expr_as(arg, ty);
             self.moved(&value, ty)
         } else if by_value(ty) {
-            self.expr(arg)
+            self.expr_as(arg, ty)
         } else {
             self.borrowed(arg)
         }
@@ -1781,6 +2037,10 @@ impl Generator<'_> {
                         .push_str(&format!("set{}(&{local}, {k}, {v});\n", ctype(ty)));
                 }
                 local
+            }
+            // 匿名函数按目标函数类型确定参数与返回类型（参数类型可以省略）。
+            (Expr::Lambda(params, _, body), Type::Func(_) | Type::FuncRef(_)) => {
+                self.lambda(params, body, ty)
             }
             // 泛型类型的值：记下目标类型，构造（含 if/match 的分支）按它确定类型实参。
             (_, Type::Record(id)) if instance_of(id).is_some() => {
@@ -1883,6 +2143,16 @@ impl Generator<'_> {
     }
     fn expr(&mut self, expr: &Expr) -> String {
         match expr {
+            Expr::FnRef(name) => self.function_value(name),
+            Expr::Lambda(params, _, body) => {
+                let ty = self.ty(expr);
+                self.lambda(params, body, ty)
+            }
+            Expr::Apply(path, args) => self.apply(path, args),
+            Expr::Method(..) if self.field_call(expr).is_some() => {
+                let (path, args) = self.field_call(expr).expect("field call");
+                self.apply(&path, &args)
+            }
             // 结构体的方法：改写成普通调用 `Owner.m(接收者, ...)`。
             _ if self.record_call(expr) => {
                 let (name, args) = self.call_target(expr).expect("record method");
@@ -2547,12 +2817,23 @@ impl Generator<'_> {
         let known = |arg: &&Expr| {
             !matches!(arg, Expr::Record(..) | Expr::Variant(..)) || self.constructed(arg).is_some()
         };
-        let name = overload(name, args.first().filter(known).map(|arg| self.ty(arg)));
+        let typed = |arg: &&Expr| match arg {
+            Expr::Lambda(params, _, _) => params.iter().all(|(_, ty)| ty.is_some()),
+            _ => known(arg),
+        };
+        let name = overload(name, args.first().filter(typed).map(|arg| self.ty(arg)));
         let actuals: Vec<Option<Type>> = args
             .iter()
-            .map(|arg| known(&arg).then(|| self.value_type(arg)))
+            .map(|arg| typed(&arg).then(|| self.value_type(arg)))
             .collect();
-        instance(&self.module.functions, name, &actuals).expect("checked generic call")
+        let late = |index: usize, known: Vec<Type>| {
+            let Expr::Lambda(params, result, body) = &args[index] else {
+                return None;
+            };
+            self.lambda_type(params, *result, body, Some(known))
+                .map(Type::FuncRef)
+        };
+        instance_with(&self.module.functions, name, &actuals, &late).expect("checked generic call")
     }
     /// 调用的目标函数与实参：普通调用原样返回，结构体的方法改写成 `Owner.m(接收者, ...)`。
     fn call_target(&self, expr: &Expr) -> Option<(String, Vec<Expr>)> {
@@ -3080,6 +3361,12 @@ fn visit_exprs<'a>(body: &'a Block, visit: &mut impl FnMut(&'a Expr)) {
     fn expr<'a>(value: &'a Expr, visit: &mut impl FnMut(&'a Expr)) {
         visit(value);
         match value {
+            Expr::Lambda(_, _, body) => visit_exprs(body, visit),
+            Expr::Apply(_, args) => {
+                for arg in args {
+                    expr(arg, visit);
+                }
+            }
             Expr::Call(_, args)
             | Expr::Method(_, _, args)
             | Expr::Variant(_, _, args)
@@ -3379,6 +3666,9 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
                             .map(|(name, _)| name.clone()),
                     );
                 }
+                Expr::FnRef(name) => {
+                    needed.insert(name.clone());
+                }
                 // 泛型模板不生成；用到的实例经生成器登记的类型带进来。
                 Expr::Record(name, _) | Expr::Variant(name, _, _)
                     if module.structs[name].generics.is_empty() =>
@@ -3429,6 +3719,21 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
         .collect();
     // 先生成函数体并收集其中的容器类型，再按依赖顺序拼装：容器、结构体、结果结构体、声明、函数体。
     let mut bodies = String::new();
+    let mut funcs = std::collections::BTreeSet::new();
+    let mut lifted: Vec<(String, String)> = Vec::new();
+    for name in &needed {
+        let function = &module.functions[name];
+        for ty in function
+            .params
+            .iter()
+            .map(|(_, ty)| *ty)
+            .chain([function.result])
+        {
+            if let Type::Func(id) | Type::FuncRef(id) = ty {
+                funcs.insert(id);
+            }
+        }
+    }
     let generic = plans.into_iter().map(|(name, plan)| (name, None, plan));
     let specialized = specializations.into_iter().map(|version| {
         let proofs = ranges::analyze_with_ranges(&module.functions[&version.name], &version.inputs);
@@ -3443,6 +3748,7 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
     });
     for (name, symbol, plan) in generic.chain(specialized) {
         let function = &module.functions[&name];
+        let prefix = symbol.clone().unwrap_or_else(|| symbols[&name].clone());
         let declaration = if let Some(symbol) = symbol {
             format!(
                 "static {}",
@@ -3468,6 +3774,9 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
             values: false,
             records: Default::default(),
             hint: None,
+            funcs: Default::default(),
+            lifted: Vec::new(),
+            prefix,
         };
         for (i, (param, ty)) in function.params.iter().enumerate() {
             let local = format!("p{i}");
@@ -3492,15 +3801,37 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
         for id in g.records {
             records.insert(record_name(id));
         }
+        funcs.extend(g.funcs);
+        for (key, definition) in g.lifted {
+            if !lifted.iter().any(|(other, _)| *other == key) {
+                lifted.push((key, definition));
+            }
+        }
     }
     // 结构体与容器互相引用（结构体字段是列表，列表元素是结构体），收集到不再增加为止。
     loop {
-        let before = (records.len(), containers.len());
+        let before = (records.len(), containers.len(), funcs.len());
         for name in records.clone() {
             for (_, ty) in &module.structs[&name].fields {
                 note(&mut containers, *ty);
                 if let Some(id) = record_of(*ty) {
                     records.insert(record_name(id));
+                }
+                if let Type::Func(id) = ty {
+                    funcs.insert(*id);
+                }
+            }
+        }
+        // 函数类型的参数与结果也要有定义（按值传的结构体、容器）。
+        for id in funcs.clone() {
+            let (params, result) = func_sig(id);
+            for ty in params.into_iter().chain([result]) {
+                note(&mut containers, ty);
+                if let Some(id) = record_of(ty) {
+                    records.insert(record_name(id));
+                }
+                if let Type::Func(id) | Type::FuncRef(id) = ty {
+                    funcs.insert(id);
                 }
             }
         }
@@ -3515,7 +3846,7 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
                 }
             }
         }
-        if (records.len(), containers.len()) == before {
+        if (records.len(), containers.len(), funcs.len()) == before {
             break;
         }
     }
@@ -3541,6 +3872,21 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
     }
     for (key, value) in &maps {
         source.push_str(&map_helpers(MAP_DECLARATION, *key, *value));
+    }
+    // 函数值：函数指针（第一个参数是环境）加环境指针。不捕获变量时环境是 NULL。
+    for id in &funcs {
+        source.push_str(&format!("typedef struct F{id} F{id};\n"));
+    }
+    for id in &funcs {
+        let (params, result) = func_sig(*id);
+        let params: String = params
+            .iter()
+            .map(|ty| format!(", {}", ctype(*ty)))
+            .collect();
+        source.push_str(&format!(
+            "struct F{id} {{ {} (*call)(void *{params}); void *env; }};\n",
+            ctype(result)
+        ));
     }
     for elem in &lists {
         source.push_str(&list_definition(*elem));
@@ -3668,6 +4014,9 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
         }
     }
     source.push_str(&specialized_decls);
+    for (_, definition) in &lifted {
+        source.push_str(definition);
+    }
     source.push_str(&bodies);
     if entry.split_once(':').unwrap().0 == unit {
         // argv 留给 std/env（Unix）；Windows 下 std/env 改读 GetCommandLineW 以拿到 UTF-8。
