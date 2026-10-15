@@ -1,5 +1,5 @@
 use crate::compiler::{
-    bitwise, borrow_of, compound, each_bindings, field_path, linked_tuple, method_args,
+    bitwise, borrow_of, compound, each_bindings, field_path, instance, linked_tuple, method_args,
     method_signature, nest, nested, numeric, overload, record_id, record_method, record_order,
     terminates, tuple_fields, Block, Elem, Expr, Instruction, Module, Pattern, Receiver, Type,
     COPY,
@@ -1106,6 +1106,7 @@ pub fn builtin_functions() -> impl Iterator<Item = (String, crate::compiler::Fun
                 body: Vec::new(),
                 position: (1, 1),
                 builtin: true,
+                generics: Vec::new(),
             },
         )
     })
@@ -1608,7 +1609,7 @@ impl Generator<'_> {
                 }
             }
             Expr::Call(name, args) if name == COPY => self.value_type(&args[0]),
-            Expr::Call(name, args) => self.module.functions[self.callee(name, args)].result,
+            Expr::Call(name, args) => self.module.functions[&self.callee(name, args)].result,
             Expr::Try(inner) => self.ty(inner),
             Expr::Catch(inner, _, _) => self.ty(inner),
             Expr::Unary('!', _) => Type::Bool,
@@ -2215,7 +2216,7 @@ impl Generator<'_> {
                 self.call_value(&native_values::copy(ty, &pointer), ty)
             }
             Expr::Call(name, args) => {
-                let name = self.callee(name, args);
+                let name = &self.callee(name, args);
                 let result = self.module.functions[name].result;
                 let symbol = self
                     .call_targets
@@ -2486,15 +2487,17 @@ impl Generator<'_> {
         }
     }
     /// 被调函数的实际名字：`abs`/`min`/`max` 按第一个参数的类型选版本。
-    fn callee<'n>(&self, name: &'n str, args: &[Expr]) -> &'n str {
-        overload(name, args.first().map(|arg| self.ty(arg)))
+    /// 被调函数的实际名字：`abs`/`min`/`max` 按第一个参数的类型选版本，泛型函数按实参类型选副本。
+    fn callee(&self, name: &str, args: &[Expr]) -> String {
+        let name = overload(name, args.first().map(|arg| self.ty(arg)));
+        let actuals: Vec<Option<Type>> =
+            args.iter().map(|arg| Some(self.value_type(arg))).collect();
+        instance(&self.module.functions, name, &actuals).expect("checked generic call")
     }
     /// 调用的目标函数与实参：普通调用原样返回，结构体的方法改写成 `Owner.m(接收者, ...)`。
     fn call_target(&self, expr: &Expr) -> Option<(String, Vec<Expr>)> {
         let (receiver, ty, method, args) = match expr {
-            Expr::Call(name, args) => {
-                return Some((self.callee(name, args).to_owned(), args.clone()))
-            }
+            Expr::Call(name, args) => return Some((self.callee(name, args), args.clone())),
             Expr::Method(path, method, args) => {
                 let ty = self.place_ty(path);
                 (Receiver::Path(path, ty), ty, method, args)
@@ -3163,7 +3166,8 @@ fn specialization_plan(
     let mut plans = BTreeMap::new();
     let mut versions: Vec<Specialization> = Vec::new();
     for (name, function) in &module.functions {
-        if name.split_once(':').unwrap().0 != unit {
+        // 泛型模板不生成，只生成按类型生成的副本。
+        if name.split_once(':').unwrap().0 != unit || !function.generics.is_empty() {
             continue;
         }
         let proofs = ranges::analyze(function);
@@ -3271,14 +3275,30 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
     let mut records = std::collections::BTreeSet::new();
     let mut needed = std::collections::BTreeSet::new();
     for (name, function) in &module.functions {
-        if name.split_once(':').unwrap().0 == unit {
+        if name.split_once(':').unwrap().0 == unit && function.generics.is_empty() {
             needed.insert(name.clone());
             visit_exprs(&function.body, &mut |expr| match expr {
                 // `copy` 不在函数表里；重载的内建函数两个版本都带上，按参数类型调用其中一个。
                 Expr::Call(name, _) if name != COPY => {
                     for ty in [Type::Int, Type::Float] {
-                        needed.insert(overload(name, Some(ty)).to_owned());
+                        let callee = overload(name, Some(ty));
+                        if module
+                            .functions
+                            .get(callee)
+                            .is_some_and(|f| f.generics.is_empty())
+                        {
+                            needed.insert(callee.to_owned());
+                        }
                     }
+                    // 泛型函数：调用的是按类型生成的副本，同名模板的副本都带上原型。
+                    let prefix = format!("{name}[");
+                    needed.extend(
+                        module
+                            .functions
+                            .keys()
+                            .filter(|key| key.starts_with(&prefix))
+                            .cloned(),
+                    );
                 }
                 // 方法调用要到生成时才知道接收者类型：同名的结构体方法都带上原型。
                 Expr::Method(_, method, _)

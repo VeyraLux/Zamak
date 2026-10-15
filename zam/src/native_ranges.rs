@@ -1011,6 +1011,7 @@ mod tests {
             body: body.into_iter().map(|i| (i, (1, 1))).collect(),
             position: (1, 1),
             builtin: false,
+            generics: Vec::new(),
         }
     }
     fn binary(op: &str, a: Expr, b: Expr) -> Expr {

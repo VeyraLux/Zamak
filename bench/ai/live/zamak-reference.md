@@ -65,6 +65,18 @@ fn double(n: i64) -> i64: n * 2
 
 The last expression of the function body (or of the final `if`/`elif`/`else` branches) is the return value; `return expr` also works. Function names start with a lowercase letter. Only `pub fn` is visible from other modules (single-file programs do not need `pub`).
 
+## Generic functions
+
+```
+fn largest[T](items: &[T]) -> T:
+    let mut best = items[0]
+    for item in items:
+        if item > best: best = item
+    best
+```
+
+Type parameters are uppercase names in brackets after the function name. Calls do not name the types (`largest(&numbers)`); each type parameter must appear in a parameter type so it can be inferred. The body is checked for each concrete type used.
+
 ## Control flow
 
 ```
