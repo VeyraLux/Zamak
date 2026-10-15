@@ -4220,8 +4220,12 @@ impl<'a> Checker<'a> {
                 );
                 let returned = self.block(block, self.result)?;
                 self.locals.remove(binding);
-                // ponytail: 只认 return；需要 break/continue 收尾时再放宽。
-                if !returned {
+                // 在循环里用 break / continue 收尾也算走完：控制流离开了这次调用所在的语句。
+                let jumped = matches!(
+                    block.last(),
+                    Some((Instruction::Break | Instruction::Continue, _))
+                );
+                if !returned && !jumped {
                     return Err(format!("catch block for {name} must return a value"));
                 }
                 Ok(())
@@ -4726,9 +4730,15 @@ pub fn check(module: &Module, entry: &str) -> Result<(), String> {
             module: name.split(':').next().unwrap_or(name),
         };
         let result = (|| {
-            // ponytail: v1 只支持 string 错误类型；泛化 E 是纯增量（C 侧结果结构体按 E 再分一个维度）。
-            if function.error.is_some_and(|ty| ty != Type::Owned) {
-                return Err("only string error types are supported for now".into());
+            // 错误类型是字符串、结构体或枚举；C 侧结果结构体按（成功类型, 错误类型）区分。
+            if function
+                .error
+                .is_some_and(|ty| !matches!(ty, Type::Owned | Type::Record(_)))
+            {
+                return Err(
+                    "unsupported error type; errors are a string, a struct or an enum, such as -> i64!ParseError"
+                        .into(),
+                );
             }
             let mut names = BTreeSet::new();
             for (param, ty) in &function.params {
