@@ -1,11 +1,12 @@
 use crate::compiler::{self, Block, Expr, Instruction, Module};
 use crate::native;
+use crate::package;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
@@ -82,6 +83,8 @@ struct Input {
     module: Module,
     // `zam fmt` 要落盘；模块 id 与文件名不一定同名（单文件入口恒为 main）。
     path: PathBuf,
+    // 来自哪个依赖包；项目自己的模块是 None。
+    package: Option<String>,
 }
 
 pub struct Project {
@@ -89,18 +92,6 @@ pub struct Project {
     pub root: PathBuf,
     entry: String,
     modules: BTreeMap<String, Input>,
-}
-
-fn relative(path: &str) -> Result<PathBuf> {
-    let path = PathBuf::from(path);
-    if path.as_os_str().is_empty()
-        || path
-            .components()
-            .any(|c| !matches!(c, Component::Normal(_)))
-    {
-        return Err("project paths must be nonempty relative paths without '..'".into());
-    }
-    Ok(path)
 }
 
 fn is_source(path: &Path) -> bool {
@@ -148,12 +139,47 @@ fn scan(
                         source,
                         module,
                         path,
+                        package: None,
                     },
                 )
                 .is_some()
             {
                 return Err(format!("duplicate module {id}"));
             }
+        }
+    }
+    Ok(())
+}
+
+/// 把依赖包的模块挂到包名下：`src/geo.zm` 是 `包名/geo`，与包同名的 `src/包名.zm` 就是 `包名`。
+/// 包内部的 `use geo` 改写成限定后的名字；指向别的包或标准库的导入不变。
+fn load_package(
+    name: &str,
+    package: &package::Package,
+    modules: &mut BTreeMap<String, Input>,
+    parse: Parse,
+) -> Result<()> {
+    let base = package.dir.join(&package.manifest.modules);
+    let mut own = BTreeMap::new();
+    scan(&base, &base, &mut own, parse)?;
+    let qualified = |id: &str| {
+        if id == name {
+            name.to_owned()
+        } else {
+            format!("{name}/{id}")
+        }
+    };
+    let local: BTreeSet<String> = own.keys().cloned().collect();
+    for (id, mut input) in own {
+        for import in &mut input.module.imports {
+            if local.contains(import.as_str()) {
+                *import = qualified(import);
+            }
+        }
+        input.package = Some(name.to_owned());
+        let id = qualified(&id);
+        if modules.insert(id.clone(), input).is_some() {
+            return Err(format!("duplicate module {id}"));
         }
     }
     Ok(())
@@ -169,17 +195,35 @@ pub fn identifier(name: &str) -> bool {
 
 impl Project {
     pub fn load(input: &Path) -> Result<Self> {
-        Self::load_with(input, compiler::parse)
+        Self::load_with(input, compiler::parse, Some(false))
     }
 
-    /// `zam fmt` 用：行首 Tab 先展开再解析，Tab 缩进的文件也能被格式化。
+    /// `zam update`：忽略 `zam.lock`，把每个 git 依赖的 rev 重新解析成最新的提交。
+    pub fn load_updating(input: &Path) -> Result<Self> {
+        Self::load_with(input, compiler::parse, Some(true))
+    }
+
+    /// `zam fmt` 用：行首 Tab 先展开再解析，Tab 缩进的文件也能被格式化。只整理项目自己的模块，
+    /// 不读依赖。
     pub fn load_for_format(input: &Path) -> Result<Self> {
-        Self::load_with(input, |source| {
-            compiler::parse(&compiler::expand_tabs(source))
-        })
+        Self::load_with(
+            input,
+            |source| compiler::parse(&compiler::expand_tabs(source)),
+            None,
+        )
     }
 
-    fn load_with(input: &Path, parse: Parse) -> Result<Self> {
+    /// 清单文件的路径：目录下的 `zam.toml`，或者直接给出的文件。
+    pub fn manifest_path(input: &Path) -> PathBuf {
+        if input.is_dir() {
+            input.join("zam.toml")
+        } else {
+            input.into()
+        }
+    }
+
+    /// `dependencies` 为 None 时不解析依赖（格式化），Some(update) 时解析，update 表示忽略锁文件。
+    fn load_with(input: &Path, parse: Parse, dependencies: Option<bool>) -> Result<Self> {
         if is_source(input) {
             let source = fs::read_to_string(input).map_err(|e| e.to_string())?;
             let module = parse(&source).map_err(|e| format!("{}: {e}", input.display()))?;
@@ -193,43 +237,16 @@ impl Project {
                         source,
                         module,
                         path: input.to_path_buf(),
+                        package: None,
                     },
                 )]),
             });
         }
-        let manifest = if input.is_dir() {
-            input.join("zam.toml")
-        } else {
-            input.into()
-        };
-        let text =
-            fs::read_to_string(&manifest).map_err(|e| format!("{}: {e}", manifest.display()))?;
-        let config: toml::Table = text.parse().map_err(|e| format!("invalid zam.toml: {e}"))?;
-        if config.len() != 1 {
-            return Err("zam.toml accepts only [project]".into());
-        }
-        let table = config
-            .get("project")
-            .and_then(toml::Value::as_table)
-            .ok_or("missing [project]")?;
-        if table
-            .keys()
-            .any(|key| !matches!(key.as_str(), "name" | "entry" | "modules"))
-        {
-            return Err("unknown project setting".into());
-        }
-        let setting = |key: &str| -> Result<&str> {
-            table
-                .get(key)
-                .and_then(toml::Value::as_str)
-                .ok_or_else(|| format!("missing string project.{key}"))
-        };
-        let name = setting("name")?.to_owned();
-        if !identifier(&name) {
-            return Err("project.name must be an identifier".into());
-        }
-        let entry_path = relative(setting("entry")?)?;
-        let module_path = relative(setting("modules")?)?;
+        let manifest = Self::manifest_path(input);
+        let config = package::manifest(&manifest, false)?;
+        let name = config.name.clone();
+        let entry_path = config.entry.clone().expect("project entry");
+        let module_path = config.modules.clone();
         let entry = entry_path
             .strip_prefix(&module_path)
             .map_err(|_| "entry must be inside modules")?;
@@ -247,6 +264,25 @@ impl Project {
         scan(&base, &base, &mut modules, parse)?;
         if !modules.contains_key(&entry) {
             return Err(format!("missing entry module {entry}"));
+        }
+        if let Some(update) = dependencies {
+            let packages = package::resolve(
+                &root,
+                &config.dependencies,
+                &cache_dir().join("packages"),
+                update,
+            )?;
+            for (dependency, package) in &packages {
+                if let Some(id) = modules
+                    .keys()
+                    .find(|id| *id == dependency || id.starts_with(&format!("{dependency}/")))
+                {
+                    return Err(format!(
+                        "module {id} has the same name as the dependency {dependency}; rename one of them"
+                    ));
+                }
+                load_package(dependency, package, &mut modules, parse)?;
+            }
         }
         Ok(Self {
             name,
@@ -300,6 +336,7 @@ impl Project {
     pub fn module_paths(&self) -> Vec<PathBuf> {
         self.modules
             .values()
+            .filter(|input| input.package.is_none())
             .map(|input| input.path.clone())
             .collect()
     }
@@ -312,6 +349,10 @@ impl Project {
     pub fn tests(&self) -> Result<Vec<String>> {
         let mut tests = Vec::new();
         for (id, input) in &self.modules {
+            // 依赖包里的测试由包自己运行。
+            if input.package.is_some() {
+                continue;
+            }
             for (name, function) in &input.module.functions {
                 if !name.starts_with("test_") {
                     continue;

@@ -1,5 +1,6 @@
 mod compiler;
 mod native;
+mod package;
 mod project;
 
 use std::path::Path;
@@ -38,6 +39,8 @@ fn execute() -> project::Result<()> {
     let valid_shape = match args.first().map(String::as_str) {
         Some("check" | "build" | "fmt" | "run") => matches!(args.len(), 1..=2),
         Some("test") => matches!(args.len(), 1..=3),
+        Some("update") => matches!(args.len(), 1..=2),
+        Some("add") => matches!(args.len(), 3..=4),
         Some("new") => {
             args.len() == 2
                 || (args.len() == 4 && args[2] == "--template" && args[3] == "ai")
@@ -51,7 +54,8 @@ fn execute() -> project::Result<()> {
     let missing_command = raw_args.first().is_some_and(|arg| arg == "--json");
     if !valid_shape || option_as_path || missing_command {
         return Err(
-            "usage: zam <check|build|run|test|fmt|new> [project|file] [--template ai]".into(),
+            "usage: zam <check|build|run|test|fmt|new|add|update> [project|file] [--template ai]"
+                .into(),
         );
     }
     let input = Path::new(args.get(1).map(String::as_str).unwrap_or("."));
@@ -82,6 +86,45 @@ fn execute() -> project::Result<()> {
         }
         Some("build") => { project::Project::load(input)?.build(&project::cache_dir())?; }
         Some("fmt") => format_sources(input)?,
+        // `zam add <名字> <git 地址|本地目录> [rev]`：在当前目录的 zam.toml 里加一个依赖并拉取。
+        Some("add") => {
+            let location = &args[2];
+            let source = if Path::new(location).is_dir() {
+                package::Source::Path(location.into())
+            } else {
+                package::Source::Git {
+                    url: location.clone(),
+                    rev: args.get(3).cloned().unwrap_or_else(|| "HEAD".into()),
+                }
+            };
+            if args.len() == 4 && matches!(source, package::Source::Path(_)) {
+                return Err("a path dependency takes no rev".into());
+            }
+            let manifest = project::Project::manifest_path(Path::new("."));
+            let original = std::fs::read(&manifest).map_err(|e| format!("{}: {e}", manifest.display()))?;
+            let lock = manifest.with_file_name("zam.lock");
+            let original_lock = std::fs::read(&lock).ok();
+            package::add(&manifest, &args[1], &source)?;
+            // 拉取或检查失败时恢复原来的 zam.toml 与 zam.lock，不留下坏掉的依赖。
+            if let Err(error) = project::Project::load(Path::new(".")) {
+                let _ = std::fs::write(&manifest, original);
+                match original_lock {
+                    Some(bytes) => {
+                        let _ = std::fs::write(&lock, bytes);
+                    }
+                    None => {
+                        let _ = std::fs::remove_file(&lock);
+                    }
+                }
+                return Err(error);
+            }
+            eprintln!("ADD {}", args[1]);
+        }
+        Some("update") => {
+            project::Project::load_updating(input)?;
+            let lock = project::Project::manifest_path(input).with_file_name("zam.lock");
+            eprintln!("UPDATE {}", lock.display());
+        }
         // `zam test [project|file] [名字里的一段]`：运行 test_ 开头的函数，有失败时退出码非零。
         Some("test") => {
             let project = project::Project::load(input)?;
@@ -105,8 +148,8 @@ fn execute() -> project::Result<()> {
         }
         Some("demo") if args.len() == 1 => demo()?,
         Some("--version") | Some("-V") => println!("{}", env!("CARGO_PKG_VERSION")),
-        None | Some("--help") | Some("-h") => println!("zam {}\n  zam check [project|file]\n  zam build [project|file]\n  zam fmt [project|file]\n  zam run [project|file|artifact] [-- args...]\n  zam test [project|file] [filter]\n  zam new <directory> [--template ai]\n  zam check --json [project|file]\n  zam build --json [project|file]\n  zam demo\n  zam --version", env!("CARGO_PKG_VERSION")),
-        _ => return Err("usage: zam <check|build|run|test|fmt|new> [project|file]".into()),
+        None | Some("--help") | Some("-h") => println!("zam {}\n  zam check [project|file]\n  zam build [project|file]\n  zam fmt [project|file]\n  zam run [project|file|artifact] [-- args...]\n  zam test [project|file] [filter]\n  zam add <name> <git-url|directory> [rev]\n  zam update [project]\n  zam new <directory> [--template ai]\n  zam check --json [project|file]\n  zam build --json [project|file]\n  zam demo\n  zam --version", env!("CARGO_PKG_VERSION")),
+        _ => return Err("usage: zam <check|build|run|test|fmt|new|add|update> [project|file]".into()),
     }
     Ok(())
 }
