@@ -54,7 +54,7 @@ error[ZM301]: use after move: name
 
 ## 模板
 
-使用 `zam new demo --template ai` 生成带 `AI.md` 的项目。每轮只做一个局部修复；修复后重新运行 `check --json`，通过后再构建和执行。模板写明代码块靠缩进、用 `elif` 和 `and`/`or`/`not`、结构体字面量的写法，当前不支持的网络 I/O、泛型、闭包、线程和 FFI，以及 `i64` 与 `f64` 之间要显式转换，减少模型凭经验猜测语法的失败。缩进相关的报错（`expected an indented block`、`unexpected indent`、`unindent does not match any outer indentation level`、Tab 缩进）都归 `ZM110`，建议里给出具体改法；Tab 缩进先运行 `zam fmt`。
+使用 `zam new demo --template ai` 生成带 `AI.md` 的项目。每轮只做一个局部修复；修复后重新运行 `check --json`，通过后再构建和执行。模板写明代码块靠缩进、用 `elif` 和 `and`/`or`/`not`、结构体字面量的写法，泛型与 `Option[T]`、函数值与匿名函数的写法，当前不支持的网络 I/O、线程和 FFI，以及 `i64` 与 `f64` 之间要显式转换，减少模型凭经验猜测语法的失败。缩进相关的报错（`expected an indented block`、`unexpected indent`、`unindent does not match any outer indentation level`、Tab 缩进）都归 `ZM110`，建议里给出具体改法；Tab 缩进先运行 `zam fmt`。
 
 ## 离线评测
 
