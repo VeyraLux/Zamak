@@ -146,7 +146,9 @@ let area = match s:
 
 ## Lists `[T]`
 
-`T` is `i64`, `f64`, `bool`, `string`, a struct or an enum.
+`T` is `i64`, `f64`, `bool`, `string`, a struct, an enum, or another list or map: `[[i64]]`, `[{string: i64}]`, `{string: [string]}`.
+
+- Nested elements: `grid[i][j]` reads and writes an inner element (two levels at most; string elements are read as copies), `grid[i].push(x)` and `m[k].len()` call methods on an inner container, `for row in &grid:` gives `&[i64]`, and `&grid[i]` borrows a row. `grid[i]` alone cannot be taken out.
 
 - `let mut xs: [i64] = []` (an empty list needs a type annotation), `let xs: [string] = ["a", "b"]`.
 - `xs.len()`, `xs.push(v)`, `xs.pop()` (removes and returns the last element), `xs.insert(i, v)`, `xs.remove(i)` (removes and returns element `i`), `xs.swap(i, j)`, `xs.reverse()`, `xs.clear()`, `xs.extend(ys)` (moves all of `ys` to the end).
@@ -157,7 +159,7 @@ let area = match s:
 
 ## Maps `{K: V}`
 
-`K` is `i64` or `string`; `V` is `i64`, `f64`, `bool`, `string`, a struct or an enum (maps of structs have no `get`; use `m.contains(k)` then `m[k].field`).
+`K` is `i64` or `string`; `V` is `i64`, `f64`, `bool`, `string`, a struct, an enum, a list or a map (maps of structs have no `get`; use `m.contains(k)` then `m[k].field`).
 
 - `let mut m: {string: i64} = {}` (an empty map needs a type annotation), `let m = {"a": 1, "b": 2}`.
 - `m[k]` reads (stops the program if the key is missing); `m[k] = v` inserts or replaces.

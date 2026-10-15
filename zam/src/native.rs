@@ -1,7 +1,7 @@
 use crate::compiler::{
-    bitwise, borrow_of, compound, each_bindings, field_path, method_args, method_signature,
-    numeric, overload, record_id, record_method, record_order, terminates, Block, Elem, Expr,
-    Instruction, Module, Pattern, Receiver, Type, COPY,
+    bitwise, borrow_of, compound, each_bindings, field_path, method_args, method_signature, nest,
+    nested, numeric, overload, record_id, record_method, record_order, terminates, Block, Elem,
+    Expr, Instruction, Module, Pattern, Receiver, Type, COPY,
 };
 use crate::project::Result;
 use std::collections::BTreeMap;
@@ -1132,17 +1132,27 @@ type Containers = std::collections::BTreeSet<(Elem, Option<Elem>)>;
 fn note(set: &mut Containers, ty: Type) {
     match ty.container() {
         Some(Type::List(elem)) => {
-            set.insert((elem, None));
+            if set.insert((elem, None)) {
+                note_nested(set, elem);
+            }
         }
         // 字典的 keys()/values() 返回键与值的列表，所以这两种列表一并生成。
         Some(Type::Map(key, value)) => {
             set.insert((key, None));
-            if !matches!(value, Elem::Record(_)) {
+            if value.comparable() {
                 set.insert((value, None));
             }
-            set.insert((key, Some(value)));
+            if set.insert((key, Some(value))) {
+                note_nested(set, value);
+            }
         }
         _ => {}
+    }
+}
+/// 内层容器也要生成自己的辅助函数。
+fn note_nested(set: &mut Containers, elem: Elem) {
+    if let Elem::Nested(id) = elem {
+        note(set, nested(id));
     }
 }
 fn is_text(ty: Type) -> bool {
@@ -1154,6 +1164,7 @@ fn elem_of(ty: Type) -> Elem {
         Type::Float => Elem::Float,
         Type::Bool => Elem::Bool,
         Type::Record(id) => Elem::Record(id),
+        Type::List(_) | Type::Map(_, _) => nest(ty),
         _ => Elem::Str,
     }
 }
@@ -1225,6 +1236,12 @@ fn elem_suffix(elem: Elem) -> String {
         Elem::Bool => "b".into(),
         Elem::Str => "s".into(),
         Elem::Record(id) => format!("R{id}"),
+        // 内层容器的名字直接拼进来：`[[i64]]` 是 `LLi`，`{string: [string]}` 是 `MsLs`。
+        Elem::Nested(id) => match nested(id) {
+            Type::List(elem) => format!("L{}", elem_suffix(elem)),
+            Type::Map(key, value) => format!("M{}{}", elem_suffix(key), elem_suffix(value)),
+            _ => unreachable!("nested elements are containers"),
+        },
     }
 }
 fn map_name(key: Elem, value: Elem) -> String {
@@ -1298,13 +1315,29 @@ static int del$M($M *m, $KP) { int64_t at = find$M(m, k, $HASH); E$M *e; if (at 
 static $L keys$M($M *m) { $L out = {0}; size_t i; for (i = 0; i < m->len; i++) { E$M *e = &m->entries[i]; if (e->live) push$L(&out, $KEYOUT); } return out; }
 static void clear$M($M *m) { size_t i; for (i = 0; i < m->len; i++) { E$M *e = &m->entries[i]; if (e->live) { $DROPKEY $DROPVAL } } m->len = 0; m->count = 0; for (i = 0; i < m->nslots; i++) m->slots[i] = -1; }
 "#;
+/// `grid[k][j]` 的读写落到内层字典上：`valat` 读（字符串得到副本），`put` 写入或替换。
+fn map_slots(key: Elem, value: Elem) -> String {
+    let m = map_name(key, value);
+    let t = ctype(value.ty());
+    let param = if key == Elem::Str {
+        "S *k"
+    } else {
+        "int64_t k"
+    };
+    let read = match value {
+        Elem::Str => "copy(at{m}(m, k))".replace("{m}", &m),
+        _ if value.comparable() => format!("*at{m}(m, k)"),
+        _ => return format!("static void put{m}({m} *m, {param}, {t} v) {{ set{m}(m, k, v); }}\n"),
+    };
+    format!("static void put{m}({m} *m, {param}, {t} v) {{ set{m}(m, k, v); }}\nstatic {t} valat{m}({m} *m, {param}) {{ return {read}; }}\n")
+}
 /// 字典的 `values()`：值的列表，字符串值复制；结构体值不能复制，没有这个方法。
 fn map_values(key: Elem, value: Elem) -> String {
     let m = map_name(key, value);
     let l = list_suffix(value);
     let out = match value {
         Elem::Str => "copy(&e->value)",
-        Elem::Record(_) => return String::new(),
+        Elem::Record(_) | Elem::Nested(_) => return String::new(),
         _ => "e->value",
     };
     format!("static {l} values{m}({m} *m) {{ {l} out = {{0}}; size_t i; for (i = 0; i < m->len; i++) {{ E{m} *e = &m->entries[i]; if (e->live) push{l}(&out, {out}); }} return out; }}\n")
@@ -1355,6 +1388,7 @@ fn drop_elem(elem: Elem, slot: &str) -> String {
     match elem {
         Elem::Str => format!("drop({slot});"),
         Elem::Record(id) => format!("dropR{id}({slot});"),
+        Elem::Nested(id) => format!("drop{}({slot});", ctype(nested(id))),
         _ => String::new(),
     }
 }
@@ -1377,6 +1411,17 @@ fn list_helpers(elem: Elem) -> String {
         drop => format!("for (size_t i = 0; i < l->len; i++) {drop} "),
     };
     let comparable = comparable_list_helpers(elem);
+    let drop_slot = drop_elem(elem, "slot");
+    // `grid[i][j]` 读内层元素：标量按值，字符串得到副本。
+    let valat = match elem {
+        Elem::Str => {
+            format!("static S valat{l}({l} *l, int64_t i) {{ return copy(at{l}(l, i)); }}\n")
+        }
+        _ if elem.comparable() => {
+            format!("static {t} valat{l}({l} *l, int64_t i) {{ return *at{l}(l, i); }}\n")
+        }
+        _ => String::new(),
+    };
     format!(
         "static void drop{l}({l} *l) {{ {drop_items}free(l->data); l->data = NULL; l->len = 0; l->cap = 0; }}
 static {l} take{l}({l} *l) {{ {l} v = *l; l->data = NULL; l->len = 0; l->cap = 0; return v; }}
@@ -1400,7 +1445,8 @@ static {t} removeat{l}({l} *l, int64_t i) {{ {t} v; if (i < 0 || (uint64_t)i >= 
 static void reverse{l}({l} *l) {{ size_t i, j; for (i = 0, j = l->len; i + 1 < j; i++, j--) {{ {t} tmp = l->data[i]; l->data[i] = l->data[j - 1]; l->data[j - 1] = tmp; }} }}
 static void clear{l}({l} *l) {{ {drop_items}l->len = 0; }}
 static void extend{l}({l} *l, {l} o) {{ size_t i; for (i = 0; i < o.len; i++) push{l}(l, o.data[i]); free(o.data); }}
-{comparable}"
+static void put{l}({l} *l, int64_t i, {t} v) {{ {t} *slot = at{l}(l, i); {drop_slot} *slot = v; }}
+{valat}{comparable}"
     )
 }
 /// 能比较的元素（整数、浮点、布尔、字符串）才有排序、查找与切片：结构体还不能比较或复制。
@@ -1422,7 +1468,7 @@ fn comparable_list_helpers(elem: Elem) -> String {
             "string_equal(&x, v)",
             "copy(&x)",
         ),
-        Elem::Record(_) => return String::new(),
+        Elem::Record(_) | Elem::Nested(_) => return String::new(),
     };
     format!(
         "static int cmp{l}({t} *a, {t} *b) {{ return {compare}; }}
@@ -1674,7 +1720,8 @@ impl Generator<'_> {
                 let local = self.scalar("{0}", ty);
                 self.owners.push((local.clone(), ty));
                 for value in values {
-                    let value = self.expr(value);
+                    // 元素也按目标类型生成：内层的 `[1, 2]` 是列表而不是定长数组。
+                    let value = self.expr_as(value, elem.ty());
                     let value = self.moved(&value, elem.ty());
                     self.code
                         .push_str(&format!("push{}(&{local}, {value});\n", list_suffix(elem)));
@@ -1687,7 +1734,7 @@ impl Generator<'_> {
                 for (k, v) in entries {
                     let k = self.expr(k);
                     let k = if key == Elem::Str { format!("&{k}") } else { k };
-                    let v = self.expr(v);
+                    let v = self.expr_as(v, value.ty());
                     let v = self.moved(&v, value.ty());
                     self.code
                         .push_str(&format!("set{}(&{local}, {k}, {v});\n", ctype(ty)));
@@ -2333,6 +2380,8 @@ impl Generator<'_> {
             "remove" if list => "removeat",
             "remove" => "del",
             "index_of" => "index",
+            "$at" => "valat",
+            "$put" => "put",
             other => other,
         };
         let call = format!("{name}{}({})", ctype(container), values.join(", "));
@@ -2610,7 +2659,10 @@ impl Generator<'_> {
                 {
                     let container = self.place_ty(local).container().expect("guarded");
                     let key = self.key(index, container);
-                    let value = self.expr(expr);
+                    let (Type::List(elem) | Type::Map(_, elem)) = container else {
+                        unreachable!("container type")
+                    };
+                    let value = self.expr_as(expr, elem.ty());
                     let pointer = self.pointer(local);
                     let c = ctype(container);
                     self.code.push_str(&match container {
@@ -3280,8 +3332,12 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
         }
         for (key, value) in containers.clone() {
             for elem in std::iter::once(key).chain(value) {
-                if let Elem::Record(id) = elem {
-                    records.insert(record_name(id));
+                match elem {
+                    Elem::Record(id) => {
+                        records.insert(record_name(id));
+                    }
+                    Elem::Nested(_) => note_nested(&mut containers, elem),
+                    _ => {}
                 }
             }
         }
@@ -3343,6 +3399,15 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
         let id = record_id(name);
         source.push_str(&format!("static void dropR{id}(R{id} *p);\n"));
     }
+    // 容器的辅助函数会互相调用（列表的列表释放时要释放内层列表），先给出原型。
+    for elem in &lists {
+        let l = list_suffix(*elem);
+        source.push_str(&format!("static void drop{l}({l} *l);\n"));
+    }
+    for (key, value) in &maps {
+        let m = map_name(*key, *value);
+        source.push_str(&format!("static void drop{m}({m} *m);\n"));
+    }
     if !containers.is_empty() {
         source.push_str(LIST_PRELUDE);
     }
@@ -3355,6 +3420,7 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
     for (key, value) in &maps {
         source.push_str(&map_helpers(MAP_TEMPLATE, *key, *value));
         source.push_str(&map_values(*key, *value));
+        source.push_str(&map_slots(*key, *value));
     }
     for name in &records {
         let structure = &module.structs[name];

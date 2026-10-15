@@ -11,7 +11,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-37");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-38");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -384,18 +384,34 @@ impl Project {
         Ok(linked)
     }
 
-    /// 把类型里的结构体 id（结构体本身、它的借用、列表元素或字典值）换成按模块限定的 id。
+    /// 把类型里的结构体 id（结构体本身、它的借用、列表元素或字典值，包括嵌套容器里的）
+    /// 换成按模块限定的 id。
     fn resolve_type(&self, module: &str, ty: &mut compiler::Type) -> Result<()> {
-        use compiler::{Elem, Type};
-        let (Type::Record(id)
-        | Type::RecordRef(id, _)
-        | Type::List(Elem::Record(id))
-        | Type::ListRef(Elem::Record(id), _)
-        | Type::Map(_, Elem::Record(id))
-        | Type::MapRef(_, Elem::Record(id), _)) = ty
-        else {
-            return Ok(());
-        };
+        use compiler::Type;
+        match ty {
+            Type::Record(id) | Type::RecordRef(id, _) => self.resolve_record(module, id),
+            Type::List(elem) | Type::ListRef(elem, _) => self.resolve_elem(module, elem),
+            Type::Map(_, value) | Type::MapRef(_, value, _) => self.resolve_elem(module, value),
+            _ => Ok(()),
+        }
+    }
+
+    fn resolve_elem(&self, module: &str, elem: &mut compiler::Elem) -> Result<()> {
+        use compiler::Elem;
+        match elem {
+            Elem::Record(id) => self.resolve_record(module, id),
+            // 内层类型改写后重新登记，得到新的编号。
+            Elem::Nested(id) => {
+                let mut inner = compiler::nested(*id);
+                self.resolve_type(module, &mut inner)?;
+                *elem = compiler::nest(inner);
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn resolve_record(&self, module: &str, id: &mut u64) -> Result<()> {
         let name = self.modules[module]
             .module
             .type_names
