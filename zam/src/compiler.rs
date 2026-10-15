@@ -296,6 +296,57 @@ pub enum Elem {
 /// 模块、任何线程里编号都相同，所以 IR 编码与缓存键是确定的。
 static NESTED: std::sync::RwLock<BTreeMap<u64, Type>> = std::sync::RwLock::new(BTreeMap::new());
 
+/// 元组类型表：编号 → （名字, 字段类型）。元组按结构体处理，名字由字段类型拼成（如
+/// `(Int, Owned)`），编号是名字的哈希，所以同样的元组类型在所有模块里是同一个类型。
+type TupleTable = BTreeMap<u64, (String, Vec<Type>)>;
+static TUPLES: std::sync::RwLock<TupleTable> = std::sync::RwLock::new(BTreeMap::new());
+/// 字段里的结构体编号已经按模块限定的元组：链接后的模块要带上它们的结构体定义。
+static LINKED_TUPLES: std::sync::RwLock<BTreeSet<u64>> = std::sync::RwLock::new(BTreeSet::new());
+
+/// 登记一个元组类型（字段类型可能还没按模块限定）。
+pub fn tuple(fields: Vec<Type>) -> (u64, String) {
+    let names: Vec<String> = fields.iter().map(|ty| format!("{ty:?}")).collect();
+    let name = format!("({})", names.join(", "));
+    let id = record_id(&name);
+    TUPLES
+        .write()
+        .expect("tuple table")
+        .insert(id, (name.clone(), fields));
+    (id, name)
+}
+
+/// 登记字段已按模块限定的元组，链接时放进结构体表。
+pub fn linked_tuple(fields: Vec<Type>) -> u64 {
+    let (id, _) = tuple(fields);
+    LINKED_TUPLES.write().expect("tuple table").insert(id);
+    id
+}
+
+/// 元组的字段类型；不是元组时返回 None。
+pub fn tuple_fields(id: u64) -> Option<Vec<Type>> {
+    TUPLES
+        .read()
+        .expect("tuple table")
+        .get(&id)
+        .map(|(_, fields)| fields.clone())
+}
+
+/// 链接后的模块要带上的元组：（名字, 字段类型）。
+pub fn linked_tuples() -> Vec<(String, Vec<Type>)> {
+    let tuples = TUPLES.read().expect("tuple table");
+    LINKED_TUPLES
+        .read()
+        .expect("tuple table")
+        .iter()
+        .filter_map(|id| tuples.get(id).cloned())
+        .collect()
+}
+
+/// 已登记的可链接元组个数：检查时新出现的元组类型要重新链接后再检查一遍。
+pub fn linked_tuple_count() -> usize {
+    LINKED_TUPLES.read().expect("tuple table").len()
+}
+
 /// 把列表或字典类型登记为另一个容器的元素。
 pub fn nest(container: Type) -> Elem {
     let id = record_id(&format!("nested {container:?}"));
@@ -374,6 +425,8 @@ pub enum Expr {
     Method(String, String, Vec<Expr>),
     // `xs[i].tags.push(v)`：接收者是结构体元素里的容器字段（容器路径, 下标, 字段路径, 方法, 参数）。
     ElementMethod(String, Box<Expr>, String, String, Vec<Expr>),
+    // 元组字面量 `(a, b)`：类型由各项的类型决定。
+    Tuple(Vec<Expr>),
     // `f().len()`、`xs.slice(0, 2).len()`：在调用结果（临时值）上调用列表或字典的方法，
     // 临时值在语句结束时释放。
     Chain(Box<Expr>, String, Vec<Expr>),
@@ -412,6 +465,8 @@ pub enum Instruction {
     Each(String, Option<String>, String, bool, Block),
     // `match s { ... }` 语句：分支是代码块或单条语句；匹配期间被匹配的位置冻结。
     Match(Expr, Vec<(Pattern, Block)>),
+    // `let (a, b) = expr` / `let mut (a, b) = expr`：把元组的各项移进新变量，`_` 丢弃该项。
+    Unpack(Vec<String>, bool, Expr),
     Break,
     Continue,
 }
@@ -1369,10 +1424,13 @@ impl Parser {
     /// 列表元素与字典值：标量、字符串或结构体。
     /// 元素类型本身是列表或字典：`[[i64]]` 里的 `[i64]`、`{string: [string]}` 里的 `[string]`。
     fn inner_container(&mut self) -> Result<Option<Elem>, String> {
-        if !matches!(self.peek(), Some(Token::Symbol('[' | '{'))) {
+        if !matches!(self.peek(), Some(Token::Symbol('[' | '{' | '('))) {
             return Ok(None);
         }
         let inner = self.ty()?;
+        if let Type::Record(id) = inner {
+            return Ok(Some(Elem::Record(id)));
+        }
         if !matches!(inner, Type::List(_) | Type::Map(_, _)) {
             return Err(
                 "unsupported element type: fixed arrays cannot be stored in lists or maps".into(),
@@ -1399,6 +1457,31 @@ impl Parser {
         } else {
             Type::Owned
         };
+        // 元组类型 `(i64, string)`。
+        if self.symbol('(') {
+            let mut fields = Vec::new();
+            loop {
+                let field = self.ty()?;
+                if field.is_reference() || matches!(field, Type::ArrayInt(_)) {
+                    return Err("tuples hold owned values, such as (string, i64)".into());
+                }
+                fields.push(field);
+                if self.symbol(')') {
+                    break;
+                }
+                self.expect(',')?;
+            }
+            if fields.len() < 2 {
+                return Err("a tuple type lists at least two types, such as (i64, string)".into());
+            }
+            let (id, name) = tuple(fields);
+            self.type_names.insert(id, name);
+            return Ok(match ty {
+                Type::Owned => Type::Record(id),
+                Type::Shared => Type::RecordRef(id, false),
+                _ => Type::RecordRef(id, true),
+            });
+        }
         if self.peek() == Some(&Token::Symbol('{')) {
             self.take();
             let key = match self.word()?.as_str() {
@@ -1478,17 +1561,30 @@ impl Parser {
             },
         }
     }
+    /// 点号后面是字段名：标识符，或元组的项号 `t.0`。
+    fn member_follows(&self) -> bool {
+        self.peek() == Some(&Token::Symbol('.'))
+            && matches!(
+                self.tokens.get(self.position + 1),
+                Some(Token::Word(_) | Token::Number(_))
+            )
+    }
+    fn member(&mut self) -> Result<String, String> {
+        if let Some(Token::Number(number)) = self.peek().cloned() {
+            self.take();
+            return Ok(number);
+        }
+        self.word()
+    }
     /// 元素后面的字段路径 `.a.b`；没有字段时为空串。`..` 不是字段访问。
     fn field_path(&mut self) -> Result<String, String> {
         let mut path = String::new();
-        while self.peek() == Some(&Token::Symbol('.'))
-            && matches!(self.tokens.get(self.position + 1), Some(Token::Word(_)))
-        {
+        while self.member_follows() {
             self.take();
             if !path.is_empty() {
                 path.push('.');
             }
-            path.push_str(&self.word()?);
+            path.push_str(&self.member()?);
         }
         Ok(path)
     }
@@ -1573,6 +1669,18 @@ impl Parser {
     fn atom(&mut self) -> Result<Expr, String> {
         if self.symbol('(') {
             let expr = self.expr()?;
+            // `(a, b)` 是元组；`(a)` 只是括号。
+            if self.symbol(',') {
+                let mut items = vec![expr];
+                while !self.symbol(')') {
+                    items.push(self.expr()?);
+                    if self.symbol(')') {
+                        break;
+                    }
+                    self.expect(',')?;
+                }
+                return Ok(Expr::Tuple(items));
+            }
             self.expect(')')?;
             return Ok(expr);
         }
@@ -1680,12 +1788,10 @@ impl Parser {
         }
         let mut name = self.word()?;
         // 只有点号后面跟标识符才是字段路径；`a..b` 里的 `..` 留给 for 区间。
-        while self.peek() == Some(&Token::Symbol('.'))
-            && matches!(self.tokens.get(self.position + 1), Some(Token::Word(_)))
-        {
+        while self.member_follows() {
             self.take();
             name.push('.');
-            name.push_str(&self.word()?);
+            name.push_str(&self.member()?);
         }
         if !self.symbol('(') {
             if self.symbol('[') {
@@ -2063,8 +2169,19 @@ impl Parser {
             if !self.keyword("in") {
                 return Err("expected `in` after the for loop variable".into());
             }
-            if self.symbol('&') {
-                let mutable = self.keyword("mut");
+            // `for x in xs:` 与 `for x in &xs:` 相同：只借用，不移走（Python 的写法）。
+            let bare = {
+                let mut at = self.position;
+                let mut path = matches!(self.tokens.get(at), Some(Token::Word(_)));
+                at += 1;
+                while path && self.tokens.get(at) == Some(&Token::Symbol('.')) {
+                    path = matches!(self.tokens.get(at + 1), Some(Token::Word(_)));
+                    at += 2;
+                }
+                path && self.tokens.get(at) == Some(&Token::Symbol(':'))
+            };
+            if bare || self.symbol('&') {
+                let mutable = !bare && self.keyword("mut");
                 let mut path = self.word()?;
                 while self.symbol('.') {
                     path.push('.');
@@ -2092,6 +2209,18 @@ impl Parser {
             Instruction::Continue
         } else if self.keyword("let") {
             let mutable = self.keyword("mut");
+            if self.symbol('(') {
+                let mut names = Vec::new();
+                loop {
+                    names.push(self.word()?);
+                    if self.symbol(')') {
+                        break;
+                    }
+                    self.expect(',')?;
+                }
+                self.expect('=')?;
+                return Ok(Some(Instruction::Unpack(names, mutable, self.expr()?)));
+            }
             let local = self.word()?;
             let annotation = if self.symbol(':') {
                 Some(self.ty()?)
@@ -2803,7 +2932,7 @@ pub fn encode(module: &Module) -> Vec<u8> {
         .map(|(name, constant)| (name, constant.public, &constant.value))
         .collect();
     format!(
-        "ZAM-IR-25\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
+        "ZAM-IR-26\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
         module.type_names, module.imports, module.functions
     )
     .into_bytes()
@@ -3306,6 +3435,17 @@ impl<'a> Checker<'a> {
                     .ok_or_else(|| "scalar references are not supported".into())
             }
             Expr::Method(path, method, _) => self.method(path, method).map(|(_, _, ty)| ty),
+            Expr::Tuple(items) => {
+                let mut fields = Vec::new();
+                for item in items {
+                    let ty = self.ty(item)?;
+                    if ty.is_reference() || matches!(ty, Type::Unit | Type::ArrayInt(_)) {
+                        return Err("tuples hold owned values; copy borrowed values first, such as string.copy(name)".into());
+                    }
+                    fields.push(ty);
+                }
+                Ok(Type::Record(linked_tuple(fields)))
+            }
             Expr::Chain(receiver, method, _) => {
                 let ty = self.ty(receiver)?;
                 method_signature(ty, method)
@@ -3924,6 +4064,24 @@ impl<'a> Checker<'a> {
                 let owned = expected.borrowable().expect("reference").0;
                 self.expr(expr, owned, loans)
             }
+            Expr::Tuple(items) => {
+                let fields = match expected {
+                    Type::Record(id) => tuple_fields(id),
+                    _ => None,
+                }
+                .ok_or("type mismatch: a tuple is not expected here")?;
+                if fields.len() != items.len() {
+                    return Err(format!(
+                        "type mismatch: expected a tuple of {} items, found {}",
+                        fields.len(),
+                        items.len()
+                    ));
+                }
+                for (item, field) in items.iter().zip(fields) {
+                    self.expr(item, field, loans)?;
+                }
+                Ok(())
+            }
             Expr::Chain(receiver, method, args) => {
                 // 先求值调用结果（临时值，语句结束时释放），再求实参，然后调用方法。
                 let ty = self.ty(receiver)?;
@@ -4146,11 +4304,14 @@ impl<'a> Checker<'a> {
                 }
                 Instruction::Each(local, second, path, mutable, nested) => {
                     // 列表遍历元素（两个名字时先是下标），字典遍历键（两个名字时还有值），都按插入顺序。
-                    let names = each_bindings(
-                        self.container(path, *mutable, &loans)?,
-                        second.is_some(),
-                        *mutable,
-                    )?;
+                    let container = self.container(path, *mutable, &loans).map_err(|error| {
+                        if error.ends_with("is not a list or map") {
+                            format!("{error}; to count, write for i in 0..{path}")
+                        } else {
+                            error
+                        }
+                    })?;
+                    let names = each_bindings(container, second.is_some(), *mutable)?;
                     let bound: Vec<&String> = std::iter::once(local).chain(second).collect();
                     for (name, (ty, assignable)) in bound.iter().zip(names) {
                         if self.locals.contains_key(*name) {
@@ -4440,6 +4601,38 @@ impl<'a> Checker<'a> {
                     self.expr(expr, ty, &mut loans)?;
                     if terminates(expr) {
                         returned = true;
+                    }
+                }
+                Instruction::Unpack(names, mutable, expr) => {
+                    let ty = self.ty(expr)?;
+                    let fields = match ty {
+                        Type::Record(id) => tuple_fields(id),
+                        _ => None,
+                    }
+                    .ok_or("type mismatch: let (a, b) = ... needs a tuple value")?;
+                    if fields.len() != names.len() {
+                        return Err(format!(
+                            "type mismatch: the tuple has {} items, but the pattern names {}",
+                            fields.len(),
+                            names.len()
+                        ));
+                    }
+                    self.expr(expr, ty, &mut loans)?;
+                    for (name, field) in names.iter().zip(fields) {
+                        if name == "_" {
+                            continue;
+                        }
+                        if self.locals.contains_key(name) {
+                            return Err(format!("duplicate binding {name}"));
+                        }
+                        self.locals.insert(
+                            name.clone(),
+                            Binding {
+                                ty: field,
+                                mutable: *mutable,
+                                live: true,
+                            },
+                        );
                     }
                 }
                 Instruction::Fail(expr) => {

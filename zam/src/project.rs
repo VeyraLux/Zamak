@@ -11,7 +11,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-38");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-39");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -325,7 +325,16 @@ impl Project {
         for id in self.modules.keys() {
             self.key(id, &mut keys, &mut BTreeSet::new())?;
         }
-        compiler::check(&self.linked()?, &format!("{}:main", self.entry)).map_err(|errors| {
+        // 检查时可能推断出新的元组类型（`let t = (1, "a")`）：重新链接后再检查，直到不再出现新的。
+        let entry = format!("{}:main", self.entry);
+        let result = loop {
+            let known = compiler::linked_tuple_count();
+            let result = compiler::check(&self.linked()?, &entry);
+            if compiler::linked_tuple_count() == known {
+                break result;
+            }
+        };
+        result.map_err(|errors| {
             errors
                 .split(compiler::DIAGNOSTIC_SEPARATOR)
                 .map(|error| self.located_function(error.to_owned()))
@@ -381,6 +390,21 @@ impl Project {
             }
         }
         linked.functions.extend(native::builtin_functions());
+        // 元组没有声明，按结构登记过的都放进来；字段名是项号 `0`、`1`……
+        for (name, fields) in compiler::linked_tuples() {
+            linked.structs.insert(
+                name,
+                compiler::Struct {
+                    public: true,
+                    fields: fields
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, ty)| (i.to_string(), ty))
+                        .collect(),
+                    variants: Vec::new(),
+                },
+            );
+        }
         Ok(linked)
     }
 
@@ -417,6 +441,15 @@ impl Project {
             .type_names
             .get(id)
             .ok_or("unknown type name")?;
+        // 元组：各项类型限定后重新登记，同样的结构在所有模块里是同一个类型。
+        if name.starts_with('(') {
+            let mut fields = compiler::tuple_fields(*id).ok_or("unknown tuple type")?;
+            for field in &mut fields {
+                self.resolve_type(module, field)?;
+            }
+            *id = compiler::linked_tuple(fields);
+            return Ok(());
+        }
         let mut constructor = Expr::Record(name.clone(), Vec::new());
         self.resolve_expr(module, &BTreeSet::new(), &mut constructor)?;
         if let Expr::Record(name, _) = constructor {
@@ -498,6 +531,7 @@ impl Project {
             }
             let expr = match instruction {
                 Instruction::Let(_, _, _, expr)
+                | Instruction::Unpack(_, _, expr)
                 | Instruction::Assign(_, expr)
                 | Instruction::AssignField(_, _, expr)
                 | Instruction::Print(expr)
@@ -830,7 +864,7 @@ impl Project {
                 self.resolve_expr(module, locals, inner)?;
                 self.resolve_body(module, locals, block)?;
             }
-            Expr::Array(values) => {
+            Expr::Array(values) | Expr::Tuple(values) => {
                 for value in values {
                     self.resolve_expr(module, locals, value)?;
                 }
@@ -1120,6 +1154,7 @@ fn declared(body: &Block, names: &mut BTreeSet<String>) {
             Expr::Call(_, values)
             | Expr::Method(_, _, values)
             | Expr::Array(values)
+            | Expr::Tuple(values)
             | Expr::Format(values) => values.iter().for_each(|value| expr(value, names)),
             Expr::Record(_, fields) => fields.iter().for_each(|(_, value)| expr(value, names)),
             Expr::ElementMethod(_, index, _, _, values) | Expr::Chain(index, _, values) => {
@@ -1161,6 +1196,10 @@ fn declared(body: &Block, names: &mut BTreeSet<String>) {
         match instruction {
             Instruction::Let(name, _, _, value) => {
                 names.insert(name.clone());
+                expr(value, names);
+            }
+            Instruction::Unpack(bound, _, value) => {
+                names.extend(bound.iter().cloned());
                 expr(value, names);
             }
             Instruction::Assign(_, value)

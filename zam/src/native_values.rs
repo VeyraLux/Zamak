@@ -98,7 +98,24 @@ fn record(module: &Module, name: &str, protos: &mut String, defs: &mut String) {
     let mut copy_body = format!("R{id} out; memset(&out, 0, sizeof out); ");
     let mut eq_body = String::new();
     let mut show_body = String::new();
-    if structure.variants.is_empty() {
+    if short.starts_with('(') {
+        // 元组按位置显示：`(1, "a")`。
+        eq_body.push_str("return 1");
+        show_body.push_str(&text("out", "("));
+        for (i, (_, ty)) in fields.iter().enumerate() {
+            copy_body.push_str(&format!("out.m{i} = {}; ", copy(*ty, &format!("&p->m{i}"))));
+            eq_body.push_str(&format!(
+                " && {}",
+                equal(*ty, &format!("&a->m{i}"), &format!("&b->m{i}"))
+            ));
+            if i > 0 {
+                show_body.push_str(&text("out", ", "));
+            }
+            show_body.push_str(&show(*ty, "out", &format!("&p->m{i}")));
+        }
+        eq_body.push(';');
+        show_body.push_str(&text("out", ")"));
+    } else if structure.variants.is_empty() {
         eq_body.push_str("return 1");
         show_body.push_str(&text("out", &format!("{short}(")));
         for (i, (field, ty)) in fields.iter().enumerate() {

@@ -1,0 +1,41 @@
+// 元组：(i64, string) 这样的类型、(a, b) 字面量、t.0 取项、let (a, b) = ... 拆开，函数可以返回多个值。
+use std/string
+
+fn divmod(a: i64, b: i64) -> (i64, i64):
+    (a / b, a % b)
+
+fn longest(words: &[string]) -> (string, i64):
+    let mut best = ""
+    let mut size = 0
+
+    for word in words:
+        if string.char_len(word) > size:
+            best = string.copy(word)
+            size = string.char_len(word)
+
+    (best, size)
+
+fn main():
+    let (q, r) = divmod(17, 5)
+    println("{q} {r}")
+
+    let words = string.words("tea coffee cocoa")
+    let (word, size) = longest(&words)
+    println("{word} has {size} letters")
+
+    let point = (3, 4.5)
+    println(point.0)
+    println(point.1)
+    println(point)
+
+    let mut scores: [(string, i64)] = [("amy", 90), ("bob", 72)]
+    scores.push(("cid", 85))
+    scores[1].1 += 10
+
+    for entry in &scores:
+        println("{entry.0}: {entry.1}")
+
+    println(scores)
+    println(scores[0] == ("amy", 90))
+    let (_, last) = scores.pop()
+    println(last)

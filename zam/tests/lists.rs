@@ -168,7 +168,7 @@ fn checker_rejects_list_misuse() {
             "cannot mutably borrow immutable value xs",
         ),
         (
-            "let xs: [i64] = [1]\n    for x in xs: pass",
+            "let xs: [i64] = [1]\n    for x in xs.len(): pass",
             "iterate a list with for x in &items",
         ),
         (

@@ -69,6 +69,7 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 - 控制：`if c:`/`elif c:`/`else:`（**没有 `else if`**，写了报错提示 `elif`）、`while c:`、`for i in start..end:`、`for x in &list:`、`break`、`continue`；条件必须是 `bool`，条件里写单个 `=` 报“比较要用 ==”。`for` 区间左闭右开，`start`/`end` 进入循环前各求值一次，循环变量只读且不能与已有变量同名；定长数组按下标写 `for i in 0..N:`。单行分支后面的 `elif`/`else` 可以另起一行，也可以接在同一行。
 - 表达式：`+ - * / %`、`== != < <= > >=`、逻辑 **`and`、`or`、`not`**（Python 优先级，从低到高 or < and < not < 比较；`not a == b` 是 `not (a == b)`，`not` 不能直接跟在比较/算术运算符右边；and/or 短路；三个词是保留字），写 `&&`、`||`、前缀 `!` 会报错并提示单词；`!` 只用于 `T!string`、`-> !string`；一元 `-expr`、括号；位运算 `& | ^ ~ << >>`（只用于 i64，Python 优先级：比较 < `|` < `^` < `&` < 移位 < 加减 < 乘除；中缀 `&` 是按位与、前缀 `&` 仍是借用；移位量 0–63 否则终止，左移按无符号不报溢出，右移是算术右移；C 侧 `zam_shl`/`zam_shr`）；进制字面量 `0xFF`/`0b1010`/`0o17`（词法层转成十进制记号）；复合赋值 `+= -= *= /= %= &= |= ^= <<= >>=`（`Parser::compound` 识别；变量、字段、元素；元素下标里不能有调用）；if 表达式 `let v = if c: a elif d: b else: e`（必须有 else，每个分支一个表达式）；字符串 `a + b` 拼接（两边都不移动）与 `== != < <= > >=` 比较，字符串不能和整数相加；整数可用数字之间的单个 `_`（`1_000_000`）。溢出/除零在运行时返回错误。
 - 复合值：全局 `copy(&x)` 深复制 string/列表/字典/结构体/枚举（必须写借用或传已是借用的参数；标量报 already copied by assignment）；结构体、枚举、列表、字典支持 `==`/`!=`（字典与顺序无关），`<` 报 only support == and !=；`println(x)` 与插值显示 `Point(x: 1, y: 2)`、`Shape.Rect(2.0, 3.0)`、`["a"]`、`{"k": 1}`（内部字符串加引号转义）。三者都只读。实现：`compiler::COPY`（`std/core:copy` 不在函数表，检查器 `value_type`/`read`、生成器 `value_type`/`operand` 特判）；C 函数在 `native_values.rs`（`copyX`/`eqX`/`showX`/`textX`，`Generator.values` 为真时为目标文件里全部结构体与容器发射）。
+- 元组：`(i64, string)`、`(a, b)`、`t.0`（字段名就是项号，`Parser::member` 允许点号后跟数字）、`let (a, b) = expr`/`let mut (a, b)`（`Instruction::Unpack`，`_` 丢弃）。实现：元组是匿名结构体，名字 `(Int, Owned)` 由字段类型 Debug 拼成，`compiler::tuple`/`linked_tuple`/`tuple_fields` 维护全局表，`project.rs` 的 `resolve_record` 遇到 `(` 开头的名字按结构重新登记，`linked()` 把所有已限定的元组放进结构体表，`Project::check` 若检查中推断出新元组就重新链接再查；生成器 `Generator.records` 登记函数体里出现的结构体类型；打印显示 `(1, "a")`。`for x in xs:` 等同 `for x in &xs:`。
 - 字符字面量 `'a'`、`'#'`、`'\n'`、`'\''`：值是 Unicode 码点（`i64`），与 `string.byte_at` 比较只用 ASCII 字符。
 - 字符串：UTF-8，转义 `\n \r \t \" \\`，插值 `"{name}"` / `"{p.name}"` / `"{a + b}"` / `"{xs[i]}"` / `"{f(x)}"`（变量、字段、元素只读不移动；花括号里不能有字符串字面量或花括号），字面大括号写 `{{` / `}}`。
 - 注释：`//` 与 `#`；**没有块注释**。
@@ -86,7 +87,7 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
   - `println` / `io.println` / `fmt.println` 打印字符串、整数、浮点数或布尔值。
   - 可失败函数用 `?` 时当前函数要带 `!string`，所以读写文件的 `main` 一般写成 `fn main() -> !string`；`fs.write(&p, &t)?` 可以单独成一条语句。
   - 标准库实现：`zam/src/native.rs` 的 `BUILTINS` 表（签名 + C 函数体，`p0`/`p1`… 是参数）和 `STD_PRELUDE`（共用 C 辅助）；`project.rs` 把 `std/*` 调用解析成 `std/<模块>:<函数>`，检查器按普通函数签名检查。新增函数只需在表里加一项，再升 `native-c-N`。列表的 C 侧是每种元素一组 `Li`/`Lf`/`Lb`/`Ls` 结构与 `push/pop/at/len/swap/insert/removeat/reverse/clear/extend/drop/take` 函数（`list_helpers`），可比较元素另有 `cmp/sort/index/has/slice`（`comparable_list_helpers`），字典是 `M<键><值>`（如 `Msi`）一组 `set/at/has/getor/del/keys/len` 与插入顺序表 + 开放寻址下标表（`MAP_TEMPLATE`）。用到哪些容器由生成器记录在 `Generator.containers`（每个 `scalar()` 都登记类型）加上签名和结构体字段，函数体先生成、容器辅助后拼在前面。容器方法签名只在 `compiler::method_signature` 一处定义，检查器与生成器共用。
-- **尚未实现，不要写**：泛型、闭包、三层及以上的连续下标（`a[i][j][k]`）、`xs[i].tags[j]`、`i64`/`f64` 隐式转换、元组、目录遍历、追加写文件、网络、时间、包管理器、调试器、REPL、文档生成、线程、unsafe/FFI、块注释、`string` 以外的错误类型、单独移出 owned 字段。
+- **尚未实现，不要写**：泛型、闭包、三层及以上的连续下标（`a[i][j][k]`）、`xs[i].tags[j]`、`i64`/`f64` 隐式转换、目录遍历、追加写文件、网络、时间、包管理器、调试器、REPL、文档生成、线程、unsafe/FFI、块注释、`string` 以外的错误类型、单独移出 owned 字段。
 
 ## 常见诊断（照文本改代码）
 

@@ -269,7 +269,7 @@ impl Analysis {
                 }
                 Interval::TOP
             }
-            Expr::Array(values) | Expr::Format(values) => {
+            Expr::Array(values) | Expr::Format(values) | Expr::Tuple(values) => {
                 for value in values {
                     self.expr(value, env, collect);
                 }
@@ -418,6 +418,18 @@ impl Analysis {
                     _ => None,
                 };
                 env.insert(name.clone(), Fact { value, length });
+            }
+            Instruction::Unpack(names, _, expr) => {
+                self.expr(expr, &env, collect);
+                for name in names {
+                    env.insert(
+                        name.clone(),
+                        Fact {
+                            value: Interval::TOP,
+                            length: None,
+                        },
+                    );
+                }
             }
             Instruction::Assign(name, expr) => {
                 let value = self.expr(expr, &env, collect);
@@ -746,6 +758,7 @@ fn expression_cost(expr: &Expr) -> Option<i128> {
         Expr::Call(_, values)
         | Expr::Method(_, _, values)
         | Expr::Array(values)
+        | Expr::Tuple(values)
         | Expr::Format(values) => values
             .iter()
             .try_fold(0, |cost, value| Some(cost + expression_cost(value)?))?,
@@ -766,6 +779,7 @@ fn body_cost(block: &Block, writes: &mut BTreeMap<String, usize>) -> Option<i128
             | Instruction::While(_, _)
             | Instruction::For(_, _, _, _)
             | Instruction::Each(_, _, _, _, _)
+            | Instruction::Unpack(_, _, _)
             | Instruction::Match(_, _) => return None,
             Instruction::Let(_, _, _, expr)
             | Instruction::Print(expr)
