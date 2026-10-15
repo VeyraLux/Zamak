@@ -128,6 +128,7 @@ fn main() -> !string:
 - **Errors.** A function that can fail returns `T!E` or `!E`, where `E` is `string`, a struct, or an enum. Use `fail` to return an error, `?` to pass it to the caller, and `catch e:` followed by an indented block to handle it in place, for example with `match e`.
 - **Generic functions.** Write `fn largest[T](items: &[T]) -> T`. Zamak infers `T` at each call and compiles a separate version per type.
 - **Generic types and Option.** Declare `struct Stack[T]` or `enum Tree[T]` and write the type as `Stack[string]`. Methods inside a generic type can use `T`. The built-in `Option[T]` has the variants `Option.Some(value)` and `Option.None`.
+- **Function values.** A function type is written `fn(i64) -> bool`. Pass a named function by name, or write an anonymous fn such as `fn(x): x * 2`. An anonymous fn can read variables of the enclosing function; such a closure is passed directly as an argument and never outlives the call, so no garbage collector is needed.
 - **Tuples.** Group values as `(3, "three")` with type `(i64, string)`, read items with `t.0`, and return several values from a function: `let (q, r) = divmod(17, 5)`.
 - **Constants.** Declare `const LIMIT = 100` at the top level. Zamak computes the value at compile time from literals, earlier constants, and operators.
 - **Modules.** Each file is a module. Import one with `use name`, and export items with `pub fn`, `pub struct`, and `pub const`.
@@ -164,7 +165,7 @@ For the list of error codes and the recommended loop for AI agents (check, make 
 
 ## Current limitations
 
-Zamak doesn't support closures, threads, a foreign function interface (FFI), networking, or directory listing yet. There's no package manager, language server, or read-eval-print loop (REPL) yet. When you use an unsupported construct, `zam check` reports a diagnostic instead of compiling incorrect code.
+Zamak doesn't support threads, a foreign function interface (FFI), networking, or directory listing yet. There's no package manager, language server, or read-eval-print loop (REPL) yet. When you use an unsupported construct, `zam check` reports a diagnostic instead of compiling incorrect code.
 
 ## Editor and agent support
 

@@ -25,7 +25,7 @@ fn main() -> !string:
 
 ## Values and bindings
 
-- Types: `i64`, `f64`, `bool`, `string` (UTF-8, owned), structs, enums, lists `[T]`, maps `{K: V}`, tuples `(i64, string)`, and `Option[T]`. There are no closures.
+- Types: `i64`, `f64`, `bool`, `string` (UTF-8, owned), structs, enums, lists `[T]`, maps `{K: V}`, tuples `(i64, string)`, `Option[T]`, and function types such as `fn(i64) -> bool`.
 - `let x = 1`, `let mut x = 1`, `let mut x: i64 = 1`. Only `let mut` bindings can be reassigned. A name cannot be declared twice in the same function scope chain (no shadowing).
 - Top-level constants: `const LIMIT = 100`, `const RATE: f64 = 0.25`, `const NAME = "x"`. Names are UPPER_CASE; the value is computed at compile time from literals, earlier constants and operators. `pub const` is visible from other modules as `config.LIMIT`.
 - Integer literals may use `_` between digits: `1_000_000`. Character literals like `'a'`, `'#'`, `'\n'`, `'\''` are `i64` Unicode code points (useful with `string.byte_at`).
@@ -100,6 +100,27 @@ fn main():
 ```
 
 `struct Name[T]` and `enum Name[T]` take type parameters; write the type as `Stack[string]` or `Option[i64]`. A constructor infers the type arguments from its values; when it cannot (`Option.None`, `Stack(items: [])`), annotate the variable or rely on the parameter or return type. `Option[T]` is built in, with variants `Some(value)` and `None`.
+
+## Function values
+
+```
+fn double(n: i64) -> i64: n * 2
+
+fn count_if(xs: &[string], keep: fn(&string) -> bool) -> i64:
+    let mut n = 0
+    for x in xs:
+        if keep(x): n += 1
+    n
+
+fn main():
+    let words: [string] = ["apple", "kiwi"]
+    let min_len = 5
+    println(count_if(&words, fn(w): string.byte_len(w) >= min_len))
+    let f = double
+    println(f(21))
+```
+
+A function type is `fn(T1, T2) -> R` (no `-> R` means no result). Pass a named function by name (`double`, `util.double`) or write an anonymous fn `fn(x: i64) -> i64: x * 2`; its body is one expression (or one `println(...)`) on the same line, and parameter types may be omitted when the expected function type is known. An anonymous fn can read the enclosing function's variables (never change them); such a closure can only be passed directly as an argument, and a function-typed parameter can only be called or passed on. Functions without captures can be stored in variables, struct fields, and returned. A struct field of function type is called like a method: `button.on_click(1)`.
 
 ## Control flow
 

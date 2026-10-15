@@ -314,7 +314,7 @@ fn main():
 - `-> 类型` 声明返回值类型；省略时表示函数不返回值。
 - 函数体末尾的值表达式可以作为返回值，因此 `add` 无需显式写 `return`。也可以使用 `return` 明确返回或提前结束函数。
 - 跨模块调用需要 `pub fn`（见第 12 节）。
-- 当前不支持闭包和函数重载。本教程使用 `while` 讲解重复执行，不涉及递归。
+- 当前不支持函数重载。函数本身也能当值传，见下面的“函数值与匿名函数”。本教程使用 `while` 讲解重复执行，不涉及递归。
 
 练习：将 `greet` 的参数改为 `name: &string`，并使用 `println(greet(&who))` 调用。借用字符串可以用于插值；插值只读取内容，不移动或修改原字符串。调用后再加入 `println(who)`，检查借用结束后原变量仍可使用。
 
@@ -385,6 +385,42 @@ Option.None
 - 类型写作 `Stack[string]`、`Option[i64]`，方括号里是具体类型。
 - 构造时编译器按字段的值推断类型参数，`Stack(items: ["a"])` 就是 `Stack[string]`。`Option.None`、空列表推断不出，要靠变量标注、参数类型或返回类型告诉它。
 - 用 `match` 取出 `Option` 里的值：`Some(v): ...`、`None: ...`。
+
+### 函数值与匿名函数
+
+函数也是值：可以当实参传给别的函数。函数类型写作 `fn(参数类型) -> 返回类型`，匿名函数写作 `fn(x): 表达式`：
+
+```zamak
+use std/string
+
+fn count_if(words: &[string], keep: fn(&string) -> bool) -> i64:
+    let mut count = 0
+
+    for word in words:
+        if keep(word):
+            count += 1
+
+    count
+
+fn is_short(word: &string) -> bool: string.byte_len(word) < 5
+
+fn main():
+    let words: [string] = ["apple", "kiwi", "fig"]
+    println(count_if(&words, is_short))
+    let min_len = 4
+    println(count_if(&words, fn(w): string.byte_len(w) >= min_len))
+```
+
+```text
+2
+2
+```
+
+要点：
+
+- 具名函数直接写名字当值传，比如 `is_short`。
+- 匿名函数的冒号后面在同一行写一个表达式。参数类型能从函数类型推断时可以省略，`fn(w): ...` 里的 `w` 就是 `&string`。
+- 匿名函数可以读外面的变量（这里的 `min_len`），但不能改。用到外面变量的匿名函数只能直接当实参传，不能存进变量。
 
 ## 第 7 节：字符串、转义与插值
 
@@ -1110,7 +1146,7 @@ error[ZM301]: use after move: name
 
 Zamak 0.1.0 的支持范围有限。编写程序时需注意以下限制：
 
-- `match` 匹配枚举变体，或者整数、字符、字符串、布尔字面量（`1 | 2 | 3:`、`"go":`），还不支持区间和守卫条件；尚不支持闭包和 trait/接口；`for` 支持整数区间 `a..b` 以及遍历 `&列表`、`&字典`。
+- `match` 匹配枚举变体，或者整数、字符、字符串、布尔字面量（`1 | 2 | 3:`、`"go":`），还不支持区间和守卫条件；尚不支持 trait/接口；`for` 支持整数区间 `a..b` 以及遍历 `&列表`、`&字典`。
 - 尚不提供包管理器、交互式执行环境（REPL）、文档生成工具或重构工具。
 - 标准库包括 `std/string`（`byte_len`、`char_len`、`equal`、`parse_i64`、`parse_f64`、`trim`、`byte_at`、`slice`、`find`、`find_from`、`starts_with`、`ends_with`、`contains`、`replace`、`lower`、`upper`、`copy`、`split`、`words`、`lines`、`join`、`chars`、`codepoints`、`from_code`、`bytes`、`from_bytes`、`repeat`、`count`、`pad_left`、`pad_right`）、`std/io`（`println`、`read_line`、`read_all`）、`std/fmt`（`println`、`fixed`）、`std/math`（见第 3 节）、`std/fs`（`read`、`write`）和 `std/env`（`arg_count`、`arg`、`args`、`var`、`exit`），以及不用导入的 `abs`、`min`、`max`，没有目录遍历、网络和时间函数。
 - 错误类型可以是 `string`、结构体或枚举，没有错误堆栈。
