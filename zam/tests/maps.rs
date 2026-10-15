@@ -241,3 +241,70 @@ fn lists_swap_in_place() {
         "swap out of bounds",
     );
 }
+
+/// 嵌套容器：`[[i64]]`、`{string: [string]}`、`[{string: i64}]`，两层下标读写、元素上调方法、遍历、比较与打印。
+#[test]
+fn nested_containers() {
+    let case = Case::new("maps", "nested");
+    let output = case.run(include_str!("../../examples/collections/nested.zm"));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "[[11, 2, 3], [4, 5, 60], [7, 8]]\n60\n2\n100\na: apple,avocado\nb: banana,blueberry\nc: cherry\n[{\"a\": 1}, {\"b\": 2, \"c\": 3}]\n3\n[[\"amy\", \"bob\"], [\"solo\"]]\ntrue\n"
+    );
+    // 三层嵌套、&mut 遍历内层、字符串元素读出副本、弹出整行、结构体字段里的嵌套字典。
+    let output = case.run("struct Index:\n    words: {string: [i64]}\nfn main():\n    let mut cube: [[[i64]]] = [[[1, 2], [3]], [[4]]]\n    for plane in &mut cube:\n        for row in &mut plane:\n            row.push(0)\n    println(cube)\n    let mut names: [[string]] = [[\"a\", \"b\"]]\n    let first = names[0][1]\n    names[0][1] = \"z\"\n    println(\"{first} {names}\")\n    let row = names.pop()\n    println(row.len())\n    let mut ix = Index(words: {})\n    ix.words[\"x\"] = [1]\n    ix.words[\"x\"].push(2)\n    println(ix)\n");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "[[[1, 2, 0], [3, 0]], [[4, 0]]]\nb [[\"a\", \"z\"]]\n2\nIndex(words: {\"x\": [1, 2]})\n"
+    );
+    for (body, message) in [
+        (
+            "let g: [[i64]] = [[1]]\n    let r = g[0]",
+            "cannot move a list or map out of g[..]",
+        ),
+        (
+            "let g: [[[i64]]] = []\n    println(g[0][0][0])",
+            "index at most two levels deep",
+        ),
+        (
+            "let g: [[i64]] = [[1]]\n    let x = g[0][0][0]",
+            "index at most two levels deep",
+        ),
+        (
+            "let xs: [i64] = [1]\n    println(xs[0][0])",
+            "cannot be indexed again",
+        ),
+        (
+            "let g: [[i64]] = []\n    g.sort()",
+            "need i64, f64, bool or string elements",
+        ),
+        (
+            "let m: {string: [i64]} = {}\n    let v = m.get(\"a\", [])",
+            "list and map values cannot be copied by get",
+        ),
+        (
+            "let g: [[i64]] = [[1]]\n    g[0][0] = 2",
+            "cannot mutably borrow immutable value g",
+        ),
+        (
+            "let g: [[f64]] = [[1.0]]\n    let x: i64 = g[0][0]",
+            "mismatch",
+        ),
+    ] {
+        let source = format!("fn main():\n    {body}\n");
+        let output = case.run(&source);
+        assert!(!output.status.success(), "accepted {source}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(message), "{source}: {stderr}");
+    }
+}

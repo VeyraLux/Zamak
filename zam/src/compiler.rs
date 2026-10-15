@@ -190,6 +190,10 @@ pub fn each_bindings(
     let item = |elem: Elem| match (elem, mutable) {
         (Elem::Str, true) => (Type::Mutable, false),
         (Elem::Record(id), true) => (Type::RecordRef(id, true), false),
+        (Elem::Nested(id), true) => (
+            borrow_of(nested(id), true).expect("containers can be borrowed"),
+            false,
+        ),
         (_, true) => (elem.ty(), true),
         _ => (elem.item(), false),
     };
@@ -236,7 +240,14 @@ pub fn method_signature(receiver: Type, method: &str) -> Option<(bool, Vec<Type>
         }
         (Type::Map(key, _), "contains") => (false, vec![key.key_arg()], Type::Bool),
         // 结构体不能复制，`get` 的默认值语义对它不成立。
-        (Type::Map(key, value), "get") if !matches!(value, Elem::Record(_)) => {
+        // `grid[i][j]` 的读写：内层元素按值读（字符串得到副本），写入时替换。
+        (Type::List(elem), "$at") if elem.comparable() => (false, vec![Type::Int], elem.ty()),
+        (Type::List(elem), "$put") => (true, vec![Type::Int, elem.ty()], Type::Unit),
+        (Type::Map(key, value), "$at") if value.comparable() => {
+            (false, vec![key.key_arg()], value.ty())
+        }
+        (Type::Map(key, value), "$put") => (true, vec![key.key_arg(), value.ty()], Type::Unit),
+        (Type::Map(key, value), "get") if value.comparable() => {
             (false, vec![key.key_arg(), value.ty()], value.ty())
         }
         (Type::Map(key, _), "remove") => (true, vec![key.key_arg()], Type::Bool),
@@ -253,10 +264,16 @@ fn supported_methods(container: Type, method: &str) -> &'static str {
         {
             "struct elements cannot be compared or copied yet"
         }
+        Type::List(_) if matches!(method, "sort" | "contains" | "index_of" | "slice") => {
+            "sort, contains, index_of and slice need i64, f64, bool or string elements"
+        }
         Type::List(_) => {
             "lists support len, push, pop, insert, remove, swap, reverse, clear, extend, sort, contains, index_of and slice"
         }
-        Type::Map(_, Elem::Record(_)) if method == "values" => {
+        _ if method.starts_with('$') => {
+            "indexing twice, such as grid[i][j], reads i64, f64, bool and string elements; borrow deeper levels with for row in &grid"
+        }
+        Type::Map(_, value) if method == "values" && !value.comparable() => {
             "struct values cannot be copied; iterate the keys instead"
         }
         _ => "maps support len, contains, get, remove, keys, values and clear",
@@ -271,7 +288,29 @@ pub enum Elem {
     Bool,
     Str,
     Record(u64),
+    // 内层是列表或字典（`[[i64]]`、`{string: [string]}`）：编号由内层类型的结构算出，见 `nest`。
+    Nested(u64),
 }
+
+/// 嵌套容器的内层类型表：编号 → 列表或字典类型。编号只取决于类型的结构，同样的类型在任何
+/// 模块、任何线程里编号都相同，所以 IR 编码与缓存键是确定的。
+static NESTED: std::sync::RwLock<BTreeMap<u64, Type>> = std::sync::RwLock::new(BTreeMap::new());
+
+/// 把列表或字典类型登记为另一个容器的元素。
+pub fn nest(container: Type) -> Elem {
+    let id = record_id(&format!("nested {container:?}"));
+    NESTED
+        .write()
+        .expect("nested type table")
+        .insert(id, container);
+    Elem::Nested(id)
+}
+
+/// 嵌套元素的内层类型。
+pub fn nested(id: u64) -> Type {
+    NESTED.read().expect("nested type table")[&id]
+}
+
 impl Elem {
     pub fn ty(self) -> Type {
         match self {
@@ -280,19 +319,21 @@ impl Elem {
             Elem::Bool => Type::Bool,
             Elem::Str => Type::Owned,
             Elem::Record(id) => Type::Record(id),
+            Elem::Nested(id) => nested(id),
         }
     }
-    /// `for x in &items` 拿到的元素：标量按值，字符串与结构体是只读借用。
+    /// `for x in &items` 拿到的元素：标量按值，字符串、结构体与内层容器是只读借用。
     pub fn item(self) -> Type {
         match self {
             Elem::Str => Type::Shared,
             Elem::Record(id) => Type::RecordRef(id, false),
+            Elem::Nested(id) => borrow_of(nested(id), false).expect("containers can be borrowed"),
             _ => self.ty(),
         }
     }
     /// 能比较、能复制的元素：标量与字符串。
     pub fn comparable(self) -> bool {
-        !matches!(self, Elem::Record(_))
+        matches!(self, Elem::Int | Elem::Float | Elem::Bool | Elem::Str)
     }
     /// 字典键作为参数时的类型：字符串键只读借用，整数键按值。
     pub fn key_arg(self) -> Type {
@@ -1326,6 +1367,19 @@ impl Parser {
         Some(id)
     }
     /// 列表元素与字典值：标量、字符串或结构体。
+    /// 元素类型本身是列表或字典：`[[i64]]` 里的 `[i64]`、`{string: [string]}` 里的 `[string]`。
+    fn inner_container(&mut self) -> Result<Option<Elem>, String> {
+        if !matches!(self.peek(), Some(Token::Symbol('[' | '{'))) {
+            return Ok(None);
+        }
+        let inner = self.ty()?;
+        if !matches!(inner, Type::List(_) | Type::Map(_, _)) {
+            return Err(
+                "unsupported element type: fixed arrays cannot be stored in lists or maps".into(),
+            );
+        }
+        Ok(Some(nest(inner)))
+    }
     fn elem(&mut self, name: &str) -> Option<Elem> {
         Some(match name {
             "i64" => Elem::Int,
@@ -1353,10 +1407,15 @@ impl Parser {
                 _ => return Err("unsupported map key type; expected i64 or string keys".into()),
             };
             self.expect(':')?;
-            let name = self.type_name()?;
-            let value = self
-                .elem(&name)
-                .ok_or("unsupported map value type; expected i64, f64, bool, string or a struct")?;
+            let value = match self.inner_container()? {
+                Some(value) => value,
+                None => {
+                    let name = self.type_name()?;
+                    self.elem(&name).ok_or(
+                        "unsupported map value type; expected i64, f64, bool, string, a struct, a list or a map",
+                    )?
+                }
+            };
             self.expect('}')?;
             return Ok(match ty {
                 Type::Owned => Type::Map(key, value),
@@ -1366,6 +1425,14 @@ impl Parser {
         }
         if self.peek() == Some(&Token::Symbol('[')) {
             self.take();
+            if let Some(elem) = self.inner_container()? {
+                self.expect(']')?;
+                return Ok(match ty {
+                    Type::Owned => Type::List(elem),
+                    Type::Shared => Type::ListRef(elem, false),
+                    _ => Type::ListRef(elem, true),
+                });
+            }
             let element = self.type_name()?;
             if !self.symbol(';') {
                 let elem = self.elem(&element).ok_or(
@@ -1624,6 +1691,21 @@ impl Parser {
             if self.symbol('[') {
                 let index = self.expr()?;
                 self.expect(']')?;
+                // `grid[i][j]`：嵌套容器的第二层下标，读写由内层容器的 `$at`/`$put` 完成。
+                if self.symbol('[') {
+                    let inner = self.expr()?;
+                    self.expect(']')?;
+                    if matches!(self.peek(), Some(Token::Symbol('[' | '.'))) {
+                        return Err("index at most two levels deep, such as grid[i][j]; borrow a row with for row in &grid".into());
+                    }
+                    return Ok(Expr::ElementMethod(
+                        name,
+                        Box::new(index),
+                        String::new(),
+                        "$at".into(),
+                        vec![inner],
+                    ));
+                }
                 let field = self.field_path()?;
                 if !field.is_empty() && self.symbol('(') {
                     let (field, method) = field.rsplit_once('.').unwrap_or(("", &field));
@@ -2054,6 +2136,18 @@ impl Parser {
                             Expr::IndexField(local, index, field) if pure(&index) => {
                                 Instruction::AssignIndexField(local, *index, field, combined)
                             }
+                            Expr::ElementMethod(local, index, _, method, mut args)
+                                if method == "$at" && pure(&index) && args.iter().all(pure) =>
+                            {
+                                args.push(combined);
+                                Instruction::Call(Expr::ElementMethod(
+                                    local,
+                                    index,
+                                    String::new(),
+                                    "$put".into(),
+                                    args,
+                                ))
+                            }
                             Expr::Index(_, _) | Expr::IndexField(_, _, _) => return Err(
                                 "unsupported compound assignment index: it must not call functions; bind it with let first"
                                     .into(),
@@ -2078,6 +2172,24 @@ impl Parser {
                 } else {
                     Instruction::Return(Some(expr))
                 }
+            } else if let (Expr::ElementMethod(local, index, _, method, args), true) = (
+                &expr,
+                self.peek() == Some(&Token::Symbol('='))
+                    && self.tokens.get(self.position + 1) != Some(&Token::Symbol('=')),
+            ) {
+                if method != "$at" {
+                    return Err("expected newline between statements, found Symbol('=')".into());
+                }
+                self.take();
+                let mut args = args.clone();
+                args.push(self.expr()?);
+                Instruction::Call(Expr::ElementMethod(
+                    local.clone(),
+                    index.clone(),
+                    String::new(),
+                    "$put".into(),
+                    args,
+                ))
             } else if let Expr::IndexField(local, index, field) = &expr {
                 if self.symbol('=') {
                     Instruction::AssignIndexField(
@@ -2966,6 +3078,11 @@ impl<'a> Checker<'a> {
     ) -> Result<(Type, bool, Vec<Type>, Type), String> {
         let (key, target) = self.element(path, field)?;
         let receiver = format!("{path}[..].{field}");
+        if method.starts_with('$') && target.container().is_none() {
+            return Err(format!(
+                "type mismatch: {path}[..] is not a list or map, so it cannot be indexed again"
+            ));
+        }
         let Some(container) = target.container() else {
             return Err(format!(
                 "type mismatch: {receiver} has no method {method}; methods are only available on lists and maps"
@@ -3089,6 +3206,11 @@ impl<'a> Checker<'a> {
                     "unknown function {path}.get: struct values cannot be copied; check {path}.contains(k), then read {path}[k].field or borrow &{path}[k]"
                 );
             }
+            if method == "get" && matches!(container, Type::Map(_, Elem::Nested(_))) {
+                return format!(
+                    "unknown function {path}.get: list and map values cannot be copied by get; check {path}.contains(k), then borrow &{path}[k] or call {path}[k].len()"
+                );
+            }
             let supported = supported_methods(container, method);
             format!("unknown function {path}.{method}: {supported}")
         })
@@ -3170,6 +3292,7 @@ impl<'a> Checker<'a> {
                     Type::Bool => Some(Elem::Bool),
                     Type::Owned | Type::Shared | Type::Mutable => Some(Elem::Str),
                     Type::Record(id) => Some(Elem::Record(id)),
+                    Type::List(_) | Type::Map(_, _) => Some(nest(ty)),
                     _ => None,
                 };
                 match (elem(self.ty(key)?), elem(self.ty(value)?)) {
@@ -3432,6 +3555,11 @@ impl<'a> Checker<'a> {
                 if let Elem::Record(_) = elem {
                     return Err(format!(
                         "cannot move a struct out of {local}[..]; borrow it with &{local}[..] or read a field with {local}[..].field"
+                    ));
+                }
+                if let Elem::Nested(_) = elem {
+                    return Err(format!(
+                        "cannot move a list or map out of {local}[..]; borrow it with &{local}[..], call methods such as {local}[..].len(), or read an element with {local}[i][j]"
                     ));
                 }
                 if elem.ty() != expected {

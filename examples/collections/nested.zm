@@ -1,0 +1,54 @@
+// 嵌套容器：列表的列表、值是列表的字典、字典的列表。grid[i][j] 读写内层元素。
+use std/string
+
+struct Team:
+    name: string
+    members: [string]
+
+fn total(grid: &[[i64]]) -> i64:
+    let mut sum = 0
+
+    for row in &grid:
+        for x in &row:
+            sum += x
+
+    sum
+
+fn main():
+    let mut grid: [[i64]] = [[1, 2, 3], [4, 5, 6]]
+    grid[1][2] = 60
+    grid[0][0] += 10
+    grid.push([7])
+    grid[2].push(8)
+    println(grid)
+    println(grid[1][2])
+    println(grid[2].len())
+    println(total(&grid))
+
+    let mut groups: {string: [string]} = {}
+
+    let words = string.words("apple avocado banana blueberry cherry")
+
+    for word in &words:
+        let first = string.slice(word, 0, 1)
+
+        if not groups.contains(&first):
+            groups[&first] = []
+
+        groups[&first].push(string.copy(word))
+
+    for letter, group in &groups:
+        let joined = string.join(group, ",")
+        println("{letter}: {joined}")
+
+    let mut rows: [{string: i64}] = [{"a": 1}, {"b": 2}]
+    rows[1]["c"] = 3
+    println(rows)
+    println(rows[1]["c"])
+
+    let mut teams: [Team] = [Team(name: "red", members: ["amy"])]
+    teams[0].members.push("bob")
+    let names: [[string]] = [copy(&teams[0].members), ["solo"]]
+    println(names)
+    let expected: [[string]] = [["amy", "bob"], ["solo"]]
+    println(names == expected)
