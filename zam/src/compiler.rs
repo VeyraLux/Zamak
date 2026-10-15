@@ -315,10 +315,13 @@ pub fn tuple(fields: Vec<Type>) -> (u64, String) {
     (id, name)
 }
 
-/// 登记字段已按模块限定的元组，链接时放进结构体表。
+/// 登记字段已按模块限定的元组，链接时放进结构体表（泛型模板里还含类型参数的不放）。
 pub fn linked_tuple(fields: Vec<Type>) -> u64 {
+    let generic = fields.iter().any(|field| mentions_param(*field));
     let (id, _) = tuple(fields);
-    LINKED_TUPLES.write().expect("tuple table").insert(id);
+    if !generic {
+        LINKED_TUPLES.write().expect("tuple table").insert(id);
+    }
     id
 }
 
@@ -481,6 +484,227 @@ pub struct Function {
     pub position: SourcePosition,
     // 标准库函数：只有签名，函数体由原生后端按名字提供；检查器不检查它的空函数体。
     pub builtin: bool,
+    // 泛型函数的类型参数（`fn largest[T](...)`）。泛型函数本身不检查也不生成，
+    // 调用时按实参类型生成专门的副本（`largest[Int]`）。
+    pub generics: Vec<String>,
+}
+
+/// 泛型函数的类型参数在类型里写成一个特殊的结构体编号。
+pub fn type_param(name: &str) -> u64 {
+    let id = record_id(&format!("$param:{name}"));
+    PARAMS.write().expect("type parameters").insert(id);
+    id
+}
+static PARAMS: std::sync::RwLock<BTreeSet<u64>> = std::sync::RwLock::new(BTreeSet::new());
+
+/// 类型里还有没换成具体类型的类型参数（泛型模板里的类型）。
+pub fn mentions_param(ty: Type) -> bool {
+    let params = PARAMS.read().expect("type parameters");
+    fn walk(ty: Type, params: &BTreeSet<u64>) -> bool {
+        match ty {
+            Type::Record(id) | Type::RecordRef(id, _) => {
+                params.contains(&id)
+                    || tuple_fields(id)
+                        .is_some_and(|fields| fields.into_iter().any(|f| walk(f, params)))
+            }
+            Type::List(elem) | Type::ListRef(elem, _) => walk(elem.ty(), params),
+            Type::Map(_, value) | Type::MapRef(_, value, _) => walk(value.ty(), params),
+            _ => false,
+        }
+    }
+    walk(ty, &params)
+}
+
+/// 已生成的泛型函数副本：名字 → 函数。链接时放进函数表。
+static INSTANCES: std::sync::RwLock<BTreeMap<String, Function>> =
+    std::sync::RwLock::new(BTreeMap::new());
+
+pub fn instances() -> Vec<(String, Function)> {
+    INSTANCES
+        .read()
+        .expect("instance table")
+        .iter()
+        .map(|(name, function)| (name.clone(), function.clone()))
+        .collect()
+}
+
+pub fn instance_count() -> usize {
+    INSTANCES.read().expect("instance table").len()
+}
+
+/// 列表元素或字典值对应的 Elem。
+pub fn elem_from(ty: Type) -> Option<Elem> {
+    Some(match ty {
+        Type::Int => Elem::Int,
+        Type::Float => Elem::Float,
+        Type::Bool => Elem::Bool,
+        Type::Owned => Elem::Str,
+        Type::Record(id) => Elem::Record(id),
+        Type::List(_) | Type::Map(_, _) => nest(ty),
+        _ => return None,
+    })
+}
+
+/// 按实参类型推断类型参数：在形参类型里找到类型参数出现的位置，对上实参类型的同一位置。
+fn unify(pattern: Type, actual: Type, params: &BTreeSet<u64>, map: &mut BTreeMap<u64, Type>) {
+    match (pattern, actual) {
+        (Type::Record(id), _) if params.contains(&id) => {
+            map.entry(id).or_insert(actual);
+        }
+        (Type::List(p), Type::List(a)) => unify_elem(p, a, params, map),
+        (Type::Map(_, p), Type::Map(_, a)) => unify_elem(p, a, params, map),
+        (Type::Record(p), Type::Record(a)) => {
+            if let (Some(p), Some(a)) = (tuple_fields(p), tuple_fields(a)) {
+                for (p, a) in p.into_iter().zip(a) {
+                    unify(p, a, params, map);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn unify_elem(pattern: Elem, actual: Elem, params: &BTreeSet<u64>, map: &mut BTreeMap<u64, Type>) {
+    match (pattern, actual) {
+        (Elem::Nested(p), Elem::Nested(a)) => unify(nested(p), nested(a), params, map),
+        _ => unify(pattern.ty(), actual.ty(), params, map),
+    }
+}
+
+/// 把类型参数换成具体类型。`&T` 遇到 i64、f64、bool 时按值传；`&mut T` 不能是这三种。
+fn substitute(ty: Type, map: &BTreeMap<u64, Type>) -> Result<Type, String> {
+    Ok(match ty {
+        Type::Record(id) if map.contains_key(&id) => map[&id],
+        Type::RecordRef(id, mutable) if map.contains_key(&id) => match map[&id] {
+            concrete @ (Type::Int | Type::Float | Type::Bool) if !mutable => concrete,
+            concrete => borrow_of(concrete, mutable).ok_or_else(|| {
+                format!("type mismatch: &mut T cannot be {concrete:?}; numbers and booleans are passed by value")
+            })?,
+        },
+        Type::Record(id) => match tuple_fields(id) {
+            Some(fields) => Type::Record(substituted_tuple(fields, map)?),
+            None => ty,
+        },
+        Type::RecordRef(id, mutable) => match tuple_fields(id) {
+            Some(fields) => Type::RecordRef(substituted_tuple(fields, map)?, mutable),
+            None => ty,
+        },
+        Type::List(elem) => Type::List(substitute_elem(elem, map)?),
+        Type::ListRef(elem, mutable) => Type::ListRef(substitute_elem(elem, map)?, mutable),
+        Type::Map(key, value) => Type::Map(key, substitute_elem(value, map)?),
+        Type::MapRef(key, value, mutable) => {
+            Type::MapRef(key, substitute_elem(value, map)?, mutable)
+        }
+        other => other,
+    })
+}
+
+fn substituted_tuple(fields: Vec<Type>, map: &BTreeMap<u64, Type>) -> Result<u64, String> {
+    let fields = fields
+        .into_iter()
+        .map(|field| substitute(field, map))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(linked_tuple(fields))
+}
+
+fn substitute_elem(elem: Elem, map: &BTreeMap<u64, Type>) -> Result<Elem, String> {
+    match elem {
+        Elem::Record(_) | Elem::Nested(_) => {
+            let ty = substitute(elem.ty(), map)?;
+            elem_from(ty).ok_or_else(|| format!("unsupported element type {ty:?}"))
+        }
+        other => Ok(other),
+    }
+}
+
+/// 函数体里写着类型的地方（`let x: T = ...`，包括 if/循环/match/catch 里的）换成具体类型。
+fn substitute_block(block: &mut Block, map: &BTreeMap<u64, Type>) -> Result<(), String> {
+    for (instruction, _) in block {
+        match instruction {
+            Instruction::Let(_, _, annotation, value) => {
+                if let Some(ty) = annotation {
+                    *ty = substitute(*ty, map)?;
+                }
+                substitute_catch(value, map)?;
+            }
+            Instruction::If(_, yes, no) => {
+                substitute_block(yes, map)?;
+                substitute_block(no, map)?;
+            }
+            Instruction::While(_, body)
+            | Instruction::For(_, _, _, body)
+            | Instruction::Each(_, _, _, _, body) => substitute_block(body, map)?,
+            Instruction::Match(_, arms) => {
+                for (_, body) in arms {
+                    substitute_block(body, map)?;
+                }
+            }
+            Instruction::Call(value)
+            | Instruction::Assign(_, value)
+            | Instruction::Return(Some(value))
+            | Instruction::Unpack(_, _, value) => substitute_catch(value, map)?,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn substitute_catch(expr: &mut Expr, map: &BTreeMap<u64, Type>) -> Result<(), String> {
+    if let Expr::Catch(_, _, block) = expr {
+        substitute_block(block, map)?;
+    }
+    Ok(())
+}
+
+/// 调用泛型函数：按实参类型（已去掉借用）推断类型参数，返回专门副本的名字，没生成过就生成。
+/// 不是泛型函数时原样返回名字。
+pub fn instance(
+    functions: &BTreeMap<String, Function>,
+    name: &str,
+    actuals: &[Option<Type>],
+) -> Result<String, String> {
+    let Some(template) = functions.get(name).filter(|f| !f.generics.is_empty()) else {
+        return Ok(name.to_owned());
+    };
+    let params: BTreeSet<u64> = template.generics.iter().map(|g| type_param(g)).collect();
+    let mut map = BTreeMap::new();
+    for ((_, pattern), actual) in template.params.iter().zip(actuals) {
+        let pattern = pattern.borrowable().map_or(*pattern, |(owned, _)| owned);
+        if let Some(actual) = actual {
+            unify(pattern, *actual, &params, &mut map);
+        }
+    }
+    let mut types = Vec::new();
+    for generic in &template.generics {
+        let ty = map.get(&type_param(generic)).ok_or_else(|| {
+            let short = name.split_once(':').map_or(name, |(_, n)| n);
+            format!("cannot infer {generic} for {short}: {generic} must appear in a parameter type")
+        })?;
+        types.push(format!("{ty:?}"));
+    }
+    let instance = format!("{name}[{}]", types.join(", "));
+    if INSTANCES
+        .read()
+        .expect("instance table")
+        .contains_key(&instance)
+    {
+        return Ok(instance);
+    }
+    let mut function = template.clone();
+    function.generics.clear();
+    for (_, ty) in &mut function.params {
+        *ty = substitute(*ty, &map)?;
+    }
+    function.result = substitute(function.result, &map)?;
+    if let Some(error) = &mut function.error {
+        *error = substitute(*error, &map)?;
+    }
+    substitute_block(&mut function.body, &map)?;
+    INSTANCES
+        .write()
+        .expect("instance table")
+        .insert(instance.clone(), function);
+    Ok(instance)
 }
 
 #[derive(Clone, Debug)]
@@ -1160,6 +1384,8 @@ struct Parser {
     // 要插在当前语句前面的语句：对调用结果做字面量 match 时，先把值存进隐藏变量。
     pending: Vec<Instruction>,
     temps: usize,
+    // 正在解析的泛型函数的类型参数：这些名字是类型参数，不是结构体。
+    type_params: Vec<String>,
 }
 
 /// match 的一个分支：枚举变体、字面量（`1 | 2`、`"a"`、`true`）或 `_`。
@@ -1410,6 +1636,11 @@ impl Parser {
     }
     /// 首字母大写的类型名是结构体：记下名字，返回它的 id。
     fn record(&mut self, name: &str) -> Option<u64> {
+        if self.type_params.iter().any(|param| param == name) {
+            let id = type_param(name);
+            self.type_names.insert(id, format!("$param:{name}"));
+            return Some(id);
+        }
         if !name
             .rsplit('.')
             .next()
@@ -1915,6 +2146,38 @@ impl Parser {
         if matches!(name.as_str(), "i64" | "f64") {
             return Err(format!("reserved type name {name}"));
         }
+        // `fn largest[T](xs: &[T]) -> T`：类型参数首字母大写，函数体里也能用。
+        let mut generics = Vec::new();
+        if self.symbol('[') {
+            loop {
+                let generic = self.word()?;
+                if !generic.starts_with(char::is_uppercase) {
+                    return Err(format!(
+                        "type parameter names start with an uppercase letter, such as T; found {generic}"
+                    ));
+                }
+                generics.push(generic);
+                if self.symbol(']') {
+                    break;
+                }
+                self.expect(',')?;
+            }
+        }
+        let outer = std::mem::replace(&mut self.type_params, generics.clone());
+        let parsed = self.function_rest(public, start, imports, owner, name, generics);
+        self.type_params = outer;
+        parsed
+    }
+    /// 函数名（与类型参数）之后：参数表、返回类型与函数体。
+    fn function_rest(
+        &mut self,
+        public: bool,
+        start: SourcePosition,
+        imports: &[String],
+        owner: Option<&str>,
+        name: String,
+        generics: Vec<String>,
+    ) -> Result<(String, Function), String> {
         self.expect('(')?;
         let mut params = Vec::new();
         if !self.symbol(')') {
@@ -1981,6 +2244,7 @@ impl Parser {
                 body,
                 position: start,
                 builtin: false,
+                generics,
             },
         ))
     }
@@ -2072,6 +2336,7 @@ impl Parser {
                         flat: false,
                         pending: Vec::new(),
                         temps: 0,
+                        type_params: self.type_params.clone(),
                     };
                     let expr = inner
                         .expr()
@@ -2665,6 +2930,7 @@ pub fn parse(source: &str) -> Result<Module, String> {
         flat,
         pending: Vec::new(),
         temps: 0,
+        type_params: Vec::new(),
     };
     let result = (|| {
         let mut module = Module {
@@ -2932,7 +3198,7 @@ pub fn encode(module: &Module) -> Vec<u8> {
         .map(|(name, constant)| (name, constant.public, &constant.value))
         .collect();
     format!(
-        "ZAM-IR-26\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
+        "ZAM-IR-27\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
         module.type_names, module.imports, module.functions
     )
     .into_bytes()
@@ -3224,16 +3490,23 @@ impl<'a> Checker<'a> {
         Ok((key, mutable, params, result))
     }
     /// 被调函数的实际名字：`abs`/`min`/`max` 按第一个参数的类型选版本。
-    fn callee<'n>(&self, name: &'n str, args: &[Expr]) -> &'n str {
-        overload(name, args.first().and_then(|arg| self.ty(arg).ok()))
+    /// 被调函数的实际名字：`abs`/`min`/`max` 按第一个参数的类型选版本，泛型函数按实参类型
+    /// 选（并生成）专门的副本。推断失败时返回原名，由调用处报错。
+    fn callee(&self, name: &str, args: &[Expr]) -> String {
+        let name = overload(name, args.first().and_then(|arg| self.ty(arg).ok()));
+        let actuals: Vec<Option<Type>> = args.iter().map(|arg| self.value_type(arg).ok()).collect();
+        instance(self.functions, name, &actuals).unwrap_or_else(|_| name.to_owned())
+    }
+    /// 泛型函数推断不出类型参数时的报错。
+    fn generic_error(&self, name: &str, args: &[Expr]) -> Option<String> {
+        let actuals: Vec<Option<Type>> = args.iter().map(|arg| self.value_type(arg).ok()).collect();
+        instance(self.functions, name, &actuals).err()
     }
     /// 调用的目标函数与实参：普通调用原样返回；结构体的方法改写成 `Owner.m(接收者, ...)`。
     /// 列表、字典的方法与不是调用的表达式返回 None。
     fn call_target(&self, expr: &Expr) -> Result<Option<(String, Vec<Expr>)>, String> {
         let (receiver, ty, method, args) = match expr {
-            Expr::Call(name, args) => {
-                return Ok(Some((self.callee(name, args).to_owned(), args.clone())))
-            }
+            Expr::Call(name, args) => return Ok(Some((self.callee(name, args), args.clone()))),
             Expr::Method(path, method, args) => {
                 let ty = self.place(path)?.1;
                 (Receiver::Path(path, ty), ty, method, args)
@@ -3472,7 +3745,7 @@ impl<'a> Checker<'a> {
             },
             Expr::Call(name, args) => self
                 .functions
-                .get(self.callee(name, args))
+                .get(&self.callee(name, args))
                 .map(|f| f.result)
                 .ok_or_else(|| format!("unknown function {name}")),
             // `?` 的值就是被调函数的成功值。
@@ -4160,7 +4433,10 @@ impl<'a> Checker<'a> {
                 self.read(arg, ty, loans)
             }
             Expr::Call(name, args) => {
-                let name = self.callee(name, args);
+                let name = &self.callee(name, args);
+                if let Some(error) = self.generic_error(name, args) {
+                    return Err(error);
+                }
                 let callee = self
                     .functions
                     .get(name)
@@ -4584,7 +4860,7 @@ impl<'a> Checker<'a> {
                         self.ty(expr)?
                     } else if let Expr::Call(callee, args) = expr {
                         self.functions
-                            .get(self.callee(callee, args))
+                            .get(&self.callee(callee, args))
                             .ok_or_else(|| format!("unknown function {callee}"))?
                             .result
                     } else if matches!(
@@ -4715,7 +4991,7 @@ pub fn check(module: &Module, entry: &str) -> Result<(), String> {
     }
     let mut errors = Vec::new();
     for (name, function) in &module.functions {
-        if function.builtin {
+        if function.builtin || !function.generics.is_empty() {
             continue;
         }
         let mut checker = Checker {

@@ -318,6 +318,39 @@ fn main():
 
 练习：将 `greet` 的参数改为 `name: &string`，并使用 `println(greet(&who))` 调用。借用字符串可以用于插值；插值只读取内容，不移动或修改原字符串。调用后再加入 `println(who)`，检查借用结束后原变量仍可使用。
 
+### 泛型函数
+
+函数名后面用方括号写类型参数，同一个函数就能处理不同类型（Python 3.12 的写法）：
+
+```zamak
+fn largest[T](items: &[T]) -> T:
+    let mut best = items[0]
+
+    for item in items:
+        if item > best:
+            best = item
+
+    best
+
+fn main():
+    let numbers: [i64] = [3, 9, 4]
+    println(largest(&numbers))
+    let prices: [f64] = [2.5, 1.5]
+    println(largest(&prices))
+```
+
+```text
+9
+2.5
+```
+
+要点：
+
+- 类型参数首字母大写，可以有多个：`fn swap_pair[A, B](pair: (A, B)) -> (B, A)`。
+- 调用时不用写类型，编译器按实参推断 `T`，再为每种类型生成一份专门的函数，所以运行起来和手写的一样快。`T` 至少要在一个参数的类型里出现，否则推断不出来。
+- 函数体按具体类型检查：`largest` 用了 `>`，传入不能比较的类型时，报错里会写出是哪个版本（如 `largest[Bool]`）。
+- `&T` 遇到 `i64`、`f64`、`bool` 时按值传。
+
 ## 第 7 节：字符串、转义与插值
 
 ```zamak

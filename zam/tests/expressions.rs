@@ -385,3 +385,48 @@ fn tuples_and_multiple_returns() {
     let output = case.run("fn f(name: &string):\n    let t = (name, 1)\nfn main(): f(\"a\")\n");
     assert!(String::from_utf8_lossy(&output.stderr).contains("tuples hold owned values"));
 }
+
+/// 泛型函数：按实参类型生成副本，`&T` 遇到数字按值传，跨模块调用，推断失败与副本里的类型错误。
+#[test]
+fn generic_functions() {
+    let case = Case::new("expressions", "generics");
+    assert_eq!(
+        stdout(&case.run(include_str!("../../examples/values/generics.zm"))),
+        "9\n2.5\n2\n1\n(\"one\", 1)\n[\"ab\", \"ab\", \"ab\"]\n"
+    );
+    let project = case.path("project");
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    std::fs::write(
+        project.join("zam.toml"),
+        "[project]\nname = \"gen\"\nentry = \"src/main.zm\"\nmodules = \"src\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project.join("src/util.zm"),
+        "pub fn size[T](xs: &[T]) -> i64: xs.len()\npub fn pick[T](a: T, b: T, first: bool) -> T:\n    if first: return a\n    b\nfn hidden[T](x: T) -> T: x\n",
+    )
+    .unwrap();
+    let run_project = |main: &str| {
+        std::fs::write(project.join("src/main.zm"), main).unwrap();
+        std::process::Command::new(env!("CARGO_BIN_EXE_zam"))
+            .arg("run")
+            .arg(&project)
+            .env("ZAMAK_CACHE_DIR", case.path("cache"))
+            .output()
+            .unwrap()
+    };
+    let output = run_project("use util\nfn main():\n    let xs: [string] = [\"a\"]\n    println(util.size(&xs))\n    println(util.pick(\"x\", \"y\", false))\n    println(util.pick(1.5, 2.5, true))\n");
+    assert_eq!(stdout(&output), "1\ny\n1.5\n");
+    let output = run_project("use util\nfn main(): println(util.hidden(1))\n");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("private"));
+    for (source, message) in [
+        ("fn make[T]() -> [T]:\n    let out: [T] = []\n    out\nfn main():\n    let xs = make()\n", "cannot infer T for make"),
+        ("fn add[T](a: T, b: T) -> T: a + b\nfn main(): println(add(true, false))\n", "add[Bool]"),
+        ("fn f[t](x: t) -> t: x\nfn main(): pass\n", "type parameter names start with an uppercase letter"),
+    ] {
+        let output = case.run(source);
+        assert!(!output.status.success(), "accepted {source}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(message), "{source}: {stderr}");
+    }
+}

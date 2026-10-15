@@ -11,7 +11,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-40");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-41");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -327,10 +327,11 @@ impl Project {
         }
         // 检查时可能推断出新的元组类型（`let t = (1, "a")`）：重新链接后再检查，直到不再出现新的。
         let entry = format!("{}:main", self.entry);
+        // 泛型函数的新副本同理：副本里再调用泛型函数时会生成更多副本，直到不再增加。
         let result = loop {
-            let known = compiler::linked_tuple_count();
+            let known = (compiler::linked_tuple_count(), compiler::instance_count());
             let result = compiler::check(&self.linked()?, &entry);
-            if compiler::linked_tuple_count() == known {
+            if (compiler::linked_tuple_count(), compiler::instance_count()) == known {
                 break result;
             }
         };
@@ -394,6 +395,8 @@ impl Project {
             }
         }
         linked.functions.extend(native::builtin_functions());
+        // 泛型函数按类型生成的副本（检查时生成，名字形如 `模块:largest[Int]`）。
+        linked.functions.extend(compiler::instances());
         // 元组没有声明，按结构登记过的都放进来；字段名是项号 `0`、`1`……
         for (name, fields) in compiler::linked_tuples() {
             linked.structs.insert(
@@ -445,6 +448,10 @@ impl Project {
             .type_names
             .get(id)
             .ok_or("unknown type name")?;
+        // 泛型函数的类型参数：调用时才换成具体类型。
+        if name.starts_with("$param:") {
+            return Ok(());
+        }
         // 元组：各项类型限定后重新登记，同样的结构在所有模块里是同一个类型。
         if name.starts_with('(') {
             let mut fields = compiler::tuple_fields(*id).ok_or("unknown tuple type")?;
