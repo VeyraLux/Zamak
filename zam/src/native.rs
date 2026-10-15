@@ -2,8 +2,8 @@ use crate::compiler::{
     bitwise, borrow_of, captured_view, compound, constructed, copied, each_bindings, expr_roots,
     field_function, field_path, func_sig, func_type, instance_of, instance_with, lambda_body,
     lambda_prints, linked_tuple, method_args, method_signature, nest, nested, numeric, overload,
-    record_id, record_method, record_order, terminates, tuple_fields, Block, Elem, Expr,
-    Instruction, Module, Pattern, Receiver, Type, COPY,
+    record_id, record_method, record_order, sort_by_type, terminates, tuple_fields, Block, Elem,
+    Expr, Instruction, Module, Pattern, Receiver, Type, COPY,
 };
 use crate::project::Result;
 use std::collections::BTreeMap;
@@ -1468,6 +1468,39 @@ static void put{l}({l} *l, int64_t i, {t} v) {{ {t} *slot = at{l}(l, i); {drop_s
 {valat}{comparable}"
     )
 }
+/// `xs.sort_by(before)`：稳定的归并排序，`before(b, a)` 为真时 b 才排到 a 前面。
+fn sort_by_helper(elem: Elem) -> String {
+    let l = list_suffix(elem);
+    let t = ctype(elem.ty());
+    let id = sort_by_type(elem);
+    let (x, y) = if by_value(elem.ty()) {
+        ("a[x]", "a[y]")
+    } else {
+        ("&a[x]", "&a[y]")
+    };
+    format!(
+        "static void sortby{l}({l} *l, F{id} before) {{
+    size_t n = l->len, width, i;
+    {t} *a = l->data, *b, *tmp;
+    if (n < 2) return;
+    if (n > SIZE_MAX / 2 / sizeof({t})) list_alloc_failed();
+    b = ({t}*)malloc(n * sizeof({t}));
+    if (!b) list_alloc_failed();
+    for (width = 1; width < n; width *= 2) {{
+        for (i = 0; i < n; i += 2 * width) {{
+            size_t mid = i + width < n ? i + width : n, hi = i + 2 * width < n ? i + 2 * width : n;
+            size_t x = i, y = mid, k = i;
+            while (x < mid && y < hi) b[k++] = before.call(before.env, {y}, {x}) ? a[y++] : a[x++];
+            while (x < mid) b[k++] = a[x++];
+            while (y < hi) b[k++] = a[y++];
+        }}
+        tmp = a; a = b; b = tmp;
+    }}
+    if (a != l->data) {{ memcpy(l->data, a, n * sizeof({t})); free(a); }} else free(b);
+}}
+"
+    )
+}
 /// 能比较的元素（整数、浮点、布尔、字符串）才有排序、查找与切片：结构体还不能比较或复制。
 fn comparable_list_helpers(elem: Elem) -> String {
     let l = list_suffix(elem);
@@ -2746,6 +2779,7 @@ impl<'a> Generator<'a> {
             "remove" if list => "removeat",
             "remove" => "del",
             "index_of" => "index",
+            "sort_by" => "sortby",
             "$at" => "valat",
             "$put" => "put",
             other => other,
@@ -3936,6 +3970,10 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
     }
     for elem in &lists {
         source.push_str(&list_helpers(*elem));
+        // 用到 `sort_by` 的列表（它的比较函数类型出现过）才生成。
+        if funcs.contains(&sort_by_type(*elem)) {
+            source.push_str(&sort_by_helper(*elem));
+        }
     }
     for (key, value) in &maps {
         source.push_str(&map_helpers(MAP_TEMPLATE, *key, *value));

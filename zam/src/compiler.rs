@@ -353,6 +353,10 @@ pub fn method_signature(receiver: Type, method: &str) -> Option<(bool, Vec<Type>
         (Type::List(elem), "insert") => (true, vec![Type::Int, elem.ty()], Type::Unit),
         (Type::List(elem), "remove") => (true, vec![Type::Int], elem.ty()),
         (Type::List(_), "reverse" | "clear") => (true, Vec::new(), Type::Unit),
+        // `xs.sort_by(fn(a, b): a.age < b.age)`：`before(a, b)` 为真时 a 排在 b 前面，稳定排序。
+        (Type::List(elem), "sort_by") => {
+            (true, vec![Type::FuncRef(sort_by_type(elem))], Type::Unit)
+        }
         (Type::List(elem), "extend") => (true, vec![Type::List(elem)], Type::Unit),
         // 排序、查找与切片要比较或复制元素，结构体还不行。
         (Type::List(elem), "sort") if elem.comparable() => (true, Vec::new(), Type::Unit),
@@ -387,6 +391,11 @@ pub fn method_signature(receiver: Type, method: &str) -> Option<(bool, Vec<Type>
     })
 }
 
+/// `sort_by` 的参数类型：`fn(&T, &T) -> bool`（数字和布尔按值）。
+pub fn sort_by_type(elem: Elem) -> u64 {
+    func_type(vec![elem.item(), elem.item()], Type::Bool)
+}
+
 /// 方法名写错或元素类型不支持时，报错里列出能用的方法。
 fn supported_methods(container: Type, method: &str) -> &'static str {
     match container {
@@ -399,7 +408,7 @@ fn supported_methods(container: Type, method: &str) -> &'static str {
             "sort, contains, index_of and slice need i64, f64, bool or string elements"
         }
         Type::List(_) => {
-            "lists support len, push, pop, insert, remove, swap, reverse, clear, extend, sort, contains, index_of and slice"
+            "lists support len, push, pop, insert, remove, swap, reverse, clear, extend, sort, sort_by, contains, index_of and slice"
         }
         _ if method.starts_with('$') => {
             "indexing twice, such as grid[i][j], reads i64, f64, bool and string elements; borrow deeper levels with for row in &grid"
@@ -5191,6 +5200,21 @@ impl<'a> Checker<'a> {
                 let mut frame = loans.clone();
                 for (arg, ty) in args.iter().zip(&params) {
                     self.expr(arg, *ty, &mut frame)?;
+                }
+                // 闭包在整个调用期间都读它捕获的变量：方法要改的容器不能被它读。
+                let root = path.split('.').next().unwrap_or(path);
+                if mutable
+                    && args.iter().any(|arg| {
+                        let mut roots = BTreeSet::new();
+                        if let Expr::Lambda(_, _, body) = arg {
+                            expr_roots(lambda_body(body), &mut roots);
+                        }
+                        roots.contains(root)
+                    })
+                {
+                    return Err(format!(
+                        "borrow conflict: the fn reads {root} while .{method} changes it"
+                    ));
                 }
                 self.container(path, mutable, loans)?;
                 Ok(())

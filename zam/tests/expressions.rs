@@ -504,7 +504,7 @@ fn function_values_and_closures() {
     let case = Case::new("expressions", "functions");
     assert_eq!(
         stdout(&case.run(include_str!("../../examples/values/functions.zm"))),
-        "20\n18\n42\n[5, 4, 6]\n2\n[\"APPLE!\", \"KIWI!\", \"BANANA!\"]\n42\n"
+        "20\n18\n42\n[5, 4, 6]\n2\n[\"APPLE!\", \"KIWI!\", \"BANANA!\"]\n42\n[\"fig\", \"kiwi\", \"banana\"]\n"
     );
     // 语句位置的调用、无返回值的函数、println 当函数体、枚举载荷、循环里的闭包、函数参数再转传。
     let source = "use std/io\n\nenum Op:\n    Unary(f: fn(i64) -> i64)\n    Nothing\n\nfn each(xs: &[string], f: fn(&string)):\n    for x in xs:\n        f(x)\n\nfn run(f: fn()): f()\n\nfn compose(f: fn(i64) -> i64, g: fn(i64) -> i64, x: i64) -> i64: g(f(x))\n\nfn relay(f: fn(i64) -> i64) -> i64: compose(f, f, 1)\n\nfn main():\n    let names: [string] = [\"a\", \"b\"]\n    let prefix = \"> \"\n    each(&names, fn(s): println(prefix + s))\n    run(fn(): io.println(\"ran\"))\n    let op = Op.Unary(fn(x: i64) -> i64: x * 10)\n    match op:\n        Unary(f): println(f(4))\n        Nothing: pass\n    let base = 7\n    println(compose(fn(x): x + base, fn(y): y * base, 1))\n    for i in 0..3:\n        println(relay(fn(x): x + i))\n";
@@ -512,6 +512,8 @@ fn function_values_and_closures() {
         stdout(&case.run(source)),
         "> a\n> b\nran\n40\n56\n1\n3\n5\n"
     );
+    let source = "struct Person:\n    name: string\n    age: i64\n\nfn main():\n    let mut people: [Person] = [Person(name: \"amy\", age: 30), Person(name: \"bob\", age: 25), Person(name: \"cat\", age: 30)]\n    people.sort_by(fn(a, b): a.age < b.age)\n    for p in &people:\n        println(p.name)\n    let mut nums: [i64] = [3, 1, 2]\n    let desc = true\n    nums.sort_by(fn(a, b): if desc: a > b else: a < b)\n    println(nums)\n";
+    assert_eq!(stdout(&case.run(source)), "bob\namy\ncat\n[3, 2, 1]\n");
     // 跨模块：导入模块的函数当值、接收回调的 pub fn。
     let project = case.path("project");
     std::fs::create_dir_all(project.join("src")).unwrap();
@@ -551,6 +553,7 @@ fn function_values_and_closures() {
         ("fn main():\n    let x = 1\n    let f = fn(x: i64) -> i64: x\n", "x is already declared"),
         ("fn main():\n    let f = fn(x: i64) -> i64:\n        x\n", "an anonymous fn holds one expression"),
         ("fn d(x: i64) -> i64: x\n\nfn main():\n    let f = d\n    println(f)\n", "function values cannot be printed"),
+        ("fn main():\n    let mut xs: [i64] = [2, 1]\n    xs.sort_by(fn(a, b): a < xs.len())\n", "the fn reads xs while .sort_by changes it"),
     ] {
         let output = case.run(source);
         assert!(!output.status.success(), "accepted {source}");
