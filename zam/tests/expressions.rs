@@ -498,3 +498,63 @@ fn generic_structs_enums_and_option() {
         }
     }
 }
+
+#[test]
+fn function_values_and_closures() {
+    let case = Case::new("expressions", "functions");
+    assert_eq!(
+        stdout(&case.run(include_str!("../../examples/values/functions.zm"))),
+        "20\n18\n42\n[5, 4, 6]\n2\n[\"APPLE!\", \"KIWI!\", \"BANANA!\"]\n42\n"
+    );
+    // 语句位置的调用、无返回值的函数、println 当函数体、枚举载荷、循环里的闭包、函数参数再转传。
+    let source = "use std/io\n\nenum Op:\n    Unary(f: fn(i64) -> i64)\n    Nothing\n\nfn each(xs: &[string], f: fn(&string)):\n    for x in xs:\n        f(x)\n\nfn run(f: fn()): f()\n\nfn compose(f: fn(i64) -> i64, g: fn(i64) -> i64, x: i64) -> i64: g(f(x))\n\nfn relay(f: fn(i64) -> i64) -> i64: compose(f, f, 1)\n\nfn main():\n    let names: [string] = [\"a\", \"b\"]\n    let prefix = \"> \"\n    each(&names, fn(s): println(prefix + s))\n    run(fn(): io.println(\"ran\"))\n    let op = Op.Unary(fn(x: i64) -> i64: x * 10)\n    match op:\n        Unary(f): println(f(4))\n        Nothing: pass\n    let base = 7\n    println(compose(fn(x): x + base, fn(y): y * base, 1))\n    for i in 0..3:\n        println(relay(fn(x): x + i))\n";
+    assert_eq!(
+        stdout(&case.run(source)),
+        "> a\n> b\nran\n40\n56\n1\n3\n5\n"
+    );
+    // 跨模块：导入模块的函数当值、接收回调的 pub fn。
+    let project = case.path("project");
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    std::fs::write(
+        project.join("zam.toml"),
+        "[project]\nname = \"fns\"\nentry = \"src/main.zm\"\nmodules = \"src\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project.join("src/lib.zm"),
+        "pub fn square(x: i64) -> i64: x * x\n\npub fn sum_by(xs: &[i64], f: fn(i64) -> i64) -> i64:\n    let mut total = 0\n    for x in xs:\n        total += f(x)\n    total\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project.join("src/main.zm"),
+        "use lib\n\nfn main():\n    let xs: [i64] = [1, 2, 3]\n    println(lib.sum_by(&xs, lib.square))\n    let k = 10\n    println(lib.sum_by(&xs, fn(x): x * k))\n",
+    )
+    .unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_zam"))
+        .arg("run")
+        .arg(&project)
+        .env("ZAMAK_CACHE_DIR", case.path("cache"))
+        .output()
+        .unwrap();
+    assert_eq!(stdout(&output), "14\n60\n");
+    for (source, message) in [
+        ("fn main():\n    let n = 1\n    let f = fn(): n\n", "can only be passed directly as an argument"),
+        ("struct H:\n    f: fn() -> i64\n\nfn keep(f: fn() -> i64) -> H: H(f: f)\n\nfn main(): pass\n", "may capture local variables of its caller"),
+        ("fn give(f: fn() -> i64) -> fn() -> i64: f\n\nfn main(): pass\n", "may capture local variables of its caller"),
+        ("fn main():\n    let f = fn(x): x\n", "cannot infer the type of parameter x"),
+        ("fn run(f: fn()): f()\n\nfn main():\n    let mut xs: [i64] = []\n    run(fn(): xs.push(1))\n", "cannot mutably borrow immutable value xs"),
+        ("fn both(xs: &mut [i64], f: fn() -> i64): pass\n\nfn main():\n    let mut xs: [i64] = []\n    both(&mut xs, fn(): xs.len())\n", "borrow conflict: xs"),
+        ("fn run(f: fn(i64) -> i64) -> i64: f(1)\n\nfn main(): println(run(fn(a, b): a))\n", "the function takes 1 parameter(s)"),
+        ("fn run(f: fn(i64) -> i64) -> i64: f(1)\n\nfn neg(b: bool) -> bool: not b\n\nfn main(): println(run(neg))\n", "neg has a different function type"),
+        ("fn id[T](x: T) -> T: x\n\nfn main():\n    let f: fn(i64) -> i64 = id\n", "generic function id cannot be used as a value"),
+        ("fn p(s: &string) -> i64!string: 1\n\nfn main():\n    let f = p\n", "function values cannot fail yet"),
+        ("fn main():\n    let x = 1\n    let f = fn(x: i64) -> i64: x\n", "x is already declared"),
+        ("fn main():\n    let f = fn(x: i64) -> i64:\n        x\n", "an anonymous fn holds one expression"),
+        ("fn d(x: i64) -> i64: x\n\nfn main():\n    let f = d\n    println(f)\n", "function values cannot be printed"),
+    ] {
+        let output = case.run(source);
+        assert!(!output.status.success(), "accepted {source}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(message), "{source}: {stderr}");
+    }
+}

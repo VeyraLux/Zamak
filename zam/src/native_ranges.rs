@@ -180,6 +180,14 @@ impl Analysis {
         let key = expr as *const Expr as usize;
         match expr {
             Expr::Int(value) => Interval::point(*value),
+            // 匿名函数体在别处执行，不参与这里的区间推理；函数值的调用结果未知。
+            Expr::Lambda(..) | Expr::FnRef(_) => Interval::TOP,
+            Expr::Apply(_, values) => {
+                for value in values {
+                    self.expr(value, env, collect);
+                }
+                Interval::TOP
+            }
             Expr::Variable(name) => env.get(name).map_or(Interval::TOP, |f| f.value),
             Expr::Unary('-', inner) => {
                 let range = self.expr(inner, env, collect);

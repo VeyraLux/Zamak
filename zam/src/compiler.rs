@@ -33,6 +33,11 @@ pub enum Type {
     // 字典 `{K: V}`（owned）与它的调用帧借用；键只能是 i64 或 string。
     Map(Elem, Elem),
     MapRef(Elem, Elem, bool),
+    // 函数值 `fn(i64) -> bool`：编号指向签名表（`func_sig`）。`Func` 不捕获局部变量，可以存进
+    // 变量、字段、返回；参数位置写的函数类型是 `FuncRef`，它可能是捕获了调用方局部变量的闭包，
+    // 和借用一样只能调用或继续当实参传，不能存下来。
+    Func(u64),
+    FuncRef(u64),
 }
 impl Type {
     /// `[T]`、`{K: V}` 或它们的借用 → 背后的 owned 容器类型。
@@ -51,6 +56,7 @@ impl Type {
                 | Type::ListRef(_, _)
                 | Type::MapRef(_, _, _)
                 | Type::RecordRef(_, _)
+                | Type::FuncRef(_)
         )
     }
     /// 可被借用的值：（被借用的 owned 类型，本身已是借用时是否可写）。标量不可借用。
@@ -180,6 +186,120 @@ pub fn method_args(
 /// 全局 `copy(&x)`：深复制字符串、列表、字典、结构体与枚举。它对任何类型都成立，
 /// 所以不在函数表里，检查器与生成器按名字特判。
 pub const COPY: &str = "std/core:copy";
+
+/// 按值复制、不需要释放的值：数字、布尔与函数值。
+pub fn copied(ty: Type) -> bool {
+    matches!(
+        ty,
+        Type::Int | Type::Float | Type::Bool | Type::Func(_) | Type::FuncRef(_)
+    )
+}
+
+/// 闭包看见的外层局部变量：一律只读；owned 的值变成共享借用，数字、布尔与函数照旧。
+pub fn captured_view(ty: Type) -> Result<Type, String> {
+    Ok(match ty {
+        Type::Owned | Type::Shared | Type::Mutable => Type::Shared,
+        Type::Record(id) | Type::RecordRef(id, _) => Type::RecordRef(id, false),
+        Type::List(elem) | Type::ListRef(elem, _) => Type::ListRef(elem, false),
+        Type::Map(key, value) | Type::MapRef(key, value, _) => Type::MapRef(key, value, false),
+        Type::ArrayInt(_) => {
+            return Err("fixed arrays cannot be used inside an anonymous fn; use a list".into())
+        }
+        other => other,
+    })
+}
+
+/// 表达式里用到的局部名（路径的根）。闭包据此找出它捕获了哪些外层变量。
+pub fn expr_roots(expr: &Expr, out: &mut BTreeSet<String>) {
+    let root = |path: &str| path.split('.').next().unwrap_or(path).to_owned();
+    match expr {
+        Expr::Variable(name) | Expr::Borrow(name, _) => {
+            out.insert(root(name));
+        }
+        Expr::Field(base, _) => {
+            out.insert(root(base));
+        }
+        Expr::Index(path, index) | Expr::IndexField(path, index, _) => {
+            out.insert(root(path));
+            expr_roots(index, out);
+        }
+        Expr::BorrowIndex(path, index, _, _) => {
+            out.insert(root(path));
+            expr_roots(index, out);
+        }
+        Expr::Method(path, _, args) | Expr::Apply(path, args) => {
+            out.insert(root(path));
+            args.iter().for_each(|arg| expr_roots(arg, out));
+        }
+        Expr::ElementMethod(path, index, _, _, args) => {
+            out.insert(root(path));
+            expr_roots(index, out);
+            args.iter().for_each(|arg| expr_roots(arg, out));
+        }
+        Expr::Chain(inner, _, args) => {
+            expr_roots(inner, out);
+            args.iter().for_each(|arg| expr_roots(arg, out));
+        }
+        Expr::Call(_, args)
+        | Expr::Variant(_, _, args)
+        | Expr::Array(args)
+        | Expr::Tuple(args)
+        | Expr::Format(args) => args.iter().for_each(|arg| expr_roots(arg, out)),
+        Expr::Record(_, fields) => fields.iter().for_each(|(_, v)| expr_roots(v, out)),
+        Expr::MapLit(entries) => entries.iter().for_each(|(k, v)| {
+            expr_roots(k, out);
+            expr_roots(v, out);
+        }),
+        Expr::Unary(_, inner) | Expr::Try(inner) | Expr::ByteLen(inner) | Expr::CharLen(inner) => {
+            expr_roots(inner, out)
+        }
+        Expr::Catch(inner, _, _) => expr_roots(inner, out),
+        Expr::Binary(_, a, b) | Expr::StringEqual(a, b) => {
+            expr_roots(a, out);
+            expr_roots(b, out);
+        }
+        Expr::If(c, a, b) => {
+            expr_roots(c, out);
+            expr_roots(a, out);
+            expr_roots(b, out);
+        }
+        Expr::Match(scrutinee, arms) => {
+            expr_roots(scrutinee, out);
+            arms.iter().for_each(|(_, v)| expr_roots(v, out));
+        }
+        Expr::Lambda(_, _, body) => expr_roots(lambda_body(body), out),
+        Expr::Text(_) | Expr::Int(_) | Expr::Float(_) | Expr::Bool(_) | Expr::FnRef(_) => {}
+    }
+}
+
+/// 匿名函数体里的那个表达式（打印语句打印的值，或函数体本身）。
+pub fn lambda_body(body: &Block) -> &Expr {
+    match &body[0].0 {
+        Instruction::Print(expr) | Instruction::Call(expr) => expr,
+        _ => unreachable!("anonymous fn bodies hold one expression"),
+    }
+}
+
+/// 匿名函数体是打印语句：没有返回值。
+pub fn lambda_prints(body: &Block) -> bool {
+    matches!(body[0].0, Instruction::Print(_))
+}
+
+/// 结构体字段里存的函数：`p.on_click(x)` 调用它。不是函数字段时返回 None。
+pub fn field_function(
+    structs: &BTreeMap<String, Struct>,
+    receiver: Type,
+    field: &str,
+) -> Option<u64> {
+    let (Type::Record(id) | Type::RecordRef(id, _)) = receiver else {
+        return None;
+    };
+    let structure = structs.iter().find(|(name, _)| record_id(name) == id)?.1;
+    match structure.fields.iter().find(|(name, _)| name == field)?.1 {
+        Type::Func(func) => Some(func),
+        _ => None,
+    }
+}
 
 /// 结构体（含枚举）、列表与字典：有按类型生成的复制、相等与显示函数。
 pub fn compound(ty: Type) -> bool {
@@ -361,6 +481,34 @@ pub fn linked_tuple_count() -> usize {
     LINKED_TUPLES.read().expect("tuple table").len()
 }
 
+/// 函数类型表：编号 → （参数类型, 结果类型）。编号是签名文字的哈希，同样的签名在所有模块里
+/// 是同一个类型。
+type FuncTable = BTreeMap<u64, (Vec<Type>, Type)>;
+static FUNCS: std::sync::RwLock<FuncTable> = std::sync::RwLock::new(BTreeMap::new());
+
+/// 登记一个函数类型，返回编号。
+pub fn func_type(params: Vec<Type>, result: Type) -> u64 {
+    let params: Vec<Type> = params
+        .into_iter()
+        .map(|ty| match ty {
+            Type::Func(id) => Type::FuncRef(id),
+            other => other,
+        })
+        .collect();
+    let names: Vec<String> = params.iter().map(|ty| format!("{ty:?}")).collect();
+    let id = record_id(&format!("fn({}) -> {result:?}", names.join(", ")));
+    FUNCS
+        .write()
+        .expect("function types")
+        .insert(id, (params, result));
+    id
+}
+
+/// 函数类型的（参数类型, 结果类型）。
+pub fn func_sig(id: u64) -> (Vec<Type>, Type) {
+    FUNCS.read().expect("function types")[&id].clone()
+}
+
 /// 把列表或字典类型登记为另一个容器的元素。
 pub fn nest(container: Type) -> Elem {
     let id = record_id(&format!("nested {container:?}"));
@@ -446,6 +594,14 @@ pub enum Expr {
     Chain(Box<Expr>, String, Vec<Expr>),
     // `{k: v, ...}` 字典字面量；空字典需要类型标注。
     MapLit(Vec<(Expr, Expr)>),
+    // `fn(x: i64) -> i64: x * 2`：匿名函数，函数体是一个表达式；参数类型与返回类型可以省略，
+    // 按期望的函数类型补上。用到外层局部变量时是闭包，只能直接当实参传。
+    // 函数体存成只有一条语句的代码块：`println(x)` 是打印语句，其他是一个表达式。
+    Lambda(Vec<(String, Option<Type>)>, Option<Type>, Block),
+    // 把具名函数当值用：`double`、`util.double`（模块解析后是限定名）。
+    FnRef(String),
+    // 调用函数值：`f(x)`，`f` 是函数类型的局部变量或参数。
+    Apply(String, Vec<Expr>),
     // `if c { a } else { b }` 作为值：每个分支是单个表达式，必须有 else。
     If(Box<Expr>, Box<Expr>, Box<Expr>),
     // `Shape.Circle(1.0)`、`Shape.Empty`：构造枚举变体（模块解析后是限定的枚举名）。
@@ -522,6 +678,10 @@ pub fn mentions_param(ty: Type) -> bool {
             }
             Type::List(elem) | Type::ListRef(elem, _) => walk(elem.ty(), params),
             Type::Map(_, value) | Type::MapRef(_, value, _) => walk(value.ty(), params),
+            Type::Func(id) | Type::FuncRef(id) => {
+                let (args, result) = func_sig(id);
+                args.into_iter().chain([result]).any(|ty| walk(ty, params))
+            }
             _ => false,
         }
     }
@@ -565,6 +725,15 @@ fn unify(pattern: Type, actual: Type, params: &BTreeSet<u64>, map: &mut BTreeMap
             map.entry(id).or_insert(actual);
         }
         (Type::List(p), Type::List(a)) => unify_elem(p, a, params, map),
+        (Type::Func(p) | Type::FuncRef(p), Type::Func(a) | Type::FuncRef(a)) => {
+            let ((p_args, p_result), (a_args, a_result)) = (func_sig(p), func_sig(a));
+            for (p, a) in p_args.into_iter().zip(a_args).chain([(p_result, a_result)]) {
+                // `fn(&T)` 对上 `fn(&string)`：按借用的目标类型推断。
+                let p = p.borrowable().map_or(p, |(owned, _)| owned);
+                let a = a.borrowable().map_or(a, |(owned, _)| owned);
+                unify(p, a, params, map);
+            }
+        }
         (Type::Map(_, p), Type::Map(_, a)) => unify_elem(p, a, params, map),
         (Type::Record(p), Type::Record(a)) | (Type::RecordRef(p, _), Type::RecordRef(a, _)) => {
             if let (Some(p), Some(a)) = (tuple_fields(p), tuple_fields(a)) {
@@ -599,11 +768,26 @@ fn substitute(ty: Type, map: &BTreeMap<u64, Type>) -> Result<Type, String> {
     Ok(match ty {
         Type::Record(id) if map.contains_key(&id) => map[&id],
         Type::RecordRef(id, mutable) if map.contains_key(&id) => match map[&id] {
-            concrete @ (Type::Int | Type::Float | Type::Bool) if !mutable => concrete,
+            concrete @ (Type::Int | Type::Float | Type::Bool | Type::Func(_)) if !mutable => {
+                concrete
+            }
             concrete => borrow_of(concrete, mutable).ok_or_else(|| {
                 format!("type mismatch: &mut T cannot be {concrete:?}; numbers and booleans are passed by value")
             })?,
         },
+        Type::Func(id) | Type::FuncRef(id) => {
+            let (args, result) = func_sig(id);
+            let args = args
+                .into_iter()
+                .map(|arg| substitute(arg, map))
+                .collect::<Result<Vec<_>, _>>()?;
+            let id = func_type(args, substitute(result, map)?);
+            if matches!(ty, Type::Func(_)) {
+                Type::Func(id)
+            } else {
+                Type::FuncRef(id)
+            }
+        }
         Type::Record(id) => Type::Record(substituted_record(id, map)?),
         Type::RecordRef(id, mutable) => Type::RecordRef(substituted_record(id, map)?, mutable),
         Type::List(elem) => Type::List(substitute_elem(elem, map)?),
@@ -695,6 +879,17 @@ pub fn instance(
     name: &str,
     actuals: &[Option<Type>],
 ) -> Result<String, String> {
+    instance_with(functions, name, actuals, &|_, _| None)
+}
+
+/// 同 `instance`；`late(i, 参数类型)` 给出第 i 个实参（没写参数类型的匿名函数）在这些参数类型下
+/// 的函数类型：先用其他实参推断出的类型参数补全它的参数，再用它的返回类型推断剩下的。
+pub fn instance_with(
+    functions: &BTreeMap<String, Function>,
+    name: &str,
+    actuals: &[Option<Type>],
+    late: &dyn Fn(usize, Vec<Type>) -> Option<Type>,
+) -> Result<String, String> {
     let Some(template) = functions.get(name).filter(|f| !f.generics.is_empty()) else {
         return Ok(name.to_owned());
     };
@@ -706,6 +901,23 @@ pub fn instance(
             unify(pattern, *actual, &params, &mut map);
         }
     }
+    for (index, ((_, pattern), actual)) in template.params.iter().zip(actuals).enumerate() {
+        let (Type::Func(id) | Type::FuncRef(id), None) = (pattern, actual) else {
+            continue;
+        };
+        let known: Result<Vec<Type>, String> = func_sig(*id)
+            .0
+            .into_iter()
+            .map(|arg| substitute(arg, &map))
+            .collect();
+        let Ok(known) = known else { continue };
+        if known.iter().any(|arg| mentions_param(*arg)) {
+            continue;
+        }
+        if let Some(actual) = late(index, known) {
+            unify(*pattern, actual, &params, &mut map);
+        }
+    }
     let mut types = Vec::new();
     for generic in &template.generics {
         let ty = map.get(&type_param(generic)).ok_or_else(|| {
@@ -715,6 +927,11 @@ pub fn instance(
         if matches!(ty, Type::ArrayInt(_)) {
             return Err(format!(
                 "type mismatch: {generic} cannot be a fixed array; use a list, such as let xs: [i64] = [1, 2]"
+            ));
+        }
+        if matches!(ty, Type::FuncRef(_)) {
+            return Err(format!(
+                "type mismatch: {generic} cannot be a function parameter that may capture local variables; give the parameter a function type instead"
             ));
         }
         types.push(format!("{ty:?}"));
@@ -1918,6 +2135,36 @@ impl Parser {
         })
     }
     fn ty(&mut self) -> Result<Type, String> {
+        // 函数类型 `fn(i64, &string) -> bool`；没有 `->` 时没有返回值。
+        if self.keyword("fn") {
+            self.expect('(')?;
+            let mut params = Vec::new();
+            while !self.symbol(')') {
+                let param = self.ty()?;
+                if matches!(param, Type::ArrayInt(_)) {
+                    return Err("arrays are only supported as local values".into());
+                }
+                params.push(param);
+                if self.symbol(')') {
+                    break;
+                }
+                self.expect(',')?;
+            }
+            let result = if self.symbol('-') {
+                self.expect('>')?;
+                let result = self.ty()?;
+                if result.is_reference() || matches!(result, Type::ArrayInt(_)) {
+                    return Err("function types return owned values".into());
+                }
+                if self.peek() == Some(&Token::Symbol('!')) {
+                    return Err("function types cannot fail yet; pass a function without !E".into());
+                }
+                result
+            } else {
+                Type::Unit
+            };
+            return Ok(Type::Func(func_type(params, result)));
+        }
         let ty = if self.symbol('&') {
             if self.keyword("mut") {
                 Type::Mutable
@@ -2149,6 +2396,64 @@ impl Parser {
         Ok(left)
     }
     fn atom(&mut self) -> Result<Expr, String> {
+        // `fn(x: i64) -> i64: x * 2`、`fn(a, b): a < b`：匿名函数，冒号后是一个表达式。
+        if self.keyword("fn") {
+            self.expect('(')?;
+            let mut params = Vec::new();
+            while !self.symbol(')') {
+                let name = self.word()?;
+                let ty = if self.symbol(':') {
+                    let ty = self.ty()?;
+                    if matches!(ty, Type::ArrayInt(_)) {
+                        return Err("arrays are only supported as local values".into());
+                    }
+                    Some(match ty {
+                        Type::Func(id) => Type::FuncRef(id),
+                        ty => ty,
+                    })
+                } else {
+                    None
+                };
+                if params.iter().any(|(other, _)| *other == name) {
+                    return Err(format!("duplicate parameter {name}"));
+                }
+                params.push((name, ty));
+                if self.symbol(')') {
+                    break;
+                }
+                self.expect(',')?;
+            }
+            let result = if self.symbol('-') {
+                self.expect('>')?;
+                let result = self.ty()?;
+                if result.is_reference() || matches!(result, Type::ArrayInt(_)) {
+                    return Err("function types return owned values".into());
+                }
+                Some(result)
+            } else {
+                None
+            };
+            if !self.symbol(':') {
+                return Err(
+                    "expected ':' and an expression after the parameters of fn(...)".into(),
+                );
+            }
+            if matches!(self.peek(), Some(Token::Newline | Token::Indent)) {
+                return Err("an anonymous fn holds one expression on the same line; declare a named fn for longer code".into());
+            }
+            let position = self.at();
+            let body = self.expr()?;
+            let statement = match body {
+                Expr::Call(name, mut args)
+                    if args.len() == 1
+                        && matches!(name.as_str(), "println" | "io.println" | "fmt.println") =>
+                {
+                    Instruction::Print(args.remove(0))
+                }
+                body => Instruction::Call(body),
+            };
+            return Ok(Expr::Lambda(params, result, vec![(statement, position)]));
+        }
         if self.symbol('(') {
             let expr = self.expr()?;
             // `(a, b)` 是元组；`(a)` 只是括号。
@@ -2437,7 +2742,11 @@ impl Parser {
                         return Err("self can only be the first parameter of a method declared inside a struct or enum".into());
                     }
                     self.expect(':')?;
-                    let ty = self.ty()?;
+                    let ty = match self.ty()? {
+                        // 参数位置的函数类型可以接收闭包，按借用对待。
+                        Type::Func(id) => Type::FuncRef(id),
+                        ty => ty,
+                    };
                     if matches!(ty, Type::ArrayInt(_)) {
                         return Err("arrays are only supported as local values".into());
                     }
@@ -3490,7 +3799,7 @@ pub fn encode(module: &Module) -> Vec<u8> {
         .map(|(name, constant)| (name, constant.public, &constant.value))
         .collect();
     format!(
-        "ZAM-IR-28\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
+        "ZAM-IR-29\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
         module.type_names, module.imports, module.functions
     )
     .into_bytes()
@@ -3690,7 +3999,7 @@ impl<'a> Checker<'a> {
             if self.locals.contains_key(binding) || bindings.iter().any(|(b, _)| b == binding) {
                 return Err(format!("duplicate binding {binding}"));
             }
-            let ty = if matches!(ty, Type::Int | Type::Float | Type::Bool) {
+            let ty = if copied(*ty) {
                 *ty
             } else {
                 borrow_of(*ty, false).expect("enum payloads are owned values")
@@ -3788,13 +4097,27 @@ impl<'a> Checker<'a> {
     /// 选（并生成）专门的副本。推断失败时返回原名，由调用处报错。
     fn callee(&self, name: &str, args: &[Expr]) -> String {
         let name = overload(name, args.first().and_then(|arg| self.ty(arg).ok()));
-        let actuals: Vec<Option<Type>> = args.iter().map(|arg| self.value_type(arg).ok()).collect();
-        instance(self.functions, name, &actuals).unwrap_or_else(|_| name.to_owned())
+        self.generic_instance(name, args)
+            .unwrap_or_else(|_| name.to_owned())
     }
     /// 泛型函数推断不出类型参数时的报错。
     fn generic_error(&self, name: &str, args: &[Expr]) -> Option<String> {
+        self.generic_instance(name, args).err()
+    }
+    fn generic_instance(&self, name: &str, args: &[Expr]) -> Result<String, String> {
         let actuals: Vec<Option<Type>> = args.iter().map(|arg| self.value_type(arg).ok()).collect();
-        instance(self.functions, name, &actuals).err()
+        // 没写参数类型的匿名函数：参数类型由其他实参推断出的类型参数决定，返回类型由函数体决定。
+        let late = |index: usize, params: Vec<Type>| {
+            let Expr::Lambda(names, result, body) = &args[index] else {
+                return None;
+            };
+            let (id, _) = self
+                .fork()
+                .lambda(names, *result, body, Some((params, None)))
+                .ok()?;
+            Some(Type::FuncRef(id))
+        };
+        instance_with(self.functions, name, &actuals, &late)
     }
     /// 调用的目标函数与实参：普通调用原样返回；结构体的方法改写成 `Owner.m(接收者, ...)`。
     /// 列表、字典的方法与不是调用的表达式返回 None。
@@ -3942,8 +4265,176 @@ impl<'a> Checker<'a> {
             .1;
         Ok((id, declaration))
     }
+    /// 带着当前局部变量的副本：求类型时要在里面试着检查（匿名函数、match 分支）。
+    fn fork(&self) -> Checker<'a> {
+        Checker {
+            structs: self.structs,
+            functions: self.functions,
+            locals: self.locals.clone(),
+            loops: Vec::new(),
+            position: self.position,
+            error: self.error,
+            result: self.result,
+            frozen: self.frozen.clone(),
+            module: self.module,
+            generic: self.generic,
+        }
+    }
+    /// 具名函数当值用时的类型。泛型函数、会失败的函数暂时不能当值。
+    fn fn_value(&self, name: &str) -> Result<Type, String> {
+        let function = self
+            .functions
+            .get(name)
+            .ok_or_else(|| format!("unknown function {name}"))?;
+        let short = name.rsplit(':').next().unwrap_or(name);
+        if !function.generics.is_empty() {
+            return Err(format!(
+                "generic function {short} cannot be used as a value yet; wrap it, such as fn(x: i64): {short}(x)"
+            ));
+        }
+        if function.error.is_some() {
+            return Err(format!(
+                "{short} can fail, and function values cannot fail yet; wrap it and handle the error inside"
+            ));
+        }
+        let params = function.params.iter().map(|(_, ty)| *ty).collect();
+        Ok(Type::Func(func_type(params, function.result)))
+    }
+    /// 函数值的签名：`f` 是函数类型的局部变量或参数，`p.on_click` 是结构体里的函数字段。
+    fn apply_sig(&self, path: &str) -> Result<(Vec<Type>, Type), String> {
+        match self.place(path)?.1 {
+            Type::Func(id) | Type::FuncRef(id) => Ok(func_sig(id)),
+            _ => Err(format!("type mismatch: {path} is not a function")),
+        }
+    }
+    /// `p.on_click(x)`：调用结构体里存的函数（没有同名方法时）。
+    fn field_call(&self, expr: &Expr) -> Option<(String, Vec<Expr>)> {
+        let Expr::Method(path, method, args) = expr else {
+            return None;
+        };
+        let receiver = self.place(path).ok()?.1;
+        field_function(self.structs, receiver, method)?;
+        Some((format!("{path}.{method}"), args.clone()))
+    }
+    /// 匿名函数：参数类型取标注或 `hint`，函数体在只读看见外层局部变量的环境里检查。
+    /// 返回函数类型的编号与捕获的外层变量。
+    fn lambda(
+        &mut self,
+        params: &[(String, Option<Type>)],
+        result: Option<Type>,
+        block: &Block,
+        hint: Option<(Vec<Type>, Option<Type>)>,
+    ) -> Result<(u64, Vec<String>), String> {
+        let body = lambda_body(block);
+        let prints = lambda_prints(block);
+        if let Some((types, _)) = &hint {
+            if types.len() != params.len() {
+                return Err(format!(
+                    "argument count mismatch: the function takes {} parameter(s), but this fn has {}",
+                    types.len(),
+                    params.len()
+                ));
+            }
+        }
+        let mut types = Vec::new();
+        for (index, (name, annotated)) in params.iter().enumerate() {
+            let wanted = hint.as_ref().map(|(types, _)| types[index]);
+            let ty = match (*annotated, wanted) {
+                (Some(ty), Some(wanted)) if ty != wanted => {
+                    return Err(format!(
+                        "type mismatch: parameter {name} of this fn has a different type than the expected function type"
+                    ))
+                }
+                (Some(ty), _) | (None, Some(ty)) => ty,
+                (None, None) => {
+                    return Err(format!(
+                        "cannot infer the type of parameter {name}; write it, such as fn({name}: i64): ..."
+                    ))
+                }
+            };
+            if self.locals.contains_key(name) {
+                return Err(format!(
+                    "{name} is already declared; give the fn parameter another name"
+                ));
+            }
+            types.push(ty);
+        }
+        let mut roots = BTreeSet::new();
+        expr_roots(body, &mut roots);
+        let captures: Vec<String> = roots
+            .into_iter()
+            .filter(|name| self.locals.contains_key(name) && !params.iter().any(|(p, _)| p == name))
+            .collect();
+        let mut inner = BTreeMap::new();
+        for name in &captures {
+            let binding = self.binding(name)?;
+            inner.insert(
+                name.clone(),
+                Binding {
+                    ty: captured_view(binding.ty)?,
+                    mutable: false,
+                    live: true,
+                },
+            );
+        }
+        for ((name, _), ty) in params.iter().zip(&types) {
+            inner.insert(
+                name.clone(),
+                Binding {
+                    ty: *ty,
+                    mutable: false,
+                    live: true,
+                },
+            );
+        }
+        let outer = std::mem::replace(&mut self.locals, inner);
+        let error = self.error.take();
+        let loops = std::mem::take(&mut self.loops);
+        let frozen = std::mem::take(&mut self.frozen);
+        let checked = (|| {
+            let wanted = hint.as_ref().and_then(|(_, result)| *result);
+            let result = match (result, wanted) {
+                (Some(ty), Some(wanted)) if ty != wanted => {
+                    return Err("type mismatch: this fn returns a different type than the expected function type".to_owned())
+                }
+                (Some(ty), _) | (None, Some(ty)) => ty,
+                (None, None) if prints => Type::Unit,
+                (None, None) => self.ty(body)?,
+            };
+            if result.is_reference() {
+                return Err("borrow escape: an anonymous fn returns owned values; copy the value, such as copy(&x)".to_owned());
+            }
+            if prints || result == Type::Unit {
+                if prints && result != Type::Unit {
+                    return Err(
+                        "type mismatch: println has no value, but the function type returns one"
+                            .to_owned(),
+                    );
+                }
+                self.block(block, Type::Unit)?;
+            } else {
+                self.expr(body, result, &mut BTreeMap::new())?;
+            }
+            Ok(func_type(types, result))
+        })();
+        self.locals = outer;
+        self.error = error;
+        self.loops = loops;
+        self.frozen = frozen;
+        Ok((checked?, captures))
+    }
     fn ty(&self, expr: &Expr) -> Result<Type, String> {
         match expr {
+            Expr::FnRef(name) => self.fn_value(name),
+            Expr::Lambda(params, result, body) => {
+                let (id, _) = self.fork().lambda(params, *result, body, None)?;
+                Ok(Type::Func(id))
+            }
+            Expr::Apply(path, _) => Ok(self.apply_sig(path)?.1),
+            Expr::Method(..) if self.field_call(expr).is_some() => {
+                let (path, _) = self.field_call(expr).expect("field call");
+                Ok(self.apply_sig(&path)?.1)
+            }
             _ if self.record_call(expr) => {
                 let (name, _) = self.call_target(expr)?.expect("record method");
                 Ok(self.functions[&name].result)
@@ -4128,6 +4619,68 @@ impl<'a> Checker<'a> {
         loans: &mut BTreeMap<String, Type>,
     ) -> Result<(), String> {
         match expr {
+            Expr::FnRef(name) => {
+                let Type::Func(found) = self.fn_value(name)? else {
+                    unreachable!("function value")
+                };
+                match expected {
+                    Type::Func(id) | Type::FuncRef(id) if id == found => Ok(()),
+                    _ => Err(format!(
+                        "type mismatch: {} has a different function type",
+                        name.rsplit(':').next().unwrap_or(name)
+                    )),
+                }
+            }
+            Expr::Variable(name) if matches!(expected, Type::Func(_) | Type::FuncRef(_)) => {
+                match (self.binding(name)?.ty, expected) {
+                    (Type::Func(a), Type::Func(b) | Type::FuncRef(b))
+                    | (Type::FuncRef(a), Type::FuncRef(b))
+                        if a == b =>
+                    {
+                        Ok(())
+                    }
+                    (Type::FuncRef(_), Type::Func(_)) => Err(format!(
+                        "borrow escape: {name} may capture local variables of its caller; it can only be called or passed as an argument"
+                    )),
+                    _ => Err(format!("type mismatch: {name} has a different function type")),
+                }
+            }
+            Expr::Lambda(params, result, body) => {
+                let hint = match expected {
+                    Type::Func(id) | Type::FuncRef(id) => {
+                        let (types, result) = func_sig(id);
+                        Some((types, Some(result)))
+                    }
+                    _ => {
+                        return Err(
+                            "type mismatch: an anonymous fn is a function value, but another type is expected"
+                                .into(),
+                        )
+                    }
+                };
+                let (id, captures) = self.lambda(params, *result, body, hint)?;
+                if !matches!(expected, Type::Func(want) | Type::FuncRef(want) if want == id) {
+                    return Err("type mismatch: this fn has a different function type".into());
+                }
+                if matches!(expected, Type::Func(_)) && !captures.is_empty() {
+                    return Err(format!(
+                        "borrow escape: this fn uses the local variable {}, so it can only be passed directly as an argument",
+                        captures[0]
+                    ));
+                }
+                for name in captures {
+                    if loans.get(&name) == Some(&Type::Mutable) {
+                        return Err(format!("borrow conflict: {name}"));
+                    }
+                    loans.entry(name).or_insert(Type::Shared);
+                }
+                Ok(())
+            }
+            Expr::Apply(path, args) => self.apply(path, args, expected, loans),
+            Expr::Method(..) if self.field_call(expr).is_some() => {
+                let (path, args) = self.field_call(expr).expect("field call");
+                self.apply(&path, &args, expected, loans)
+            }
             _ if self.record_call(expr) => {
                 let (name, args) = self.call_target(expr)?.expect("record method");
                 let callee = self.functions[&name].clone();
@@ -4837,6 +5390,27 @@ impl<'a> Checker<'a> {
             _ => Err("string type mismatch".into()),
         }
     }
+    /// 调用函数值：参数与返回值按它的函数类型检查。
+    fn apply(
+        &mut self,
+        path: &str,
+        args: &[Expr],
+        expected: Type,
+        loans: &mut BTreeMap<String, Type>,
+    ) -> Result<(), String> {
+        let (params, result) = self.apply_sig(path)?;
+        let callee = Function {
+            public: true,
+            params: params.into_iter().map(|ty| (String::new(), ty)).collect(),
+            result,
+            error: None,
+            body: Vec::new(),
+            position: self.position,
+            builtin: false,
+            generics: Vec::new(),
+        };
+        self.call(path, &callee, args, expected, loans)
+    }
     fn call(
         &mut self,
         name: &str,
@@ -5152,6 +5726,9 @@ impl<'a> Checker<'a> {
                             | Type::Float
                             | Type::Bool
                     ) {
+                        if matches!(ty, Type::Func(_) | Type::FuncRef(_)) {
+                            return Err("type mismatch: function values cannot be printed; call the function and print its result".into());
+                        }
                         return Err("cannot print void or a fixed array".into());
                     }
                     if let Expr::Variable(local) = expr {
@@ -5198,6 +5775,7 @@ impl<'a> Checker<'a> {
                             | Expr::Method(_, _, _)
                             | Expr::ElementMethod(_, _, _, _, _)
                             | Expr::Chain(_, _, _)
+                            | Expr::Apply(_, _)
                     ) {
                         self.ty(expr)?
                     } else {
