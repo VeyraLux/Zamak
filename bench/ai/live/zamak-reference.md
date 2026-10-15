@@ -122,6 +122,10 @@ fn main():
 
 A function type is `fn(T1, T2) -> R` (no `-> R` means no result). Pass a named function by name (`double`, `util.double`) or write an anonymous fn `fn(x: i64) -> i64: x * 2`; its body is one expression (or one `println(...)`) on the same line, and parameter types may be omitted when the expected function type is known. An anonymous fn can read the enclosing function's variables (never change them); such a closure can only be passed directly as an argument, and a function-typed parameter can only be called or passed on. Functions without captures can be stored in variables, struct fields, and returned. A struct field of function type is called like a method: `button.on_click(1)`.
 
+## Assertions and tests
+
+`assert cond` or `assert cond, "message"` stops the program with exit status 1 when `cond` is false. `zam test` runs every function named `test_...` (no parameters, no result, may be `-> !string`) in its own process and reports each one.
+
 ## Control flow
 
 ```

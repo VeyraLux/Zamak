@@ -56,6 +56,7 @@ zam check hello
 zam build hello
 zam run hello
 zam fmt hello
+zam test hello
 ```
 
 `hello` 是一个还不存在的目录。进入该目录后可以直接执行 `zam run`。新项目的输出是：
@@ -100,6 +101,18 @@ error[ZM301]: use after move: name
 `zam new <directory>` 生成一个最小可运行的骨架：`zam.toml`（`name`、`entry = "src/main.zm"`、`modules = "src"`）、打印一句问候的 `src/main.zm`，以及忽略 `build/` 的 `.gitignore`。创建的文件路径以 `NEW <path>` 写到 stderr，stdout 保持为空。骨架已经格式化，可以直接 `zam run`。目标目录已存在时报错退出，不覆盖任何文件；目录名要是合法标识符，因为它会写进 `zam.toml` 的 `name`。
 
 面向 AI 协作可以用 `zam new <directory> --template ai`，额外生成 `AI.md` 与 `README.md`，写明 check --json → 最小修复 → fmt → check → build → run 的工作循环。
+
+### 测试
+
+`zam test [project|file] [过滤词]` 运行所有名字以 `test_` 开头的函数（任何模块里都行，签名是 `fn test_x():` 或 `fn test_x() -> !E:`，不带参数）。测试写在被测代码旁边，普通构建不受影响。每个测试单独起一个进程运行，某个测试越界、`assert` 失败或返回错误时只算它失败，其他测试照常跑；超过 60 秒算失败。结果写 stdout：每个测试一行 `test 名字 ... ok/FAILED`，失败的测试随后列出它的输出，最后一行是 `test result: ok. N passed; M failed`；有失败时退出码非零。给出过滤词时只运行名字里含这段文字的测试。入口模块里的测试显示为 `test_x`，其他模块显示为 `模块.test_x`。测试时不要求 `fn main()`，所以库也能直接测。实现上是同一套构建，入口模块生成的 C `main` 按第一个参数的名字分派到对应的测试函数；生成的 C 不同，目标文件的缓存键自然不同，不会和普通构建混用。示例：`zam test examples/testing`。
+
+`assert 条件` 或 `assert 条件, 说明` 在条件为假时把文件、行号、条件原文和说明写到 stderr 并以退出码 1 结束，测试和普通程序里都能用。条件是 `a == b` 或 `a != b`、两边是变量、字段、元素或字面量时，还会显示两边的值：
+
+```text
+src/stats.zm:8: assertion failed: got == 5: two plus two
+  left:  4
+  right: 5
+```
 
 ### 格式化
 
