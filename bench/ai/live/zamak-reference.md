@@ -216,6 +216,7 @@ let area = match s:
 - `let mut xs: [i64] = []` (an empty list needs a type annotation), `let xs: [string] = ["a", "b"]`.
 - `xs.len()`, `xs.push(v)`, `xs.pop()` (removes and returns the last element), `xs.insert(i, v)`, `xs.remove(i)` (removes and returns element `i`), `xs.swap(i, j)`, `xs.reverse()`, `xs.clear()`, `xs.extend(ys)` (moves all of `ys` to the end).
 - For `i64`, `f64`, `bool` and `string` elements: `xs.sort()` (ascending, stable), `xs.contains(v)`, `xs.index_of(v)` (-1 when absent), `xs.slice(a, b)` (a new list of elements `a..b`). String arguments are borrows: `names.contains("amy")`.
+- Any list: `xs.sort_by(fn(a, b): a.age < b.age)` sorts in place (stable); the fn returns true when `a` goes before `b`.
 - `xs[i]` reads an `i64`/`f64`/`bool` element and `xs[i] = v` writes. A string element cannot be taken out with `xs[i]`; pass `&xs[i]` to a `&string` parameter or copy it with `string.copy(&xs[i])`.
 - Struct elements: read and write fields with `xs[i].field` (also `+=`), pass `&xs[i]` / `&mut xs[i]` to `&Point` / `&mut Point` parameters, pass `&xs[i].name` to a `&string` parameter, call `xs[i].tags.push(v)`. `for p in &xs` gives a read-only `&Point`. Structs move on assignment: `let p = xs[i]` is an error; write `copy(&xs[i])` for an independent copy, `xs.pop()` to take the last one out, `xs.swap(i, j)` to reorder, and `xs[i] = Point(...)` to replace. `xs[i].tags[j]` is not supported.
 - Methods can be called on variables, fields and call results: `parts.len()`, `string.split(&s, ",").len()`, `xs.slice(0, 2).len()`.

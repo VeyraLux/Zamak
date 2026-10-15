@@ -48,3 +48,8 @@ fn main():
     // 结构体里存函数，调用写法和方法一样。
     let button = Button(label: "ok", on_click: double)
     println(button.on_click(21))
+
+    // 列表按自定义规则排序：before(a, b) 为真时 a 排在前面，排序是稳定的。
+    let mut sorted: [string] = ["kiwi", "fig", "banana"]
+    sorted.sort_by(fn(a, b): string.byte_len(a) < string.byte_len(b))
+    println(sorted)
