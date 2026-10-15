@@ -59,7 +59,7 @@
       "patterns": [
         {
           "name": "keyword.control.zamak",
-          "match": "\\b(?:if|elif|else|while|for|in|break|continue|return|catch|match|pass)\\b"
+          "match": "\\b(?:if|elif|else|while|for|in|break|continue|return|catch|match|pass|assert)\\b"
         },
         {
           "name": "keyword.operator.logical.zamak",
