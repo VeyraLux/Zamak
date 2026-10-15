@@ -925,6 +925,28 @@ hello from zamak
 - 文件后缀统一是 `.zm`；入口必须是 `.zm`（否则报 `entry must be a .zm file`）。
 - 对于单文件程序，`zam check`/`build`/`run`/`fmt` 也接受单个 `.zm` 文件。
 
+### 使用别人写的库
+
+别人发布在 git 仓库里的 Zamak 库，可以在项目目录里用一条命令加进来：
+
+```text
+zam add mathx https://github.com/you/mathx v1.0
+```
+
+`zam.toml` 会多出一节：
+
+```toml
+[dependencies]
+mathx = { git = "https://github.com/you/mathx", rev = "v1.0" }
+```
+
+然后像用自己的模块一样导入：`use mathx` 或 `use mathx/geo`，调用 `mathx.double(21)`。要点：
+
+- `zam` 把 `v1.0` 解析成具体的提交，记在 `zam.lock` 里。把 `zam.lock` 一起提交，别人构建时用的就是同一份代码。
+- 想换到最新版本时运行 `zam update`。
+- 本地目录也能当依赖：`zam add util ../util`。
+- 自己写库：建一个普通项目，`zam.toml` 里可以不写 `entry`，把要给别人用的函数标成 `pub`。
+
 ## 第 13 节：文件、标准输入与命令行参数
 
 读取命令行参数指定的文件，统计后写出报告：
@@ -1051,6 +1073,8 @@ zam 0.1.0
   zam fmt [project|file]
   zam run [project|file|artifact] [-- args...]
   zam test [project|file] [filter]
+  zam add <name> <git-url|directory> [rev]
+  zam update [project]
   zam new <directory> [--template ai]
   zam check --json [project|file]
   zam build --json [project|file]
@@ -1063,6 +1087,7 @@ zam 0.1.0
 - `zam run`：先构建再运行，程序输出就是它的 stdout；`--` 之后的参数原样传给程序，例如 `zam run main.zm -- 笔记.txt`。
 - `zam fmt`：就地整理格式。缩进统一成 4 个空格（Tab 先换成空格），括号里的续行按括号层数缩进；多行的 `if`/`for`/`while`/`match` 前后各留一个空行（块里第一条、紧跟在注释后面、`elif`/`else` 之前、块的末尾除外），连续空行压成一个，顶层声明之间留一个空行；去掉行尾空白，结尾留一个换行，保留原来的 CRLF/LF。注释和字符串内容原样保留；语法有错的代码会被拒绝而不会被改写。修改过的文件通过 `FORMAT <path>` 写入 stderr。它不调整行内空格，也不自动折行。
 - `zam test`：运行所有名字以 `test_` 开头的函数，每个测试单独运行，一个失败不影响其他；最后打印 `test result: ok. 3 passed; 0 failed`，有失败时退出码非 0。后面跟一段文字时只运行名字里含它的测试，例如 `zam test . parse`。测试里用 `assert 条件` 检查结果，失败时会显示条件原文；`a == b` 还会显示两边的值。示例见 `examples/testing`。
+- `zam add <名字> <git 地址或目录> [rev]`：添加依赖并立即拉取；`zam update`：把每个 git 依赖更新到 `rev` 的最新提交（见第 12 节）。
 - `zam new <directory>`：生成最小项目骨架（第 1 节）。目录名必须是合法标识符，已存在的目录会被拒绝，不会覆盖任何文件。
 - `zam demo`：运行内置的双目录缓存演示，展示相同源码的缓存复用。
 - `zam check --json` / `zam build --json`：将结果以一行 JSON 写入 stdout，供编辑器、持续集成（CI）或 AI 工具读取。其他子命令不接受 `--json`。第 15 节示例对应的 JSON 如下：
