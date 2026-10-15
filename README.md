@@ -127,6 +127,7 @@ fn main() -> !string:
 - **Control flow.** Use `if`, `elif`, `else`, `while`, `break`, and `continue`. To choose a value, write `let v = if c: a elif d: b else: e`. Combine conditions with `and`, `or`, and `not`, which follow Python's precedence and short-circuit. Loop over a range with `for i in 0..n`, over a list with `for x in &list` or `for i, x in &list`, and over a map in insertion order with `for k in &map` or `for k, v in &map`. Write `&mut` to change elements in place, as in `for x in &mut list: x += 1`.
 - **Errors.** A function that can fail returns `T!E` or `!E`, where `E` is `string`, a struct, or an enum. Use `fail` to return an error, `?` to pass it to the caller, and `catch e:` followed by an indented block to handle it in place, for example with `match e`.
 - **Generic functions.** Write `fn largest[T](items: &[T]) -> T`. Zamak infers `T` at each call and compiles a separate version per type.
+- **Generic types and Option.** Declare `struct Stack[T]` or `enum Tree[T]` and write the type as `Stack[string]`. Methods inside a generic type can use `T`. The built-in `Option[T]` has the variants `Option.Some(value)` and `Option.None`.
 - **Tuples.** Group values as `(3, "three")` with type `(i64, string)`, read items with `t.0`, and return several values from a function: `let (q, r) = divmod(17, 5)`.
 - **Constants.** Declare `const LIMIT = 100` at the top level. Zamak computes the value at compile time from literals, earlier constants, and operators.
 - **Modules.** Each file is a module. Import one with `use name`, and export items with `pub fn`, `pub struct`, and `pub const`.
@@ -163,7 +164,7 @@ For the list of error codes and the recommended loop for AI agents (check, make 
 
 ## Current limitations
 
-Zamak doesn't support generics, closures, threads, a foreign function interface (FFI), nested containers such as `[[i64]]`, networking, or directory listing yet. There's no package manager, language server, or read-eval-print loop (REPL) yet. When you use an unsupported construct, `zam check` reports a diagnostic instead of compiling incorrect code.
+Zamak doesn't support closures, threads, a foreign function interface (FFI), networking, or directory listing yet. There's no package manager, language server, or read-eval-print loop (REPL) yet. When you use an unsupported construct, `zam check` reports a diagnostic instead of compiling incorrect code.
 
 ## Editor and agent support
 

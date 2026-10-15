@@ -94,6 +94,12 @@ fn record(module: &Module, name: &str, protos: &mut String, defs: &mut String) {
     let structure = &module.structs[name];
     let id = record_id(name);
     let short = name.rsplit(':').next().unwrap_or(name);
+    // 泛型实例 `Maybe[Int]` 显示成模板名 `Maybe`，与源码里的写法一致。
+    let short = if short.starts_with('(') {
+        short
+    } else {
+        short.split('[').next().unwrap_or(short)
+    };
     let fields = &structure.fields;
     let mut copy_body = format!("R{id} out; memset(&out, 0, sizeof out); ");
     let mut eq_body = String::new();

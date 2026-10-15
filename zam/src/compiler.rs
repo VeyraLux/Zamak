@@ -113,8 +113,19 @@ pub fn record_method<'f>(
     let Some(owner) = structs.keys().find(|name| record_id(name) == id) else {
         return Ok(None);
     };
+    // 泛型类型的实例（`Stack[Int]`）：方法声明在模板 `Stack` 里，是泛型函数，按接收者的
+    // 类型实参生成副本。
+    let template = instance_of(id).map(|(template, _, _)| template);
+    let owner = template.as_ref().unwrap_or(owner);
     let name = format!("{owner}.{method}");
     let short = owner.rsplit(':').next().unwrap_or(owner);
+    if template.is_some() && functions.contains_key(&name) {
+        let name = instance(functions, &name, &[Some(Type::Record(id))])?;
+        return functions
+            .get(&name)
+            .map(|function| Some((name.clone(), function)))
+            .ok_or_else(|| format!("unknown method {short}.{method}"));
+    }
     match functions.get(&name) {
         Some(function) => Ok(Some((name, function))),
         None => Err(format!(
@@ -506,6 +517,8 @@ pub fn mentions_param(ty: Type) -> bool {
                 params.contains(&id)
                     || tuple_fields(id)
                         .is_some_and(|fields| fields.into_iter().any(|f| walk(f, params)))
+                    || instance_of(id)
+                        .is_some_and(|(_, args, _)| args.into_iter().any(|a| walk(a, params)))
             }
             Type::List(elem) | Type::ListRef(elem, _) => walk(elem.ty(), params),
             Type::Map(_, value) | Type::MapRef(_, value, _) => walk(value.ty(), params),
@@ -553,10 +566,20 @@ fn unify(pattern: Type, actual: Type, params: &BTreeSet<u64>, map: &mut BTreeMap
         }
         (Type::List(p), Type::List(a)) => unify_elem(p, a, params, map),
         (Type::Map(_, p), Type::Map(_, a)) => unify_elem(p, a, params, map),
-        (Type::Record(p), Type::Record(a)) => {
+        (Type::Record(p), Type::Record(a)) | (Type::RecordRef(p, _), Type::RecordRef(a, _)) => {
             if let (Some(p), Some(a)) = (tuple_fields(p), tuple_fields(a)) {
                 for (p, a) in p.into_iter().zip(a) {
                     unify(p, a, params, map);
+                }
+            }
+            // 同一个泛型类型的两个实例：`Option[T]` 对上 `Option[Int]`，按位置推断类型实参。
+            if let (Some((p_owner, p_args, _)), Some((a_owner, a_args, _))) =
+                (instance_of(p), instance_of(a))
+            {
+                if p_owner == a_owner {
+                    for (p, a) in p_args.into_iter().zip(a_args) {
+                        unify(p, a, params, map);
+                    }
                 }
             }
         }
@@ -581,14 +604,8 @@ fn substitute(ty: Type, map: &BTreeMap<u64, Type>) -> Result<Type, String> {
                 format!("type mismatch: &mut T cannot be {concrete:?}; numbers and booleans are passed by value")
             })?,
         },
-        Type::Record(id) => match tuple_fields(id) {
-            Some(fields) => Type::Record(substituted_tuple(fields, map)?),
-            None => ty,
-        },
-        Type::RecordRef(id, mutable) => match tuple_fields(id) {
-            Some(fields) => Type::RecordRef(substituted_tuple(fields, map)?, mutable),
-            None => ty,
-        },
+        Type::Record(id) => Type::Record(substituted_record(id, map)?),
+        Type::RecordRef(id, mutable) => Type::RecordRef(substituted_record(id, map)?, mutable),
         Type::List(elem) => Type::List(substitute_elem(elem, map)?),
         Type::ListRef(elem, mutable) => Type::ListRef(substitute_elem(elem, map)?, mutable),
         Type::Map(key, value) => Type::Map(key, substitute_elem(value, map)?),
@@ -597,6 +614,21 @@ fn substitute(ty: Type, map: &BTreeMap<u64, Type>) -> Result<Type, String> {
         }
         other => other,
     })
+}
+
+/// 元组与泛型实例里的类型参数也要换掉；普通结构体原样返回。
+fn substituted_record(id: u64, map: &BTreeMap<u64, Type>) -> Result<u64, String> {
+    if let Some(fields) = tuple_fields(id) {
+        return substituted_tuple(fields, map);
+    }
+    if let Some((template, args, _)) = instance_of(id) {
+        let args = args
+            .into_iter()
+            .map(|arg| substitute(arg, map))
+            .collect::<Result<Vec<_>, _>>()?;
+        return Ok(struct_instance(&template, args));
+    }
+    Ok(id)
 }
 
 fn substituted_tuple(fields: Vec<Type>, map: &BTreeMap<u64, Type>) -> Result<u64, String> {
@@ -680,6 +712,11 @@ pub fn instance(
             let short = name.split_once(':').map_or(name, |(_, n)| n);
             format!("cannot infer {generic} for {short}: {generic} must appear in a parameter type")
         })?;
+        if matches!(ty, Type::ArrayInt(_)) {
+            return Err(format!(
+                "type mismatch: {generic} cannot be a fixed array; use a list, such as let xs: [i64] = [1, 2]"
+            ));
+        }
         types.push(format!("{ty:?}"));
     }
     let instance = format!("{name}[{}]", types.join(", "));
@@ -714,6 +751,169 @@ pub struct Struct {
     // 枚举：每个变体的（名字, 第一个载荷字段的下标, 载荷字段数）。字段 0 是隐藏的标签 `$tag`，
     // 各变体的载荷平铺在后面，名字形如 `Circle$r`；没选中的变体字段保持全零，释放时一并释放也安全。
     pub variants: Vec<(String, usize, usize)>,
+    // 泛型结构体或枚举的类型参数（`struct Pair[A, B]`、`enum Option[T]`）。模板本身不生成，
+    // 用到的具体类型（`Option[Int]`）按结构生成实例。
+    pub generics: Vec<String>,
+}
+
+/// 泛型结构体与枚举的实例：编号 → （模板名, 类型实参, 实例名）。实例名如 `main:Option[Int]`，
+/// 编号是它的哈希，所以同样的实例在所有模块里是同一个类型。
+type StructInstances = BTreeMap<u64, (String, Vec<Type>, String)>;
+static STRUCT_INSTANCES: std::sync::RwLock<StructInstances> =
+    std::sync::RwLock::new(BTreeMap::new());
+
+/// 登记一个泛型结构体实例，返回它的编号。
+pub fn struct_instance(template: &str, args: Vec<Type>) -> u64 {
+    let names: Vec<String> = args.iter().map(|ty| format!("{ty:?}")).collect();
+    let name = format!("{template}[{}]", names.join(", "));
+    let id = record_id(&name);
+    STRUCT_INSTANCES
+        .write()
+        .expect("struct instances")
+        .insert(id, (template.to_owned(), args, name));
+    id
+}
+
+/// 编号对应的泛型实例：（模板名, 类型实参, 实例名）。
+pub fn instance_of(id: u64) -> Option<(String, Vec<Type>, String)> {
+    STRUCT_INSTANCES
+        .read()
+        .expect("struct instances")
+        .get(&id)
+        .cloned()
+}
+
+/// 要链接的实例：类型实参里还有类型参数的（泛型模板内部用到的 `Option[T]`）不生成。
+pub fn struct_instances() -> Vec<(String, Vec<Type>, String)> {
+    let all: Vec<_> = STRUCT_INSTANCES
+        .read()
+        .expect("struct instances")
+        .values()
+        .cloned()
+        .collect();
+    all.into_iter()
+        .filter(|(_, args, _)| !args.iter().any(|arg| mentions_param(*arg)))
+        .collect()
+}
+
+pub fn struct_instance_count() -> usize {
+    STRUCT_INSTANCES.read().expect("struct instances").len()
+}
+
+/// 解析时遇到的 `Option[i64]`：编号 → （模板名, 类型实参），链接时换成实例。
+type Applications = BTreeMap<u64, (String, Vec<Type>)>;
+static APPLICATIONS: std::sync::RwLock<Applications> = std::sync::RwLock::new(BTreeMap::new());
+
+pub fn application(id: u64) -> Option<(String, Vec<Type>)> {
+    APPLICATIONS
+        .read()
+        .expect("type applications")
+        .get(&id)
+        .cloned()
+}
+
+/// 把类型参数换成具体类型（链接实例的字段时用）。
+pub fn substitute_fields(
+    generics: &[String],
+    args: &[Type],
+    fields: &[(String, Type)],
+) -> Result<Vec<(String, Type)>, String> {
+    let map: BTreeMap<u64, Type> = generics
+        .iter()
+        .map(|g| type_param(g))
+        .zip(args.iter().copied())
+        .collect();
+    fields
+        .iter()
+        .map(|(name, ty)| Ok((name.clone(), substitute(*ty, &map)?)))
+        .collect()
+}
+
+/// 构造结构体或枚举的值时实际的类型：普通结构体就是它自己；泛型模板看期望类型（是它的实例
+/// 就用期望类型），否则按字段或载荷的类型推断类型实参。`actual` 给出子表达式的类型。
+pub fn constructed(
+    structs: &BTreeMap<String, Struct>,
+    expr: &Expr,
+    expected: Option<Type>,
+    actual: impl Fn(&Expr) -> Option<Type>,
+) -> Result<u64, String> {
+    let (Expr::Record(name, _) | Expr::Variant(name, _, _)) = expr else {
+        unreachable!("constructor expression")
+    };
+    let Some(template) = structs.get(name).filter(|s| !s.generics.is_empty()) else {
+        return Ok(record_id(name));
+    };
+    if let Some(Type::Record(id)) = expected {
+        if instance_of(id).is_some_and(|(owner, _, _)| owner == *name) {
+            return Ok(id);
+        }
+    }
+    let pairs: Vec<(Type, &Expr)> = match expr {
+        Expr::Record(_, fields) => fields
+            .iter()
+            .filter_map(|(field, value)| {
+                let pattern = template.fields.iter().find(|(n, _)| n == field)?.1;
+                Some((pattern, value))
+            })
+            .collect(),
+        Expr::Variant(_, variant, args) => {
+            let Some((_, first, _)) = template.variants.iter().find(|(v, _, _)| v == variant)
+            else {
+                return Ok(record_id(name));
+            };
+            template.fields[*first..]
+                .iter()
+                .zip(args)
+                .map(|((_, pattern), arg)| (*pattern, arg))
+                .collect()
+        }
+        _ => unreachable!(),
+    };
+    let params: BTreeSet<u64> = template.generics.iter().map(|g| type_param(g)).collect();
+    let mut map = BTreeMap::new();
+    for (pattern, value) in pairs {
+        // `[1.5, 2.5]` 本身会被当成定长数组；填进泛型位置时是列表，按第一项推断元素类型。
+        let ty = match (pattern, value) {
+            (_, Expr::Array(items)) => items
+                .first()
+                .and_then(&actual)
+                .and_then(elem_from)
+                .map(Type::List),
+            _ => actual(value),
+        };
+        if let Some(ty) = ty {
+            unify(pattern, ty, &params, &mut map);
+        }
+    }
+    let short = name.rsplit(':').next().unwrap_or(name);
+    let mut args = Vec::new();
+    for generic in &template.generics {
+        let ty = *map.get(&type_param(generic)).ok_or_else(|| {
+            format!("cannot infer {generic} for {short}; annotate the type, such as let x: {short}[i64] = ...")
+        })?;
+        if ty.is_reference() || matches!(ty, Type::ArrayInt(_) | Type::Unit) {
+            return Err(format!(
+                "type mismatch: {generic} of {short} must be an owned type such as i64, string or a list"
+            ));
+        }
+        args.push(ty);
+    }
+    Ok(struct_instance(name, args))
+}
+
+/// 内置的 `Option[T]`：`Some(value: T)` 或 `None`，所有模块都能直接用（模块自己声明了
+/// `Option` 时用自己的）。链接后叫 `std/core:Option`。
+pub const OPTION: &str = "std/core:Option";
+pub fn option() -> Struct {
+    Struct {
+        public: true,
+        fields: vec![
+            ("$tag".into(), Type::Int),
+            ("Some$value".into(), Type::Record(type_param("T"))),
+        ],
+        variants: vec![("Some".into(), 1, 1), ("None".into(), 2, 0)],
+        generics: vec!["T".into()],
+    }
 }
 
 /// 顶层常量：值在解析时算好，是整数、浮点、布尔或字符串字面量；用到的地方直接换成这个字面量。
@@ -1386,6 +1586,8 @@ struct Parser {
     temps: usize,
     // 正在解析的泛型函数的类型参数：这些名字是类型参数，不是结构体。
     type_params: Vec<String>,
+    // 正在解析的泛型结构体或枚举的类型参数：方法的 self 是 `Owner[T]`。
+    owner_generics: Vec<String>,
 }
 
 /// match 的一个分支：枚举变体、字面量（`1 | 2`、`"a"`、`true`）或 `_`。
@@ -1669,6 +1871,43 @@ impl Parser {
         }
         Ok(Some(nest(inner)))
     }
+    /// 类型名后面的 `[T, U]`：泛型结构体或枚举的类型实参，如 `Option[i64]`、`Pair[string, i64]`。
+    fn applied(&mut self, name: &str) -> Result<Option<u64>, String> {
+        if self.peek() != Some(&Token::Symbol('['))
+            || !name
+                .rsplit('.')
+                .next()
+                .is_some_and(|n| n.starts_with(char::is_uppercase))
+        {
+            return Ok(None);
+        }
+        self.take();
+        let mut args = Vec::new();
+        loop {
+            let arg = self.ty()?;
+            if arg.is_reference() || matches!(arg, Type::Unit | Type::ArrayInt(_)) {
+                return Err("type arguments are owned types, such as Option[string]".into());
+            }
+            args.push(arg);
+            if self.symbol(']') {
+                break;
+            }
+            self.expect(',')?;
+        }
+        Ok(Some(self.apply(name, args)))
+    }
+    /// 登记 `Name[args]`（名字还没按模块限定），链接时换成泛型实例。
+    fn apply(&mut self, name: &str, args: Vec<Type>) -> u64 {
+        let names: Vec<String> = args.iter().map(|ty| format!("{ty:?}")).collect();
+        let text = format!("{name}[{}]", names.join(", "));
+        let id = record_id(&format!("apply {text}"));
+        self.type_names.insert(id, text);
+        APPLICATIONS
+            .write()
+            .expect("type applications")
+            .insert(id, (name.to_owned(), args));
+        id
+    }
     fn elem(&mut self, name: &str) -> Option<Elem> {
         Some(match name {
             "i64" => Elem::Int,
@@ -1725,9 +1964,12 @@ impl Parser {
                 Some(value) => value,
                 None => {
                     let name = self.type_name()?;
-                    self.elem(&name).ok_or(
-                        "unsupported map value type; expected i64, f64, bool, string, a struct, a list or a map",
-                    )?
+                    match self.applied(&name)? {
+                        Some(id) => Elem::Record(id),
+                        None => self.elem(&name).ok_or(
+                            "unsupported map value type; expected i64, f64, bool, string, a struct, a list or a map",
+                        )?,
+                    }
                 }
             };
             self.expect('}')?;
@@ -1749,9 +1991,12 @@ impl Parser {
             }
             let element = self.type_name()?;
             if !self.symbol(';') {
-                let elem = self.elem(&element).ok_or(
-                    "unsupported list element type; expected [i64], [f64], [bool], [string] or a struct such as [Point]",
-                )?;
+                let elem = match self.applied(&element)? {
+                    Some(id) => Elem::Record(id),
+                    None => self.elem(&element).ok_or(
+                        "unsupported list element type; expected [i64], [f64], [bool], [string] or a struct such as [Point]",
+                    )?,
+                };
                 self.expect(']')?;
                 return Ok(match ty {
                     Type::Owned => Type::List(elem),
@@ -1778,6 +2023,12 @@ impl Parser {
             return Ok(Type::ArrayInt(length));
         }
         let name = self.type_name()?;
+        if let Some(id) = self.applied(&name)? {
+            return Ok(match ty {
+                Type::Owned => Type::Record(id),
+                _ => Type::RecordRef(id, ty == Type::Mutable),
+            });
+        }
         match name.as_str() {
             "string" => Ok(ty),
             "i64" if ty == Type::Owned => Ok(Type::Int),
@@ -2147,21 +2398,13 @@ impl Parser {
             return Err(format!("reserved type name {name}"));
         }
         // `fn largest[T](xs: &[T]) -> T`：类型参数首字母大写，函数体里也能用。
-        let mut generics = Vec::new();
-        if self.symbol('[') {
-            loop {
-                let generic = self.word()?;
-                if !generic.starts_with(char::is_uppercase) {
-                    return Err(format!(
-                        "type parameter names start with an uppercase letter, such as T; found {generic}"
-                    ));
-                }
-                generics.push(generic);
-                if self.symbol(']') {
-                    break;
-                }
-                self.expect(',')?;
+        // 泛型结构体或枚举里的方法还带上外层的类型参数（`Stack[T]` 的 `push` 也是泛型函数）。
+        let mut generics = self.type_params.clone();
+        for generic in self.generics()? {
+            if generics.contains(&generic) {
+                return Err(format!("duplicate type parameter {generic}"));
             }
+            generics.push(generic);
         }
         let outer = std::mem::replace(&mut self.type_params, generics.clone());
         let parsed = self.function_rest(public, start, imports, owner, name, generics);
@@ -2248,15 +2491,48 @@ impl Parser {
             },
         ))
     }
+    /// 名字后面的 `[T, U]`：类型参数列表，没有时为空。
+    fn generics(&mut self) -> Result<Vec<String>, String> {
+        let mut generics = Vec::new();
+        if self.symbol('[') {
+            loop {
+                let generic = self.word()?;
+                if !generic.starts_with(char::is_uppercase) {
+                    return Err(format!(
+                        "type parameter names start with an uppercase letter, such as T; found {generic}"
+                    ));
+                }
+                if generics.contains(&generic) {
+                    return Err(format!("duplicate type parameter {generic}"));
+                }
+                generics.push(generic);
+                if self.symbol(']') {
+                    break;
+                }
+                self.expect(',')?;
+            }
+        }
+        Ok(generics)
+    }
     /// 方法的第一个参数 `self` / `&self` / `&mut self`；不是时退回原位置。
     fn self_param(&mut self, owner: &str) -> Result<Option<Type>, String> {
         let at = self.position;
         let borrowed = self.symbol('&');
         let mutable = borrowed && self.keyword("mut");
         if self.keyword("self") {
-            let id = self
-                .record(owner)
-                .expect("struct and enum names are uppercase");
+            // 泛型结构体的方法：self 是 `Stack[T]`。
+            let id = if self.owner_generics.is_empty() {
+                self.record(owner)
+                    .expect("struct and enum names are uppercase")
+            } else {
+                let args = self
+                    .owner_generics
+                    .clone()
+                    .iter()
+                    .map(|g| Type::Record(self.record(g).expect("type parameter")))
+                    .collect();
+                self.apply(owner, args)
+            };
             return Ok(Some(if borrowed {
                 Type::RecordRef(id, mutable)
             } else {
@@ -2337,6 +2613,7 @@ impl Parser {
                         pending: Vec::new(),
                         temps: 0,
                         type_params: self.type_params.clone(),
+                        owner_generics: Vec::new(),
                     };
                     let expr = inner
                         .expr()
@@ -2931,6 +3208,7 @@ pub fn parse(source: &str) -> Result<Module, String> {
         pending: Vec::new(),
         temps: 0,
         type_params: Vec::new(),
+        owner_generics: Vec::new(),
     };
     let result = (|| {
         let mut module = Module {
@@ -3005,6 +3283,10 @@ pub fn parse(source: &str) -> Result<Module, String> {
                 if !name.starts_with(char::is_uppercase) {
                     return Err("struct names must start with an uppercase letter".into());
                 }
+                // `struct Pair[A, B]:`：字段和方法里可以用 A、B。
+                let generics = p.generics()?;
+                p.type_params = generics.clone();
+                p.owner_generics = generics.clone();
                 p.colon("struct")?;
                 let mut fields = Vec::new();
                 let mut names = BTreeSet::new();
@@ -3059,6 +3341,7 @@ pub fn parse(source: &str) -> Result<Module, String> {
                                 public,
                                 fields,
                                 variants: Vec::new(),
+                                generics,
                             },
                         )
                         .is_some()
@@ -3066,6 +3349,8 @@ pub fn parse(source: &str) -> Result<Module, String> {
                     return Err(format!("duplicate declaration {name}"));
                 }
                 add_methods(&mut module, methods)?;
+                p.type_params.clear();
+                p.owner_generics.clear();
                 p.separator()?;
                 continue;
             }
@@ -3077,6 +3362,9 @@ pub fn parse(source: &str) -> Result<Module, String> {
                 if !name.starts_with(char::is_uppercase) {
                     return Err("enum names must start with an uppercase letter".into());
                 }
+                let generics = p.generics()?;
+                p.type_params = generics.clone();
+                p.owner_generics = generics.clone();
                 p.colon("enum")?;
                 if p.keyword("pass") {
                     return Err(format!("expected at least one variant in enum {name}"));
@@ -3146,6 +3434,7 @@ pub fn parse(source: &str) -> Result<Module, String> {
                                 public,
                                 fields,
                                 variants,
+                                generics,
                             },
                         )
                         .is_some()
@@ -3153,6 +3442,8 @@ pub fn parse(source: &str) -> Result<Module, String> {
                     return Err(format!("duplicate declaration {name}"));
                 }
                 add_methods(&mut module, methods)?;
+                p.type_params.clear();
+                p.owner_generics.clear();
                 p.separator()?;
                 continue;
             }
@@ -3189,6 +3480,7 @@ pub fn encode(module: &Module) -> Vec<u8> {
                 structure.public,
                 &structure.fields,
                 &structure.variants,
+                &structure.generics,
             )
         })
         .collect();
@@ -3198,7 +3490,7 @@ pub fn encode(module: &Module) -> Vec<u8> {
         .map(|(name, constant)| (name, constant.public, &constant.value))
         .collect();
     format!(
-        "ZAM-IR-27\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
+        "ZAM-IR-28\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
         module.type_names, module.imports, module.functions
     )
     .into_bytes()
@@ -3256,6 +3548,8 @@ struct Checker<'a> {
     frozen: Vec<String>,
     // 当前函数所在的模块：调用别的模块的方法要求它是 pub。
     module: &'a str,
+    // 正在检查泛型函数的副本：`copy(v)` 对 i64、f64、bool 也成立（T 可能是任何类型）。
+    generic: bool,
 }
 impl<'a> Checker<'a> {
     fn thawed(&self, root: &str) -> Result<(), String> {
@@ -3627,17 +3921,35 @@ impl<'a> Checker<'a> {
         }
         Ok(binding)
     }
+    /// 构造表达式的类型编号与（实例化后的）声明：泛型结构体与枚举按期望类型或字段推断类型实参。
+    fn constructor(
+        &self,
+        expr: &Expr,
+        expected: Option<Type>,
+    ) -> Result<(u64, &'a Struct), String> {
+        let (Expr::Record(name, _) | Expr::Variant(name, _, _)) = expr else {
+            unreachable!("constructor expression")
+        };
+        self.structs
+            .get(name)
+            .ok_or_else(|| format!("unknown struct {name}"))?;
+        let id = constructed(self.structs, expr, expected, |e| self.ty(e).ok())?;
+        let declaration = self
+            .structs
+            .iter()
+            .find(|(name, _)| record_id(name) == id)
+            .ok_or_else(|| format!("unknown struct {name}"))?
+            .1;
+        Ok((id, declaration))
+    }
     fn ty(&self, expr: &Expr) -> Result<Type, String> {
         match expr {
             _ if self.record_call(expr) => {
                 let (name, _) = self.call_target(expr)?.expect("record method");
                 Ok(self.functions[&name].result)
             }
-            Expr::Record(name, _) | Expr::Variant(name, _, _) => {
-                self.structs
-                    .get(name)
-                    .ok_or_else(|| format!("unknown struct {name}"))?;
-                Ok(Type::Record(record_id(name)))
+            Expr::Record(_, _) | Expr::Variant(_, _, _) => {
+                Ok(Type::Record(self.constructor(expr, None)?.0))
             }
             // 分支的值可能用到绑定：在带上第一个分支绑定的副本里求类型。
             Expr::Match(scrutinee, arms) => {
@@ -3667,6 +3979,7 @@ impl<'a> Checker<'a> {
                     result: self.result,
                     frozen: Vec::new(),
                     module: self.module,
+                    generic: self.generic,
                 }
                 .ty(value)
             }
@@ -3835,15 +4148,18 @@ impl<'a> Checker<'a> {
                 ))
             }
             Expr::Variant(name, variant, args) => {
-                let declaration = self
+                let short = name.rsplit(':').next().unwrap_or(name);
+                if self
                     .structs
                     .get(name)
-                    .ok_or_else(|| format!("unknown struct {name}"))?;
-                let short = name.rsplit(':').next().unwrap_or(name);
-                if declaration.variants.is_empty() {
+                    .ok_or_else(|| format!("unknown struct {name}"))?
+                    .variants
+                    .is_empty()
+                {
                     return Err(format!("type mismatch: {short} is a struct, not an enum"));
                 }
-                if expected != Type::Record(record_id(name)) {
+                let (id, declaration) = self.constructor(expr, Some(expected))?;
+                if expected != Type::Record(id) {
                     return Err(format!("type mismatch: {short}.{variant} is a {short}"));
                 }
                 let (_, first, count) = declaration
@@ -3902,16 +4218,12 @@ impl<'a> Checker<'a> {
                 }
                 Ok(())
             }
-            Expr::Record(name, fields) => {
-                if expected != Type::Record(record_id(name)) {
+            Expr::Record(_, fields) => {
+                let (id, declaration) = self.constructor(expr, Some(expected))?;
+                if expected != Type::Record(id) {
                     return Err("struct type mismatch".into());
                 }
-                let declaration = self
-                    .structs
-                    .get(name)
-                    .ok_or("unknown struct")?
-                    .fields
-                    .clone();
+                let declaration = declaration.fields.clone();
                 let mut seen = BTreeSet::new();
                 for (field, value) in fields {
                     if !seen.insert(field) {
@@ -4407,6 +4719,19 @@ impl<'a> Checker<'a> {
                 let ty = self.value_type(arg)?;
                 match ty {
                     Type::Owned | Type::Record(_) | Type::List(_) | Type::Map(_, _) => {}
+                    Type::Int | Type::Float | Type::Bool if self.generic => {
+                        if expected != ty {
+                            return Err("type mismatch: copy returns a value of the borrowed type".into());
+                        }
+                        let value = match arg {
+                            Expr::Borrow(path, _) => match path.split_once('.') {
+                                Some((root, field)) => Expr::Field(root.into(), field.into()),
+                                None => Expr::Variable(path.clone()),
+                            },
+                            other => other.clone(),
+                        };
+                        return self.expr(&value, ty, loans);
+                    }
                     Type::Int | Type::Float | Type::Bool => {
                         return Err("type mismatch: copy is for strings, lists, maps, structs and enums; i64, f64 and bool values are already copied by assignment, such as let b = a".into())
                     }
@@ -4956,13 +5281,11 @@ pub fn record_order(module: &Module, roots: &BTreeSet<String>) -> Result<Vec<Str
             return Err(format!("recursive struct layout: {name}"));
         }
         for (_, ty) in &module.structs[name].fields {
+            // 还没链接进来的泛型实例下一轮检查再看。
             if let Type::Record(id) = ty {
-                let child = module
-                    .structs
-                    .keys()
-                    .find(|name| record_id(name) == *id)
-                    .ok_or("unknown field type")?;
-                visit(module, child, active, done, order)?;
+                if let Some(child) = module.structs.keys().find(|name| record_id(name) == *id) {
+                    visit(module, child, active, done, order)?;
+                }
             }
         }
         active.remove(name);
@@ -4984,7 +5307,14 @@ pub const DIAGNOSTIC_SEPARATOR: char = '\u{1e}';
 
 /// 逐个函数独立检查：每个出错的函数报它的第一条错误，互不影响；全部检查完再一起返回。
 pub fn check(module: &Module, entry: &str) -> Result<(), String> {
-    record_order(module, &module.structs.keys().cloned().collect())?;
+    // 泛型模板的字段里还有类型参数，不排布局；用到的实例各自排。
+    let concrete = module
+        .structs
+        .iter()
+        .filter(|(_, s)| s.generics.is_empty())
+        .map(|(name, _)| name.clone())
+        .collect();
+    record_order(module, &concrete)?;
     let main = module.functions.get(entry).ok_or("missing main function")?;
     if !main.params.is_empty() || main.result != Type::Unit {
         return Err("main must have no parameters or return value".into());
@@ -5004,6 +5334,7 @@ pub fn check(module: &Module, entry: &str) -> Result<(), String> {
             result: function.result,
             frozen: Vec::new(),
             module: name.split(':').next().unwrap_or(name),
+            generic: name.ends_with(']'),
         };
         let result = (|| {
             // 错误类型是字符串、结构体或枚举；C 侧结果结构体按（成功类型, 错误类型）区分。

@@ -1,0 +1,66 @@
+// 泛型结构体与枚举：struct Name[T]、enum Name[T]，以及内置的 Option[T]。
+
+struct Pair[A, B]:
+    first: A
+    second: B
+
+    fn swap(&self) -> Pair[B, A]:
+        Pair(first: copy(&self.second), second: copy(&self.first))
+
+struct Stack[T]:
+    items: [T]
+
+    fn push(&mut self, item: T):
+        self.items.push(item)
+
+    fn pop(&mut self) -> Option[T]:
+        if self.items.len() == 0:
+            return Option.None
+
+        Option.Some(self.items.pop())
+
+enum Tree[T]:
+    Leaf
+    Node(value: T, children: [Tree[T]])
+
+fn size[T](tree: &Tree[T]) -> i64:
+    match tree:
+        Leaf: 0
+        Node(_, children):
+            let mut total = 1
+
+            for child in children:
+                total += size(child)
+
+            total
+
+fn find(names: &[string], wanted: &string) -> Option[i64]:
+    for i, name in names:
+        if name == wanted:
+            return Option.Some(i)
+
+    Option.None
+
+fn main():
+    let pair = Pair(first: 1, second: "one")
+    println(pair.swap())
+
+    let mut stack: Stack[string] = Stack(items: [])
+    stack.push("a")
+    stack.push("b")
+    println(stack.pop())
+    println(stack.pop())
+    println(stack.pop())
+
+    let leaf = Tree.Node("leaf", [])
+    let root = Tree.Node("root", [leaf, Tree.Leaf])
+    println(size(&root))
+
+    let names: [string] = ["amy", "bob"]
+
+    match find(&names, "bob"):
+        Some(i): println("bob is at {i}")
+        None: println("no bob")
+
+    let missing: Option[i64] = find(&names, "cat")
+    println(missing)

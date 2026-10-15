@@ -430,3 +430,71 @@ fn generic_functions() {
         assert!(stderr.contains(message), "{source}: {stderr}");
     }
 }
+
+#[test]
+fn generic_structs_enums_and_option() {
+    let case = Case::new("expressions", "generic-types");
+    assert_eq!(
+        stdout(&case.run(include_str!("../../examples/values/generic_types.zm"))),
+        "Pair(first: \"one\", second: 1)\nOption.Some(\"b\")\nOption.Some(\"a\")\nOption.None\n2\nbob is at 1\nOption.None\n"
+    );
+    // 期望类型决定 `None` 的类型实参：赋值、push、实参、if 表达式、嵌套。
+    let source = "enum Maybe[T]:\n    Some(value: T)\n    Nothing\n\n    fn or_else(self, fallback: T) -> T:\n        match self:\n            Some(v): copy(v)\n            Nothing: fallback\n\nfn show(m: Maybe[i64]): println(m.or_else(-1))\n\nfn main():\n    let mut x: Maybe[i64] = Maybe.Some(1)\n    x = Maybe.Nothing\n    println(x)\n    let mut xs: [Maybe[string]] = []\n    xs.push(Maybe.Nothing)\n    xs.push(Maybe.Some(\"a\"))\n    println(xs)\n    show(Maybe.Nothing)\n    show(Maybe.Some(7))\n    let v: Maybe[f64] = if xs.len() > 1: Maybe.Some(0.5) else: Maybe.Nothing\n    println(v)\n    let r: Maybe[Maybe[i64]] = Maybe.Some(Maybe.Nothing)\n    let want: Maybe[Maybe[i64]] = Maybe.Some(Maybe.Nothing)\n    println(r == want)\n    let o: Option[bool] = Option.Some(true)\n    println(copy(&o))\n";
+    assert_eq!(
+        stdout(&case.run(source)),
+        "Maybe.Nothing\n[Maybe.Nothing, Maybe.Some(\"a\")]\n-1\n7\nMaybe.Some(0.5)\ntrue\nOption.Some(true)\n"
+    );
+    // 跨模块：泛型类型、它的方法和返回泛型类型的函数。
+    let project = case.path("project");
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    std::fs::write(
+        project.join("zam.toml"),
+        "[project]\nname = \"gen\"\nentry = \"src/main.zm\"\nmodules = \"src\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project.join("src/box.zm"),
+        "pub struct Box[T]:\n    item: T\n\n    pub fn get(&self) -> T: copy(&self.item)\n\npub fn find(xs: &[i64], n: i64) -> Option[i64]:\n    for i, x in xs:\n        if x == n: return Option.Some(i)\n    Option.None\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project.join("src/main.zm"),
+        "use box\n\nfn main():\n    let b = box.Box(item: \"x\")\n    println(b.get())\n    let n: box.Box[i64] = box.Box(item: 2)\n    println(n.get())\n    let xs: [i64] = [5, 6]\n    let at: Option[i64] = box.find(&xs, 6)\n    println(at)\n",
+    )
+    .unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_zam"))
+        .arg("run")
+        .arg(&project)
+        .env("ZAMAK_CACHE_DIR", case.path("cache"))
+        .output()
+        .unwrap();
+    assert_eq!(stdout(&output), "x\n2\nOption.Some(1)\n");
+    let header = "enum Maybe[T]:\n    Some(value: T)\n    Nothing\n\nstruct Plain:\n    a: i64\n\nfn main():\n    ";
+    for (body, message) in [
+        (
+            "let x = Maybe.Nothing",
+            "cannot infer T for Maybe; annotate the type",
+        ),
+        (
+            "let x: Maybe = Maybe.Some(1)",
+            "Maybe takes 1 type argument(s); write it as Maybe[i64]",
+        ),
+        (
+            "let x: Maybe[i64, string] = Maybe.Some(1)",
+            "type argument count mismatch for Maybe: it takes 1",
+        ),
+        ("let p: Plain[i64] = Plain(a: 1)", "Plain is not generic"),
+        ("let x: Maybe[i64] = Maybe.Some(\"s\")", "type mismatch"),
+        ("let x = Maybe.Some([1, 2])\n    println(x)", ""),
+    ] {
+        let output = case.run(&format!("{header}{body}\n"));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if message.is_empty() {
+            assert!(output.status.success(), "{body}: {stderr}");
+            assert_eq!(stdout(&output), "Maybe.Some([1, 2])\n");
+        } else {
+            assert!(!output.status.success(), "accepted {body}");
+            assert!(stderr.contains(message), "{body}: {stderr}");
+        }
+    }
+}

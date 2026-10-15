@@ -1,8 +1,8 @@
 use crate::compiler::{
-    bitwise, borrow_of, compound, each_bindings, field_path, instance, linked_tuple, method_args,
-    method_signature, nest, nested, numeric, overload, record_id, record_method, record_order,
-    terminates, tuple_fields, Block, Elem, Expr, Instruction, Module, Pattern, Receiver, Type,
-    COPY,
+    bitwise, borrow_of, compound, constructed, each_bindings, field_path, instance, instance_of,
+    linked_tuple, method_args, method_signature, nest, nested, numeric, overload, record_id,
+    record_method, record_order, terminates, tuple_fields, Block, Elem, Expr, Instruction, Module,
+    Pattern, Receiver, Type, COPY,
 };
 use crate::project::Result;
 use std::collections::BTreeMap;
@@ -1131,6 +1131,9 @@ struct Generator<'a> {
     values: bool,
     // 函数体里声明过的结构体类型（含推断出来的元组），都要发射定义。
     records: std::collections::BTreeSet<u64>,
+    // 正按目标类型生成的表达式（地址）与目标类型：`Option.None` 这类构造只能从期望类型得知
+    // 类型实参，检查器用的是同一个期望类型。只对这一个表达式生效，不传给子表达式。
+    hint: Option<(usize, Type)>,
 }
 /// 用到的容器：`(元素, None)` 是列表，`(键, Some(值))` 是字典。
 type Containers = std::collections::BTreeSet<(Elem, Option<Elem>)>;
@@ -1531,7 +1534,16 @@ impl Generator<'_> {
                 let (name, _) = self.call_target(expr).expect("record method");
                 self.module.functions[&name].result
             }
-            Expr::Record(name, _) | Expr::Variant(name, _, _) => Type::Record(record_id(name)),
+            Expr::Record(_, _) | Expr::Variant(_, _, _) | Expr::If(..) | Expr::Match(..)
+                if self
+                    .hint
+                    .is_some_and(|(at, _)| at == expr as *const Expr as usize) =>
+            {
+                self.hint.expect("hint").1
+            }
+            Expr::Record(_, _) | Expr::Variant(_, _, _) => {
+                Type::Record(self.constructed(expr).expect("checked constructor"))
+            }
             // 分支的值可能用到绑定：在带上第一个分支绑定的副本里求类型。
             Expr::Match(scrutinee, arms) => {
                 let id = self.scrutinee_id(scrutinee);
@@ -1555,6 +1567,7 @@ impl Generator<'_> {
                     containers: Containers::new(),
                     values: false,
                     records: Default::default(),
+                    hint: None,
                 }
                 .ty(value)
             }
@@ -1769,8 +1782,35 @@ impl Generator<'_> {
                 }
                 local
             }
+            // 泛型类型的值：记下目标类型，构造（含 if/match 的分支）按它确定类型实参。
+            (_, Type::Record(id)) if instance_of(id).is_some() => {
+                let outer = self.hint.replace((expr as *const Expr as usize, ty));
+                let value = self.expr(expr);
+                self.hint = outer;
+                value
+            }
             _ => self.expr(expr),
         }
+    }
+    /// 构造表达式的类型编号：泛型结构体与枚举按字段推断类型实参（检查器已确认推断得出）。
+    fn constructed(&self, expr: &Expr) -> Option<u64> {
+        constructed(&self.module.structs, expr, None, |value| match value {
+            Expr::Record(..) | Expr::Variant(..) => self.constructed(value).map(Type::Record),
+            _ => Some(self.ty(value)),
+        })
+        .ok()
+    }
+    /// 结构体类型（或它的借用）对应的声明。
+    fn record_struct(&self, ty: Type) -> &crate::compiler::Struct {
+        let (Type::Record(id) | Type::RecordRef(id, _)) = ty else {
+            unreachable!("record type")
+        };
+        self.module
+            .structs
+            .iter()
+            .find(|(name, _)| record_id(name) == id)
+            .expect("checked struct")
+            .1
     }
     /// 把已生成的 owned 值移交出去（实参、字段、返回值）；标量原样返回。
     fn moved(&self, value: &str, ty: Type) -> String {
@@ -1850,11 +1890,11 @@ impl Generator<'_> {
                 let call = self.raw_call(&name, &args, None);
                 self.call_value(&call, result)
             }
-            Expr::Record(name, fields) => {
-                let ty = Type::Record(record_id(name));
+            Expr::Record(_, fields) => {
+                let ty = self.ty(expr);
                 let local = self.scalar("{0}", ty);
                 self.owners.push((local.clone(), ty));
-                let declaration = self.module.structs[name].clone();
+                let declaration = self.record_struct(ty).clone();
                 for (field, expr) in fields {
                     let index = declaration
                         .fields
@@ -2027,14 +2067,16 @@ impl Generator<'_> {
                 }
                 name.expect("interpolation has segments")
             }
-            Expr::Variant(name, variant, args) => {
-                let id = record_id(name);
-                let ty = Type::Record(id);
+            Expr::Variant(_, variant, args) => {
+                let ty = self.ty(expr);
+                let Type::Record(id) = ty else {
+                    unreachable!("variant type")
+                };
                 let local = self.scalar("{0}", ty);
                 self.owners.push((local.clone(), ty));
                 let (tag, first) = self.variant_of(id, variant);
                 self.code.push_str(&format!("{local}.m0 = {tag};\n"));
-                let fields = self.module.structs[name].fields.clone();
+                let fields = self.record_struct(ty).fields.clone();
                 for (j, arg) in args.iter().enumerate() {
                     let field = fields[first + j].1;
                     let value = self.expr_as(arg, field);
@@ -2209,6 +2251,18 @@ impl Generator<'_> {
             }
             Expr::Variable(name) => self.temporary(&format!("take({})", self.pointer(name))),
             Expr::Borrow(name, _) => self.pointer(name),
+            // 泛型副本里的 `copy(v)` / `copy(&p.n)`：数值和布尔直接取值。
+            Expr::Call(name, args) if name == COPY && by_value(self.value_type(&args[0])) => {
+                let ty = self.value_type(&args[0]);
+                let value = match &args[0] {
+                    Expr::Borrow(path, _) => match path.split_once('.') {
+                        Some((root, field)) => self.field(root, field),
+                        None => self.locals[path].0.clone(),
+                    },
+                    other => self.expr(other),
+                };
+                self.scalar(&value, ty)
+            }
             Expr::Call(name, args) if name == COPY => {
                 let ty = self.value_type(&args[0]);
                 let pointer = self.operand(&args[0]);
@@ -2489,9 +2543,15 @@ impl Generator<'_> {
     /// 被调函数的实际名字：`abs`/`min`/`max` 按第一个参数的类型选版本。
     /// 被调函数的实际名字：`abs`/`min`/`max` 按第一个参数的类型选版本，泛型函数按实参类型选副本。
     fn callee(&self, name: &str, args: &[Expr]) -> String {
-        let name = overload(name, args.first().map(|arg| self.ty(arg)));
-        let actuals: Vec<Option<Type>> =
-            args.iter().map(|arg| Some(self.value_type(arg))).collect();
+        // `Maybe.Nothing` 这类实参自己推断不出类型，和检查器一样不参与推断。
+        let known = |arg: &&Expr| {
+            !matches!(arg, Expr::Record(..) | Expr::Variant(..)) || self.constructed(arg).is_some()
+        };
+        let name = overload(name, args.first().filter(known).map(|arg| self.ty(arg)));
+        let actuals: Vec<Option<Type>> = args
+            .iter()
+            .map(|arg| known(&arg).then(|| self.value_type(arg)))
+            .collect();
         instance(&self.module.functions, name, &actuals).expect("checked generic call")
     }
     /// 调用的目标函数与实参：普通调用原样返回，结构体的方法改写成 `Owner.m(接收者, ...)`。
@@ -3304,16 +3364,25 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
                 Expr::Method(_, method, _)
                 | Expr::ElementMethod(_, _, _, method, _)
                 | Expr::Chain(_, method, _) => {
+                    // 泛型类型的方法调用的是副本（`Stack.push[Int]`），模板本身不生成。
                     let suffix = format!(".{method}");
+                    let instance = format!(".{method}[");
                     needed.extend(
                         module
                             .functions
-                            .keys()
-                            .filter(|name| name.ends_with(&suffix) && !name.starts_with("std/"))
-                            .cloned(),
+                            .iter()
+                            .filter(|(name, function)| {
+                                (name.ends_with(&suffix) || name.contains(&instance))
+                                    && !name.starts_with("std/")
+                                    && function.generics.is_empty()
+                            })
+                            .map(|(name, _)| name.clone()),
                     );
                 }
-                Expr::Record(name, _) | Expr::Variant(name, _, _) => {
+                // 泛型模板不生成；用到的实例经生成器登记的类型带进来。
+                Expr::Record(name, _) | Expr::Variant(name, _, _)
+                    if module.structs[name].generics.is_empty() =>
+                {
                     records.insert(name.clone());
                 }
                 _ => {}
@@ -3398,6 +3467,7 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
             containers: Containers::new(),
             values: false,
             records: Default::default(),
+            hint: None,
         };
         for (i, (param, ty)) in function.params.iter().enumerate() {
             let local = format!("p{i}");
