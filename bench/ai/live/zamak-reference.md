@@ -25,7 +25,7 @@ fn main() -> !string:
 
 ## Values and bindings
 
-- Types: `i64`, `f64`, `bool`, `string` (UTF-8, owned), structs, enums, lists `[T]`, maps `{K: V}`. There are no chars, tuples, generics or closures.
+- Types: `i64`, `f64`, `bool`, `string` (UTF-8, owned), structs, enums, lists `[T]`, maps `{K: V}`, tuples `(i64, string)`, and `Option[T]`. There are no closures.
 - `let x = 1`, `let mut x = 1`, `let mut x: i64 = 1`. Only `let mut` bindings can be reassigned. A name cannot be declared twice in the same function scope chain (no shadowing).
 - Top-level constants: `const LIMIT = 100`, `const RATE: f64 = 0.25`, `const NAME = "x"`. Names are UPPER_CASE; the value is computed at compile time from literals, earlier constants and operators. `pub const` is visible from other modules as `config.LIMIT`.
 - Integer literals may use `_` between digits: `1_000_000`. Character literals like `'a'`, `'#'`, `'\n'`, `'\''` are `i64` Unicode code points (useful with `string.byte_at`).
@@ -76,6 +76,30 @@ fn largest[T](items: &[T]) -> T:
 ```
 
 Type parameters are uppercase names in brackets after the function name. Calls do not name the types (`largest(&numbers)`); each type parameter must appear in a parameter type so it can be inferred. The body is checked for each concrete type used.
+
+## Generic types and Option
+
+```
+struct Stack[T]:
+    items: [T]
+
+    fn push(&mut self, item: T):
+        self.items.push(item)
+
+fn find(names: &[string], wanted: &string) -> Option[i64]:
+    for i, name in names:
+        if name == wanted: return Option.Some(i)
+    Option.None
+
+fn main():
+    let mut s: Stack[string] = Stack(items: [])
+    s.push("a")
+    match find(&s.items, "a"):
+        Some(i): println("at {i}")
+        None: println("missing")
+```
+
+`struct Name[T]` and `enum Name[T]` take type parameters; write the type as `Stack[string]` or `Option[i64]`. A constructor infers the type arguments from its values; when it cannot (`Option.None`, `Stack(items: [])`), annotate the variable or rely on the parameter or return type. `Option[T]` is built in, with variants `Some(value)` and `None`.
 
 ## Control flow
 

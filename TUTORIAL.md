@@ -314,7 +314,7 @@ fn main():
 - `-> 类型` 声明返回值类型；省略时表示函数不返回值。
 - 函数体末尾的值表达式可以作为返回值，因此 `add` 无需显式写 `return`。也可以使用 `return` 明确返回或提前结束函数。
 - 跨模块调用需要 `pub fn`（见第 12 节）。
-- 当前不支持泛型、闭包和函数重载。本教程使用 `while` 讲解重复执行，不涉及递归。
+- 当前不支持闭包和函数重载。本教程使用 `while` 讲解重复执行，不涉及递归。
 
 练习：将 `greet` 的参数改为 `name: &string`，并使用 `println(greet(&who))` 调用。借用字符串可以用于插值；插值只读取内容，不移动或修改原字符串。调用后再加入 `println(who)`，检查借用结束后原变量仍可使用。
 
@@ -350,6 +350,41 @@ fn main():
 - 调用时不用写类型，编译器按实参推断 `T`，再为每种类型生成一份专门的函数，所以运行起来和手写的一样快。`T` 至少要在一个参数的类型里出现，否则推断不出来。
 - 函数体按具体类型检查：`largest` 用了 `>`，传入不能比较的类型时，报错里会写出是哪个版本（如 `largest[Bool]`）。
 - `&T` 遇到 `i64`、`f64`、`bool` 时按值传。
+
+### 泛型结构体与 Option
+
+结构体和枚举也可以带类型参数。内置的 `Option[T]` 表示“可能没有值”：有值是 `Option.Some(值)`，没有是 `Option.None`：
+
+```zamak
+struct Stack[T]:
+    items: [T]
+
+    fn push(&mut self, item: T):
+        self.items.push(item)
+
+    fn pop(&mut self) -> Option[T]:
+        if self.items.len() == 0:
+            return Option.None
+
+        Option.Some(self.items.pop())
+
+fn main():
+    let mut stack: Stack[string] = Stack(items: [])
+    stack.push("a")
+    println(stack.pop())
+    println(stack.pop())
+```
+
+```text
+Option.Some("a")
+Option.None
+```
+
+要点：
+
+- 类型写作 `Stack[string]`、`Option[i64]`，方括号里是具体类型。
+- 构造时编译器按字段的值推断类型参数，`Stack(items: ["a"])` 就是 `Stack[string]`。`Option.None`、空列表推断不出，要靠变量标注、参数类型或返回类型告诉它。
+- 用 `match` 取出 `Option` 里的值：`Some(v): ...`、`None: ...`。
 
 ## 第 7 节：字符串、转义与插值
 
@@ -799,7 +834,7 @@ fn main():
 
 - `catch e:` 下面缩进的块里，`e` 是错误值，只在块内可见。
 - `catch` 块必须在所有路径上使用 `return` 从当前函数返回；若块内有条件分支，每个分支都必须返回。它不支持用末尾表达式为 `let value` 提供恢复值。成功时才会给 `value` 赋值并继续执行后续语句。
-- 当前错误类型仅支持 `string`，不支持泛型错误和错误堆栈。可失败调用必须使用 `?` 传播或使用 `catch` 处理。
+- 错误类型可以是 `string`、结构体或枚举，不支持错误堆栈。可失败调用必须使用 `?` 传播或使用 `catch` 处理。
 
 ## 第 12 节：多模块项目
 
@@ -1075,7 +1110,7 @@ error[ZM301]: use after move: name
 
 Zamak 0.1.0 的支持范围有限。编写程序时需注意以下限制：
 
-- `match` 匹配枚举变体，或者整数、字符、字符串、布尔字面量（`1 | 2 | 3:`、`"go":`），还不支持区间和守卫条件；尚不支持泛型、闭包和 trait/接口；`for` 支持整数区间 `a..b` 以及遍历 `&列表`、`&字典`。
+- `match` 匹配枚举变体，或者整数、字符、字符串、布尔字面量（`1 | 2 | 3:`、`"go":`），还不支持区间和守卫条件；尚不支持闭包和 trait/接口；`for` 支持整数区间 `a..b` 以及遍历 `&列表`、`&字典`。
 - 尚不提供包管理器、交互式执行环境（REPL）、文档生成工具或重构工具。
 - 标准库包括 `std/string`（`byte_len`、`char_len`、`equal`、`parse_i64`、`parse_f64`、`trim`、`byte_at`、`slice`、`find`、`find_from`、`starts_with`、`ends_with`、`contains`、`replace`、`lower`、`upper`、`copy`、`split`、`words`、`lines`、`join`、`chars`、`codepoints`、`from_code`、`bytes`、`from_bytes`、`repeat`、`count`、`pad_left`、`pad_right`）、`std/io`（`println`、`read_line`、`read_all`）、`std/fmt`（`println`、`fixed`）、`std/math`（见第 3 节）、`std/fs`（`read`、`write`）和 `std/env`（`arg_count`、`arg`、`args`、`var`、`exit`），以及不用导入的 `abs`、`min`、`max`，没有目录遍历、网络和时间函数。
 - 错误类型可以是 `string`、结构体或枚举，没有错误堆栈。

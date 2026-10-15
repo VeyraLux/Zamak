@@ -11,7 +11,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-41");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-43");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -329,9 +329,16 @@ impl Project {
         let entry = format!("{}:main", self.entry);
         // 泛型函数的新副本同理：副本里再调用泛型函数时会生成更多副本，直到不再增加。
         let result = loop {
-            let known = (compiler::linked_tuple_count(), compiler::instance_count());
+            let counts = || {
+                (
+                    compiler::linked_tuple_count(),
+                    compiler::instance_count(),
+                    compiler::struct_instance_count(),
+                )
+            };
+            let known = counts();
             let result = compiler::check(&self.linked()?, &entry);
-            if (compiler::linked_tuple_count(), compiler::instance_count()) == known {
+            if counts() == known {
                 break result;
             }
         };
@@ -409,8 +416,36 @@ impl Project {
                         .map(|(i, ty)| (i.to_string(), ty))
                         .collect(),
                     variants: Vec::new(),
+                    generics: Vec::new(),
                 },
             );
+        }
+        linked
+            .structs
+            .insert(compiler::OPTION.into(), compiler::option());
+        // 泛型结构体与枚举按用到的类型实参生成实例（`Option[Int]`），字段里的类型参数换成实参。
+        // 实例的字段可能又用到新的实例，检查循环会再链接一遍。
+        if compiler::struct_instance_count() > 10_000 {
+            return Err(
+                "too many generic type instances; a generic type may expand without end".into(),
+            );
+        }
+        for (template, args, name) in compiler::struct_instances() {
+            let Some(declaration) = linked.structs.get(&template) else {
+                continue;
+            };
+            let short = template.rsplit(':').next().unwrap_or(&template);
+            if declaration.generics.len() != args.len() {
+                return Err(format!(
+                    "type argument count mismatch for {short}: it takes {}",
+                    declaration.generics.len()
+                ));
+            }
+            let mut instance = declaration.clone();
+            instance.fields =
+                compiler::substitute_fields(&declaration.generics, &args, &declaration.fields)?;
+            instance.generics.clear();
+            linked.structs.insert(name, instance);
         }
         Ok(linked)
     }
@@ -452,6 +487,29 @@ impl Project {
         if name.starts_with("$param:") {
             return Ok(());
         }
+        // `Option[i64]`：模板名按模块限定，类型实参也限定，换成实例的编号。
+        if let Some((template, mut args)) = compiler::application(*id) {
+            let mut constructor = Expr::Record(template.clone(), Vec::new());
+            self.resolve_expr(module, &BTreeSet::new(), &mut constructor)?;
+            let Expr::Record(qualified, _) = constructor else {
+                unreachable!("record constructor")
+            };
+            let count = self.declared_generics(&qualified);
+            if count != Some(args.len()) {
+                let short = template.rsplit('.').next().unwrap_or(&template);
+                return Err(match count {
+                    Some(0) | None => format!("{short} is not generic; write it without [...]"),
+                    Some(count) => {
+                        format!("type argument count mismatch for {short}: it takes {count}")
+                    }
+                });
+            }
+            for arg in &mut args {
+                self.resolve_type(module, arg)?;
+            }
+            *id = compiler::struct_instance(&qualified, args);
+            return Ok(());
+        }
         // 元组：各项类型限定后重新登记，同样的结构在所有模块里是同一个类型。
         if name.starts_with('(') {
             let mut fields = compiler::tuple_fields(*id).ok_or("unknown tuple type")?;
@@ -463,10 +521,31 @@ impl Project {
         }
         let mut constructor = Expr::Record(name.clone(), Vec::new());
         self.resolve_expr(module, &BTreeSet::new(), &mut constructor)?;
-        if let Expr::Record(name, _) = constructor {
-            *id = compiler::record_id(&name);
+        if let Expr::Record(qualified, _) = constructor {
+            if let Some(count @ 1..) = self.declared_generics(&qualified) {
+                let short = name.rsplit('.').next().unwrap_or(name);
+                let params = vec!["i64"; count].join(", ");
+                return Err(format!(
+                    "{short} takes {count} type argument(s); write it as {short}[{params}]"
+                ));
+            }
+            *id = compiler::record_id(&qualified);
         }
         Ok(())
+    }
+
+    /// 限定名对应的结构体或枚举声明了几个类型参数；找不到时为 None。
+    fn declared_generics(&self, qualified: &str) -> Option<usize> {
+        if qualified == compiler::OPTION {
+            return Some(1);
+        }
+        let (module, name) = qualified.rsplit_once(':')?;
+        self.modules
+            .get(module)?
+            .module
+            .structs
+            .get(name)
+            .map(|s| s.generics.len())
     }
 
     /// 模块解析期错误此前不带位置，AI 只能从 message 里抠模块名。指令级位置已经在
@@ -670,6 +749,16 @@ impl Project {
                     }
                     (imports[0].as_str(), short)
                 } else {
+                    // 模块自己没有声明 `Option` 时用内置的。
+                    if name == "Option"
+                        && !self.modules[module].module.structs.contains_key("Option")
+                    {
+                        *name = compiler::OPTION.into();
+                        for (_, value) in fields {
+                            self.resolve_expr(module, locals, value)?;
+                        }
+                        return Ok(());
+                    }
                     (module, name.as_str())
                 };
                 let declaration = self
