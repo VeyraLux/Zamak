@@ -27,7 +27,8 @@ Zamak 是为频繁构建和多 worktree 协作设计的语言原型，改完代�
 
 | 组件 | 当前能力 |
 | --- | --- |
-| 命令行 | `check`、`build`、`run`、`fmt`、`new`、`demo`；检查与构建支持 JSON 诊断 |
+| 命令行 | `check`、`build`、`run`、`test`、`fmt`、`new`、`add`、`update`、`demo`；检查与构建支持 JSON 诊断 |
+| 包管理 | `zam.toml` 写 git 或本地路径依赖，`zam.lock` 锁定提交，依赖包里的模块按 `use 包名/模块` 导入 |
 | 数值 | `i64`（溢出与除零在运行时检查）、`f64`（IEEE 754）、`bool`；`f64(n)`、`i64(x)` 显式转换 |
 | 集合 | 定长 `[i64; N]`、可增长列表 `[T]`、字典 `{K: V}`；元素与值可以是标量、字符串或结构体，键为 `i64` 或 `string` |
 | 标准库 | 文件读写、标准输入、命令行参数、整数与浮点数解析；`std/math` 的平方根、幂、三角、取整等函数；`fmt.fixed` 按位数格式化；字符串的长度、比较、查找、替换、大小写转换、裁剪、切片、切分与连接；`println` |
@@ -35,7 +36,7 @@ Zamak 是为频繁构建和多 worktree 协作设计的语言原型，改完代�
 | 错误处理 | `T!string`、`fail`、`?` 传播、`catch` 处理 |
 | 编辑器 | VS Code 语法高亮、括号与引号配对 |
 
-尚未支持网络 I/O、目录遍历、线程及 FFI，也还没有包管理器、语言服务器、REPL 和文档生成工具。安装方式见 [预览版说明](PREVIEW.md)。
+尚未支持网络 I/O、目录遍历、线程及 FFI，也还没有中心化的包仓库、语言服务器、REPL 和文档生成工具。安装方式见 [预览版说明](PREVIEW.md)。
 
 ## 快速运行
 
@@ -143,7 +144,7 @@ entry = "src/main.zm"
 modules = "src"
 ```
 
-配置只能包含 `[project]` 和上面三个字符串字段；路径相对配置文件，不能包含 `..`，入口要在模块目录内。`zam` 递归扫描模块目录里的 `.zm` 文件，一个文件对应一个模块，例如 `src/tools/greeting.zm` 的模块名是 `tools/greeting`。暂不支持源码符号链接。
+配置包含 `[project]` 和可选的 `[dependencies]`（见下文“依赖包”）；`[project]` 只有上面三个字符串字段；路径相对配置文件，不能包含 `..`，入口要在模块目录内。`zam` 递归扫描模块目录里的 `.zm` 文件，一个文件对应一个模块，例如 `src/tools/greeting.zm` 的模块名是 `tools/greeting`。暂不支持源码符号链接。
 
 ```zam
 use tools/greeting
@@ -155,6 +156,24 @@ fn main():
 ```
 
 被导入模块里的函数要声明为 `pub fn`。导入用 `/`，调用用模块路径的末段名称。模块别名有歧义、模块缺失、调用私有函数、重复声明和模块依赖成环都会报错。
+
+### 依赖包
+
+别人写好的 Zamak 库可以直接拿来用。依赖写在 `[dependencies]` 里，来源是 git 仓库或本地目录：
+
+```toml
+[dependencies]
+mathx = { git = "https://github.com/you/mathx", rev = "v1.0" }
+util = { path = "../util" }
+```
+
+也可以用命令添加：`zam add mathx https://github.com/you/mathx v1.0`、`zam add util ../util`。`zam add` 修改当前目录的 `zam.toml` 并立即拉取，拉取或检查失败时把 `zam.toml` 与 `zam.lock` 恢复原样。
+
+- **包的写法**：包就是一个普通的 Zamak 项目，`zam.toml` 里 `[project]` 的 `name` 要和依赖名相同，`entry` 可以省略（库不需要 `main`）。包可以再有自己的依赖，`zam` 会一起解析；同一个名字被要求从两个不同的来源拉取时报错。
+- **导入**：包里的 `src/geo.zm` 写成 `use mathx/geo`，调用 `geo.twice(2)`；与包同名的 `src/mathx.zm` 是包的根模块，写成 `use mathx`。包内部的模块照常互相 `use geo`。只有 `pub` 的函数、结构体和常量能被项目使用；项目自己的模块不能和依赖同名。
+- **锁定**：`rev` 可以是分支、标签或提交，省略时是默认分支。第一次构建把它解析成具体提交，写进 `zam.lock`（请提交到版本库），之后的构建都用锁定的提交，即使标签移动了也不变；`zam update` 忽略锁文件，把每个 `rev` 重新解析成最新的提交。路径依赖不进锁文件。
+- **缓存与离线**：git 仓库的镜像与检出的源码放在缓存目录的 `packages/` 下（默认 `~/.zam/cache/packages`），按提交区分、只检出一次。锁定的提交已在缓存里时构建不访问网络。拉取 git 依赖需要 PATH 上有 `git`。
+- **测试**：`zam test` 只运行项目自己的测试，不运行依赖包里的；`zam fmt` 也只整理项目自己的模块。
 
 ## 当前语法范围
 
