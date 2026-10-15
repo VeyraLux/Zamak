@@ -73,6 +73,7 @@ zam new hello        # creates hello/zam.toml and hello/src/main.zm
 zam run hello        # prints: hello from zamak
 zam check hello      # type and borrow check only
 zam fmt hello        # normalizes indentation
+zam test hello       # runs every fn test_...() in the project
 zam build hello      # writes build/hello-<hash>(.exe)
 zam run app.zm -- a b   # pass arguments to the program
 ```
@@ -129,6 +130,7 @@ fn main() -> !string:
 - **Generic functions.** Write `fn largest[T](items: &[T]) -> T`. Zamak infers `T` at each call and compiles a separate version per type.
 - **Generic types and Option.** Declare `struct Stack[T]` or `enum Tree[T]` and write the type as `Stack[string]`. Methods inside a generic type can use `T`. The built-in `Option[T]` has the variants `Option.Some(value)` and `Option.None`.
 - **Function values.** A function type is written `fn(i64) -> bool`. Pass a named function by name, or write an anonymous fn such as `fn(x): x * 2`. An anonymous fn can read variables of the enclosing function; such a closure is passed directly as an argument and never outlives the call, so no garbage collector is needed.
+- **Tests.** `assert cond` or `assert cond, "message"` stops the program when `cond` is false and prints the condition, and for `a == b` both values. `zam test` runs every function named `test_...` in its own process, so a crash fails only that test, and prints a summary. Pass a word to run only matching tests: `zam test . parse`.
 - **Tuples.** Group values as `(3, "three")` with type `(i64, string)`, read items with `t.0`, and return several values from a function: `let (q, r) = divmod(17, 5)`.
 - **Constants.** Declare `const LIMIT = 100` at the top level. Zamak computes the value at compile time from literals, earlier constants, and operators.
 - **Modules.** Each file is a module. Import one with `use name`, and export items with `pub fn`, `pub struct`, and `pub const`.

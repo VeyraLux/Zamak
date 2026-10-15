@@ -9,9 +9,10 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 
 ## 命令
 
-- `zam check [project|file]`、`zam build ...`、`zam run ...`、`zam fmt ...`、`zam new <directory>`、`zam demo`；无路径参数时用当前目录；源码后缀统一 `.zm`，可直接对单个源码文件操作；`run` 也能直接执行已构建的产物；`zam run <file> -- a b` 把 `--` 之后的参数原样交给程序（只有 `run` 接受 `--`）。
+- `zam check [project|file]`、`zam build ...`、`zam run ...`、`zam fmt ...`、`zam test [project|file] [过滤词]`、`zam new <directory>`、`zam demo`；无路径参数时用当前目录；源码后缀统一 `.zm`，可直接对单个源码文件操作；`run` 也能直接执行已构建的产物；`zam run <file> -- a b` 把 `--` 之后的参数原样交给程序（只有 `run` 接受 `--`）。
 - `zam new <directory>` 生成最小骨架（`zam.toml` + 问候用的 `src/main.zm` + 忽略 `build/` 的 `.gitignore`），列出文件到 stderr，stdout 保持空；目录已存在就报错且不覆盖，目录名必须是合法标识符（写进 `zam.toml` 的 `name`）。
 - `zam fmt` 整理格式：缩进统一成 4 空格（行首 Tab 先展开再解析，所以 Tab 缩进的文件 `check` 报错但能 `fmt`），括号内续行按括号层数缩进，注释按上下文层级缩进；多行形式的 `if`/`for`/`while`/`match` 前后各加一个空行（块内第一条、前一行是注释、`elif`/`else` 前、块结束处除外），连续空行压成一个，顶层声明之间一个空行（连续 `use` 之间不加）；单行形式不算。去行尾空白、结尾留一个换行、保留 CRLF/LF；注释和字符串原样保留。改过的文件以 `FORMAT <path>` 打到 stderr。语法坏掉的代码先被拒绝。不做行内空格重排与折行。实现在 `compiler::format`（逻辑行 + 物理行两层），幂等。
+- `zam test`：运行所有模块里 `fn test_x():` / `fn test_x() -> !E:`（不能带参数；签名不对报 ZM200），不要求 `fn main()`。每个测试单独起进程（`Project::test` → `build_with(cache, tests)` 编出 `build/<name>-test-<hash>`，C `main` 按 `argv[1]` 的 `模块:test_x` 分派，见 `native::generate_with`），并行跑、60 秒超时；stdout 每个测试一行 `test 名字 ... ok/FAILED`，再列失败输出，最后 `test result: ...`，有失败时 stderr 报 `N test(s) failed` 并退出非零。`assert 条件[, 说明]` 是保留字语句，解析时展开成 `if not 条件: $assert(格式化报错)`，`project.rs` 把 `$assert` 换成内建 `std/core:assert_failed` 并在报错前补模块路径；`a == b`/`a != b` 两边是变量、字段、元素或字面量时报错里再显示两边的值。
 - `zam --version` / `--help`；缓存目录默认是用户主目录下的 `.zam/cache`，可用环境变量 `ZAMAK_CACHE_DIR` 覆盖。`check` 在任何平台都不需要 C 编译器。
 - C 编译按模块并行，只有缓存 MISS 的模块进编译队列，默认并发度为 `min(可用核数, 8)`，可用环境变量 `ZAMAK_JOBS` 调整（设 `1` 即串行）。并行时 `OBJECT ...` 进度行的顺序不确定，解析进度请按行前缀匹配而不要依赖顺序。
 - `zam check --json` / `zam build --json` 在 stdout 输出一行机器可读诊断：`{"command","ok","diagnostics":[{file,line,column,function,code,category,message,suggestion}]}`。`code`（如 `ZM100`）与 `category` 是稳定机器字段，分支判断只依赖它们；`message` 是人类可读文本，`suggestion` 在有修复路径时给出（`ZM999` 无建议，值为 `null`）；`file`/`line`/`column`/`function` 无法定位时为 `null`。**词法/语法/模块解析错误只报第一条；之后类型与所有权检查逐个函数进行，每个出错的函数各报它的第一条，`diagnostics` 按文件、行、列排序，可能有多项。** 一轮可以修完各函数的问题再检查；同一函数里的后续错误要等前一条修好才出现。 失败时 stderr 仍有一行人类可读信息、退出码非零；其他子命令不接受 `--json`。
