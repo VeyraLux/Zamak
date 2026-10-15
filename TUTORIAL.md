@@ -568,6 +568,7 @@ fn main():
 - 字段通过 `.` 访问。修改字段要求所属变量可变，如本例的 `let mut p`。
 - 结构体使用移动语义：执行 `let moved = p` 后，再读取 `p` 会报 `use after move`。对于可变变量，可以通过整体重新赋值恢复其有效值，例如 `p = Point(x: 1, y: 2)`。
 - 嵌套结构体字段可以连续访问，例如 `group.leader.age = group.leader.age + 1`。
+- 方法写在结构体（或枚举）的缩进块里，和字段放在一起：第一个参数 `&self` 只读、`&mut self` 可以改字段、`self` 把值移进方法。调用写 `p.length()`、`p.scale(2.0)`，接收者会按需要自动借用。没有 `self` 的是关联函数，用类型名调用，比如构造函数 `Vec2.new(3.0, 4.0)`。跨模块调用方法要声明成 `pub fn`。完整例子见 `examples/structs/methods.zm`。
 
 ### 结构体借用与结构体列表
 
@@ -608,7 +609,7 @@ fn main():
 - 参数写成 `&Task` 是只读借用，写成 `&mut Task` 是可变借用，规则与字符串借用相同：只能作参数，调用返回就结束。经由 `&mut` 可以改字段，也可以整体赋值。
 - 列表和字典可以存结构体：`[Task]`、`{string: Task}`。`push` 把结构体移进列表，`pop` 把最后一个移出来。
 - `tasks[i].hours` 读写元素的字段，也能用复合赋值；`&tasks[i]`、`&mut tasks[i]` 借用整个元素，`&tasks[i].title` 借用元素的字段；`tasks[i].tags.push(x)` 调用元素字段上的列表或字典方法。
-- `for t in &tasks` 里的 `t` 是只读借用。要修改元素，改用 `for i in 0..tasks.len()` 按下标处理。
+- `for t in &tasks` 里的 `t` 是只读借用。要修改元素写 `for t in &mut tasks`，`t` 是 `&mut Task`，可以改字段。
 - 结构体赋值是移动，所以 `let t = tasks[0]` 会报错。要一份独立的副本写 `let t = copy(&tasks[0])`；拿走元素用 `pop`，整体替换写 `tasks[0] = Task(...)`，排序用 `tasks.swap(i, j)`。结构体值的字典不支持 `get`，先用 `contains` 判断，再读 `m[k].field`。
 - 元素字段里的列表不能再接下标（`tasks[0].tags[1]`），把 `&tasks[0].tags` 传给函数处理。
 

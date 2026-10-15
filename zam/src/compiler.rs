@@ -92,6 +92,80 @@ pub fn overload(name: &str, first: Option<Type>) -> &str {
         _ => name,
     }
 }
+/// 方法调用的接收者：路径（`p`、`a.b`）、列表或字典的元素（`xs[i]`、`xs[i].f`）、调用结果。
+pub enum Receiver<'a> {
+    Path(&'a str, Type),
+    Element(&'a str, &'a Expr, &'a str),
+    Temp(&'a Expr),
+}
+
+/// 结构体或枚举里声明的方法：`Point` 里的 `fn norm(&self)` 在链接后的函数表里叫 `模块:Point.norm`。
+/// 接收者不是结构体时返回 Ok(None)；是结构体但没有这个方法时报错。
+pub fn record_method<'f>(
+    structs: &BTreeMap<String, Struct>,
+    functions: &'f BTreeMap<String, Function>,
+    receiver: Type,
+    method: &str,
+) -> Result<Option<(String, &'f Function)>, String> {
+    let (Type::Record(id) | Type::RecordRef(id, _)) = receiver else {
+        return Ok(None);
+    };
+    let Some(owner) = structs.keys().find(|name| record_id(name) == id) else {
+        return Ok(None);
+    };
+    let name = format!("{owner}.{method}");
+    let short = owner.rsplit(':').next().unwrap_or(owner);
+    match functions.get(&name) {
+        Some(function) => Ok(Some((name, function))),
+        None => Err(format!(
+            "unknown method {short}.{method}; declare it inside {short} as fn {method}(&self)"
+        )),
+    }
+}
+
+/// `p.m(a)` 改写成普通调用 `Owner.m(接收者, a)` 的实参：`&self`、`&mut self` 借用接收者，
+/// `self` 把它移进去。检查器与生成器共用。
+pub fn method_args(
+    receiver: Receiver,
+    callee: &Function,
+    method: &str,
+    args: &[Expr],
+) -> Result<Vec<Expr>, String> {
+    let Some(self_ty) = callee
+        .params
+        .first()
+        .filter(|(name, _)| name == "self")
+        .map(|(_, ty)| *ty)
+    else {
+        return Err(format!(
+            "{method} has no self parameter; call it on the type, such as Point.{method}(...)"
+        ));
+    };
+    let first = match (receiver, self_ty) {
+        (Receiver::Path(path, place), Type::RecordRef(_, mutable)) => {
+            if place.is_reference() && !path.contains('.') {
+                Expr::Variable(path.into())
+            } else {
+                Expr::Borrow(path.into(), mutable)
+            }
+        }
+        (Receiver::Path(path, _), _) => match path.split_once('.') {
+            Some((root, rest)) => Expr::Field(root.into(), rest.into()),
+            None => Expr::Variable(path.into()),
+        },
+        (Receiver::Element(path, index, field), Type::RecordRef(_, mutable)) => {
+            Expr::BorrowIndex(path.into(), Box::new(index.clone()), field.into(), mutable)
+        }
+        (Receiver::Element(path, _, _), _) => {
+            return Err(format!(
+                "cannot move a struct out of {path}[..]: {method} takes self by value; take it out with pop() or copy(&...) first"
+            ))
+        }
+        (Receiver::Temp(expr), _) => expr.clone(),
+    };
+    Ok(std::iter::once(first).chain(args.iter().cloned()).collect())
+}
+
 /// 全局 `copy(&x)`：深复制字符串、列表、字典、结构体与枚举。它对任何类型都成立，
 /// 所以不在函数表里，检查器与生成器按名字特判。
 pub const COPY: &str = "std/core:copy";
@@ -1633,6 +1707,128 @@ impl Parser {
         }
         Ok(call)
     }
+    /// `fn` 之后的函数声明：名字、参数、返回类型与函数体。`owner` 是方法所在的结构体或枚举，
+    /// 这时第一个参数可以写 `self`（移入）、`&self` 或 `&mut self`。
+    fn function(
+        &mut self,
+        public: bool,
+        start: SourcePosition,
+        imports: &[String],
+        owner: Option<&str>,
+    ) -> Result<(String, Function), String> {
+        let name = self.word()?;
+        // 首字母大写的名字留给结构体与枚举：`Point(x: 1)` 是结构体字面量，不是调用。
+        if name.starts_with(char::is_uppercase) {
+            return Err(format!(
+                "function names must start with a lowercase letter: {name}; uppercase names are for structs and enums"
+            ));
+        }
+        // `i64(x)`、`f64(n)` 是内建的数值转换。
+        if matches!(name.as_str(), "i64" | "f64") {
+            return Err(format!("reserved type name {name}"));
+        }
+        self.expect('(')?;
+        let mut params = Vec::new();
+        if !self.symbol(')') {
+            loop {
+                let receiver = match owner {
+                    Some(owner) if params.is_empty() => self.self_param(owner)?,
+                    _ => None,
+                };
+                if let Some(ty) = receiver {
+                    params.push(("self".to_owned(), ty));
+                } else {
+                    let param = self.word()?;
+                    if param == "self" {
+                        return Err("self can only be the first parameter of a method declared inside a struct or enum".into());
+                    }
+                    self.expect(':')?;
+                    let ty = self.ty()?;
+                    if matches!(ty, Type::ArrayInt(_)) {
+                        return Err("arrays are only supported as local values".into());
+                    }
+                    params.push((param, ty));
+                }
+                if self.symbol(')') {
+                    break;
+                }
+                self.expect(',')?;
+            }
+        }
+        let (result, error) = if self.symbol('-') {
+            self.expect('>')?;
+            // `-> !E` 表示没有成功值、只有错误值。
+            if self.symbol('!') {
+                let error = self.ty()?;
+                (Type::Unit, Some(error))
+            } else {
+                let ty = self.ty()?;
+                if ty.is_reference() {
+                    return Err("borrow escape: functions cannot return references".into());
+                }
+                if matches!(ty, Type::ArrayInt(_)) {
+                    return Err("arrays are only supported as local values".into());
+                }
+                let error = if self.symbol('!') {
+                    Some(self.ty()?)
+                } else {
+                    None
+                };
+                (ty, error)
+            }
+        } else {
+            (Type::Unit, None)
+        };
+        self.imports = imports.to_vec();
+        self.result = result;
+        let mut body = self.suite(imports, result, "fn")?;
+        untail(&mut body, true, &self.implicit);
+        Ok((
+            name,
+            Function {
+                public,
+                params,
+                result,
+                error,
+                body,
+                position: start,
+                builtin: false,
+            },
+        ))
+    }
+    /// 方法的第一个参数 `self` / `&self` / `&mut self`；不是时退回原位置。
+    fn self_param(&mut self, owner: &str) -> Result<Option<Type>, String> {
+        let at = self.position;
+        let borrowed = self.symbol('&');
+        let mutable = borrowed && self.keyword("mut");
+        if self.keyword("self") {
+            let id = self
+                .record(owner)
+                .expect("struct and enum names are uppercase");
+            return Ok(Some(if borrowed {
+                Type::RecordRef(id, mutable)
+            } else {
+                Type::Record(id)
+            }));
+        }
+        self.position = at;
+        Ok(None)
+    }
+    /// 结构体或枚举块里的下一行是方法声明。
+    fn method_start(&self) -> bool {
+        let word = |offset: usize, text: &str| {
+            self.tokens.get(self.position + offset) == Some(&Token::Word(text.into()))
+        };
+        word(0, "fn") || (word(0, "pub") && word(1, "fn"))
+    }
+    /// 结构体或枚举里的方法：在函数表里叫 `Owner.name`。
+    fn method(&mut self, owner: &str, imports: &[String]) -> Result<(String, Function), String> {
+        let start = self.at();
+        let public = self.keyword("pub");
+        self.keyword("fn");
+        let (name, function) = self.function(public, start, imports, Some(owner))?;
+        Ok((format!("{owner}.{name}"), function))
+    }
     /// 左括号之后的实参列表，读到右括号为止。
     fn arguments(&mut self) -> Result<Vec<Expr>, String> {
         let mut args = Vec::new();
@@ -2107,6 +2303,16 @@ impl Parser {
     }
 }
 
+/// 把结构体或枚举里声明的方法放进函数表。
+fn add_methods(module: &mut Module, methods: Vec<(String, Function)>) -> Result<(), String> {
+    for (name, function) in methods {
+        if module.functions.insert(name.clone(), function).is_some() {
+            return Err(format!("duplicate method {name}"));
+        }
+    }
+    Ok(())
+}
+
 /// 分支是不是字面量模式（要展开成 if 链）。不能和枚举变体混用；`_` 只能在最后；字面量不能重复。
 fn literal_arms<T>(arms: &[(Arm, T)]) -> Result<bool, String> {
     let literal = arms.iter().any(|(arm, _)| matches!(arm, Arm::Values(_)));
@@ -2295,6 +2501,7 @@ pub fn parse(source: &str) -> Result<Module, String> {
                 p.colon("struct")?;
                 let mut fields = Vec::new();
                 let mut names = BTreeSet::new();
+                let mut methods = Vec::new();
                 let block = p.peek() == Some(&Token::Newline);
                 if block {
                     p.take();
@@ -2309,6 +2516,11 @@ pub fn parse(source: &str) -> Result<Module, String> {
                         if !block {
                             break;
                         }
+                        p.separator()?;
+                        continue;
+                    }
+                    if block && p.method_start() {
+                        methods.push(p.method(&name, &module.imports.clone())?);
                         p.separator()?;
                         continue;
                     }
@@ -2346,6 +2558,7 @@ pub fn parse(source: &str) -> Result<Module, String> {
                 {
                     return Err(format!("duplicate declaration {name}"));
                 }
+                add_methods(&mut module, methods)?;
                 p.separator()?;
                 continue;
             }
@@ -2370,9 +2583,15 @@ pub fn parse(source: &str) -> Result<Module, String> {
                 p.indent("enum")?;
                 let mut fields = vec![("$tag".to_owned(), Type::Int)];
                 let mut variants: Vec<(String, usize, usize)> = Vec::new();
+                let mut methods = Vec::new();
                 while !p.symbol_dedent() {
                     if p.peek().is_none() {
                         break;
+                    }
+                    if p.method_start() {
+                        methods.push(p.method(&name, &module.imports.clone())?);
+                        p.separator()?;
+                        continue;
                     }
                     let variant = p.word()?;
                     if !variant.starts_with(char::is_uppercase) {
@@ -2426,84 +2645,19 @@ pub fn parse(source: &str) -> Result<Module, String> {
                 {
                     return Err(format!("duplicate declaration {name}"));
                 }
+                add_methods(&mut module, methods)?;
                 p.separator()?;
                 continue;
             }
             if !p.keyword("fn") {
                 return Err("expected use, const, struct, enum or fn declaration".into());
             }
-            let name = p.word()?;
-            // 首字母大写的名字留给结构体与枚举：`Point(x: 1)` 是结构体字面量，不是调用。
-            if name.starts_with(char::is_uppercase) {
-                return Err(format!(
-                    "function names must start with a lowercase letter: {name}; uppercase names are for structs and enums"
-                ));
-            }
-            // `i64(x)`、`f64(n)` 是内建的数值转换。
-            if matches!(name.as_str(), "i64" | "f64") {
-                return Err(format!("reserved type name {name}"));
-            }
+            let imports = module.imports.clone();
+            let (name, function) = p.function(public, start, &imports, None)?;
             if module.structs.contains_key(&name) {
                 return Err(format!("duplicate declaration {name}"));
             }
-            p.expect('(')?;
-            let mut params = Vec::new();
-            if !p.symbol(')') {
-                loop {
-                    let param = p.word()?;
-                    p.expect(':')?;
-                    let ty = p.ty()?;
-                    if matches!(ty, Type::ArrayInt(_)) {
-                        return Err("arrays are only supported as local values".into());
-                    }
-                    params.push((param, ty));
-                    if p.symbol(')') {
-                        break;
-                    }
-                    p.expect(',')?;
-                }
-            }
-            let (result, error) = if p.symbol('-') {
-                p.expect('>')?;
-                // `-> !E` 表示没有成功值、只有错误值。
-                if p.symbol('!') {
-                    let error = p.ty()?;
-                    (Type::Unit, Some(error))
-                } else {
-                    let ty = p.ty()?;
-                    if ty.is_reference() {
-                        return Err("borrow escape: functions cannot return references".into());
-                    }
-                    if matches!(ty, Type::ArrayInt(_)) {
-                        return Err("arrays are only supported as local values".into());
-                    }
-                    let error = if p.symbol('!') { Some(p.ty()?) } else { None };
-                    (ty, error)
-                }
-            } else {
-                (Type::Unit, None)
-            };
-            p.imports = module.imports.clone();
-            p.result = result;
-            let imports = module.imports.clone();
-            let mut body = p.suite(&imports, result, "fn")?;
-            untail(&mut body, true, &p.implicit);
-            if module
-                .functions
-                .insert(
-                    name.clone(),
-                    Function {
-                        public,
-                        params,
-                        result,
-                        error,
-                        body,
-                        position: start,
-                        builtin: false,
-                    },
-                )
-                .is_some()
-            {
+            if module.functions.insert(name.clone(), function).is_some() {
                 return Err(format!("duplicate function {name}"));
             }
             p.separator()?;
@@ -2593,6 +2747,8 @@ struct Checker<'a> {
     result: Type,
     // 正被 `for x in &items` 遍历的根绑定：循环体内不能修改、移走或独占借用它们。
     frozen: Vec<String>,
+    // 当前函数所在的模块：调用别的模块的方法要求它是 pub。
+    module: &'a str,
 }
 impl<'a> Checker<'a> {
     fn thawed(&self, root: &str) -> Result<(), String> {
@@ -2825,6 +2981,47 @@ impl<'a> Checker<'a> {
     fn callee<'n>(&self, name: &'n str, args: &[Expr]) -> &'n str {
         overload(name, args.first().and_then(|arg| self.ty(arg).ok()))
     }
+    /// 调用的目标函数与实参：普通调用原样返回；结构体的方法改写成 `Owner.m(接收者, ...)`。
+    /// 列表、字典的方法与不是调用的表达式返回 None。
+    fn call_target(&self, expr: &Expr) -> Result<Option<(String, Vec<Expr>)>, String> {
+        let (receiver, ty, method, args) = match expr {
+            Expr::Call(name, args) => {
+                return Ok(Some((self.callee(name, args).to_owned(), args.clone())))
+            }
+            Expr::Method(path, method, args) => {
+                let ty = self.place(path)?.1;
+                (Receiver::Path(path, ty), ty, method, args)
+            }
+            Expr::ElementMethod(path, index, field, method, args) => (
+                Receiver::Element(path, index, field),
+                self.element(path, field)?.1,
+                method,
+                args,
+            ),
+            Expr::Chain(receiver, method, args) => {
+                (Receiver::Temp(receiver), self.ty(receiver)?, method, args)
+            }
+            _ => return Ok(None),
+        };
+        let Some((name, callee)) = record_method(self.structs, self.functions, ty, method)? else {
+            return Ok(None);
+        };
+        if !callee.public && name.split(':').next() != Some(self.module) {
+            let short = name.split_once(':').map_or(name.as_str(), |(_, n)| n);
+            return Err(format!("private method {short}; declare it with pub fn"));
+        }
+        Ok(Some((
+            name.clone(),
+            method_args(receiver, callee, method, args)?,
+        )))
+    }
+    /// 结构体方法调用（不是列表、字典的方法）。
+    fn record_call(&self, expr: &Expr) -> bool {
+        matches!(
+            expr,
+            Expr::Method(..) | Expr::ElementMethod(..) | Expr::Chain(..)
+        ) && !matches!(self.call_target(expr), Ok(None))
+    }
     /// 调用结果上的方法不存在：列出能用的方法。
     fn chain_error(&self, ty: Type, method: &str) -> String {
         match ty.container() {
@@ -2908,6 +3105,10 @@ impl<'a> Checker<'a> {
     }
     fn ty(&self, expr: &Expr) -> Result<Type, String> {
         match expr {
+            _ if self.record_call(expr) => {
+                let (name, _) = self.call_target(expr)?.expect("record method");
+                Ok(self.functions[&name].result)
+            }
             Expr::Record(name, _) | Expr::Variant(name, _, _) => {
                 self.structs
                     .get(name)
@@ -2941,6 +3142,7 @@ impl<'a> Checker<'a> {
                     error: self.error,
                     result: self.result,
                     frozen: Vec::new(),
+                    module: self.module,
                 }
                 .ty(value)
             }
@@ -3077,6 +3279,14 @@ impl<'a> Checker<'a> {
         loans: &mut BTreeMap<String, Type>,
     ) -> Result<(), String> {
         match expr {
+            _ if self.record_call(expr) => {
+                let (name, args) = self.call_target(expr)?.expect("record method");
+                let callee = self.functions[&name].clone();
+                if callee.error.is_some() {
+                    return Err(format!("fallible call {name} must be handled with ?"));
+                }
+                self.call(&name, &callee, &args, expected, loans)
+            }
             Expr::Record(name, _)
                 if self
                     .structs
@@ -3579,6 +3789,13 @@ impl<'a> Checker<'a> {
                 self.container(path, mutable, loans)?;
                 Ok(())
             }
+            // 调用结果（临时结构体）借给 `&T` 参数：只活到语句结束，比如 `make().norm()`。
+            Expr::Call(_, _) | Expr::Try(_) | Expr::Chain(_, _, _)
+                if matches!(expected, Type::RecordRef(_, _)) =>
+            {
+                let owned = expected.borrowable().expect("reference").0;
+                self.expr(expr, owned, loans)
+            }
             Expr::Chain(receiver, method, args) => {
                 // 先求值调用结果（临时值，语句结束时释放），再求实参，然后调用方法。
                 let ty = self.ty(receiver)?;
@@ -3670,9 +3887,10 @@ impl<'a> Checker<'a> {
                 self.call(name, &callee, args, expected, loans)
             }
             Expr::Try(inner) => {
-                let Expr::Call(name, args) = &**inner else {
+                let Some((name, args)) = self.call_target(inner)? else {
                     return Err("? requires a function call".into());
                 };
+                let (name, args) = (&name, &args);
                 let callee = self
                     .functions
                     .get(name)
@@ -3689,9 +3907,10 @@ impl<'a> Checker<'a> {
                 self.call(name, &callee, args, expected, loans)
             }
             Expr::Catch(inner, binding, block) => {
-                let Expr::Call(name, args) = &**inner else {
+                let Some((name, args)) = self.call_target(inner)? else {
                     return Err("catch requires a function call".into());
                 };
+                let (name, args) = (&name, &args);
                 let callee = self
                     .functions
                     .get(name)
@@ -4183,6 +4402,7 @@ pub fn check(module: &Module, entry: &str) -> Result<(), String> {
             error: function.error,
             result: function.result,
             frozen: Vec::new(),
+            module: name.split(':').next().unwrap_or(name),
         };
         let result = (|| {
             // ponytail: v1 只支持 string 错误类型；泛化 E 是纯增量（C 侧结果结构体按 E 再分一个维度）。

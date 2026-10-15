@@ -213,3 +213,88 @@ fn compound_values_copy_compare_and_print() {
     let output = case.run("fn copy(n: i64) -> i64: n + 1\nfn main(): println(copy(1))\n");
     assert_eq!(stdout(&output), "2\n");
 }
+
+/// 结构体与枚举的方法：`&self`/`&mut self`/`self`、关联函数、跨模块 `pub fn`、可失败方法，以及误用。
+#[test]
+fn struct_and_enum_methods() {
+    let case = Case::new("struct-lists", "methods");
+    assert_eq!(
+        stdout(&case.run(include_str!("../../examples/structs/methods.zm"))),
+        "5.0\nVec2(x: 6.0, y: 8.0)\nVec2(x: 7.0, y: 9.0)\n2.0\ncircle: 3\nsquare: 9\n9.0\n70\nrefused: ada has only 70\n"
+    );
+    let project = case.path("project");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("zam.toml"),
+        "[project]\nname = \"geo\"\nentry = \"src/main.zm\"\nmodules = \"src\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/geo.zm"),
+        "pub struct Point:\n    x: i64\n    y: i64\n\n    pub fn new(x: i64, y: i64) -> Point: Point(x: x, y: y)\n\n    pub fn sum(&self) -> i64: self.x + self.y + self.bonus()\n\n    fn bonus(&self) -> i64: 100\n",
+    )
+    .unwrap();
+    let run_project = |main: &str| {
+        fs::write(project.join("src/main.zm"), main).unwrap();
+        Command::new(env!("CARGO_BIN_EXE_zam"))
+            .arg("run")
+            .arg(&project)
+            .env("ZAMAK_CACHE_DIR", case.path("cache"))
+            .output()
+            .unwrap()
+    };
+    let output = run_project("use geo\nfn main():\n    let p = geo.Point.new(1, 2)\n    println(p.sum())\n    let ps: [geo.Point] = [geo.Point.new(5, 5)]\n    println(ps[0].sum())\n");
+    assert_eq!(stdout(&output), "103\n110\n");
+    let output = run_project(
+        "use geo\nfn main():\n    let p = geo.Point.new(1, 2)\n    println(p.bonus())\n",
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("private method Point.bonus"), "{stderr}");
+    let header = "struct V:\n    x: i64\n\n    fn new(x: i64) -> V: V(x: x)\n\n    fn get(&self) -> i64: self.x\n\n    fn bump(&mut self): self.x += 1\n\n    fn take(self) -> i64: self.x\n\n    fn check(&self) -> i64!string: self.x\n\n";
+    for (body, message) in [
+        (
+            "let v = V.new(1)\n    v.bump()",
+            "cannot mutably borrow immutable value v",
+        ),
+        (
+            "let v = V.new(1)\n    println(v.missing())",
+            "unknown method V.missing",
+        ),
+        (
+            "let v = V.new(1)\n    let w = v.new(2)",
+            "new has no self parameter",
+        ),
+        (
+            "let v = V.new(1)\n    let n = v.take()\n    println(v.get())",
+            "use after move: v",
+        ),
+        (
+            "let vs: [V] = [V.new(1)]\n    println(vs[0].take())",
+            "cannot move a struct out of vs[..]",
+        ),
+        (
+            "let v = V.new(1)\n    println(v.check())",
+            "must be handled with ?",
+        ),
+        ("println(V.missing(1))", "unknown function V.missing"),
+    ] {
+        let source = format!("{header}fn main():\n    {body}\n");
+        let output = case.run(&source);
+        assert!(!output.status.success(), "accepted {source}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(message), "{source}: {stderr}");
+    }
+    for (source, message) in [
+        ("fn f(self: i64): pass\nfn main(): pass\n", "self can only be the first parameter"),
+        ("struct V:\n    x: i64\n\n    fn f(&self): pass\n\n    fn f(&self): pass\nfn main(): pass\n", "duplicate method V.f"),
+        ("struct V:\n    x: i64\n\n    fn f(x: i64, self): pass\nfn main(): pass\n", "self can only be the first parameter"),
+    ] {
+        let output = case.run(source);
+        assert!(!output.status.success(), "accepted {source}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(message), "{source}: {stderr}");
+    }
+    // 调用结果上直接调用方法；借用参数（&V、&mut V）作为接收者转传。
+    let output = case.run(&format!("{header}fn twice(v: &mut V):\n    v.bump()\n    v.bump()\nfn read(v: &V) -> i64: v.get()\nfn main():\n    println(V.new(7).get())\n    let mut v = V.new(1)\n    twice(&mut v)\n    println(read(&v))\n"));
+    assert_eq!(stdout(&output), "7\n3\n");
+}

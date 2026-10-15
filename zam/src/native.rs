@@ -1,7 +1,7 @@
 use crate::compiler::{
-    bitwise, borrow_of, compound, each_bindings, field_path, method_signature, numeric, overload,
-    record_id, record_order, terminates, Block, Elem, Expr, Instruction, Module, Pattern, Type,
-    COPY,
+    bitwise, borrow_of, compound, each_bindings, field_path, method_args, method_signature,
+    numeric, overload, record_id, record_method, record_order, terminates, Block, Elem, Expr,
+    Instruction, Module, Pattern, Receiver, Type, COPY,
 };
 use crate::project::Result;
 use std::collections::BTreeMap;
@@ -1472,6 +1472,10 @@ fn ctype(ty: Type) -> String {
 impl Generator<'_> {
     fn ty(&self, expr: &Expr) -> Type {
         match expr {
+            _ if self.record_call(expr) => {
+                let (name, _) = self.call_target(expr).expect("record method");
+                self.module.functions[&name].result
+            }
             Expr::Record(name, _) | Expr::Variant(name, _, _) => Type::Record(record_id(name)),
             // 分支的值可能用到绑定：在带上第一个分支绑定的副本里求类型。
             Expr::Match(scrutinee, arms) => {
@@ -1637,7 +1641,12 @@ impl Generator<'_> {
                 let value = self.expr(expr);
                 format!("&{value}")
             }
-            _ => unreachable!("checked borrow"),
+            // 调用结果（临时结构体）借给 `&T` 参数：登记在 owners 里，语句结束时释放。
+            _ => {
+                let ty = self.ty(expr);
+                let value = self.expr_as(expr, ty);
+                format!("&{value}")
+            }
         }
     }
     /// 按形参类型传值：owned 移交，标量按值，借用传指针。
@@ -1759,6 +1768,13 @@ impl Generator<'_> {
     }
     fn expr(&mut self, expr: &Expr) -> String {
         match expr {
+            // 结构体的方法：改写成普通调用 `Owner.m(接收者, ...)`。
+            _ if self.record_call(expr) => {
+                let (name, args) = self.call_target(expr).expect("record method");
+                let result = self.module.functions[&name].result;
+                let call = self.raw_call(&name, &args, None);
+                self.call_value(&call, result)
+            }
             Expr::Record(name, fields) => {
                 let ty = Type::Record(record_id(name));
                 let local = self.scalar("{0}", ty);
@@ -2131,9 +2147,8 @@ impl Generator<'_> {
                 self.call_value(&call, result)
             }
             Expr::Try(inner) => {
-                let Expr::Call(name, args) = &**inner else {
-                    unreachable!("checked ? operand")
-                };
+                let (name, args) = self.call_target(inner).expect("checked ? operand");
+                let (name, args) = (&name, &args);
                 let result = self.module.functions[name].result;
                 let call = self.raw_call(name, args, None);
                 let structure = fallible_name(result);
@@ -2153,9 +2168,8 @@ impl Generator<'_> {
                 self.result_value(&temp, result)
             }
             Expr::Catch(inner, binding, block) => {
-                let Expr::Call(name, args) = &**inner else {
-                    unreachable!("checked catch operand")
-                };
+                let (name, args) = self.call_target(inner).expect("checked catch operand");
+                let (name, args) = (&name, &args);
                 let result = self.module.functions[name].result;
                 let call = self.raw_call(name, args, None);
                 let structure = fallible_name(result);
@@ -2384,6 +2398,37 @@ impl Generator<'_> {
     /// 被调函数的实际名字：`abs`/`min`/`max` 按第一个参数的类型选版本。
     fn callee<'n>(&self, name: &'n str, args: &[Expr]) -> &'n str {
         overload(name, args.first().map(|arg| self.ty(arg)))
+    }
+    /// 调用的目标函数与实参：普通调用原样返回，结构体的方法改写成 `Owner.m(接收者, ...)`。
+    fn call_target(&self, expr: &Expr) -> Option<(String, Vec<Expr>)> {
+        let (receiver, ty, method, args) = match expr {
+            Expr::Call(name, args) => {
+                return Some((self.callee(name, args).to_owned(), args.clone()))
+            }
+            Expr::Method(path, method, args) => {
+                let ty = self.place_ty(path);
+                (Receiver::Path(path, ty), ty, method, args)
+            }
+            Expr::ElementMethod(path, index, field, method, args) => (
+                Receiver::Element(path, index, field),
+                self.element_ty(path, field),
+                method,
+                args,
+            ),
+            Expr::Chain(receiver, method, args) => {
+                (Receiver::Temp(receiver), self.ty(receiver), method, args)
+            }
+            _ => return None,
+        };
+        let (name, callee) =
+            record_method(&self.module.structs, &self.module.functions, ty, method).ok()??;
+        Some((name, method_args(receiver, callee, method, args).ok()?))
+    }
+    fn record_call(&self, expr: &Expr) -> bool {
+        matches!(
+            expr,
+            Expr::Method(..) | Expr::ElementMethod(..) | Expr::Chain(..)
+        ) && self.call_target(expr).is_some()
     }
     fn raw_call(&mut self, name: &str, args: &[Expr], symbol: Option<&str>) -> String {
         let function = &self.module.functions[name];
@@ -3108,6 +3153,19 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
                     for ty in [Type::Int, Type::Float] {
                         needed.insert(overload(name, Some(ty)).to_owned());
                     }
+                }
+                // 方法调用要到生成时才知道接收者类型：同名的结构体方法都带上原型。
+                Expr::Method(_, method, _)
+                | Expr::ElementMethod(_, _, _, method, _)
+                | Expr::Chain(_, method, _) => {
+                    let suffix = format!(".{method}");
+                    needed.extend(
+                        module
+                            .functions
+                            .keys()
+                            .filter(|name| name.ends_with(&suffix) && !name.starts_with("std/"))
+                            .cloned(),
+                    );
                 }
                 Expr::Record(name, _) | Expr::Variant(name, _, _) => {
                     records.insert(name.clone());
