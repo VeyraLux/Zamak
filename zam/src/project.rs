@@ -257,7 +257,13 @@ impl Project {
     }
 
     fn resolve(&self, module: &str, call: &str) -> Result<String> {
-        let (target, name) = if let Some((alias, name)) = call.split_once('.') {
+        // `Point.origin()`：本模块结构体或枚举里声明的函数，函数表里就叫 `Point.origin`。
+        let owner = call
+            .split_once('.')
+            .is_some_and(|(alias, _)| self.modules[module].module.structs.contains_key(alias));
+        let (target, name) = if owner {
+            (module, call)
+        } else if let Some((alias, name)) = call.split_once('.') {
             let matches: Vec<_> = self.modules[module]
                 .module
                 .imports

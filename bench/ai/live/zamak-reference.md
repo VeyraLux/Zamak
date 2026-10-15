@@ -107,6 +107,21 @@ let p = Point(x: 1, y: 2)
 
 Fields are declared one per line. A struct literal names every field, separated by commas: `Point(x: 1, y: 2)`. Read and assign fields with `p.x`.
 
+Methods go inside the struct or enum block, after the fields or variants. The first parameter is `&self` (read), `&mut self` (modify) or `self` (consume); the receiver is borrowed automatically, so call `p.norm()` or `p.scale(2.0)`. A function without `self` is called on the type, such as `Point.new(1, 2)`. Mark methods `pub fn` to call them from other modules.
+
+```
+struct Point:
+    x: i64
+    y: i64
+
+    fn new(x: i64, y: i64) -> Point: Point(x: x, y: y)
+
+    fn sum(&self) -> i64: self.x + self.y
+
+    fn shift(&mut self, d: i64):
+        self.x += d
+```
+
 ## Enums and match
 
 ```
