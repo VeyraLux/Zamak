@@ -318,3 +318,70 @@ fn constants_fold_and_inline() {
         assert!(stderr.contains(message), "{source}: {stderr}");
     }
 }
+
+/// 元组：类型、字面量、`t.0`、`let (a, b) = ...`、多返回值、元组列表，跨模块的同一个元组类型，以及误用。
+#[test]
+fn tuples_and_multiple_returns() {
+    let case = Case::new("expressions", "tuples");
+    assert_eq!(
+        stdout(&case.run(include_str!("../../examples/values/tuples.zm"))),
+        "3 2\ncoffee has 6 letters\n3\n4.5\n(3, 4.5)\namy: 90\nbob: 82\ncid: 85\n[(\"amy\", 90), (\"bob\", 82), (\"cid\", 85)]\ntrue\n85\n"
+    );
+    let project = case.path("project");
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    std::fs::write(
+        project.join("zam.toml"),
+        "[project]\nname = \"pairs\"\nentry = \"src/main.zm\"\nmodules = \"src\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project.join("src/geo.zm"),
+        "pub struct P:\n    x: i64\npub fn pair() -> (i64, string): (7, \"seven\")\npub fn make() -> (P, i64): (P(x: 3), 4)\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project.join("src/main.zm"),
+        "use geo\nfn show(t: &(i64, string)): println(\"{t.0}={t.1}\")\nfn main():\n    let t: (i64, string) = geo.pair()\n    show(&t)\n    let (n, s) = geo.pair()\n    println(\"{n} {s}\")\n    let pt: (geo.P, i64) = geo.make()\n    println(pt.0.x + pt.1)\n    let (p, k) = geo.make()\n    println(p.x * k)\n",
+    )
+    .unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_zam"))
+        .arg("run")
+        .arg(&project)
+        .env("ZAMAK_CACHE_DIR", case.path("cache"))
+        .output()
+        .unwrap();
+    assert_eq!(stdout(&output), "7=seven\n7 seven\n7\n12\n");
+    let output = case.run("fn main():\n    let xs: [i64] = [1, 2]\n    let mut total = 0\n    for x in xs:\n        total += x\n    println(total)\n");
+    assert_eq!(stdout(&output), "3\n");
+    for (body, message) in [
+        (
+            "let (a, b, c) = (1, 2)",
+            "the tuple has 2 items, but the pattern names 3",
+        ),
+        ("let (a, b) = 5", "needs a tuple value"),
+        ("let t: (i64, string) = (1, 2)", "mismatch"),
+        ("let t: (i64) = 1", "at least two types"),
+        ("let t = (1, 2)\n    println(t.2)", "unknown field"),
+        (
+            "let s = \"a\"\n    let t = (s, 1)\n    println(s)",
+            "use after move: s",
+        ),
+        (
+            "let t = (1, 2)\n    let (a, b) = t\n    println(t.0)",
+            "use after move: t",
+        ),
+        (
+            "let n = 3\n    for x in n: pass",
+            "to count, write for i in 0..n",
+        ),
+        ("let (a, a) = (1, 2)", "duplicate binding a"),
+    ] {
+        let source = format!("fn main():\n    {body}\n");
+        let output = case.run(&source);
+        assert!(!output.status.success(), "accepted {source}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(message), "{source}: {stderr}");
+    }
+    let output = case.run("fn f(name: &string):\n    let t = (name, 1)\nfn main(): f(\"a\")\n");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("tuples hold owned values"));
+}

@@ -1,7 +1,8 @@
 use crate::compiler::{
-    bitwise, borrow_of, compound, each_bindings, field_path, method_args, method_signature, nest,
-    nested, numeric, overload, record_id, record_method, record_order, terminates, Block, Elem,
-    Expr, Instruction, Module, Pattern, Receiver, Type, COPY,
+    bitwise, borrow_of, compound, each_bindings, field_path, linked_tuple, method_args,
+    method_signature, nest, nested, numeric, overload, record_id, record_method, record_order,
+    terminates, tuple_fields, Block, Elem, Expr, Instruction, Module, Pattern, Receiver, Type,
+    COPY,
 };
 use crate::project::Result;
 use std::collections::BTreeMap;
@@ -1126,6 +1127,8 @@ struct Generator<'a> {
     containers: Containers,
     // 用到了复合值的复制、相等或打印：这个目标文件要带上 native_values 生成的函数。
     values: bool,
+    // 函数体里声明过的结构体类型（含推断出来的元组），都要发射定义。
+    records: std::collections::BTreeSet<u64>,
 }
 /// 用到的容器：`(元素, None)` 是列表，`(键, Some(值))` 是字典。
 type Containers = std::collections::BTreeSet<(Elem, Option<Elem>)>;
@@ -1545,6 +1548,7 @@ impl Generator<'_> {
                     error: self.error,
                     containers: Containers::new(),
                     values: false,
+                    records: Default::default(),
                 }
                 .ty(value)
             }
@@ -1580,6 +1584,9 @@ impl Generator<'_> {
                     .expect("checked method")
                     .2
             }
+            Expr::Tuple(items) => Type::Record(linked_tuple(
+                items.iter().map(|item| self.ty(item)).collect(),
+            )),
             Expr::Chain(receiver, method, _) => {
                 method_signature(self.ty(receiver), method)
                     .expect("checked method")
@@ -1638,6 +1645,9 @@ impl Generator<'_> {
     }
     fn scalar(&mut self, value: &str, ty: Type) -> String {
         note(&mut self.containers, ty);
+        if let Some(id) = record_of(ty) {
+            self.records.insert(id);
+        }
         let name = format!("v{}", self.next);
         self.next += 1;
         self.code
@@ -1725,6 +1735,18 @@ impl Generator<'_> {
                     let value = self.moved(&value, elem.ty());
                     self.code
                         .push_str(&format!("push{}(&{local}, {value});\n", list_suffix(elem)));
+                }
+                local
+            }
+            // 元组按目标类型的各项生成：`(1, 2)` 赋给 `(f64, i64)` 时第一项按 f64 处理。
+            (Expr::Tuple(items), Type::Record(id)) => {
+                let fields = tuple_fields(id).expect("checked tuple");
+                let local = self.scalar("{0}", ty);
+                self.owners.push((local.clone(), ty));
+                for (i, (item, field)) in items.iter().zip(fields).enumerate() {
+                    let value = self.expr_as(item, field);
+                    let value = self.moved(&value, field);
+                    self.code.push_str(&format!("{local}.m{i} = {value};\n"));
                 }
                 local
             }
@@ -1907,6 +1929,10 @@ impl Generator<'_> {
                 }
                 values.insert(0, self.pointer(path));
                 self.method_call(receiver, method, &values, result)
+            }
+            Expr::Tuple(_) => {
+                let ty = self.ty(expr);
+                self.expr_as(expr, ty)
             }
             Expr::Chain(receiver, method, args) => {
                 let ty = self.ty(receiver);
@@ -2838,6 +2864,31 @@ impl Generator<'_> {
                     }
                     returned = true;
                 }
+                Instruction::Unpack(names, _, expr) => {
+                    let ty = self.ty(expr);
+                    let Type::Record(id) = ty else {
+                        unreachable!("checked tuple")
+                    };
+                    let fields = tuple_fields(id).expect("checked tuple");
+                    // 元组是登记在 owners 里的临时值：各项移进新变量后清零，它自己的释放什么也不做。
+                    let value = self.expr_as(expr, ty);
+                    for (i, (name, field)) in names.iter().zip(fields).enumerate() {
+                        if name == "_" {
+                            if owned(field) {
+                                self.code
+                                    .push_str(&format!("{}(&{value}.m{i});\n", drop_fn(field)));
+                            }
+                            continue;
+                        }
+                        let local = self.scalar(&format!("{value}.m{i}"), field);
+                        if owned(field) {
+                            self.owners.push((local.clone(), field));
+                        }
+                        self.locals.insert(name.clone(), (local, field));
+                    }
+                    self.code
+                        .push_str(&format!("memset(&{value}, 0, sizeof {value});\n"));
+                }
                 Instruction::Fail(expr) => {
                     let value = self.expr(expr);
                     self.code
@@ -2949,6 +3000,7 @@ fn visit_exprs<'a>(body: &'a Block, visit: &mut impl FnMut(&'a Expr)) {
             | Expr::Method(_, _, args)
             | Expr::Variant(_, _, args)
             | Expr::Array(args)
+            | Expr::Tuple(args)
             | Expr::Format(args) => {
                 for arg in args {
                     expr(arg, visit);
@@ -3008,6 +3060,7 @@ fn visit_exprs<'a>(body: &'a Block, visit: &mut impl FnMut(&'a Expr)) {
             | Instruction::Print(value)
             | Instruction::Call(value)
             | Instruction::Fail(value)
+            | Instruction::Unpack(_, _, value)
             | Instruction::Return(Some(value)) => expr(value, visit),
             Instruction::AssignIndex(_, index, value)
             | Instruction::AssignIndexField(_, index, _, value) => {
@@ -3300,6 +3353,7 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
             error: function.error,
             containers: Containers::new(),
             values: false,
+            records: Default::default(),
         };
         for (i, (param, ty)) in function.params.iter().enumerate() {
             let local = format!("p{i}");
@@ -3318,6 +3372,9 @@ pub fn generate(module: &Module, entry: &str, unit: &str) -> String {
         bodies.push_str("}\n");
         containers.extend(g.containers);
         values |= g.values;
+        for id in g.records {
+            records.insert(record_name(id));
+        }
     }
     // 结构体与容器互相引用（结构体字段是列表，列表元素是结构体），收集到不再增加为止。
     loop {

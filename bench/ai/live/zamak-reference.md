@@ -79,7 +79,7 @@ else:
 - Conditions must be `bool`; compare with `==` (a single `=` in a condition is an error). There is no `else if`; write `elif`.
 - To choose a value, use an if expression on one line: `let v = if c: a elif d: b else: e`; it needs `else`, and each branch is a single expression.
 - `while cond:`, `break`, `continue`.
-- `for i in start..end:` iterates integers from `start` up to but not including `end`.
+- `for i in start..end:` iterates integers from `start` up to but not including `end`. `for x in xs:` is the same as `for x in &xs:` (it borrows, it does not move).
 - `for x in &list:` iterates list elements and `for i, x in &list:` also gives the index; `for k in &map:` iterates map keys in insertion order and `for k, v in &map:` gives keys and values. String elements/keys are read-only borrows.
 - `for x in &mut list:` and `for k, v in &mut map:` change elements in place: assigning `x = x * 2` writes the element, struct elements allow `x.field += 1`. Elements cannot be added or removed inside these loops.
 
@@ -121,6 +121,11 @@ struct Point:
     fn shift(&mut self, d: i64):
         self.x += d
 ```
+
+## Tuples
+
+- Type `(i64, string)`, value `(3, "three")`, items `t.0`, `t.1`. A function returns several values as a tuple: `fn divmod(a: i64, b: i64) -> (i64, i64): (a / b, a % b)`.
+- `let (q, r) = divmod(17, 5)` unpacks a tuple (`_` skips an item); the tuple is moved. Tuples can be stored in lists (`[(string, i64)]`), compared with `==` and printed.
 
 ## Enums and match
 
