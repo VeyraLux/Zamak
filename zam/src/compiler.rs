@@ -234,6 +234,10 @@ pub fn expr_roots(expr: &Expr, out: &mut BTreeSet<String>) {
             out.insert(root(path));
             args.iter().for_each(|arg| expr_roots(arg, out));
         }
+        Expr::Invoke(callee, args) => {
+            expr_roots(callee, out);
+            args.iter().for_each(|arg| expr_roots(arg, out));
+        }
         Expr::ElementMethod(path, index, _, _, args) => {
             out.insert(root(path));
             expr_roots(index, out);
@@ -675,6 +679,8 @@ pub enum Expr {
     FnRef(String),
     // 调用函数值：`f(x)`，`f` 是函数类型的局部变量或参数。
     Apply(String, Vec<Expr>),
+    // 调用求值得到的函数：`steps[0](x)`、`commands["run"](x)`。先求被调用的值，再求实参。
+    Invoke(Box<Expr>, Vec<Expr>),
     // `if c { a } else { b }` 作为值：每个分支是单个表达式，必须有 else。
     If(Box<Expr>, Box<Expr>, Box<Expr>),
     // `Shape.Circle(1.0)`、`Shape.Empty`：构造枚举变体（模块解析后是限定的枚举名）。
@@ -2770,7 +2776,13 @@ impl Parser {
                 if !field.is_empty() {
                     return Ok(Expr::IndexField(name, Box::new(index), field));
                 }
-                return Ok(Expr::Index(name, Box::new(index)));
+                let element = Expr::Index(name, Box::new(index));
+                // `steps[0](x)`：元素是函数时直接调用。
+                if self.symbol('(') {
+                    let args = self.arguments()?;
+                    return Ok(Expr::Invoke(Box::new(element), args));
+                }
+                return Ok(element);
             }
             if let Some((local, field)) = name.split_once('.') {
                 return Ok(Expr::Field(local.into(), field.into()));
@@ -3494,6 +3506,7 @@ impl Parser {
                     | Expr::Catch(_, _, _)
                     | Expr::ElementMethod(_, _, _, _, _)
                     | Expr::Chain(_, _, _)
+                    | Expr::Invoke(_, _)
             ) {
                 // `write(&p)?` 这类语句：不是函数的最后一个值表达式，就只求值、不返回。
                 if result != Type::Unit && last.unwrap_or_else(|| self.at_end()) {
@@ -4806,6 +4819,10 @@ impl<'a> Checker<'a> {
     fn ty(&self, expr: &Expr) -> Result<Type, String> {
         match expr {
             Expr::FnRef(name) => self.fn_value(name),
+            Expr::Invoke(callee, _) => match self.value_type(callee)? {
+                Type::Func(id) | Type::FuncRef(id) => Ok(func_sig(id).1),
+                _ => Err("type mismatch: only a function value can be called".into()),
+            },
             Expr::Lambda(params, result, body) => {
                 let (id, _) = self.fork().lambda(params, *result, body, None)?;
                 Ok(Type::Func(id))
@@ -5072,6 +5089,28 @@ impl<'a> Checker<'a> {
                 self.capture_loans("this fn", &captures, loans)
             }
             Expr::Apply(path, args) => self.apply(path, args, expected, loans),
+            Expr::Invoke(callee, args) => {
+                let ty = self.value_type(callee)?;
+                let (Type::Func(id) | Type::FuncRef(id)) = ty else {
+                    return Err("type mismatch: only a function value can be called".into());
+                };
+                let (params, result) = func_sig(id);
+                // 被调用的值先求出来（函数值按值复制），实参在同一个调用帧里检查。
+                let mut frame = loans.clone();
+                self.expr(callee, ty, &mut frame)?;
+                let callee = Function {
+                    public: true,
+                    params: params.into_iter().map(|ty| (String::new(), ty)).collect(),
+                    result,
+                    error: None,
+                    body: Vec::new(),
+                    position: self.position,
+                    builtin: false,
+                    generics: Vec::new(),
+                    external: false,
+                };
+                self.call("this function value", &callee, args, expected, &mut frame)
+            }
             Expr::Method(..) if self.field_call(expr).is_some() => {
                 let (path, args) = self.field_call(expr).expect("field call");
                 self.apply(&path, &args, expected, loans)
@@ -6245,6 +6284,7 @@ impl<'a> Checker<'a> {
                             | Expr::ElementMethod(_, _, _, _, _)
                             | Expr::Chain(_, _, _)
                             | Expr::Apply(_, _)
+                            | Expr::Invoke(_, _)
                     ) {
                         self.ty(expr)?
                     } else {

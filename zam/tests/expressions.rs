@@ -633,3 +633,13 @@ fn equality_infers_constructors_and_generic_function_values() {
     let source = "fn identity[T](x: T) -> T: x\n\nfn largest[T](items: &[T]) -> T:\n    let mut best = items[0]\n    for item in items:\n        if item > best: best = item\n    best\n\nfn apply(f: fn(i64) -> i64, x: i64) -> i64: f(x)\n\nfn pick(lists: &[[i64]], f: fn(&[i64]) -> i64) -> [i64]:\n    let mut out: [i64] = []\n    for list in lists:\n        out.push(f(list))\n    out\n\nfn main():\n    println(apply(identity, 7))\n    let f: fn(string) -> string = identity\n    println(f(\"hi\"))\n    let grid: [[i64]] = [[1, 9], [4, 2]]\n    println(pick(&grid, largest))\n    let steps: [fn(f64) -> f64] = [identity]\n    println(steps.len())\n";
     assert_eq!(stdout(&case.run(source)), "7\nhi\n[9, 4]\n1\n");
 }
+
+#[test]
+fn calling_function_elements_directly() {
+    let case = Case::new("expressions", "invoke");
+    // 元素是函数时直接调用；and 短路时不求后面的下标；只用到函数字典、不调用 values() 也能编译。
+    let source = "fn double(x: i64) -> i64: x * 2\n\nfn shout(s: &string) -> string: s + \"!\"\n\nfn main():\n    let steps: [fn(i64) -> i64] = [double, fn(x): x + 1]\n    println(steps[0](7))\n    println(steps[1](steps[0](3)))\n    let mut commands: {string: fn(&string) -> string} = {}\n    commands[\"shout\"] = shout\n    println(commands[\"shout\"](\"hi\"))\n    let ok = false\n    if ok and steps[5](1) > 0:\n        println(\"never\")\n    steps[0](1)\n    println(\"done\")\n";
+    assert_eq!(stdout(&case.run(source)), "14\n7\nhi!\ndone\n");
+    let output = case.run("fn main():\n    let xs: [i64] = [1]\n    println(xs[0](2))\n");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("only a function value can be called"));
+}

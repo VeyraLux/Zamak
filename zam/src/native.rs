@@ -1649,7 +1649,7 @@ fn note(set: &mut Containers, ty: Type) {
         // 字典的 keys()/values() 返回键与值的列表，所以这两种列表一并生成。
         Some(Type::Map(key, value)) => {
             set.insert((key, None));
-            if value.comparable() {
+            if value.copyable() {
                 set.insert((value, None));
             }
             if set.insert((key, Some(value))) {
@@ -2283,6 +2283,10 @@ impl<'a> Generator<'a> {
     }
     fn ty(&self, expr: &Expr) -> Type {
         match expr {
+            Expr::Invoke(callee, _) => match self.value_type(callee) {
+                Type::Func(id) | Type::FuncRef(id) => func_sig(id).1,
+                _ => unreachable!("checked function value"),
+            },
             Expr::Lambda(..)
                 if self
                     .hint
@@ -2684,6 +2688,19 @@ impl<'a> Generator<'a> {
     fn expr(&mut self, expr: &Expr) -> String {
         match expr {
             Expr::FnRef(name) => self.function_value(name),
+            Expr::Invoke(callee, args) => {
+                let ty = self.value_type(callee);
+                let (Type::Func(id) | Type::FuncRef(id)) = ty else {
+                    unreachable!("checked function value")
+                };
+                let function = self.expr_as(callee, ty);
+                let (params, result) = func_sig(id);
+                let mut values = vec![format!("{function}.env")];
+                for (arg, ty) in args.iter().zip(params) {
+                    values.push(self.argument(arg, ty));
+                }
+                self.call_value(&format!("{function}.call({})", values.join(", ")), result)
+            }
             Expr::Lambda(params, _, body) => {
                 let ty = self.ty(expr);
                 self.lambda(params, body, ty)
@@ -3928,6 +3945,12 @@ fn visit_exprs<'a>(body: &'a Block, visit: &mut impl FnMut(&'a Expr)) {
         match value {
             Expr::Lambda(_, _, body) => visit_exprs(body, visit),
             Expr::Apply(_, args) => {
+                for arg in args {
+                    expr(arg, visit);
+                }
+            }
+            Expr::Invoke(callee, args) => {
+                expr(callee, visit);
                 for arg in args {
                     expr(arg, visit);
                 }
