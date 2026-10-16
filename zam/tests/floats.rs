@@ -107,7 +107,6 @@ fn parsing_and_conversions_check_their_input() {
 fn checker_rejects_float_misuse() {
     let case = Case::new("floats", "reject");
     for (body, message) in [
-        ("let x: f64 = 1", "found the integer 1; write 1.0"),
         (
             "let n: i64 = 2.5",
             "found an f64 literal; convert with i64(x)",
@@ -116,13 +115,11 @@ fn checker_rejects_float_misuse() {
             "let x = 2.5\n    let n: i64 = x",
             "x is f64 but i64 is expected",
         ),
-        ("let n = 2\n    let x: f64 = n", "convert with f64(n)"),
         (
             "let n: i64 = 1.5 * 2.0",
             "this f64 expression is used as i64",
         ),
         ("println(f64(1.5))", "type mismatch"),
-        ("println(i64(2))", "type mismatch"),
         ("for i in 0..2.5: pass", "mismatch"),
         ("let m: {f64: i64} = {}", "unsupported map key type"),
         ("let x = 1.5e", "expected digits in the f64 exponent"),
@@ -149,4 +146,18 @@ fn checker_rejects_float_misuse() {
     }
     let output = case.run("fn f64(): pass\nfn main(): pass\n");
     assert!(String::from_utf8_lossy(&output.stderr).contains("reserved type name f64"));
+}
+
+#[test]
+fn integers_where_floats_are_expected() {
+    let case = Case::new("floats", "int-to-float");
+    // 期望 f64 的位置给整数（变量标注、参数、返回值、字段、列表、字典、赋值、分支）时当小数用，与 Python 相同。
+    assert_eq!(
+        stdout(&case.run("struct Circle:\n    r: f64\n\nfn area(r: f64) -> f64: 3.0 * r * r\nfn half(n: i64) -> f64: n\n\nfn main():\n    let x: f64 = 1\n    println(x)\n    println(area(2))\n    println(half(3))\n    let c = Circle(r: 2)\n    println(c.r)\n    let mut xs: [f64] = [1, 2.5]\n    xs.push(3)\n    println(xs)\n    let mut m: {string: f64} = {}\n    m[\"a\"] = 4\n    println(m)\n    let mut y = 0.5\n    y = 7\n    println(y)\n    let n = 5\n    let z: f64 = n * 2\n    println(z)\n    println(max(1.5, 2))\n")),
+        "1.0\n12.0\n3.0\n2.0\n[1.0, 2.5, 3.0]\n{\"a\": 4.0}\n7.0\n10.0\n2.0\n"
+    );
+    assert_eq!(
+        stdout(&case.run("enum Shape:\n    Circle(r: f64)\n    Empty\n\nfn main():\n    let s = Shape.Empty\n    let x = match s:\n        Circle(r): r\n        _: 1\n    println(x)\n    let y = if x > 5.0: 2.5 else: 3\n    println(y)\n    println(i64(2))\n")),
+        "1.0\n3.0\n2\n"
+    );
 }

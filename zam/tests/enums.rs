@@ -108,7 +108,6 @@ fn checker_rejects_enum_misuse() {
         ("let r = 1\n    match s:\n        Circle(r): println(r)\n        _: println(2)", "duplicate binding r"),
         ("let t = Shape.Triangle(1.0)", "unknown variant Triangle of Shape"),
         ("let t = Shape.Circle()", "argument count mismatch for Shape.Circle"),
-        ("let t = Shape.Circle(1)", "found the integer 1; write 1.0"),
         ("let t = Shape(r: 1.0)", "Shape is an enum"),
         ("let t = Point.Origin", "Point is a struct, not an enum"),
         ("match 5:\n        _: println(1)", "match requires an enum value"),
@@ -120,7 +119,6 @@ fn checker_rejects_enum_misuse() {
         ("let x = match s:\n        Circle(r):\n            let y = r\n            y\n        _: 0.0", "a match expression arm holds a single value"),
         ("match s:\n        Circle(r) => println(r)\n        _ => println(0)", "arms are written Circle(r): value, not =>"),
         ("match s: _: println(1)", "expected the match arms on the following lines"),
-        ("let x = match s:\n        Circle(r): r\n        _: 1", "found the integer 1; write 1.0"),
     ] {
         let source = format!(
             "enum Shape:\n    Circle(r: f64)\n    Rect(w: f64, h: f64)\n    Label(text: string)\n    Empty\nstruct Point:\n    x: i64\nfn main():\n    let mut s = Shape.Circle(1.0)\n    {body}\n"
