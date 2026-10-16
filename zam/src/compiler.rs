@@ -553,13 +553,18 @@ pub fn linked_tuple_count() -> usize {
     LINKED_TUPLES.read().expect("tuple table").len()
 }
 
-/// 函数类型表：编号 → （参数类型, 结果类型）。编号是签名文字的哈希，同样的签名在所有模块里
-/// 是同一个类型。
-type FuncTable = BTreeMap<u64, (Vec<Type>, Type)>;
+/// 函数类型表：编号 → （参数类型, 结果类型, 错误类型）。编号是签名文字的哈希，同样的签名在
+/// 所有模块里是同一个类型。
+type FuncTable = BTreeMap<u64, (Vec<Type>, Type, Option<Type>)>;
 static FUNCS: std::sync::RwLock<FuncTable> = std::sync::RwLock::new(BTreeMap::new());
 
-/// 登记一个函数类型，返回编号。
+/// 登记一个不会失败的函数类型，返回编号。
 pub fn func_type(params: Vec<Type>, result: Type) -> u64 {
+    func_type_full(params, result, None)
+}
+
+/// 登记一个函数类型（`fn(&string) -> i64!string` 的 error 是 `Some(string)`），返回编号。
+pub fn func_type_full(params: Vec<Type>, result: Type, error: Option<Type>) -> u64 {
     let params: Vec<Type> = params
         .into_iter()
         .map(|ty| match ty {
@@ -568,17 +573,24 @@ pub fn func_type(params: Vec<Type>, result: Type) -> u64 {
         })
         .collect();
     let names: Vec<String> = params.iter().map(|ty| format!("{ty:?}")).collect();
-    let id = record_id(&format!("fn({}) -> {result:?}", names.join(", ")));
+    let failure = error.map_or(String::new(), |error| format!("!{error:?}"));
+    let id = record_id(&format!("fn({}) -> {result:?}{failure}", names.join(", ")));
     FUNCS
         .write()
         .expect("function types")
-        .insert(id, (params, result));
+        .insert(id, (params, result, error));
     id
 }
 
 /// 函数类型的（参数类型, 结果类型）。
 pub fn func_sig(id: u64) -> (Vec<Type>, Type) {
-    FUNCS.read().expect("function types")[&id].clone()
+    let (params, result, _) = FUNCS.read().expect("function types")[&id].clone();
+    (params, result)
+}
+
+/// 函数类型的错误类型；不会失败时为 None。
+pub fn func_error(id: u64) -> Option<Type> {
+    FUNCS.read().expect("function types")[&id].2
 }
 
 /// 把列表或字典类型登记为另一个容器的元素。
@@ -884,7 +896,8 @@ fn substitute(ty: Type, map: &BTreeMap<u64, Type>) -> Result<Type, String> {
                 .into_iter()
                 .map(|arg| substitute(arg, map))
                 .collect::<Result<Vec<_>, _>>()?;
-            let id = func_type(args, substitute(result, map)?);
+            let error = func_error(id).map(|error| substitute(error, map)).transpose()?;
+            let id = func_type_full(args, substitute(result, map)?, error);
             if matches!(ty, Type::Func(_)) {
                 Type::Func(id)
             } else {
@@ -2314,18 +2327,25 @@ impl Parser {
             }
             let result = if self.symbol('-') {
                 self.expect('>')?;
-                let result = self.ty()?;
+                // `-> !E`：没有成功值，只会失败。
+                let result = if self.peek() == Some(&Token::Symbol('!')) {
+                    Type::Unit
+                } else {
+                    self.ty()?
+                };
                 if result.is_reference() || matches!(result, Type::ArrayInt(_)) {
                     return Err("function types return owned values".into());
-                }
-                if self.peek() == Some(&Token::Symbol('!')) {
-                    return Err("function types cannot fail yet; pass a function without !E".into());
                 }
                 result
             } else {
                 Type::Unit
             };
-            return Ok(Type::Func(func_type(params, result)));
+            let error = if self.symbol('!') {
+                Some(self.ty()?)
+            } else {
+                None
+            };
+            return Ok(Type::Func(func_type_full(params, result, error)));
         }
         let ty = if self.symbol('&') {
             if self.keyword("mut") {
@@ -2604,6 +2624,15 @@ impl Parser {
                 return Err("an anonymous fn holds one expression on the same line; declare a named fn for longer code".into());
             }
             let position = self.at();
+            // `fn(s): fail "..."`：函数体是一条 fail（函数类型要带错误类型）。
+            if self.keyword("fail") {
+                let error = self.expr()?;
+                return Ok(Expr::Lambda(
+                    params,
+                    result,
+                    vec![(Instruction::Fail(error), position)],
+                ));
+            }
             let body = self.expr()?;
             let statement = match body {
                 Expr::Call(name, mut args)
@@ -2780,7 +2809,7 @@ impl Parser {
                 // `steps[0](x)`：元素是函数时直接调用。
                 if self.symbol('(') {
                     let args = self.arguments()?;
-                    return Ok(Expr::Invoke(Box::new(element), args));
+                    return self.after_call(Expr::Invoke(Box::new(element), args));
                 }
                 return Ok(element);
             }
@@ -2826,7 +2855,10 @@ impl Parser {
             };
         }
         let args = self.arguments()?;
-        let mut call = Expr::Call(name, args);
+        self.after_call(Expr::Call(name, args))
+    }
+    /// 调用后面可以接 `?`、`catch e:`，或在结果上接着调用方法。
+    fn after_call(&mut self, mut call: Expr) -> Result<Expr, String> {
         // `?` 只作用于调用；其他位置的 `?` 不是合法语法。
         if self.symbol('?') {
             call = Expr::Try(Box::new(call));
@@ -3292,11 +3324,14 @@ impl Parser {
                     "a fn declared inside a function cannot have type parameters; declare {name} at the top level"
                 ));
             }
-            if function.error.is_some() {
-                return Err(format!(
-                    "a fn declared inside a function cannot fail yet; declare {name} at the top level, or handle the error inside it"
-                ));
-            }
+            // 会失败的函数：完整的函数类型（带错误类型）记在 let 的标注上，函数体按它检查。
+            let annotation = function.error.map(|error| {
+                Type::Func(func_type_full(
+                    function.params.iter().map(|(_, ty)| *ty).collect(),
+                    function.result,
+                    Some(error),
+                ))
+            });
             let params = function
                 .params
                 .into_iter()
@@ -3305,7 +3340,7 @@ impl Parser {
             Instruction::Let(
                 name,
                 false,
-                None,
+                annotation,
                 Expr::Lambda(params, Some(function.result), function.body),
             )
         } else if self.keyword("break") {
@@ -4102,7 +4137,7 @@ pub fn encode(module: &Module) -> Vec<u8> {
         .map(|(name, constant)| (name, constant.public, &constant.value))
         .collect();
     format!(
-        "ZAM-IR-31\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
+        "ZAM-IR-32\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
         module.type_names, module.imports, module.functions
     )
     .into_bytes()
@@ -4424,7 +4459,7 @@ impl<'a> Checker<'a> {
             };
             let (id, _) = self
                 .fork()
-                .lambda(names, *result, body, Some((params, None)))
+                .lambda(names, *result, body, Some((params, None, None)))
                 .ok()?;
             Some(Type::FuncRef(id))
         };
@@ -4606,13 +4641,12 @@ impl<'a> Checker<'a> {
                 "generic function {short} needs a known function type to be used as a value; annotate it, such as let f: fn(i64) -> i64 = {short}"
             ));
         }
-        if function.error.is_some() {
-            return Err(format!(
-                "{short} can fail, and function values cannot fail yet; wrap it and handle the error inside"
-            ));
-        }
         let params = function.params.iter().map(|(_, ty)| *ty).collect();
-        Ok(Type::Func(func_type(params, function.result)))
+        Ok(Type::Func(func_type_full(
+            params,
+            function.result,
+            function.error,
+        )))
     }
     /// 函数值的签名：`f` 是函数类型的局部变量或参数，`p.on_click` 是结构体里的函数字段。
     fn apply_sig(&self, path: &str) -> Result<(Vec<Type>, Type), String> {
@@ -4637,11 +4671,12 @@ impl<'a> Checker<'a> {
         params: &[(String, Option<Type>)],
         result: Option<Type>,
         block: &Block,
-        hint: Option<(Vec<Type>, Option<Type>)>,
+        hint: Option<(Vec<Type>, Option<Type>, Option<Type>)>,
     ) -> Result<(u64, Vec<(String, bool)>), String> {
         let body = lambda_body(block);
         let prints = lambda_prints(block);
-        if let Some((types, _)) = &hint {
+        let failure = hint.as_ref().and_then(|(_, _, error)| *error);
+        if let Some((types, _, _)) = &hint {
             if types.len() != params.len() {
                 return Err(format!(
                     "argument count mismatch: the function takes {} parameter(s), but this fn has {}",
@@ -4652,7 +4687,7 @@ impl<'a> Checker<'a> {
         }
         let mut types = Vec::new();
         for (index, (name, annotated)) in params.iter().enumerate() {
-            let wanted = hint.as_ref().map(|(types, _)| types[index]);
+            let wanted = hint.as_ref().map(|(types, _, _)| types[index]);
             let ty = match (*annotated, wanted) {
                 (Some(ty), Some(wanted)) if ty != wanted => {
                     return Err(format!(
@@ -4707,14 +4742,14 @@ impl<'a> Checker<'a> {
             );
         }
         let outer = std::mem::replace(&mut self.locals, inner);
-        let error = self.error.take();
+        let error = std::mem::replace(&mut self.error, failure);
         let loops = std::mem::take(&mut self.loops);
         let frozen = std::mem::take(&mut self.frozen);
         let outer_result = self.result;
         let closures = std::mem::take(&mut self.closures);
         let written = self.written.take();
         let checked = (|| {
-            let wanted = hint.as_ref().and_then(|(_, result)| *result);
+            let wanted = hint.as_ref().and_then(|(_, result, _)| *result);
             let result = match (result, wanted) {
                 (Some(ty), Some(wanted)) if ty != wanted => {
                     return Err("type mismatch: this fn returns a different type than the expected function type".to_owned())
@@ -4739,7 +4774,7 @@ impl<'a> Checker<'a> {
                             .to_owned(),
                     );
                 }
-                return Ok(func_type(types, result));
+                return Ok(func_type_full(types, result, failure));
             };
             if prints || result == Type::Unit {
                 if prints && result != Type::Unit {
@@ -4752,7 +4787,7 @@ impl<'a> Checker<'a> {
             } else {
                 self.expr(body, result, &mut BTreeMap::new())?;
             }
-            Ok(func_type(types, result))
+            Ok(func_type_full(types, result, failure))
         })();
         self.locals = outer;
         self.error = error;
@@ -5033,11 +5068,18 @@ impl<'a> Checker<'a> {
                 let Type::Func(found) = self.fn_value(name)? else {
                     unreachable!("function value")
                 };
+                let short = name.rsplit(':').next().unwrap_or(name);
                 match expected {
                     Type::Func(id) | Type::FuncRef(id) if id == found => Ok(()),
+                    Type::Func(id) | Type::FuncRef(id)
+                        if func_error(found).is_some() && func_error(id).is_none() =>
+                    {
+                        Err(format!(
+                            "type mismatch: {short} can fail, but the expected function type has no !E; add the error type, such as fn(&string) -> i64!string"
+                        ))
+                    }
                     _ => Err(format!(
-                        "type mismatch: {} has a different function type",
-                        name.rsplit(':').next().unwrap_or(name)
+                        "type mismatch: {short} has a different function type"
                     )),
                 }
             }
@@ -5067,7 +5109,7 @@ impl<'a> Checker<'a> {
                 let hint = match expected {
                     Type::Func(id) | Type::FuncRef(id) => {
                         let (types, result) = func_sig(id);
-                        Some((types, Some(result)))
+                        Some((types, Some(result), func_error(id)))
                     }
                     _ => {
                         return Err(
@@ -5094,6 +5136,11 @@ impl<'a> Checker<'a> {
                 let (Type::Func(id) | Type::FuncRef(id)) = ty else {
                     return Err("type mismatch: only a function value can be called".into());
                 };
+                if func_error(id).is_some() {
+                    return Err(
+                        "fallible call this function value must be handled with ? or catch".into(),
+                    );
+                }
                 let (params, result) = func_sig(id);
                 // 被调用的值先求出来（函数值按值复制），实参在同一个调用帧里检查。
                 let mut frame = loans.clone();
@@ -5782,6 +5829,14 @@ impl<'a> Checker<'a> {
                 self.call(name, &callee, args, expected, loans)
             }
             Expr::Try(inner) => {
+                if let Some((label, error, _)) = self.value_call(inner, expected, loans)? {
+                    if Some(error) != self.error {
+                        return Err(format!(
+                            "? cannot propagate the error of {label} from this function"
+                        ));
+                    }
+                    return Ok(());
+                }
                 let Some((name, args)) = self.call_target(inner)? else {
                     return Err("? requires a function call".into());
                 };
@@ -5803,19 +5858,25 @@ impl<'a> Checker<'a> {
             }
             Expr::Catch(inner, binding, block) => {
                 let discarded = std::mem::take(&mut self.discarded);
-                let Some((name, args)) = self.call_target(inner)? else {
-                    return Err("catch requires a function call".into());
+                let (name, error, success) = match self.value_call(inner, expected, loans)? {
+                    Some(found) => found,
+                    None => {
+                        let Some((name, args)) = self.call_target(inner)? else {
+                            return Err("catch requires a function call".into());
+                        };
+                        let callee = self
+                            .functions
+                            .get(&name)
+                            .ok_or_else(|| format!("unknown function {name}"))?
+                            .clone();
+                        let error = callee.error.ok_or_else(|| {
+                            format!("catch requires a fallible call, but {name} cannot fail")
+                        })?;
+                        self.call(&name, &callee, &args, expected, loans)?;
+                        (name, error, callee.result)
+                    }
                 };
-                let (name, args) = (&name, &args);
-                let callee = self
-                    .functions
-                    .get(name)
-                    .ok_or_else(|| format!("unknown function {name}"))?
-                    .clone();
-                let error = callee.error.ok_or_else(|| {
-                    format!("catch requires a fallible call, but {name} cannot fail")
-                })?;
-                self.call(name, &callee, args, expected, loans)?;
+                let name = &name;
                 // 错误值只在 catch 的代码块里可见。
                 if self.locals.contains_key(binding) {
                     return Err(format!("duplicate binding {binding}"));
@@ -5837,7 +5898,7 @@ impl<'a> Checker<'a> {
                 );
                 // 没有成功值的调用（`fs.remove(p) catch e:`）或单独成句、值没人用的调用：处理完错误
                 // 可以接着往下走，块里移走的变量之后照旧算移走。值要用时块必须离开，否则表达式没有值。
-                if !returned && !jumped && callee.result != Type::Unit && !discarded {
+                if !returned && !jumped && success != Type::Unit && !discarded {
                     return Err(format!("catch block for {name} must return a value"));
                 }
                 Ok(())
@@ -5848,6 +5909,66 @@ impl<'a> Checker<'a> {
             _ => Err("string type mismatch".into()),
         }
     }
+    /// 函数值（局部变量、参数、结构体字段）的错误类型。
+    fn value_error(&self, path: &str) -> Result<Option<Type>, String> {
+        match self.place(path)?.1 {
+            Type::Func(id) | Type::FuncRef(id) => Ok(func_error(id)),
+            _ => Ok(None),
+        }
+    }
+    /// `?`、`catch` 包着的是对函数值的调用（`f(x)?`、`steps[0](x) catch e:`）：检查调用，返回
+    /// （显示用的名字, 错误类型, 结果类型）。不是函数值调用时返回 None，按普通调用处理。
+    fn value_call(
+        &mut self,
+        inner: &Expr,
+        expected: Type,
+        loans: &mut BTreeMap<String, Type>,
+    ) -> Result<Option<(String, Type, Type)>, String> {
+        let (label, id, args) = match inner {
+            Expr::Apply(path, args) => match self.place(path)?.1 {
+                Type::Func(id) | Type::FuncRef(id) => (path.clone(), id, args),
+                _ => return Ok(None),
+            },
+            Expr::Method(..) if self.field_call(inner).is_some() => {
+                let (path, _) = self.field_call(inner).expect("field call");
+                let Expr::Method(_, _, args) = inner else {
+                    unreachable!("field call")
+                };
+                match self.place(&path)?.1 {
+                    Type::Func(id) | Type::FuncRef(id) => (path, id, args),
+                    _ => return Ok(None),
+                }
+            }
+            Expr::Invoke(callee, args) => match self.value_type(callee)? {
+                Type::Func(id) | Type::FuncRef(id) => {
+                    self.expr(callee, Type::Func(id), loans)?;
+                    ("this function value".to_owned(), id, args)
+                }
+                _ => return Err("type mismatch: only a function value can be called".into()),
+            },
+            _ => return Ok(None),
+        };
+        let Some(error) = func_error(id) else {
+            return Err(format!("{label} cannot fail, so it needs no ? or catch"));
+        };
+        if let Some(captures) = self.closures.get(&label).cloned() {
+            self.capture_loans(&label, &captures, loans)?;
+        }
+        let (params, result) = func_sig(id);
+        let callee = Function {
+            public: true,
+            params: params.into_iter().map(|ty| (String::new(), ty)).collect(),
+            result,
+            error: Some(error),
+            body: Vec::new(),
+            position: self.position,
+            builtin: false,
+            generics: Vec::new(),
+            external: false,
+        };
+        self.call(&label, &callee, args, expected, loans)?;
+        Ok(Some((label, error, result)))
+    }
     /// 调用函数值：参数与返回值按它的函数类型检查。
     fn apply(
         &mut self,
@@ -5857,6 +5978,11 @@ impl<'a> Checker<'a> {
         loans: &mut BTreeMap<String, Type>,
     ) -> Result<(), String> {
         let (params, result) = self.apply_sig(path)?;
+        if self.value_error(path)?.is_some() {
+            return Err(format!(
+                "fallible call {path} must be handled with ? or catch"
+            ));
+        }
         if let Some(captures) = self.closures.get(path).cloned() {
             self.capture_loans(path, &captures, loans)?;
         }
@@ -6096,7 +6222,7 @@ impl<'a> Checker<'a> {
                         let hint = match annotation {
                             Some(Type::Func(id) | Type::FuncRef(id)) => {
                                 let (types, result) = func_sig(*id);
-                                Some((types, Some(result)))
+                                Some((types, Some(result), func_error(*id)))
                             }
                             Some(_) => {
                                 return Err(

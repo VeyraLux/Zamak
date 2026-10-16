@@ -1,9 +1,10 @@
 use crate::compiler::{
     bitwise, block_roots, borrow_of, captured_view, compound, constructed, copied, each_bindings,
-    field_function, field_path, func_sig, func_type, generic_value, instance_of, instance_with,
-    lambda_body, lambda_prints, linked_tuple, method_args, method_signature, nest, nested, numeric,
-    overload, record_id, record_method, record_order, sort_by_type, terminates, tuple_fields,
-    Block, Elem, Expr, Instruction, Module, Pattern, Receiver, Type, COPY,
+    field_function, field_path, func_error, func_sig, func_type, func_type_full, generic_value,
+    instance_of, instance_with, lambda_body, lambda_prints, linked_tuple, method_args,
+    method_signature, nest, nested, numeric, overload, record_id, record_method, record_order,
+    sort_by_type, terminates, tuple_fields, Block, Elem, Expr, Instruction, Module, Pattern,
+    Receiver, Type, COPY,
 };
 use crate::project::Result;
 use std::collections::BTreeMap;
@@ -1715,6 +1716,14 @@ fn fallible_name(ty: Type, error: Option<Type>) -> String {
         Some(error) => format!("F_{}_{}", ctype(ty), ctype(error)),
     }
 }
+/// 函数值的 C 返回类型：会失败时是结果结构体。
+fn value_result(id: u64) -> String {
+    let result = func_sig(id).1;
+    match func_error(id) {
+        Some(error) => fallible_name(result, Some(error)),
+        None => ctype(result),
+    }
+}
 fn fallible_ok(ty: Type, error: Option<Type>) -> String {
     format!("{}_ok", fallible_name(ty, error))
 }
@@ -2131,9 +2140,10 @@ impl<'a> Generator<'a> {
     /// 具名函数当值用：生成（一次）转调它的包装函数，第一个参数是用不到的环境。
     fn function_value(&mut self, name: &str) -> String {
         let function = &self.module.functions[name];
-        let id = func_type(
+        let id = func_type_full(
             function.params.iter().map(|(_, ty)| *ty).collect(),
             function.result,
+            function.error,
         );
         let symbol = &self.symbols[name];
         let wrapper = format!("{symbol}_value");
@@ -2148,7 +2158,7 @@ impl<'a> Generator<'a> {
                 .map(|i| format!("a{i}"))
                 .collect();
             let call = format!("{symbol}({})", args.join(", "));
-            let body = if function.result == Type::Unit {
+            let body = if function.result == Type::Unit && function.error.is_none() {
                 format!("{call};")
             } else {
                 format!("return {call};")
@@ -2157,7 +2167,7 @@ impl<'a> Generator<'a> {
                 wrapper.clone(),
                 format!(
                     "static {} {wrapper}(void *env{}) {{ (void)env; {body} }}\n",
-                    ctype(function.result),
+                    value_result(id),
                     params.concat()
                 ),
             ));
@@ -2194,7 +2204,9 @@ impl<'a> Generator<'a> {
                 locals.insert(capture.clone(), (format!("e->c{index}"), view));
             }
         }
+        let failure = func_error(id);
         let mut g = self.sub(BTreeMap::new(), result);
+        g.error = failure;
         g.prefix = name.clone();
         let mut header = Vec::new();
         for (i, ((param, _), ty)) in params.iter().zip(&types).enumerate() {
@@ -2213,12 +2225,19 @@ impl<'a> Generator<'a> {
                 g.code
                     .push_str(&format!("{} result = {value};\n", ctype(result)));
                 g.cleanup();
-                g.code.push_str("return result;\n");
+                g.code.push_str(&match failure {
+                    Some(_) => format!("return {}(result);\n", fallible_ok(result, failure)),
+                    None => "return result;\n".to_owned(),
+                });
             }
             // 没有返回值的函数体，或函数里定义的函数（完整代码块，return 语句自己返回）。
             _ => {
-                g.block(body, result);
+                let returned = g.block(body, result);
                 g.cleanup();
+                if failure.is_some() && !returned && result == Type::Unit {
+                    g.code
+                        .push_str(&format!("return {}();\n", fallible_ok(result, failure)));
+                }
             }
         }
         let environment = if captures.is_empty() {
@@ -2232,7 +2251,7 @@ impl<'a> Generator<'a> {
         }
         definition.push_str(&format!(
             "static {} {name}(void *envp{}) {{\n{environment}{}}}\n",
-            ctype(result),
+            value_result(id),
             header.concat(),
             g.code
         ));
@@ -2252,6 +2271,43 @@ impl<'a> Generator<'a> {
             inits.join(", ")
         ));
         self.scalar(&format!("{{ {name}, &{environment} }}"), ty)
+    }
+    /// `?`、`catch` 包着的函数值调用：（调用的 C 表达式, 结果类型, 错误类型）。不是时返回 None。
+    fn value_call(&mut self, inner: &Expr) -> Option<(String, Type, Type)> {
+        let (function, ty, args) = match inner {
+            Expr::Apply(path, args) => {
+                let ty = self.place_ty(path);
+                let function = match path.split_once('.') {
+                    Some((root, field)) => self.field(root, field),
+                    None => self.locals.get(path)?.0.clone(),
+                };
+                (function, ty, args.clone())
+            }
+            Expr::Method(..) if self.field_call(inner).is_some() => {
+                let (path, args) = self.field_call(inner).expect("field call");
+                let (root, field) = path.split_once('.').expect("field path");
+                (self.field(root, field), self.place_ty(&path), args)
+            }
+            Expr::Invoke(callee, args) => {
+                let ty = self.value_type(callee);
+                (self.expr_as(callee, ty), ty, args.clone())
+            }
+            _ => return None,
+        };
+        let (Type::Func(id) | Type::FuncRef(id)) = ty else {
+            return None;
+        };
+        let (params, result) = func_sig(id);
+        let mut values = vec![format!("{function}.env")];
+        for (arg, ty) in args.iter().zip(params) {
+            values.push(self.argument(arg, ty));
+        }
+        let error = func_error(id).expect("checked fallible function value");
+        Some((
+            format!("{function}.call({})", values.join(", ")),
+            result,
+            error,
+        ))
     }
     /// 调用函数值：`f.call(f.env, 实参...)`。`path` 是局部变量或结构体里的函数字段。
     fn apply(&mut self, path: &str, args: &[Expr]) -> String {
@@ -2300,9 +2356,10 @@ impl<'a> Generator<'a> {
             ),
             Expr::FnRef(name) => {
                 let function = &self.module.functions[name];
-                Type::Func(func_type(
+                Type::Func(func_type_full(
                     function.params.iter().map(|(_, ty)| *ty).collect(),
                     function.result,
+                    function.error,
                 ))
             }
             Expr::Apply(path, _) => match self.place_ty(path) {
@@ -3115,11 +3172,15 @@ impl<'a> Generator<'a> {
                 self.call_value(&call, result)
             }
             Expr::Try(inner) => {
-                let (name, args) = self.call_target(inner).expect("checked ? operand");
-                let (name, args) = (&name, &args);
-                let result = self.module.functions[name].result;
-                let error = self.module.functions[name].error;
-                let call = self.raw_call(name, args, None);
+                let (call, result, error) = match self.value_call(inner) {
+                    Some((call, result, error)) => (call, result, Some(error)),
+                    None => {
+                        let (name, args) = self.call_target(inner).expect("checked ? operand");
+                        let function = &self.module.functions[&name];
+                        let (result, error) = (function.result, function.error);
+                        (self.raw_call(&name, &args, None), result, error)
+                    }
+                };
                 let structure = fallible_name(result, error);
                 let temp = format!("v{}", self.next);
                 self.next += 1;
@@ -3138,13 +3199,18 @@ impl<'a> Generator<'a> {
                 self.result_value(&temp, result)
             }
             Expr::Catch(inner, binding, block) => {
-                let (name, args) = self.call_target(inner).expect("checked catch operand");
-                let (name, args) = (&name, &args);
-                let result = self.module.functions[name].result;
-                let error = self.module.functions[name]
-                    .error
-                    .expect("checked fallible call");
-                let call = self.raw_call(name, args, None);
+                let (call, result, error) = match self.value_call(inner) {
+                    Some(found) => found,
+                    None => {
+                        let (name, args) = self.call_target(inner).expect("checked catch operand");
+                        let function = &self.module.functions[&name];
+                        let (result, error) = (
+                            function.result,
+                            function.error.expect("checked fallible call"),
+                        );
+                        (self.raw_call(&name, &args, None), result, error)
+                    }
+                };
                 let structure = fallible_name(result, Some(error));
                 let temp = format!("v{}", self.next);
                 self.next += 1;
@@ -3166,8 +3232,12 @@ impl<'a> Generator<'a> {
                 self.owners.push((local, error));
                 // 有成功值时代码块在所有路径上离开（检查器保证）；没有成功值时可能走到块尾，
                 // block 会释放块里的值，出块后接着执行后面的语句。
-                self.block(block, self.result);
-                self.owners.pop();
+                let returned = self.block(block, self.result);
+                let (local, ty) = self.owners.pop().expect("catch binding");
+                // 块走到底（没有成功值的调用或单独成句）时，错误值在这里释放。
+                if !returned {
+                    self.code.push_str(&format!("{}(&{local});\n", drop_fn(ty)));
+                }
                 self.locals.remove(binding);
                 if let Some(previous) = previous {
                     self.locals.insert(binding.clone(), previous);
@@ -4508,19 +4578,38 @@ pub fn generate_with(module: &Module, entry: &str, unit: &str, tests: &[String])
     for (key, value) in &maps {
         source.push_str(&map_helpers(MAP_DECLARATION, *key, *value));
     }
+    // 失败函数的结果结构体：函数签名与会失败的函数值都要用到，先前置声明。
+    let mut fallible: Vec<(Type, Option<Type>)> = Vec::new();
+    let failing = needed
+        .iter()
+        .map(|name| {
+            let function = &module.functions[name];
+            (function.result, function.error)
+        })
+        .chain(funcs.iter().map(|id| (func_sig(*id).1, func_error(*id))));
+    for (result, error) in failing {
+        let key = (result, error.filter(|e| *e != Type::Owned));
+        if error.is_some() && !fallible.contains(&key) {
+            fallible.push(key);
+        }
+    }
+    for (ty, error) in &fallible {
+        let structure = fallible_name(*ty, *error);
+        source.push_str(&format!("typedef struct {structure} {structure};\n"));
+    }
     // 函数值：函数指针（第一个参数是环境）加环境指针。不捕获变量时环境是 NULL。
     for id in &funcs {
         source.push_str(&format!("typedef struct F{id} F{id};\n"));
     }
     for id in &funcs {
-        let (params, result) = func_sig(*id);
+        let (params, _) = func_sig(*id);
         let params: String = params
             .iter()
             .map(|ty| format!(", {}", ctype(*ty)))
             .collect();
         source.push_str(&format!(
             "struct F{id} {{ {} (*call)(void *{params}); void *env; }};\n",
-            ctype(result)
+            value_result(*id)
         ));
     }
     for elem in &lists {
@@ -4596,23 +4685,12 @@ pub fn generate_with(module: &Module, entry: &str, unit: &str, tests: &[String])
         source.push_str(&native_values::functions(module, &records, &lists, &maps));
     }
     // 失败函数的结果结构体与构造器；调用点只读 ok 相符的那一半。
-    let mut fallible: Vec<(Type, Option<Type>)> = Vec::new();
-    for name in &needed {
-        let function = &module.functions[name];
-        let key = (
-            function.result,
-            function.error.filter(|e| *e != Type::Owned),
-        );
-        if function.error.is_some() && !fallible.contains(&key) {
-            fallible.push(key);
-        }
-    }
     for (ty, error) in &fallible {
         let (ty, error) = (*ty, *error);
         let structure = fallible_name(ty, error);
         let error_type = ctype(error.unwrap_or(Type::Owned));
         source.push_str(&format!(
-            "typedef struct {{ int ok; {}{error_type} error; }} {structure};\n",
+            "struct {structure} {{ int ok; {}{error_type} error; }};\n",
             if ty == Type::Unit {
                 String::new()
             } else {

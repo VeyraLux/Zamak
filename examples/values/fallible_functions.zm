@@ -1,0 +1,46 @@
+// 会失败的函数也能当值：函数类型写成 fn(&string) -> i64!string，调用时用 ? 或 catch。
+use std/string
+
+fn parse(s: &string) -> i64!string: string.parse_i64(s)?
+
+fn each_number(items: &[string], convert: fn(&string) -> i64!string) -> i64!string:
+    let mut total = 0
+
+    for item in items:
+        total += convert(item)?
+
+    total
+
+fn main() -> !string:
+    let good: [string] = ["1", "2", "3"]
+    println(each_number(&good, parse)?)
+
+    let bad: [string] = ["4", "x"]
+    each_number(&bad, parse) catch e:
+        println("caught: {e}")
+
+    let limit = 10
+    fn checked(s: &string) -> i64!string:
+        let n = string.parse_i64(s)?
+
+        if n > limit:
+            fail "too big: {n}"
+
+        n
+
+    println(each_number(&good, checked)?)
+    let big: [string] = ["50"]
+    each_number(&big, checked) catch e:
+        println("caught: {e}")
+
+    let steps: [fn(&string) -> i64!string] = [parse, fn(s): string.parse_i64(s)?]
+    println(steps[1]("7")?)
+    steps[0]("q") catch e:
+        println("caught: {e}")
+
+    let f = parse
+    let n = f("40")?
+    println(n + 2)
+    let saver: fn(&string) -> !string = fn(s): fail "cannot save {s}"
+    saver("x") catch e:
+        println(e)
