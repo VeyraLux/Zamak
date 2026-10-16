@@ -3465,7 +3465,9 @@ impl Parser {
                 None
             };
             if annotation.is_some_and(Type::is_reference) {
-                return Err("borrow escape: references cannot be stored in locals".into());
+                return Err(format!(
+                    "borrow escape: a local cannot be declared with a reference type; borrow without a type, such as let {local} = &value"
+                ));
             }
             self.expect('=')?;
             Instruction::Let(local, mutable, annotation, self.expr()?)
@@ -4307,7 +4309,7 @@ impl<'a> Checker<'a> {
         self.written.borrow_mut().insert(root.to_owned());
         if self.frozen.iter().any(|name| name == root) {
             Err(format!(
-                "borrow conflict: {root} is borrowed by an enclosing for loop"
+                "borrow conflict: {root} is borrowed by an enclosing for loop or a borrowed local such as let x = &{root}[i]"
             ))
         } else {
             Ok(())
@@ -6156,8 +6158,23 @@ impl<'a> Checker<'a> {
         }
         Ok(())
     }
+    /// `let x = &place` 的类型：被借用的值的只读借用（数字与布尔不能借用）。
+    fn local_borrow(&self, expr: &Expr) -> Result<Type, String> {
+        let owned = match expr {
+            Expr::Borrow(path, _) => self.place(path)?.1,
+            Expr::BorrowIndex(path, _, field, _) => self.element(path, field)?.1,
+            _ => unreachable!("borrow expression"),
+        };
+        let owned = owned.borrowable().map_or(owned, |(owned, _)| owned);
+        borrow_of(owned, false).ok_or_else(|| {
+            "scalar references are not supported; copy the number instead, such as let n = xs[i]"
+                .to_owned()
+        })
+    }
     fn block(&mut self, body: &Block, result: Type) -> Result<bool, String> {
         let outer_names = self.locals.keys().cloned().collect();
+        // 代码块里 `let x = &...` 冻结的根到块尾解冻。
+        let outer_frozen = self.frozen.len();
         let mut returned = false;
         let mut terminated = false;
         for (instruction, position) in body {
@@ -6347,6 +6364,32 @@ impl<'a> Checker<'a> {
                         return Err(format!("duplicate binding {local}"));
                     }
                     self.closures.remove(local);
+                    // `let entry = &entries[i]`、`let name = &p.name`：只读借用存进局部变量。从这里到代码块
+                    // 结束，被借用的根冻结（不能改、不能移走，与 for 遍历相同）；借用不能返回或存进别处。
+                    if let (
+                        None,
+                        Expr::Borrow(path, false) | Expr::BorrowIndex(path, _, _, false),
+                    ) = (annotation, expr)
+                    {
+                        if *mutable {
+                            return Err(format!(
+                                "a borrowed local cannot be mut; write let {local} = &..."
+                            ));
+                        }
+                        let ty = self.local_borrow(expr)?;
+                        self.expr(expr, ty, &mut loans)?;
+                        let root = path.split('.').next().unwrap_or(path).to_owned();
+                        self.frozen.push(root);
+                        self.locals.insert(
+                            local.clone(),
+                            Binding {
+                                ty,
+                                mutable: false,
+                                live: true,
+                            },
+                        );
+                        continue;
+                    }
                     // 用到外层变量的匿名函数（含函数里定义的 fn）绑定到名字上：不借用，等到调用或
                     // 转传它时，再在那条语句里借用它用到的变量。它不能存起来或返回，活不过那些变量。
                     if let Expr::Lambda(params, result, body) = expr {
@@ -6621,6 +6664,7 @@ impl<'a> Checker<'a> {
         }
         let outer: BTreeSet<_> = outer_names;
         self.locals.retain(|name, _| outer.contains(name));
+        self.frozen.truncate(outer_frozen);
         Ok(returned)
     }
 }

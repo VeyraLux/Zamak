@@ -177,7 +177,7 @@ fn checker_rejects_misused_builtins() {
         ),
         (
             "fn main() -> !string:\n    let p = \"x\"\n    let t = fs.read(&p)?\n",
-            "ambiguous or missing import",
+            "fs.read requires use std/fs",
         ),
         (
             "use std/fs\nfn main() -> !string:\n    let p = \"x\"\n    fs.delete(&p)?\n",

@@ -75,7 +75,7 @@ fn borrowed_byte_length() {
         "hold(&r.leaf.name, consume(r))",
         "pair(&mut r.leaf.name, &r.leaf.name)",
         "let moved = r\n    string.byte_len(&r.leaf.name)",
-        "let ref = &r.leaf.name",
+        "let ref: &string = &r.leaf.name",
         "string.byte_len(&r.leaf.missing)",
         "string.byte_len(&r.leaf)",
     ] {
