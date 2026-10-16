@@ -291,3 +291,140 @@ fn time_and_random() {
     let single = "use std/random\n\nfn main():\n    random.seed(9)\n    for i in 0..3:\n        println(random.randint(1, 1000000))\n";
     assert_eq!(stdout(&output), stdout(&sandbox.run(single, NONE, None)));
 }
+
+#[test]
+fn file_system_and_paths() {
+    let sandbox = Sandbox::new("file-system");
+    let root = sandbox.path("树");
+    let base = root.to_string_lossy().replace('\\', "/");
+
+    // 创建、追加、列目录、大小、改名、删除；中文路径；错误是可以 catch 的值。
+    let program = r#"use std/env
+use std/fs
+
+fn main() -> !string:
+    let base = env.arg(0)?
+    let deep = base + "/笔记/深层"
+    fs.mkdir(&deep)?
+    fs.mkdir(&deep)?
+    let file = base + "/笔记/b.txt"
+    fs.write(&file, "one\n")?
+    fs.append(&file, "two\n")?
+    println(fs.read(&file)?)
+    let other = base + "/笔记/a.md"
+    fs.write(&other, "x")?
+    let dir = base + "/笔记"
+    println(fs.list(&dir)?)
+    println(fs.size(&file)?)
+    println(fs.is_dir(&deep))
+    println(fs.is_file(&other))
+    let missing = base + "/nope"
+    println(fs.exists(&missing))
+    fs.rename(&other, &file)?
+    println(fs.read(&file)?)
+    fs.remove(&file)?
+    fs.remove(&dir) catch e:
+        println(e)
+    fs.remove(&deep)?
+    println(fs.list(&dir)?)
+    fs.size(&dir) catch e:
+        println("size: {e}")
+    fs.list(&missing) catch e:
+        println("list: {e}")
+"#;
+    let output = sandbox.run(program, &[&base], None);
+    assert_eq!(
+        stdout(&output),
+        format!(
+            "one\ntwo\n\n[\"a.md\", \"b.txt\", \"深层\"]\n8\ntrue\ntrue\nfalse\nx\ncannot remove directory (is it empty?) {base}/笔记\n[]\nsize: not a file: {base}/笔记\nlist: cannot list {base}/nope\n"
+        )
+    );
+
+    // tree 示例：递归列目录，按名字排序。
+    fs::create_dir_all(root.join("src/深")).unwrap();
+    fs::write(root.join("src/main.zm"), "12345").unwrap();
+    fs::write(root.join("src/深/a.txt"), "abc").unwrap();
+    fs::write(root.join("README"), "").unwrap();
+    let tree = include_str!("../../examples/io/tree.zm");
+    assert_eq!(
+        stdout(&sandbox.run(tree, &[&base], None)),
+        format!(
+            "{base}/\n  README (0 bytes)\n  src/\n    main.zm (5 bytes)\n    深/\n      a.txt (3 bytes)\n  笔记/\n3 directories, 3 files, 8 bytes\n"
+        )
+    );
+    failure(
+        &sandbox.run(tree, &[&format!("{base}/README")], None),
+        "not a directory: ",
+    );
+
+    // std/path 只处理文字，不碰磁盘。
+    let paths = r#"use std/path
+
+fn main():
+    println(path.join("a/b", "c.txt"))
+    println(path.join("a/b/", "c.txt"))
+    println(path.join("a", "/abs"))
+    println(path.join("", "x"))
+    println(path.parent("a/b/c.txt"))
+    println(path.parent("c.txt") == "")
+    println(path.parent("/x"))
+    println(path.parent("a/b/"))
+    println(path.name("a/b/c.txt"))
+    println(path.name("a/b/"))
+    println(path.stem("archive.tar.gz"))
+    println(path.suffix("archive.tar.gz"))
+    println(path.suffix(".bashrc") == "")
+    println(path.stem(".bashrc"))
+    println(path.suffix("dir.d/file") == "")
+"#;
+    assert_eq!(
+        stdout(&sandbox.run(paths, &[] as &[&str], None)),
+        "a/b/c.txt\na/b/c.txt\n/abs\nx\na/b\ntrue\n/\na\nc.txt\nb\narchive.tar\n.gz\ntrue\n.bashrc\ntrue\n"
+    );
+
+    // 没有成功值的调用，catch 块处理完可以接着往下走；有成功值时仍要离开。
+    failure(
+        &sandbox.run(
+            "use std/fs\n\nfn main():\n    let n = fs.size(\"x\") catch e:\n        println(e)\n    println(n)\n",
+            &[] as &[&str],
+            None,
+        ),
+        "catch block for std/fs:size must return a value",
+    );
+    // 块里移走的变量之后算移走；块里的临时值在块尾释放，接着执行后面的语句。
+    failure(
+        &sandbox.run(
+            "use std/fs
+
+fn take(s: string): println(s)
+
+fn main():
+    let s = \"a\"
+    fs.remove(\"nope\") catch e:
+        take(s)
+    println(s)
+",
+            &[] as &[&str],
+            None,
+        ),
+        "use after move: s",
+    );
+    assert_eq!(
+        stdout(&sandbox.run(
+            "use std/fs
+
+fn main():
+    let s = \"kept\"
+    fs.size(\"nope\") catch e:
+        let note = \"inner \" + e
+        println(note)
+    println(s)
+",
+            &[] as &[&str],
+            None,
+        )),
+        "inner not a file: nope
+kept
+"
+    );
+}

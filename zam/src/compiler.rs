@@ -4013,6 +4013,8 @@ struct Checker<'a> {
     frozen: Vec<String>,
     // 当前函数所在的模块：调用别的模块的方法要求它是 pub。
     module: &'a str,
+    // 正在检查单独成句的 `f() catch e:`：调用的值没人用，catch 块处理完可以接着往下走。
+    discarded: bool,
     // 正在检查泛型函数的副本：`copy(v)` 对 i64、f64、bool 也成立（T 可能是任何类型）。
     generic: bool,
 }
@@ -4434,6 +4436,7 @@ impl<'a> Checker<'a> {
             frozen: self.frozen.clone(),
             module: self.module,
             generic: self.generic,
+            discarded: false,
         }
     }
     /// 具名函数当值用时的类型。泛型函数、会失败的函数暂时不能当值。
@@ -4627,6 +4630,7 @@ impl<'a> Checker<'a> {
                     frozen: Vec::new(),
                     module: self.module,
                     generic: self.generic,
+            discarded: false,
                 }
                 .ty(value)
             }
@@ -5518,6 +5522,7 @@ impl<'a> Checker<'a> {
                 self.call(name, &callee, args, expected, loans)
             }
             Expr::Catch(inner, binding, block) => {
+                let discarded = std::mem::take(&mut self.discarded);
                 let Some((name, args)) = self.call_target(inner)? else {
                     return Err("catch requires a function call".into());
                 };
@@ -5550,7 +5555,9 @@ impl<'a> Checker<'a> {
                     block.last(),
                     Some((Instruction::Break | Instruction::Continue, _))
                 );
-                if !returned && !jumped {
+                // 没有成功值的调用（`fs.remove(p) catch e:`）或单独成句、值没人用的调用：处理完错误
+                // 可以接着往下走，块里移走的变量之后照旧算移走。值要用时块必须离开，否则表达式没有值。
+                if !returned && !jumped && callee.result != Type::Unit && !discarded {
                     return Err(format!("catch block for {name} must return a value"));
                 }
                 Ok(())
@@ -5953,7 +5960,10 @@ impl<'a> Checker<'a> {
                     } else {
                         return Err("expected function call".into());
                     };
-                    self.expr(expr, ty, &mut loans)?;
+                    self.discarded = matches!(expr, Expr::Catch(..));
+                    let checked = self.expr(expr, ty, &mut loans);
+                    self.discarded = false;
+                    checked?;
                     if terminates(expr) {
                         returned = true;
                     }
@@ -6088,6 +6098,7 @@ pub fn check(module: &Module, entry: &str) -> Result<(), String> {
             frozen: Vec::new(),
             module: name.split(':').next().unwrap_or(name),
             generic: name.ends_with(']'),
+            discarded: false,
         };
         let result = (|| {
             // 错误类型是字符串、结构体或枚举；C 侧结果结构体按（成功类型, 错误类型）区分。
