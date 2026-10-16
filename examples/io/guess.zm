@@ -1,0 +1,34 @@
+// 猜数字：程序想一个 1 到 100 之间的数，你来猜，它告诉你大了还是小了。
+// zam run examples/io/guess.zm；给一个整数参数作随机种子时，每次想的数都一样（方便测试）。
+use std/env
+use std/io
+use std/random
+use std/string
+
+fn main() -> !string:
+    if env.arg_count() > 0:
+        let seed = env.arg(0)?
+        random.seed(string.parse_i64(&seed)?)
+
+    let secret = random.randint(1, 100)
+    let mut guesses = 0
+    let mut line = ""
+    println("Guess a number between 1 and 100.")
+
+    while io.read_line(&mut line)?:
+        let text = string.trim(&line)
+        let guess = string.parse_i64(&text) catch e:
+            println("Please type a whole number.")
+            continue
+
+        guesses += 1
+
+        if guess < secret:
+            println("Too small.")
+        elif guess > secret:
+            println("Too big.")
+        else:
+            println("You got it in {guesses} guesses!")
+            return
+
+    println("The number was {secret}.")
