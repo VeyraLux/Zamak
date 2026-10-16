@@ -1,4 +1,4 @@
-// 枚举与 match：变体构造、语句与表达式两种 match、借用载荷、枚举的列表与临时值。
+# 枚举与 match：变体构造、语句与表达式两种 match、借用载荷、枚举的列表与临时值。
 use std/fmt
 
 enum Shape:

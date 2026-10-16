@@ -1,4 +1,4 @@
-// 会失败的函数也能当值：函数类型写成 fn(&string) -> i64!string，调用时用 ? 或 catch。
+# 会失败的函数也能当值：函数类型写成 fn(&string) -> i64!string，调用时用 ? 或 catch。
 use std/string
 
 fn parse(s: &string) -> i64!string: string.parse_i64(s)?

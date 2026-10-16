@@ -1,4 +1,4 @@
-// 错误值：catch 就地处理，不向外传播
+# 错误值：catch 就地处理，不向外传播
 use std/string
 
 fn parse(text: &string) -> i64!string:

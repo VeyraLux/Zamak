@@ -20,7 +20,7 @@ fn positive_variable_boundaries_match_checked_signed_arithmetic() {
     .enumerate()
     {
         source.push_str(&format!(
-            "    let n{i} = {n}\n    let d{i} = {d}\n    println(n{i} / d{i})\n    println(n{i} % d{i})\n    println(n{i} / {d})\n    println(n{i} % {d})\n"
+            "    let n{i} = {n}\n    let d{i} = {d}\n    println(n{i} // d{i})\n    println(n{i} % d{i})\n    println(n{i} // {d})\n    println(n{i} % {d})\n"
         ));
         expected.push_str(&format!(
             "{}\n{}\n{}\n{}\n",
@@ -42,7 +42,7 @@ fn positive_variable_boundaries_match_checked_signed_arithmetic() {
 #[test]
 fn negative_and_repeated_sign_changes_keep_signed_semantics() {
     let case = Case::new("nonnegative-division", "signed");
-    let result = case.run("fn quotient(n: i64, d: i64) -> i64: n / d\nfn remainder(n: i64, d: i64) -> i64: n % d\nfn unknown() -> i64: -9\nfn main():\n    println(quotient(unknown(), 4))\n    println(remainder(unknown(), 4))\n    println(quotient(9, -4))\n    println(remainder(9, -4))\n    let mut n = 9\n    let mut i = 0\n    while i < 2:\n        println(n / 4)\n        println(n % 4)\n        n = -9\n        i = i + 1");
+    let result = case.run("fn quotient(n: i64, d: i64) -> i64: n // d\nfn remainder(n: i64, d: i64) -> i64: n % d\nfn unknown() -> i64: -9\nfn main():\n    println(quotient(unknown(), 4))\n    println(remainder(unknown(), 4))\n    println(quotient(9, -4))\n    println(remainder(9, -4))\n    let mut n = 9\n    let mut i = 0\n    while i < 2:\n        println(n // 4)\n        println(n % 4)\n        n = -9\n        i = i + 1");
     assert!(
         result.status.success(),
         "{}",
@@ -50,24 +50,33 @@ fn negative_and_repeated_sign_changes_keep_signed_semantics() {
     );
     assert_eq!(
         String::from_utf8_lossy(&result.stdout),
-        "-2\n-1\n-2\n1\n2\n1\n-2\n-1\n"
+        "-3\n3\n-3\n-3\n2\n1\n-3\n3\n"
     );
 }
 
 #[test]
 fn zero_and_signed_overflow_keep_arithmetic_errors() {
     let case = Case::new("nonnegative-division", "errors");
-    for op in ["/", "%"] {
-        for (n, d) in [(1, 0), (i64::MIN, -1)] {
-            let source =
-                format!("fn main():\n    let n = {n}\n    let d = {d}\n    println(n {op} d)\n");
-            let result = case.run(&source);
-            assert!(!result.status.success(), "accepted {source}");
-            assert!(
-                String::from_utf8_lossy(&result.stderr).contains("integer arithmetic error"),
-                "{}",
-                String::from_utf8_lossy(&result.stderr)
-            );
+    // 除以零报 division by zero；i64 最小值 // -1 溢出；与 Python 一样 i64 最小值 % -1 是 0。
+    for (op, n, d, error) in [
+        ("//", 1, 0, Some("division by zero")),
+        ("%", 1, 0, Some("division by zero")),
+        ("//", i64::MIN, -1, Some("integer arithmetic error")),
+        ("%", i64::MIN, -1, None),
+    ] {
+        let source =
+            format!("fn main():\n    let n = {n}\n    let d = {d}\n    println(n {op} d)\n");
+        let result = case.run(&source);
+        match error {
+            Some(error) => {
+                assert!(!result.status.success(), "accepted {source}");
+                assert!(
+                    String::from_utf8_lossy(&result.stderr).contains(error),
+                    "{}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+            }
+            None => assert_eq!(String::from_utf8_lossy(&result.stdout), "0\n"),
         }
     }
 }
@@ -75,7 +84,7 @@ fn zero_and_signed_overflow_keep_arithmetic_errors() {
 #[test]
 fn operand_order_and_successful_result_facts_keep_operand_errors() {
     let case = Case::new("nonnegative-division", "operand-order");
-    for (op, answer) in [("/", "2"), ("%", "1")] {
+    for (op, answer) in [("//", "2"), ("%", "1")] {
         let source = format!("fn first() -> i64:\n    println(1)\n    9\nfn second() -> i64:\n    println(2)\n    4\nfn main(): println(first() {op} second())\n");
         let result = case.run(&source);
         assert!(

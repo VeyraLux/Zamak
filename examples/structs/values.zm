@@ -1,4 +1,4 @@
-// 复合值：copy(&x) 深复制，== 逐项比较，println 和插值直接打印。
+# 复合值：copy(&x) 深复制，== 逐项比较，println 和插值直接打印。
 
 struct Point:
     x: i64

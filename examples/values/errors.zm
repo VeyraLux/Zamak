@@ -1,4 +1,4 @@
-// 错误值：T!E 签名、fail 产生错误、? 传播
+# 错误值：T!E 签名、fail 产生错误、? 传播
 use std/string
 
 fn parse(text: &string) -> i64!string:

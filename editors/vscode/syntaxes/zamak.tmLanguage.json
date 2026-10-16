@@ -16,10 +16,6 @@
     "comments": {
       "patterns": [
         {
-          "name": "comment.line.double-slash.zamak",
-          "match": "//.*$"
-        },
-        {
           "name": "comment.line.number-sign.zamak",
           "match": "#.*$"
         }

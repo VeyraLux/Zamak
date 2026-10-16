@@ -121,7 +121,7 @@ fn main():
 #[test]
 fn loop_bounds_preserve_first_evaluation_errors() {
     let workspace = TempWorkspace::new();
-    for condition in ["0 < 1 / 0", "0 < 9223372036854775807 + 1"] {
+    for condition in ["0 < 1 // 0", "0 < 9223372036854775807 + 1"] {
         write_source(
             &workspace,
             &format!("fn main():\n    while {condition}: println(7)"),
@@ -129,7 +129,11 @@ fn loop_bounds_preserve_first_evaluation_errors() {
         let output = workspace.invoke("run");
         assert!(!output.status.success(), "accepted {condition}");
         assert!(output.stdout.is_empty());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("integer arithmetic error"));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("integer arithmetic error") || stderr.contains("division by zero"),
+            "{stderr}"
+        );
     }
     write_source(
         &workspace,

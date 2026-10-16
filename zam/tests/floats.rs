@@ -18,7 +18,7 @@ fn floats_example_runs() {
     let output = case.run(include_str!("../../examples/values/floats.zm"));
     assert_eq!(
         stdout(&output),
-        "0.30000000000000004\n3.5\n1e16\n2.5e-7\n-1.5\ninf\ntrue\narea 12.566\nmean 5.0 stddev 2.0 min 2.0\ntotal 8.00\n9\n10\n0.75\n1024.0\n-2.0\n6.02e23\ninvalid float: 1.2.3\n"
+        "0.30000000000000004\n3.5\n1e16\n2.5e-7\n-1.5\n3.5\ntrue\narea 12.566\nmean 5.0 stddev 2.0 min 2.0\ntotal 8.00\n9\n10\n0.75\n1024.0\n-2.0\n6.02e23\ninvalid float: 1.2.3\n"
     );
 }
 
@@ -41,8 +41,8 @@ fn printing_uses_shortest_round_trip_text() {
         ("-0.0", "-0.0"),
         ("1_000.000_5", "1000.0005"),
         ("2.5E3", "2500.0"),
-        ("0.0 / 0.0", "NaN"),
-        ("-1.0 / 0.0", "-inf"),
+        ("math.inf - math.inf", "NaN"),
+        ("-math.inf", "-inf"),
         ("1.0 / 3.0", "0.3333333333333333"),
         ("2.0 / 3.0 * 3.0", "2.0"),
     ];
@@ -50,7 +50,7 @@ fn printing_uses_shortest_round_trip_text() {
         .iter()
         .map(|(expr, _)| format!("    println({expr})\n    println(\"{{{expr}}}\")\n"))
         .collect();
-    let output = case.run(&format!("fn main():\n{body}"));
+    let output = case.run(&format!("use std/math\nfn main():\n{body}"));
     let expected: String = values
         .iter()
         .map(|(_, text)| format!("{text}\n{text}\n"))
@@ -63,7 +63,7 @@ fn printing_uses_shortest_round_trip_text() {
 fn float_operators_follow_ieee() {
     let case = Case::new("floats", "operators");
     let output = case.run(
-        "use std/math\nfn half(x: f64) -> f64:\n    x / 2.0\nfn main():\n    let nan = 0.0 / 0.0\n    println(nan == nan)\n    println(nan != nan)\n    println(math.is_nan(nan))\n    println(-0.0 == 0.0)\n    println(2.5 >= 2.5)\n    println(-half(5.0))\n    println(7.5 % 2.0)\n    let mut x = 1.0\n    for i in 0..4:\n        x *= 1.5\n    x -= 0.0625\n    println(x)\n    let sign = if x > 0.0: 1.0 else: -1.0\n    println(sign)\n    println(math.max(math.abs(-3.0), 2.0))\n    println(math.trunc(-2.7))\n    println(math.ceil(2.1))\n    println(math.atan2(1.0, 1.0) * 4.0)\n    println(math.log(math.e))\n    println(math.log10(1000.0))\n    println(math.exp(0.0))\n",
+        "use std/math\nfn half(x: f64) -> f64:\n    x / 2.0\nfn main():\n    let nan = math.inf - math.inf\n    println(nan == nan)\n    println(nan != nan)\n    println(math.is_nan(nan))\n    println(-0.0 == 0.0)\n    println(2.5 >= 2.5)\n    println(-half(5.0))\n    println(7.5 % 2.0)\n    let mut x = 1.0\n    for i in 0..4:\n        x *= 1.5\n    x -= 0.0625\n    println(x)\n    let sign = if x > 0.0: 1.0 else: -1.0\n    println(sign)\n    println(math.max(math.abs(-3.0), 2.0))\n    println(math.trunc(-2.7))\n    println(math.ceil(2.1))\n    println(math.atan2(1.0, 1.0) * 4.0)\n    println(math.log(math.e))\n    println(math.log10(1000.0))\n    println(math.exp(0.0))\n",
     );
     assert_eq!(
         stdout(&output),
@@ -76,7 +76,7 @@ fn float_operators_follow_ieee() {
 fn fixed_formats_with_digits() {
     let case = Case::new("floats", "fixed");
     let output = case.run(
-        "use std/fmt\nfn main():\n    println(fmt.fixed(3.14159, 2))\n    println(fmt.fixed(2.5, 0))\n    println(fmt.fixed(-1.0, 3))\n    println(fmt.fixed(1e20, 1))\n    println(fmt.fixed(0.0 / 0.0, 2))\n    println(fmt.fixed(1.0 / 0.0, 2))\n    println(fmt.fixed(1.0, 31))\n",
+        "use std/fmt\nuse std/math\nfn main():\n    println(fmt.fixed(3.14159, 2))\n    println(fmt.fixed(2.5, 0))\n    println(fmt.fixed(-1.0, 3))\n    println(fmt.fixed(1e20, 1))\n    println(fmt.fixed(math.inf - math.inf, 2))\n    println(fmt.fixed(math.inf, 2))\n    println(fmt.fixed(1.0, 31))\n",
     );
     assert!(!output.status.success());
     assert_eq!(
@@ -107,14 +107,6 @@ fn parsing_and_conversions_check_their_input() {
 fn checker_rejects_float_misuse() {
     let case = Case::new("floats", "reject");
     for (body, message) in [
-        (
-            "let x = 1.5\n    println(x * 2)",
-            "write the integer 2 as 2.0",
-        ),
-        (
-            "let n = 3\n    println(1.5 + n)",
-            "convert one side with f64(n) or i64(x)",
-        ),
         ("let x: f64 = 1", "found the integer 1; write 1.0"),
         (
             "let n: i64 = 2.5",

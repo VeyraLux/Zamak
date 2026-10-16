@@ -3,8 +3,8 @@ use std/fs
 use std/io
 use std/string
 
-// 统计行数、单词数和字节数：给了参数就读文件，否则读标准输入。
-// 用法：zam run examples/io/wc.zm -- <文件>
+# 统计行数、单词数和字节数：给了参数就读文件，否则读标准输入。
+# 用法：zam run examples/io/wc.zm -- <文件>
 fn count(text: &string):
     let mut lines = 0
     let mut words = 0

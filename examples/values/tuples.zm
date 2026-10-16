@@ -1,8 +1,8 @@
-// 元组：(i64, string) 这样的类型、(a, b) 字面量、t.0 取项、let (a, b) = ... 拆开，函数可以返回多个值。
+# 元组：(i64, string) 这样的类型、(a, b) 字面量、t.0 取项、let (a, b) = ... 拆开，函数可以返回多个值。
 use std/string
 
 fn divmod(a: i64, b: i64) -> (i64, i64):
-    (a / b, a % b)
+    (a // b, a % b)
 
 fn longest(words: &[string]) -> (string, i64):
     let mut best = ""

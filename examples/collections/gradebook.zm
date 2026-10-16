@@ -1,5 +1,5 @@
-// 结构体列表、结构体借用与结构体字典：读入成绩，按平均分排序后输出报表。
-// 运行：zam run examples/collections/gradebook.zm < examples/collections/grades.txt
+# 结构体列表、结构体借用与结构体字典：读入成绩，按平均分排序后输出报表。
+# 运行：zam run examples/collections/gradebook.zm < examples/collections/grades.txt
 use std/fmt
 use std/io
 use std/string
@@ -12,7 +12,7 @@ struct Group:
     count: i64
     best: string
 
-// 只读借用：不移动学生，也不复制成绩列表。
+# 只读借用：不移动学生，也不复制成绩列表。
 fn average(s: &Student) -> f64:
     if s.scores.len() == 0:
         return 0.0
@@ -24,7 +24,7 @@ fn average(s: &Student) -> f64:
 
     f64(total) / f64(s.scores.len())
 
-// 可变借用：原地修改调用方的学生。
+# 可变借用：原地修改调用方的学生。
 fn curve(s: &mut Student, bonus: i64):
     for i in 0..s.scores.len():
         s.scores[i] = s.scores[i] + bonus
@@ -45,7 +45,7 @@ fn grade(avg: f64) -> string:
 fn main() -> !string:
     let mut students: [Student] = []
     let mut line = ""
-    // 每行：名字 分数 分数 ...
+    # 每行：名字 分数 分数 ...
     while io.read_line(&mut line)?:
         let words = string.words(&line)
 
@@ -59,13 +59,13 @@ fn main() -> !string:
             let score = string.parse_i64(&words[i])?
             students[last].scores.push(score)
 
-    // 名字以 * 结尾的学生加 5 分。
+    # 名字以 * 结尾的学生加 5 分。
     for i in 0..students.len():
         if string.ends_with(&students[i].name, "*"):
             curve(&mut students[i], 5)
             students[i].name = string.replace(&students[i].name, "*", "")
 
-    // 按平均分从高到低排序（交换整个元素，不复制字符串和列表）。
+    # 按平均分从高到低排序（交换整个元素，不复制字符串和列表）。
     for i in 0..students.len():
         for j in 0..students.len() - 1 - i:
             if average(&students[j]) < average(&students[j + 1]):

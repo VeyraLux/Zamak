@@ -3,9 +3,9 @@ use crate::compiler::{
     each_bindings, elem_from, field_function, field_path, func_error, func_sig, func_type,
     func_type_full, generic_value, instance_of, instance_with, is_string, lambda_body,
     lambda_prints, linked_tuple, loop_list, membership, method_args, method_signature, nest,
-    nested, numeric, overload, record_id, record_method, record_order, sort_by_type, string_method,
-    terminates, tuple_fields, Block, Elem, Expr, Instruction, Module, Pattern, Receiver, Type,
-    COPY,
+    nested, numeric, overload, promote, record_id, record_method, record_order, sort_by_type,
+    string_method, terminates, tuple_fields, Block, Elem, Expr, Instruction, Module, Pattern,
+    Receiver, Type, COPY,
 };
 use crate::project::Result;
 use std::collections::BTreeMap;
@@ -63,19 +63,48 @@ static int64_t mul(int64_t a, int64_t b) {
     return a*b;
 }
 #endif
+// 除以零与 Python 一样报 division by zero。
+static void zam_zero_division(void) { fputs("zam: division by zero\n", stderr); exit(1); }
 static int64_t quotient(int64_t a, int64_t b) {
-    if (!b || (a == INT64_MIN && b == -1)) arithmetic_error();
+    if (!b) zam_zero_division();
+    if (a == INT64_MIN && b == -1) arithmetic_error();
 #if defined(__GNUC__) || defined(__clang__)
     if (((uint64_t)a | (uint64_t)b) <= UINT32_MAX) return (int64_t)((uint32_t)a / (uint32_t)b);
 #endif
     return a/b;
 }
 static int64_t zam_remainder(int64_t a, int64_t b) {
-    if (!b || (a == INT64_MIN && b == -1)) arithmetic_error();
+    if (!b) zam_zero_division();
+    if (a == INT64_MIN && b == -1) arithmetic_error();
 #if defined(__GNUC__) || defined(__clang__)
     if (((uint64_t)a | (uint64_t)b) <= UINT32_MAX) return (int64_t)((uint32_t)a % (uint32_t)b);
 #endif
     return a%b;
+}
+// Python 的 `//` 与 `%`：商向下取整，余数的符号跟除数。
+static int64_t zam_floordiv(int64_t a, int64_t b) {
+    int64_t q = quotient(a, b);
+    // 用乘法回推余数，不再做第二次除法；|q * b| <= |a|，不会溢出。
+    if (a - q * b != 0 && ((a < 0) != (b < 0))) q -= 1;
+    return q;
+}
+static int64_t zam_mod(int64_t a, int64_t b) {
+    if (!b) zam_zero_division();
+    if (b == -1) return 0;
+    int64_t r = a % b;
+    if (r != 0 && ((r < 0) != (b < 0))) r += b;
+    return r;
+}
+// 除数是正的常量：不会除以零也不会溢出，只按符号修正。
+static int64_t zam_floordiv_k(int64_t a, int64_t k) { int64_t q = a / k; return (a - q * k < 0) ? q - 1 : q; }
+static int64_t zam_mod_k(int64_t a, int64_t k) { int64_t r = a % k; return r < 0 ? r + k : r; }
+static double zam_fdiv(double a, double b) { if (b == 0.0) zam_zero_division(); return a / b; }
+static double zam_ffloordiv(double a, double b) { if (b == 0.0) zam_zero_division(); return floor(a / b); }
+static double zam_fmod(double a, double b) {
+    if (b == 0.0) zam_zero_division();
+    double r = fmod(a, b);
+    if (r != 0.0 && ((r < 0.0) != (b < 0.0))) r += b;
+    return r;
 }
 static int64_t checked_index(int64_t index, size_t length) {
     if (index < 0 || (uintmax_t)index >= length) { fputs("zam: array index out of bounds\n", stderr); exit(1); }
@@ -2358,9 +2387,19 @@ impl<'a> Generator<'a> {
     }
     /// 字符串上的方法改写成 std/string 的调用（检查器已确认存在）。
     fn string_call(&self, expr: &Expr) -> Option<Expr> {
-        if let Expr::Binary(op, item, _) = expr {
+        if let Expr::Binary(op, item, other) = expr {
             if op != "in" && op != "not in" {
-                return None;
+                // 构造（`Option.None`）要按另一边定类型，不是数字运算。
+                let constructor = |e: &Expr| matches!(e, Expr::Record(..) | Expr::Variant(..));
+                if op == "&&"
+                    || op == "||"
+                    || bitwise(op)
+                    || constructor(item)
+                    || constructor(other)
+                {
+                    return None;
+                }
+                return promote(expr, self.ty(item), self.ty(other));
             }
             return membership(expr, is_text(self.ty(item)));
         }
@@ -2517,11 +2556,12 @@ impl<'a> Generator<'a> {
             Expr::Try(inner) => self.ty(inner),
             Expr::Catch(inner, _, _) => self.ty(inner),
             Expr::Unary('!', _) => Type::Bool,
+            Expr::Unary('f', _) => Type::Float,
             Expr::Unary(_, value) => numeric(self.ty(value)),
             Expr::Binary(op, left, _) if op == "+" && is_text(self.ty(left)) => Type::Owned,
             Expr::Binary(op, _, _) if bitwise(op) => Type::Int,
             Expr::Binary(op, left, _) => {
-                if matches!(op.as_str(), "+" | "-" | "*" | "/" | "%") {
+                if matches!(op.as_str(), "+" | "-" | "*" | "/" | "//" | "%") {
                     numeric(self.ty(left))
                 } else {
                     Type::Bool
@@ -3078,6 +3118,8 @@ impl<'a> Generator<'a> {
                         format!("sub(0, {value})")
                     } else if *op == '~' {
                         format!("(~{value})")
+                    } else if *op == 'f' {
+                        format!("((double){value})")
                     } else {
                         format!("!{value}")
                     },
@@ -3123,19 +3165,19 @@ impl<'a> Generator<'a> {
                 let a = self.expr(left);
                 let b = self.expr(right);
                 self.scalar(
-                    &if op == "%" {
-                        format!("fmod({a}, {b})")
-                    } else {
-                        format!("({a} {op} {b})")
+                    &match op.as_str() {
+                        "/" => format!("zam_fdiv({a}, {b})"),
+                        "//" => format!("zam_ffloordiv({a}, {b})"),
+                        "%" => format!("zam_fmod({a}, {b})"),
+                        _ => format!("({a} {op} {b})"),
                     },
                     ty,
                 )
             }
             Expr::Binary(op, left, right) => {
                 let ty = self.ty(expr);
-                // Only zero and -1 can make signed division or remainder invalid.
-                let safe_divisor =
-                    matches!(right.as_ref(), Expr::Int(value) if !matches!(*value, 0 | -1));
+                // A positive constant divisor can neither be zero nor overflow.
+                let positive_constant = matches!(right.as_ref(), Expr::Int(value) if *value > 0);
                 // Dynamic divisors retain the runtime's guarded 32-bit fast path.
                 // Unsigned power-of-two reduction exposes a precise result range;
                 // other constants retain signed reduction to avoid slower magic division.
@@ -3158,14 +3200,15 @@ impl<'a> Generator<'a> {
                     return value;
                 }
                 let right = self.expr(right);
-                if matches!(op.as_str(), "/" | "%")
+                if matches!(op.as_str(), "//" | "%")
                     && unsigned_constant_divisor
                     && self.proofs.unsigned_division(expr)
                 {
-                    // Both operands are nonnegative and the divisor is positive.
-                    // Their quotient/remainder fits i64, so the cast back is exact.
+                    // Both operands are nonnegative and the divisor is positive:
+                    // floor division and Python's remainder equal C's, and fit i64.
+                    let c = if op == "//" { "/" } else { "%" };
                     return self.scalar(
-                        &format!("(int64_t)((uint64_t){left} {op} (uint64_t){right})"),
+                        &format!("(int64_t)((uint64_t){left} {c} (uint64_t){right})"),
                         ty,
                     );
                 }
@@ -3173,8 +3216,10 @@ impl<'a> Generator<'a> {
                     "+" if !self.proofs.arithmetic(expr) => Some("add"),
                     "-" if !self.proofs.arithmetic(expr) => Some("sub"),
                     "*" if !self.proofs.arithmetic(expr) => Some("mul"),
-                    "/" if !safe_divisor => Some("quotient"),
-                    "%" if !safe_divisor => Some("zam_remainder"),
+                    "//" if positive_constant => Some("zam_floordiv_k"),
+                    "%" if positive_constant => Some("zam_mod_k"),
+                    "//" => Some("zam_floordiv"),
+                    "%" => Some("zam_mod"),
                     "<<" => Some("zam_shl"),
                     ">>" => Some("zam_shr"),
                     _ => None,
@@ -4030,7 +4075,7 @@ impl<'a> Generator<'a> {
             }
             Expr::Unary(op, value) => *op == '-' && self.scalar_invariant_expr(value, mutated),
             Expr::Binary(op, left, right) => {
-                matches!(op.as_str(), "+" | "-" | "*" | "/" | "%")
+                matches!(op.as_str(), "+" | "-" | "*" | "//" | "%")
                     && self.scalar_invariant_expr(left, mutated)
                     && self.scalar_invariant_expr(right, mutated)
             }

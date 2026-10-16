@@ -259,7 +259,7 @@ fn list_and_map_methods() {
     );
     // 排序稳定：-0.0 与 0.0 保持原顺序；NaN 排在最后；字符串元素移出与清空都不泄漏。
     let output = case.run(
-        "fn main():\n    let mut xs: [f64] = [0.0, -0.0, 1.0 / 0.0 - 1.0 / 0.0, -2.0, 0.0]\n    xs.sort()\n    println(\"{xs[0]} {xs[1]} {xs[2]} {xs[3]} {xs[4]}\")\n    let mut words: [string] = [\"b\", \"a\"]\n    words.insert(1, \"c\")\n    let w = words.remove(0)\n    println(w)\n    let tail = words.slice(1, 2)\n    words.extend(tail)\n    println(\"{words[0]}{words[1]}{words[2]}\")\n    words.clear()\n    println(words.len())\n",
+        "use std/math\nfn main():\n    let mut xs: [f64] = [0.0, -0.0, math.inf - math.inf, -2.0, 0.0]\n    xs.sort()\n    println(\"{xs[0]} {xs[1]} {xs[2]} {xs[3]} {xs[4]}\")\n    let mut words: [string] = [\"b\", \"a\"]\n    words.insert(1, \"c\")\n    let w = words.remove(0)\n    println(w)\n    let tail = words.slice(1, 2)\n    words.extend(tail)\n    println(\"{words[0]}{words[1]}{words[2]}\")\n    words.clear()\n    println(words.len())\n",
     );
     assert_eq!(stdout(&output), "-2.0 0.0 -0.0 0.0 NaN\nb\ncaa\n0\n");
     for (body, message) in [

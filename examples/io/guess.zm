@@ -1,5 +1,5 @@
-// 猜数字：程序想一个 1 到 100 之间的数，你来猜，它告诉你大了还是小了。
-// zam run examples/io/guess.zm；给一个整数参数作随机种子时，每次想的数都一样（方便测试）。
+# 猜数字：程序想一个 1 到 100 之间的数，你来猜，它告诉你大了还是小了。
+# zam run examples/io/guess.zm；给一个整数参数作随机种子时，每次想的数都一样（方便测试）。
 use std/env
 use std/io
 use std/random

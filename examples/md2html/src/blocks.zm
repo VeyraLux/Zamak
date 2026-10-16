@@ -2,13 +2,13 @@ use std/string
 use html
 use inline
 
-// 块级结构：标题、段落、无序/有序列表、引用、围栏代码块、分隔线。逐行处理，结果按行连接。
+# 块级结构：标题、段落、无序/有序列表、引用、围栏代码块、分隔线。逐行处理，结果按行连接。
 pub fn render(text: &string) -> string:
     let lines = string.lines(text)
     let mut out: [string] = []
     let mut para: [string] = []
     let mut code: [string] = []
-    // 当前打开的块：0 无，1 无序列表，2 有序列表，3 代码块，4 引用。
+    # 当前打开的块：0 无，1 无序列表，2 有序列表，3 代码块，4 引用。
     let mut open = 0
 
     for line in &lines:
@@ -95,7 +95,7 @@ pub fn render(text: &string) -> string:
             out.push("<p>{body}</p>")
             continue
 
-        // 普通文本结束列表与引用，连续的行合成一个段落。
+        # 普通文本结束列表与引用，连续的行合成一个段落。
         close_block(open, &mut out)
         open = 0
         para.push(trimmed)
@@ -124,7 +124,7 @@ fn close_block(open: i64, out: &mut [string]):
     elif open == 4:
         out.push("</blockquote>")
 
-// `# 标题` 到 `###### 标题`：返回井号个数，不是标题返回 0。
+# `# 标题` 到 `###### 标题`：返回井号个数，不是标题返回 0。
 fn heading_level(text: &string) -> i64:
     let size = string.byte_len(text)
     let mut level = 0
@@ -137,7 +137,7 @@ fn heading_level(text: &string) -> i64:
 
     0
 
-// `12. 内容`：返回标记长度（含点和空格），不是有序列表项返回 0。
+# `12. 内容`：返回标记长度（含点和空格），不是有序列表项返回 0。
 fn ordered_marker(text: &string) -> i64:
     let size = string.byte_len(text)
     let mut i = 0

@@ -3,8 +3,8 @@ use std/fs
 use std/io
 use std/string
 
-// 倒序输出各行，并把每行的单词数写在前面；给了参数就读文件，否则读标准输入。
-// 用法：zam run examples/collections/tac.zm -- <文件>
+# 倒序输出各行，并把每行的单词数写在前面；给了参数就读文件，否则读标准输入。
+# 用法：zam run examples/collections/tac.zm -- <文件>
 fn main() -> !string:
     let args = env.args()
     let mut text = ""
@@ -25,7 +25,7 @@ fn main() -> !string:
 
         for word in &words:
             if string.byte_len(word) > string.byte_len(&longest):
-                // 循环变量是对列表元素的借用；要留下来就显式复制一份。
+                # 循环变量是对列表元素的借用；要留下来就显式复制一份。
                 longest = string.copy(word)
 
     let space = " "

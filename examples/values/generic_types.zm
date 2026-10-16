@@ -1,4 +1,4 @@
-// 泛型结构体与枚举：struct Name[T]、enum Name[T]，以及内置的 Option[T]。
+# 泛型结构体与枚举：struct Name[T]、enum Name[T]，以及内置的 Option[T]。
 
 struct Pair[A, B]:
     first: A

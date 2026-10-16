@@ -1,8 +1,8 @@
 use std/io
 use std/string
 
-// 逐行读取整数并求和：空行跳过，遇到不是整数的行就报错退出（退出码 1）。
-// 用法（pwsh）："3`n4`n5" | zam run examples/io/sum.zm
+# 逐行读取整数并求和：空行跳过，遇到不是整数的行就报错退出（退出码 1）。
+# 用法（pwsh）："3`n4`n5" | zam run examples/io/sum.zm
 fn main() -> !string:
     let mut line = ""
     let mut total = 0

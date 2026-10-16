@@ -494,7 +494,7 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
             Some("index a list, array or map; slice a string instead"),
         );
     }
-    if message.contains("unexpected character") {
+    if message.contains("unexpected character") || message.contains("comments start with #") {
         (
             "ZM100",
             "syntax",

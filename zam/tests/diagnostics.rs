@@ -665,7 +665,6 @@ fn python_habits_get_the_zamak_spelling() {
         ("println(int(\"5\"))", "s.parse_i64()?"),
         ("xs.append(3)", "use .push(v)"),
         ("let ys = xs[1:]", "xs.slice(a, b)"),
-        ("println(n // 2)", "integer division is written a / b"),
         ("println(s[0])", "s.slice(i, i + 1)"),
         ("let t = s + n", "interpolate them"),
     ] {

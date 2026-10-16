@@ -1,4 +1,4 @@
-// 函数值与匿名函数：函数类型写作 fn(i64) -> i64，匿名函数写作 fn(x): x * 2。
+# 函数值与匿名函数：函数类型写作 fn(i64) -> i64，匿名函数写作 fn(x): x * 2。
 use std/string
 
 struct Button:
@@ -29,27 +29,27 @@ fn count_if[T](items: &[T], keep: fn(&T) -> bool) -> i64:
 fn adder() -> fn(i64) -> i64: fn(x): x + 1
 
 fn main():
-    // 具名函数当值传。
+    # 具名函数当值传。
     println(twice(double, 5))
 
-    // 不用外层变量的匿名函数可以存进变量。
+    # 不用外层变量的匿名函数可以存进变量。
     let triple = fn(n: i64) -> i64: n * 3
     println(twice(triple, 2))
     let inc = adder()
     println(inc(41))
 
-    // 用到外层变量的匿名函数（闭包）直接当实参传。
+    # 用到外层变量的匿名函数（闭包）直接当实参传。
     let words: [string] = ["apple", "kiwi", "banana"]
     println(map(&words, fn(w): string.byte_len(w)))
     let min_len = 5
     println(count_if(&words, fn(w): string.byte_len(w) >= min_len))
     println(map(&words, fn(w): string.upper(w) + "!"))
 
-    // 结构体里存函数，调用写法和方法一样。
+    # 结构体里存函数，调用写法和方法一样。
     let button = Button(label: "ok", on_click: double)
     println(button.on_click(21))
 
-    // 列表按自定义规则排序：before(a, b) 为真时 a 排在前面，排序是稳定的。
+    # 列表按自定义规则排序：before(a, b) 为真时 a 排在前面，排序是稳定的。
     let mut sorted: [string] = ["kiwi", "fig", "banana"]
     sorted.sort_by(fn(a, b): string.byte_len(a) < string.byte_len(b))
     println(sorted)

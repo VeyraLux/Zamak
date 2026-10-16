@@ -280,7 +280,7 @@ fn constants_fold_and_inline() {
         ),
         (
             "const A = 1 / 0\nfn main(): pass",
-            "integer arithmetic error in constant",
+            "division by zero in a constant",
         ),
         (
             "const A = 1 << 64\nfn main(): pass",
@@ -306,7 +306,6 @@ fn constants_fold_and_inline() {
             "const A = 1\nfn main():\n    let A = 2",
             "A is already a constant",
         ),
-        ("const A = 1 + 2.0\nfn main(): pass", "mixes i64 and f64"),
         (
             "const A = 1\nfn take(s: &string): pass\nfn main(): take(&A)",
             "cannot borrow the constant A",
@@ -746,5 +745,15 @@ fn automatic_shared_borrows() {
     assert_eq!(
         stdout(&case.run("struct P:\n    x: i64\n    s: string\n\nfn main():\n    let p = P(x: 1, s: \"a\")\n    let q = copy(p)\n    let t = copy(p.s)\n    let xs: [string] = [\"k\"]\n    let u = copy(xs[0])\n    println(q)\n    println(t + u)\n    println(p)\n")),
         "P(x: 1, s: \"a\")\nak\nP(x: 1, s: \"a\")\n"
+    );
+}
+
+#[test]
+fn python_division() {
+    let case = Case::new("expressions", "python-division");
+    // 除法与 Python 相同：/ 得小数，// 向下取整，% 符号跟除数，整数与小数混用变小数，常量同样折叠。
+    assert_eq!(
+        stdout(&case.run("const HALF = 7 / 2\nconst FLOOR = -7 // 2\n\nfn main():\n    println(7 / 2)\n    println(6 / 3)\n    println(7 // 2)\n    println(-7 // 2)\n    println(7 % 3)\n    println(-7 % 3)\n    println(7 % -3)\n    println(7.5 // 2.0)\n    println(-7.5 % 2.0)\n    println(7 / 2.0)\n    println(1 + 2.5)\n    println(3 < 3.5)\n    println(HALF)\n    println(FLOOR)\n    let mut n = 17\n    n //= 5\n    println(n)\n    let xs = [10, 20, 30]\n    let i = 5\n    println(xs[i % 3])\n    let total = 7\n    let count = 2\n    let avg = total / count\n    println(avg)\n    # comment\n    println(2 ** 3 // 3)\n")),
+        "3.5\n2.0\n3\n-4\n1\n2\n-2\n3.0\n0.5\n3.5\n3.5\ntrue\n3.5\n-4\n3\n30\n3.5\n2\n"
     );
 }

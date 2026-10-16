@@ -91,7 +91,7 @@ struct Person:
     name: string
     age: i64
 
-// Errors are values: `T!string` returns either a T or an error message.
+# Errors are values: `T!string` returns either a T or an error message.
 fn parse_age(text: &string) -> i64!string:
     let age = string.parse_i64(text)?
 

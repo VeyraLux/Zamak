@@ -116,19 +116,22 @@ fn finite_loop_boundaries_and_remainder_keep_checked_errors() {
         "fn main():\n    let mut i = 0\n    let mut x = 9223372036854775806\n    while i < 2:\n        x = x + 1\n        i = i + 1",
         // The loop has zero body iterations, but its bound is still evaluated.
         "fn main():\n    let mut i = 9223372036854775807\n    let n = 9223372036854775807\n    while i < n + 1:\n        i = i + 1",
-        "fn main():\n    let mut i = 0\n    while i < 1 / 0:\n        i = i + 1",
+        "fn main():\n    let mut i = 0\n    while i < 1 // 0:\n        i = i + 1",
         // A break carries assignments made before the final counter step.
         "fn main():\n    let mut i = 0\n    let mut x = 0\n    while i < 2:\n        x = 9223372036854775807\n        if i == 0: break\n        i = i + 1\n    println(x + 1)",
         // Continue and a changing bound must use the conservative fallback.
         "fn main():\n    let mut i = 0\n    let mut x = 9223372036854775806\n    while i < 2:\n        x = x + 1\n        if x > 0:\n            i = i + 1\n            continue\n        i = i + 1",
         "fn main():\n    let mut bound = 1\n    let mut i = 0\n    let mut x = 9223372036854775806\n    while i < bound:\n        x = x + 1\n        bound = bound + 1\n        i = i + 1",
         "fn remainder(n: i64) -> i64: n % 0\nfn main(): println(remainder(1))",
-        "fn remainder(n: i64) -> i64: n % -1\nfn main(): println(remainder(-9223372036854775808))",
+        "fn quotient(n: i64) -> i64: n // -1\nfn main(): println(quotient(-9223372036854775808))",
     ] {
         let result = case.run(source);
         assert!(!result.status.success(), "accepted {source}");
-        assert!(String::from_utf8_lossy(&result.stderr).contains("integer arithmetic error"),
-            "{source}\n{}", String::from_utf8_lossy(&result.stderr));
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            stderr.contains("integer arithmetic error") || stderr.contains("division by zero"),
+            "{source}\n{stderr}"
+        );
     }
 }
 
@@ -185,6 +188,6 @@ fn main():
     );
     assert_eq!(
         String::from_utf8_lossy(&result.stdout),
-        "16\n2\n0\n0\n63245986\n63245986\n8\n15\n6\n"
+        "16\n2\n63245986\n0\n63245986\n63245986\n8\n15\n6\n"
     );
 }

@@ -1,6 +1,6 @@
 use std/string
 
-// 把 & < > " 换成 HTML 实体。按字节扫描：这几个都是 ASCII，切片不会切到多字节字符中间。
+# 把 & < > " 换成 HTML 实体。按字节扫描：这几个都是 ASCII，切片不会切到多字节字符中间。
 pub fn escape(text: &string) -> string:
     let mut parts: [string] = []
     let mut start = 0

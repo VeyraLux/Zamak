@@ -1,5 +1,5 @@
-// 枚举与 match：把每行算式切成记号列表，再按乘除优先求值。
-// 运行：zam run examples/control/calc.zm < examples/control/calc.txt
+# 枚举与 match：把每行算式切成记号列表，再按乘除优先求值。
+# 运行：zam run examples/control/calc.zm < examples/control/calc.txt
 use std/io
 use std/string
 
@@ -38,7 +38,7 @@ fn number(token: &Token) -> i64!string:
         Num(value): value
         Op(_): fail "expected a number"
 
-// 乘除先并进当前项，遇到加减再把当前项累加进总和。
+# 乘除先并进当前项，遇到加减再把当前项累加进总和。
 fn evaluate(tokens: &[Token]) -> i64!string:
     if tokens.len() == 0:
         fail "empty expression"
@@ -61,7 +61,7 @@ fn evaluate(tokens: &[Token]) -> i64!string:
                     if next == 0:
                         fail "division by zero"
 
-                    term /= next
+                    term //= next
                 elif symbol == '+':
                     total += term
                     term = next

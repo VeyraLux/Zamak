@@ -1,4 +1,4 @@
-// 自定义错误类型：错误可以是枚举或结构体，catch 里用 match 分情况处理，? 照常向上传。
+# 自定义错误类型：错误可以是枚举或结构体，catch 里用 match 分情况处理，? 照常向上传。
 use std/string
 
 enum ConfigError:
