@@ -1,0 +1,39 @@
+// 像 tree 命令一样列出目录：子目录后面加 /，文件后面写大小，最后汇总。
+// zam run examples/io/tree.zm -- examples
+use std/env
+use std/fs
+use std/path
+use std/string
+
+struct Totals:
+    dirs: i64
+    files: i64
+    bytes: i64
+
+fn walk(dir: &string, depth: i64, totals: &mut Totals) -> !string:
+    let indent = string.repeat("  ", depth)
+    let names = fs.list(dir)?
+
+    for name in names:
+        let full = path.join(dir, name)
+
+        if fs.is_dir(&full):
+            println("{indent}{name}/")
+            totals.dirs += 1
+            walk(&full, depth + 1, totals)?
+        else:
+            let size = fs.size(&full)?
+            println("{indent}{name} ({size} bytes)")
+            totals.files += 1
+            totals.bytes += size
+
+fn main() -> !string:
+    let root = if env.arg_count() > 0: env.arg(0)? else: "."
+
+    if not fs.is_dir(&root):
+        fail "not a directory: {root}"
+
+    let mut totals = Totals(dirs: 0, files: 0, bytes: 0)
+    println("{root}/")
+    walk(&root, 1, &mut totals)?
+    println("{totals.dirs} directories, {totals.files} files, {totals.bytes} bytes")

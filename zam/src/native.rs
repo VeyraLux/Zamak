@@ -231,6 +231,18 @@ __declspec(dllimport) void __stdcall GetSystemTimePreciseAsFileTime(void *);
 __declspec(dllimport) int __stdcall QueryPerformanceCounter(long long *);
 __declspec(dllimport) int __stdcall QueryPerformanceFrequency(long long *);
 __declspec(dllimport) void __stdcall Sleep(unsigned long);
+__declspec(dllimport) int __stdcall MoveFileExW(const wchar_t *, const wchar_t *, unsigned long);
+#endif
+#ifdef _WIN32
+#include <direct.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <wchar.h>
+#else
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <dirent.h>
+#include <unistd.h>
 #endif
 // std/random 的状态：整个程序共用一份，定义在入口模块的目标文件里。
 extern uint64_t zam_random_state[4];
@@ -323,6 +335,80 @@ static double zam_random_unit(void) { return (double)(zam_random_next() >> 11) *
 extern int zam_argc;
 extern char **zam_argv;
 static void zam_alloc_failed(void) { fputs("zam: allocation failed\n", stderr); exit(1); }
+// std/fs 的路径：UTF-8 里有 NUL 时返回 NULL（这样的路径不存在）。Windows 转成 UTF-16。
+#ifdef _WIN32
+static wchar_t *zam_path(S *path) {
+    int n = 0; size_t i; wchar_t *wide;
+    for (i = 0; i < path->len; i++) if (!path->data[i]) return NULL;
+    if (path->len > INT_MAX / 2) return NULL;
+    if (path->len) {
+        n = MultiByteToWideChar(65001, 8, (const char*)path->data, (int)path->len, NULL, 0);
+        if (n <= 0) return NULL;
+    }
+    wide = (wchar_t*)malloc(((size_t)n + 1) * sizeof(wchar_t));
+    if (!wide) zam_alloc_failed();
+    if (n) MultiByteToWideChar(65001, 8, (const char*)path->data, (int)path->len, wide, n);
+    wide[n] = 0;
+    return wide;
+}
+#else
+static char *zam_path(S *path) {
+    size_t i; char *name;
+    for (i = 0; i < path->len; i++) if (!path->data[i]) return NULL;
+    name = (char*)malloc(path->len + 1);
+    if (!name) zam_alloc_failed();
+    if (path->len) memcpy(name, path->data, path->len);
+    name[path->len] = 0;
+    return name;
+}
+#endif
+// 0：不存在（或路径无效）；1：普通文件；2：目录；3：其他。size 可为 NULL。
+static int zam_kind(S *path, int64_t *size) {
+    int kind;
+#ifdef _WIN32
+    struct _stat64 st; wchar_t *name = zam_path(path);
+    if (!name) return 0;
+    kind = _wstat64(name, &st) != 0 ? 0 : (st.st_mode & _S_IFDIR) ? 2 : (st.st_mode & _S_IFREG) ? 1 : 3;
+    free(name);
+#else
+    struct stat st; char *name = zam_path(path);
+    if (!name) return 0;
+    kind = stat(name, &st) != 0 ? 0 : S_ISDIR(st.st_mode) ? 2 : S_ISREG(st.st_mode) ? 1 : 3;
+    free(name);
+#endif
+    if (kind && size) *size = (int64_t)st.st_size;
+    return kind;
+}
+static int zam_mkdir_one(S *path) {
+    int ok;
+#ifdef _WIN32
+    wchar_t *name = zam_path(path);
+    if (!name) return 0;
+    ok = _wmkdir(name) == 0;
+#else
+    char *name = zam_path(path);
+    if (!name) return 0;
+    ok = mkdir(name, 0777) == 0;
+#endif
+    free(name);
+    return ok;
+}
+static int zam_separator(unsigned char c) {
+#ifdef _WIN32
+    return c == '/' || c == '\\';
+#else
+    return c == '/';
+#endif
+}
+static int zam_name_order(const void *a, const void *b) { return string_compare((S*)a, (S*)b); }
+// 路径最后一段的起点；末尾的分隔符不算（`a/b/` 的最后一段是 `b`）。
+static void zam_last_part(S *p, size_t *start, size_t *end) {
+    size_t e = p->len;
+    while (e > 1 && zam_separator(p->data[e - 1])) e--;
+    *end = e;
+    while (e > 0 && !zam_separator(p->data[e - 1])) e--;
+    *start = e;
+}
 static int zam_space(unsigned char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
 static void zam_string_bounds(void) { fputs("zam: string index out of bounds\n", stderr); exit(1); }
 // 从 p 开始的一个 UTF-8 字符：返回字节数并写出码点；不合法（截断、过长编码、代理区、超出范围）时返回 0。
@@ -779,6 +865,214 @@ return (int64_t)((uint64_t)p0 + zam_random_below((uint64_t)p1 - (uint64_t)p0 + 1
         // 不含终点，与 for i in a..b 相同。
         body: r#"if (p0 >= p1) { fputs("zam: random.randrange needs start < stop\n", stderr); exit(1); }
 return (int64_t)((uint64_t)p0 + zam_random_below((uint64_t)p1 - (uint64_t)p0));"#,
+    },
+    Builtin {
+        name: "std/fs:append",
+        params: &[Type::Shared, Type::Shared],
+        result: Type::Unit,
+        fallible: true,
+        body: r#"int ok;
+FILE *file = zam_open(p0, "ab");
+if (!file) return F_void_err(zam_message("cannot open ", p0));
+ok = !p1->len || fwrite(p1->data, 1, p1->len, file) == p1->len;
+if (fclose(file) != 0) ok = 0;
+if (!ok) return F_void_err(zam_message("cannot write ", p0));
+return F_void_ok();"#,
+    },
+    Builtin {
+        name: "std/fs:exists",
+        params: &[Type::Shared],
+        result: Type::Bool,
+        fallible: false,
+        body: "return zam_kind(p0, NULL) != 0;",
+    },
+    Builtin {
+        name: "std/fs:is_file",
+        params: &[Type::Shared],
+        result: Type::Bool,
+        fallible: false,
+        body: "return zam_kind(p0, NULL) == 1;",
+    },
+    Builtin {
+        name: "std/fs:is_dir",
+        params: &[Type::Shared],
+        result: Type::Bool,
+        fallible: false,
+        body: "return zam_kind(p0, NULL) == 2;",
+    },
+    Builtin {
+        name: "std/fs:size",
+        params: &[Type::Shared],
+        result: Type::Int,
+        fallible: true,
+        body: r#"int64_t size = 0;
+if (zam_kind(p0, &size) != 1) return F_int64_t_err(zam_message("not a file: ", p0));
+return F_int64_t_ok(size);"#,
+    },
+    Builtin {
+        name: "std/fs:list",
+        params: &[Type::Shared],
+        result: Type::List(Elem::Str),
+        fallible: true,
+        // 目录里的名字（不含 . 与 ..），按字节排序，每个平台顺序相同。
+        body: r#"Ls out = {0};
+#ifdef _WIN32
+wchar_t *dir = zam_path(p0), *pattern; size_t n; intptr_t handle; struct _wfinddata64_t data;
+if (!dir || zam_kind(p0, NULL) != 2) { free(dir); return F_Ls_err(zam_message("cannot list ", p0)); }
+n = wcslen(dir);
+pattern = (wchar_t*)malloc((n + 3) * sizeof(wchar_t));
+if (!pattern) zam_alloc_failed();
+memcpy(pattern, dir, n * sizeof(wchar_t));
+if (n && dir[n - 1] != L'/' && dir[n - 1] != L'\\') pattern[n++] = L'\\';
+pattern[n++] = L'*'; pattern[n] = 0;
+free(dir);
+handle = _wfindfirst64(pattern, &data);
+free(pattern);
+if (handle == -1) return F_Ls_err(zam_message("cannot list ", p0));
+do {
+    int bytes; char *text;
+    if (!wcscmp(data.name, L".") || !wcscmp(data.name, L"..")) continue;
+    bytes = WideCharToMultiByte(65001, 0, data.name, -1, NULL, 0, NULL, NULL);
+    if (bytes <= 0) continue;
+    text = (char*)malloc((size_t)bytes);
+    if (!text) zam_alloc_failed();
+    WideCharToMultiByte(65001, 0, data.name, -1, text, bytes, NULL, NULL);
+    pushLs(&out, own((const unsigned char*)text, (size_t)bytes - 1));
+    free(text);
+} while (_wfindnext64(handle, &data) == 0);
+_findclose(handle);
+#else
+char *dir = zam_path(p0); DIR *stream; struct dirent *entry;
+if (!dir) return F_Ls_err(zam_message("cannot list ", p0));
+stream = opendir(dir);
+free(dir);
+if (!stream) return F_Ls_err(zam_message("cannot list ", p0));
+while ((entry = readdir(stream)) != NULL) {
+    if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+    pushLs(&out, own((const unsigned char*)entry->d_name, strlen(entry->d_name)));
+}
+closedir(stream);
+#endif
+if (out.len > 1) qsort(out.data, out.len, sizeof(S), zam_name_order);
+return F_Ls_ok(out);"#,
+    },
+    Builtin {
+        name: "std/fs:mkdir",
+        params: &[Type::Shared],
+        result: Type::Unit,
+        fallible: true,
+        // 连带创建上级目录；目录已经存在不算错误（Python 的 os.makedirs(exist_ok=True)）。
+        body: r#"size_t i;
+if (!p0->len) return F_void_err(zam_message("cannot create directory ", p0));
+for (i = 1; i <= p0->len; i++) {
+    if (i == p0->len || zam_separator(p0->data[i])) {
+        S prefix; prefix.data = p0->data; prefix.len = i;
+        if (zam_kind(&prefix, NULL) == 0) zam_mkdir_one(&prefix);
+    }
+}
+if (zam_kind(p0, NULL) != 2) return F_void_err(zam_message("cannot create directory ", p0));
+return F_void_ok();"#,
+    },
+    Builtin {
+        name: "std/fs:remove",
+        params: &[Type::Shared],
+        result: Type::Unit,
+        fallible: true,
+        // 删除文件或空目录；目录里还有东西时报错，不会递归删除。
+        body: r#"int kind = zam_kind(p0, NULL), ok;
+#ifdef _WIN32
+wchar_t *name = zam_path(p0);
+ok = name && kind && (kind == 2 ? _wrmdir(name) : _wremove(name)) == 0;
+#else
+char *name = zam_path(p0);
+ok = name && kind && remove(name) == 0;
+#endif
+free(name);
+if (!ok) return F_void_err(zam_message(kind == 2 ? "cannot remove directory (is it empty?) " : "cannot remove ", p0));
+return F_void_ok();"#,
+    },
+    Builtin {
+        name: "std/fs:rename",
+        params: &[Type::Shared, Type::Shared],
+        result: Type::Unit,
+        fallible: true,
+        // 目标是已存在的文件时替换它，各平台一致。
+        body: r#"int ok;
+#ifdef _WIN32
+wchar_t *from = zam_path(p0), *to = zam_path(p1);
+ok = from && to && MoveFileExW(from, to, 1 | 2) != 0;
+#else
+char *from = zam_path(p0), *to = zam_path(p1);
+ok = from && to && rename(from, to) == 0;
+#endif
+free(from); free(to);
+if (!ok) return F_void_err(zam_message("cannot rename ", p0));
+return F_void_ok();"#,
+    },
+    Builtin {
+        name: "std/path:join",
+        params: &[Type::Shared, Type::Shared],
+        result: Type::Owned,
+        fallible: false,
+        // b 是绝对路径（/x、\x、C:x）时就是 b；否则用 / 连接，不重复分隔符。
+        body: r#"S out; size_t n = p0->len;
+int absolute = p1->len && (zam_separator(p1->data[0]) || (p1->len > 1 && p1->data[1] == ':'));
+if (absolute || !p0->len) return copy(p1);
+if (!p1->len) return copy(p0);
+out.len = n + 1 + p1->len; out.data = (unsigned char*)malloc(out.len);
+if (!out.data) zam_alloc_failed();
+memcpy(out.data, p0->data, n);
+if (!zam_separator(p0->data[n - 1])) out.data[n++] = '/';
+memcpy(out.data + n, p1->data, p1->len);
+out.len = n + p1->len;
+return out;"#,
+    },
+    Builtin {
+        name: "std/path:parent",
+        params: &[Type::Shared],
+        result: Type::Owned,
+        fallible: false,
+        // `a/b/c.txt` → `a/b`；`c.txt` → 空串；`/x` → `/`。
+        body: r#"size_t start, end;
+zam_last_part(p0, &start, &end);
+while (start > 1 && zam_separator(p0->data[start - 1])) start--;
+return own(p0->data, start);"#,
+    },
+    Builtin {
+        name: "std/path:name",
+        params: &[Type::Shared],
+        result: Type::Owned,
+        fallible: false,
+        body: r#"size_t start, end;
+zam_last_part(p0, &start, &end);
+if (end == 1 && zam_separator(p0->data[0])) return own(p0->data, 0);
+return own(p0->data + start, end - start);"#,
+    },
+    Builtin {
+        name: "std/path:stem",
+        params: &[Type::Shared],
+        result: Type::Owned,
+        fallible: false,
+        // 去掉最后一个扩展名：`archive.tar.gz` → `archive.tar`；以点开头的 `.bashrc` 没有扩展名。
+        body: r#"size_t start, end, dot;
+zam_last_part(p0, &start, &end);
+if (end == 1 && zam_separator(p0->data[0])) return own(p0->data, 0);
+for (dot = end; dot > start + 1 && p0->data[dot - 1] != '.'; dot--) {}
+if (dot > start + 1) return own(p0->data + start, dot - 1 - start);
+return own(p0->data + start, end - start);"#,
+    },
+    Builtin {
+        name: "std/path:suffix",
+        params: &[Type::Shared],
+        result: Type::Owned,
+        fallible: false,
+        // 最后一个扩展名，带点：`report.txt` → `.txt`；没有扩展名时是空串。
+        body: r#"size_t start, end, dot;
+zam_last_part(p0, &start, &end);
+if (end == 1 && zam_separator(p0->data[0])) return own(p0->data, 0);
+for (dot = end; dot > start + 1 && p0->data[dot - 1] != '.'; dot--) {}
+if (dot > start + 1) return own(p0->data + dot - 1, end - dot + 1);
+return own(p0->data, 0);"#,
     },
     Builtin {
         name: "std/env:exit",
@@ -2833,7 +3127,8 @@ impl<'a> Generator<'a> {
                     self.records.insert(id);
                 }
                 self.owners.push((local, error));
-                // 代码块在所有路径上都 return（检查器保证），所以出块只需要清账本。
+                // 有成功值时代码块在所有路径上离开（检查器保证）；没有成功值时可能走到块尾，
+                // block 会释放块里的值，出块后接着执行后面的语句。
                 self.block(block, self.result);
                 self.owners.pop();
                 self.locals.remove(binding);

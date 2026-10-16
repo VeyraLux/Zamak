@@ -433,6 +433,7 @@ impl Project {
                         | "std/math"
                         | "std/time"
                         | "std/random"
+                        | "std/path"
                 ) && !self.modules.contains_key(import)
                 {
                     return Err(format!("{id}: missing module {import}"));
@@ -1080,6 +1081,7 @@ impl Project {
                                         | "math"
                                         | "time"
                                         | "random"
+                                        | "path"
                                 )))
                     {
                         let mut args = std::mem::take(args);
