@@ -82,11 +82,11 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 - 注释：`//` 与 `#`；**没有块注释**。
 - 模块：`use greeting`（同目录 `greeting.zm`，只能调用其 `pub fn`）、`use std/string`、`use std/io`、`use std/fmt`、`use std/fs`、`use std/env`、`use std/math`、`use std/time`、`use std/random`；调用 `greeting.hello()`、`io.println("x")`；`println(...)` 无需导入。
 - 所有权：字符串赋值/传参是**移动**，移动后再用报错；借用只能作为参数（`&s`、`&mut s`），调用返回即结束；共享借用可多个，可变借用必须独占且要求可变所有者；借用参数不能移动、返回或存进局部变量。整数/布尔是拷贝。
-- 错误值：签名 `fn load(p: &string) -> i64!string`（成功 T / 失败 E）或 `-> !string`（只失败）；`fail "msg"` 产生错误并立即返回；`let v = load(&p)?` 失败时向调用方传播（当前函数签名必须带相同的 `!E`）；`load(&p) catch e:` 加缩进块就地处理（**不传播**，错误值只在块内可见，**块必须在所有路径 `return`**）；`fn main() -> !string` 允许，未捕获错误写 stderr 并以退出码 1 结束。`E` 可以是 `string`、结构体或枚举：`fail ConfigError.Missing(k)`，`catch e:` 里 `match e`，`?` 只在同一种 `E` 之间传递（不同的用 catch 转换），`main -> !E` 未捕获时按 println 格式写 stderr；catch 块可以用 return、fail、break、continue 收尾。C 侧结果结构体按（T, E）命名：E 是字符串时仍叫 `F_<T>`，否则 `F_<T>_<E>`（`fallible_name(ty, error)`）。
+- 错误值：签名 `fn load(p: &string) -> i64!string`（成功 T / 失败 E）或 `-> !string`（只失败）；`fail "msg"` 产生错误并立即返回；`let v = load(&p)?` 失败时向调用方传播（当前函数签名必须带相同的 `!E`）；`load(&p) catch e:` 加缩进块就地处理（**不传播**，错误值只在块内可见，**值要用时块必须在所有路径离开；没有值或单独成句时可以接着往下走**（`Checker.discarded`，由 `Instruction::Call(Expr::Catch)` 设置，在 Catch 分支开头 take））；`fn main() -> !string` 允许，未捕获错误写 stderr 并以退出码 1 结束。`E` 可以是 `string`、结构体或枚举：`fail ConfigError.Missing(k)`，`catch e:` 里 `match e`，`?` 只在同一种 `E` 之间传递（不同的用 catch 转换），`main -> !E` 未捕获时按 println 格式写 stderr；catch 块可以用 return、fail、break、continue 收尾。C 侧结果结构体按（T, E）命名：E 是字符串时仍叫 `F_<T>`，否则 `F_<T>_<E>`（`fallible_name(ty, error)`）。
 - 标准库（`&string` 参数传 `&name`、已是借用的变量，或直接写字符串字面量/插值 `"x"`、`"{n}"`；owned 变量必须加 `&`）：
   - `std/string`：`byte_len(&s) -> i64`、`char_len(&s) -> i64`（按 UTF-8 码点）、`equal(&a, &b) -> bool`、`parse_i64(&s) -> i64!string`（严格十进制，可带 `+`/`-`，不允许空白）、`parse_f64(&s) -> f64!string`（十进制，可带小数点与指数，不接受空白、`inf`、`nan`）、`trim(&s) -> string`、`find(&s, &needle) -> i64`（字节位置，找不到 -1）、`byte_at(&s, i) -> i64`、`slice(&s, start, end) -> string`（字节区间，越界或切在多字节字符中间会**终止程序**，与数组越界一样）、`find_from(&s, &needle, start) -> i64`、`starts_with`/`ends_with`/`contains(&s, &p) -> bool`、`replace(&s, &from, &to) -> string`、`lower`/`upper(&s) -> string`（仅 ASCII）、`copy(&s) -> string`、`split(&s, &sep) -> [string]`（保留空段）、`words(&s) -> [string]`、`lines(&s) -> [string]`（去 `\r`，末尾换行不产生空行）、`join(&list, &sep) -> string`、`chars(&s) -> [string]`（每个字符一项，坏字节单独成项）、`codepoints(&s) -> [i64]`（坏字节记 U+FFFD）、`from_code(n) -> string`（非法码点终止程序）、`bytes(&s) -> [i64]`、`from_bytes(&[i64]) -> string!string`（越界或非法 UTF-8 返回错误）、`repeat(&s, n)`（n<1 得空串）、`count(&s, &sub)`（不重叠；空子串得字符数+1）、`pad_left`/`pad_right(&s, width)`（按字符数补空格）。C 侧共用 `zam_utf8_next`/`zam_utf8_put`/`zam_pad`（`STD_PRELUDE`）。
   - `std/io`：`print(&s)`（不换行）、`eprintln(&s)`（写 stderr）、`read_line(&mut line) -> bool!string`（去掉行尾 `\n`/`\r\n`，结束时返回 false；典型写法 `let mut line = ""` + `while io.read_line(&mut line)?:`）、`read_all() -> string!string`。
-  - `std/fs`：`read(&path) -> string!string`、`write(&path, &text) -> !string`（覆盖写）。
+  - `std/fs`：`read(&path) -> string!string`、`write(&path, &text) -> !string`（覆盖写）、`append`、`exists`/`is_file`/`is_dir -> bool`、`size -> i64!string`、`list(&dir) -> [string]!string`（按字节排序）、`mkdir`（建上级目录、已存在不算错）、`remove`（文件或空目录）、`rename`（替换已有文件，Windows 用 MoveFileExW）。C 侧 `zam_path`（Windows 转 UTF-16）、`zam_kind`（_wstat64/stat）；列目录 Windows 用 _wfindfirst64，POSIX 用 opendir。`std/path`：`join/parent/name/stem/suffix`，纯文字处理，Windows 上 `\` 也算分隔符。
   - `std/env`：`arg_count() -> i64`、`arg(i) -> string!string`（不含程序名，从 0 开始）、`args() -> [string]`、`var(&name) -> string!string`（Windows 走 `_wgetenv`）、`exit(code)`（0–255，越界终止；检查器与生成器经 `compiler::terminates` 把它当作代码块结束，`catch` 块不用再 `return`）。`zam run` 原样带回程序的退出码，不再打印 `program failed`。
   - 全局 `abs(x)`/`min(a, b)`/`max(a, b)`：不用导入，i64 与 f64 都行（i64 `abs` 溢出终止）；`project.rs` 在本模块没有同名函数时改写成 `std/core:abs` 等，检查器与生成器经 `compiler::overload` 按第一个参数类型选 `std/core:abs_f64` 等版本，IR 里只有原名。
   - `std/math`（参数都是 `f64`）：`sqrt`、`pow(x, y)`、`exp`、`log`（自然对数）、`log10`、`sin`、`cos`、`tan`、`atan`、`atan2(y, x)`、`floor`、`ceil`、`round`（远离零）、`trunc`、`abs`、`min(a, b)`、`max(a, b)`、`is_nan(x) -> bool`；常量 `math.pi`、`math.e`、`math.inf`（`project.rs` 解析时替换成字面量）。
@@ -95,14 +95,14 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
   - `println` / `io.println` / `fmt.println` 打印字符串、整数、浮点数或布尔值。
   - 可失败函数用 `?` 时当前函数要带 `!string`，所以读写文件的 `main` 一般写成 `fn main() -> !string`；`fs.write(&p, &t)?` 可以单独成一条语句。
   - 标准库实现：`zam/src/native.rs` 的 `BUILTINS` 表（签名 + C 函数体，`p0`/`p1`… 是参数）和 `STD_PRELUDE`（共用 C 辅助）；`project.rs` 把 `std/*` 调用解析成 `std/<模块>:<函数>`，检查器按普通函数签名检查。新增函数只需在表里加一项，再升 `native-c-N`。列表的 C 侧是每种元素一组 `Li`/`Lf`/`Lb`/`Ls` 结构与 `push/pop/at/len/swap/insert/removeat/reverse/clear/extend/drop/take` 函数（`list_helpers`），可比较元素另有 `cmp/sort/index/has/slice`（`comparable_list_helpers`），字典是 `M<键><值>`（如 `Msi`）一组 `set/at/has/getor/del/keys/len` 与插入顺序表 + 开放寻址下标表（`MAP_TEMPLATE`）。用到哪些容器由生成器记录在 `Generator.containers`（每个 `scalar()` 都登记类型）加上签名和结构体字段，函数体先生成、容器辅助后拼在前面。容器方法签名只在 `compiler::method_signature` 一处定义，检查器与生成器共用。
-- **尚未实现，不要写**：可写捕获的闭包、多行匿名函数、三层及以上的连续下标（`a[i][j][k]`）、`xs[i].tags[j]`、`i64`/`f64` 隐式转换、目录遍历、追加写文件、网络、调试器、REPL、文档生成、线程、unsafe、extern fn 的指针/结构体/回调参数、块注释、单独移出 owned 字段。
+- **尚未实现，不要写**：可写捕获的闭包、多行匿名函数、三层及以上的连续下标（`a[i][j][k]`）、`xs[i].tags[j]`、`i64`/`f64` 隐式转换、网络、调试器、REPL、文档生成、线程、unsafe、extern fn 的指针/结构体/回调参数、块注释、单独移出 owned 字段。
 
 ## 常见诊断（照文本改代码）
 
 - `fallible call f must be handled with ?` → 调用处漏了 `?` 或 `catch`。
 - `? cannot propagate the error of f from this function` → 当前函数签名缺少 `!E`，或错误类型不同。
 - `fail requires a function that declares an error type` → 在非 `!E` 函数里用了 `fail`。
-- `catch block for f must return a value` → catch 代码块要在所有路径上 `return`。
+- `catch block for f must return a value` → 用到了调用的值，catch 代码块要在所有路径上 `return`（或 break/continue）。
 - `unsupported error type` → 错误类型要是 `string`、结构体或枚举（`ZM509`）。
 - 移动后使用、借用冲突/逃逸、不可变赋值、重复/缺失字段等都在 `zam check` 阶段报错。
 - `an empty list literal needs a type annotation` → 给 `[]` 加类型；`cannot move a string out of xs[..]` → 用 `&xs[i]` 或 `string.copy`；`xs is borrowed by an enclosing for loop` → 循环里改了正在遍历的列表或字典；`an empty map literal needs a type annotation` → 给 `{}` 加类型。

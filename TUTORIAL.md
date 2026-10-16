@@ -869,7 +869,8 @@ fn main():
 要点：
 
 - `catch e:` 下面缩进的块里，`e` 是错误值，只在块内可见。
-- `catch` 块必须在所有路径上使用 `return` 从当前函数返回；若块内有条件分支，每个分支都必须返回。它不支持用末尾表达式为 `let value` 提供恢复值。成功时才会给 `value` 赋值并继续执行后续语句。
+- 像这里这样要用到调用的值（`let value = ...`）时，`catch` 块必须在所有路径上离开：用 `return` 从当前函数返回（循环里也可以用 `break`、`continue`）；若块内有条件分支，每个分支都要离开。它不支持用末尾表达式为 `let value` 提供恢复值。成功时才会给 `value` 赋值并继续执行后续语句。
+- 调用没有值（比如 `fs.remove(&path) catch e:`），或者单独写成一句、不用它的值时，`catch` 块处理完错误就接着往下执行，不必 `return`。
 - 错误类型可以是 `string`、结构体或枚举，不支持错误堆栈。可失败调用必须使用 `?` 传播或使用 `catch` 处理。
 
 ## 第 12 节：多模块项目
@@ -1030,6 +1031,14 @@ lang -> Zamak
 | `abs(x)`、`min(a, b)`、`max(a, b)` | 不用导入，整数和浮点数都能用；两个参数类型要相同 |
 | `fs.read(&path) -> string!string` | 读取整个文件；打不开或读取失败返回错误 |
 | `fs.write(&path, &text) -> !string` | 创建或覆盖文件并写入全部内容 |
+| `fs.append(&path, &text) -> !string` | 在文件末尾追加；文件不存在时创建 |
+| `fs.exists(&path)`、`fs.is_file(&path)`、`fs.is_dir(&path)` | 返回 `bool` |
+| `fs.size(&path) -> i64!string` | 文件的字节数 |
+| `fs.list(&dir) -> [string]!string` | 目录里的名字，按名字排好序，不含 `.` 和 `..` |
+| `fs.mkdir(&path) -> !string` | 创建目录，连同还不存在的上级目录；已经存在不算错误 |
+| `fs.remove(&path) -> !string` | 删除文件或空目录 |
+| `fs.rename(&from, &to) -> !string` | 改名或移动；目标文件已存在时替换它 |
+| `path.join(&a, &b)`、`path.parent(&p)`、`path.name(&p)`、`path.stem(&p)`、`path.suffix(&p)` | 拼接与拆分路径（`use std/path`），只处理文字 |
 | `io.read_line(&mut line) -> bool!string` | 读一行到 `line`，去掉行尾的 `\n` 或 `\r\n`；输入结束时返回 `false` 并把 `line` 置空 |
 | `io.read_all() -> string!string` | 读取全部标准输入 |
 | `string.parse_i64(&s) -> i64!string` | 解析十进制整数，可带 `+`/`-`；含空白或超出 `i64` 范围时返回错误 |
@@ -1058,12 +1067,13 @@ lang -> Zamak
 
 要点：
 
-- 使用前分别导入 `use std/env`、`use std/fs`、`use std/io`、`use std/string`。
+- 使用前分别导入 `use std/env`、`use std/fs`、`use std/io`、`use std/path`、`use std/string`。
 - `zam run` 把 `--` 之后的内容原样传给程序；直接运行构建产物时照常传参。
 - 路径和参数按 UTF-8 处理，Windows 上可以直接使用中文路径和中文参数。
 - 标准输入按字节读取。管道和文件重定向按原样传入字节；Windows 控制台里手动输入的文字使用控制台代码页，中文输入建议改用管道或文件。
 - 字符串位置都以字节计。`slice` 与数组下标一样在越界时终止程序；需要先判断的场景，先用 `string.byte_len` 或 `string.find` 检查范围。
-- 目前没有目录遍历、追加写入、网络和时间函数。
+- 递归列目录的完整例子见 `examples/io/tree.zm`：`zam run examples/io/tree.zm -- examples`。
+- 目前没有网络函数。
 
 ### 时间与随机数
 
@@ -1178,7 +1188,7 @@ error[ZM301]: use after move: name
 | `fallible call main:f must be handled with ?` | 可失败调用未被处理 | 加 `?`，或用 `catch` 就地处理 |
 | `? cannot propagate the error of main:f from this function` | 当前函数未声明错误类型，或错误类型不一致 | 函数签名写 `-> T!string` |
 | `fail requires a function that declares an error type` | 在不可失败的函数里用了 `fail` | 给函数加 `!string` |
-| `catch block for f must return a value` | `catch` 块存在未返回的路径 | 确保所有路径都从当前函数 `return` |
+| `catch block for f must return a value` | 要用到调用的值，但 `catch` 块有路径没有离开 | 确保所有路径都 `return`（或在循环里 `break`、`continue`） |
 | `unsupported error type` | 用了 `!i64` 之类的错误类型 | 错误类型用 `string`、结构体或枚举 |
 | `entry must be a .zm file` | `zam.toml` 的入口后缀不对 | 改成 `.zm` |
 | `zam.toml: 系统找不到指定的文件` | 目录内没有 `zam.toml` | 用 `zam new` 建项目，或直接传单个 `.zm` 文件 |
@@ -1205,7 +1215,7 @@ Zamak 0.1.0 的支持范围有限。编写程序时需注意以下限制：
 
 - `match` 匹配枚举变体，或者整数、字符、字符串、布尔字面量（`1 | 2 | 3:`、`"go":`），还不支持区间和守卫条件；尚不支持 trait/接口；`for` 支持整数区间 `a..b` 以及遍历 `&列表`、`&字典`。
 - 尚不提供包管理器、交互式执行环境（REPL）、文档生成工具或重构工具。
-- 标准库包括 `std/string`（`byte_len`、`char_len`、`equal`、`parse_i64`、`parse_f64`、`trim`、`byte_at`、`slice`、`find`、`find_from`、`starts_with`、`ends_with`、`contains`、`replace`、`lower`、`upper`、`copy`、`split`、`words`、`lines`、`join`、`chars`、`codepoints`、`from_code`、`bytes`、`from_bytes`、`repeat`、`count`、`pad_left`、`pad_right`）、`std/io`（`println`、`read_line`、`read_all`）、`std/fmt`（`println`、`fixed`）、`std/math`（见第 3 节）、`std/fs`（`read`、`write`）、`std/env`（`arg_count`、`arg`、`args`、`var`、`exit`）、`std/time`（`time`、`monotonic`、`sleep`、`iso_utc`、`iso_local`）和 `std/random`（`randint`、`randrange`、`random`、`uniform`、`seed`），以及不用导入的 `abs`、`min`、`max`，还没有目录遍历和网络。
+- 标准库包括 `std/string`（`byte_len`、`char_len`、`equal`、`parse_i64`、`parse_f64`、`trim`、`byte_at`、`slice`、`find`、`find_from`、`starts_with`、`ends_with`、`contains`、`replace`、`lower`、`upper`、`copy`、`split`、`words`、`lines`、`join`、`chars`、`codepoints`、`from_code`、`bytes`、`from_bytes`、`repeat`、`count`、`pad_left`、`pad_right`）、`std/io`（`println`、`read_line`、`read_all`）、`std/fmt`（`println`、`fixed`）、`std/math`（见第 3 节）、`std/fs`（`read`、`write`、`append`、`exists`、`is_file`、`is_dir`、`size`、`list`、`mkdir`、`remove`、`rename`）、`std/path`（`join`、`parent`、`name`、`stem`、`suffix`）、`std/env`（`arg_count`、`arg`、`args`、`var`、`exit`）、`std/time`（`time`、`monotonic`、`sleep`、`iso_utc`、`iso_local`）和 `std/random`（`randint`、`randrange`、`random`、`uniform`、`seed`），以及不用导入的 `abs`、`min`、`max`，还没有网络。
 - 错误类型可以是 `string`、结构体或枚举，没有错误堆栈。
 - 定长数组仅支持 `i64` 局部值；列表 `[T]` 的元素与字典 `{K: V}` 的值可以是 `i64`、`f64`、`bool`、`string` 或结构体，字典键只能是 `i64` 或 `string`；还没有嵌套容器（`[[i64]]`），元素字段里的列表不能再接下标。调用结果上可以接着调用方法。
 - 所有权检查覆盖 `string`、结构体、列表和字典；尚不支持线程和 `unsafe`。`extern fn` 可以调用 C 函数（见 README 的“调用 C 函数”），C 代码本身不在检查范围内。
