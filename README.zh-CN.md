@@ -1,25 +1,80 @@
-# Zamak
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.svg"/>
+    <img src="docs/logo-light.svg" alt="Zamak" width="520"/>
+  </picture>
+</p>
 
-[English](README.md) | 中文
+<p align="center">
+  <a href="./README.md">English</a>
+  &nbsp;·&nbsp;
+  <strong>简体中文</strong>
+  &nbsp;·&nbsp;
+  <a href="./TUTORIAL.md">教程</a>
+  &nbsp;·&nbsp;
+  <a href="./PREVIEW.md">预览版安装</a>
+  &nbsp;·&nbsp;
+  <a href="./CONTRIBUTING.md">参与开发</a>
+  &nbsp;·&nbsp;
+  <a href="./docs/AI_WORKFLOW.md">AI 工作流</a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/VeyraLux/zamak-index">包索引</a>
+</p>
 
-面向快速构建的静态类型原生语言原型。
+<p align="center">
+  <a href="https://github.com/VeyraLux/Zamak/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/VeyraLux/Zamak/ci.yml?style=flat-square&label=ci&labelColor=161b22&logo=githubactions&logoColor=white" alt="CI"/></a>
+  <a href="#许可证"><img src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-8b949e.svg?style=flat-square&labelColor=161b22" alt="许可证：MIT 或 Apache-2.0"/></a>
+  <img src="https://img.shields.io/badge/status-prototype%200.1.0-f97362.svg?style=flat-square&labelColor=161b22" alt="状态：原型 0.1.0"/>
+  <img src="https://img.shields.io/badge/platforms-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-6366f1.svg?style=flat-square&labelColor=161b22" alt="平台：Windows、Linux、macOS"/>
+  <a href="https://github.com/VeyraLux/Zamak/stargazers"><img src="https://img.shields.io/github/stars/VeyraLux/Zamak.svg?style=flat-square&color=06b6d4&labelColor=161b22&logo=github&logoColor=white" alt="GitHub stars"/></a>
+</p>
 
-[![CI](https://github.com/VeyraLux/Zamak/actions/workflows/ci.yml/badge.svg)](https://github.com/VeyraLux/Zamak/actions/workflows/ci.yml)
+<br/>
 
-[教程](TUTORIAL.md) · [预览版安装](PREVIEW.md) · [参与开发](CONTRIBUTING.md) · [AI 工作流](docs/AI_WORKFLOW.md) · [案例验证](docs/VALIDATION.md) · [工程指标](docs/ENGINEERING.md)
+<p align="center"><strong>开源 · MIT 或 Apache-2.0 · 原生可执行文件，没有垃圾回收</strong></p>
+<h3 align="center">写起来像 Python，编译成原生代码的静态类型语言。</h3>
+<p align="center">按 Python 的习惯写代码，得到独立运行的可执行文件。每条错误都有稳定的错误码和修改建议，你和 AI 编程助手都知道该怎么改。</p>
+<p align="center">由 <strong>VeyraLux</strong> 开发。</p>
 
-<img width="96" height="96" alt="Zamak" src="ico/Zamak_256x256.png" />
+<br/>
+
+## 示例
+
+统计输入里每个词出现的次数：
+
+```zamak
+use std/io
+
+fn main() -> !string:
+    let text = io.read_all()?
+    let mut counts: {string: i64} = {}
+
+    for word in text.words():
+        counts[word] = counts.get(word, 0) + 1
+
+    for word, n in counts:
+        print(f"{word}: {n}")
+```
+
+```text
+$ echo "to be or not to be" | zam run count.zm
+to: 2
+be: 2
+or: 1
+not: 1
+```
 
 Zamak 是为频繁构建和多 worktree 协作设计的语言原型，改完代码，人和 AI 都能很快拿到检查结果。`zam` 先生成 C，再调用 MSVC、GCC 或 Clang 编译成机器码；类型与所有权由 Zamak 自己检查，生成的程序可以独立运行，不需要安装 Zamak 或 Rust。
 
 ## 特点
 
+- **沿用 Python 的写法**：`len(xs)`、`for i in range(n)`、`x in xs`、`a if c else b`、`xs[-1]`、`xs[1:3]`、`sum(xs)`、`sorted(xs)`、`int(s)`、`str(n)`、`2 ** 10`、`f"..."` 和 `#` 注释的意思都与 Python 相同；除法也一样（`7 / 2` 是 `3.5`，`7 // 2` 是 `3`），字符串按字符计（`len("你好")` 是 2）。
 - **构建与缓存**：`zam check` 只做类型与所有权检查，不调用 C 编译器。同一份源码可以在不同目录和工作树之间共享缓存；改了实现只重编受影响的原生模块，改了被调用的函数接口或结构体布局，调用方随之失效。
 - **类型与所有权**：静态类型检查覆盖变量、函数、结构体、列表和字典。字符串、结构体、列表和字典赋值时移动；变量传给只读借用参数时自动借用，`&mut` 要显式写；借用只在一次调用内有效，不需要写生命周期标注。整数溢出、除零和越界在运行时检查。
 - **诊断**：每条错误带稳定的错误码、位置和修改建议，`--json` 把它们写成一行 JSON 给工具读取。
 - **原生执行**：生成的程序独立运行，无需安装 Zamak 或 Rust。
 
-在 3 个模型、8 个小型命令行任务的对比实验里，模型只读了一页语言参考：24 个 Zamak 程序（缩进语法）全部第一次就通过全部测试。同样的任务用 Rust 和 Go 写，24 个也都是第一次通过，这些任务太简单，分不出语言之间的高下。方法、任务和数据见 [bench/ai/live](bench/ai/live/README.md)。
+在 3 个模型、8 个小型命令行任务的对比实验里，模型只读了一页语言参考：最近一次（2026-10-16）24 个 Zamak 程序全部解出，其中 21 个第一次就通过；没一次通过的 3 个（漏写 import、漏写 `?`、借用存进局部变量）促成了更清楚的报错和局部只读借用，之后还没有重新实测。同样的任务 Rust 第一次通过 23 个、Go 24 个，这些任务太简单，分不出三种语言的高下。方法与数据见 [bench/ai/live](bench/ai/live/README.md)。
 
 当前版本适合学习、语言实验、算法练习和命令行小工具。标准库与工具生态还不完整，不适合生产使用。
 

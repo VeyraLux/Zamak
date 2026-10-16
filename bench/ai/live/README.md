@@ -17,6 +17,27 @@ ZAM_LLM_BASE_URL=https://... ZAM_LLM_API_KEY=... python bench/ai/live/run.py --m
 
 Results go to the ignored `results/ai-live-<time>/`: every prompt round's source code, `trials.jsonl`, and `summary.md`.
 
+## Results (2026-10-16)
+
+Windows 10, zam 0.1.0 with MSVC, rustc 1.99.0, go 1.26.4. Temperature 0, OpenAI-compatible endpoint. The reference described the language as of that day, before the Python-style syntax was added.
+
+| model | language | solved | first try | compile errors | build s / round (median) | tokens |
+|---|---|---|---|---|---|---|
+| claude-opus-5-5-code | Zamak | 8/8 | 5/8 | 3 | 0.58 | 128,563 |
+| claude-opus-5-5-code | Rust | 8/8 | 8/8 | 0 | 0.37 | 13,138 |
+| claude-opus-5-5-code | Go | 8/8 | 8/8 | 0 | 1.74 | 7,624 |
+| deepseek-v4.1-flash | Zamak | 8/8 | 8/8 | 0 | 0.60 | 67,897 |
+| deepseek-v4.1-flash | Rust | 8/8 | 7/8 | 1 | 0.38 | 20,770 |
+| deepseek-v4.1-flash | Go | 8/8 | 8/8 | 0 | 1.75 | 12,734 |
+| gemini-3.8-flash | Zamak | 8/8 | 8/8 | 0 | 0.60 | 92,310 |
+| gemini-3.8-flash | Rust | 8/8 | 8/8 | 0 | 0.38 | 14,417 |
+| gemini-3.8-flash | Go | 8/8 | 8/8 | 0 | 1.74 | 18,948 |
+
+What this shows:
+
+- Every task was solved in every language. Zamak passed 21 of 24 trials on the first try, Rust 23 and Go 24.
+- Claude's three Zamak compile errors, each fixed in round 2: calling `string.codepoints` without `use std/string`, passing `env.arg(0)` without the `?` it needs, and writing `let entry = &entries[i]`, which Zamak did not allow then. Afterwards the missing-import message names the exact `use` line to add, and read-only borrows can be kept in locals. The benchmark has not been rerun since these changes or since the Python-style syntax was added.
+
 ## Results (2026-10-15)
 
 Windows 10, zam 0.1.0 with MSVC, rustc 1.99.0, go 1.26.4. Temperature 0, OpenAI-compatible endpoint. Zamak uses indentation-based blocks and the logical operators `and`, `or`, `not`.

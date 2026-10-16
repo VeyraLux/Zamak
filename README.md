@@ -1,33 +1,58 @@
-# Zamak
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.svg"/>
+    <img src="docs/logo-light.svg" alt="Zamak" width="520"/>
+  </picture>
+</p>
 
-English | [中文](README.zh-CN.md)
+<p align="center">
+  <strong>English</strong>
+  &nbsp;·&nbsp;
+  <a href="./README.zh-CN.md">简体中文</a>
+  &nbsp;·&nbsp;
+  <a href="./TUTORIAL.md">Tutorial (中文)</a>
+  &nbsp;·&nbsp;
+  <a href="#language-tour">Language tour</a>
+  &nbsp;·&nbsp;
+  <a href="./editors/vscode">VS Code</a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/VeyraLux/zamak-index">Packages</a>
+</p>
 
-Zamak is a statically typed language that compiles to native executables. It's built for a fast loop of editing, checking, and building code, for both people and AI coding agents.
+<p align="center">
+  <a href="https://github.com/VeyraLux/Zamak/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/VeyraLux/Zamak/ci.yml?style=flat-square&label=ci&labelColor=161b22&logo=githubactions&logoColor=white" alt="CI"/></a>
+  <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-8b949e.svg?style=flat-square&labelColor=161b22" alt="license: MIT or Apache-2.0"/></a>
+  <img src="https://img.shields.io/badge/status-prototype%200.1.0-f97362.svg?style=flat-square&labelColor=161b22" alt="status: prototype 0.1.0"/>
+  <img src="https://img.shields.io/badge/platforms-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-6366f1.svg?style=flat-square&labelColor=161b22" alt="platforms: Windows, Linux, macOS"/>
+  <a href="https://github.com/VeyraLux/Zamak/stargazers"><img src="https://img.shields.io/github/stars/VeyraLux/Zamak.svg?style=flat-square&color=06b6d4&labelColor=161b22&logo=github&logoColor=white" alt="GitHub stars"/></a>
+</p>
 
-[![CI](https://github.com/VeyraLux/Zamak/actions/workflows/ci.yml/badge.svg)](https://github.com/VeyraLux/Zamak/actions/workflows/ci.yml)
+<br/>
 
-<img width="96" height="96" alt="Zamak" src="ico/Zamak_256x256.png" />
+<p align="center"><strong>Open source · MIT or Apache-2.0 · native executables, no garbage collector</strong></p>
+<h3 align="center">A statically typed language that reads like Python and compiles to native code.</h3>
+<p align="center">Write code the way you write Python, and get a standalone executable. Every error has a stable code and a suggested fix, so you and your AI coding agent know what to change.</p>
+<p align="center">Made by <strong>VeyraLux</strong>.</p>
+
+<br/>
+
+## Example
 
 This program counts how often each word appears in its input:
 
 ```zamak
 use std/io
-use std/string
 
 fn main() -> !string:
     let text = io.read_all()?
-    let words = string.words(&text)
     let mut counts: {string: i64} = {}
 
-    for word in &words:
+    for word in text.words():
         counts[word] = counts.get(word, 0) + 1
 
-    for word in &counts:
-        let n = counts[word]
-        println("{word}: {n}")
+    for word, n in counts:
+        print(f"{word}: {n}")
 ```
-
-Run it with some input:
 
 ```text
 $ echo "to be or not to be" | zam run count.zm
@@ -40,14 +65,24 @@ not: 1
 > [!NOTE]
 > Zamak is a prototype (version 0.1.0). Use it to learn, experiment, and write small command-line tools. Syntax and cache formats might change, so don't use it in production yet.
 
-## Why Zamak
+## Features
 
-- **Fast feedback.** `zam check` checks types and ownership without calling a C compiler. `zam build` caches each module by content, so a one-line edit rebuilds only the module you changed. On the project's 10-module, 5,250-line benchmark (Windows, MSVC, one machine), a one-line edit rebuilds in about 0.75 seconds, and `zam check` finishes in less than 0.1 seconds. For the method and raw numbers, see [docs/ENGINEERING.md](docs/ENGINEERING.md) and [docs/PERFORMANCE.md](docs/PERFORMANCE.md) (in Chinese).
-- **Python habits work.** `len(xs)`, `for i in range(n)`, `x in xs`, `a if c else b`, `xs[-1]`, `xs[1:3]`, `sum(xs)`, `sorted(xs)`, `int(s)`, `str(n)`, `2 ** 10`, and `#` comments mean what they mean in Python. Division follows Python too: `7 / 2` is `3.5`, `7 // 2` is `3`, and `-7 % 2` is `1`.
+- **Python habits work.** `len(xs)`, `for i in range(n)`, `x in xs`, `a if c else b`, `xs[-1]`, `xs[1:3]`, `sum(xs)`, `sorted(xs)`, `int(s)`, `str(n)`, `2 ** 10`, `f"..."`, and `#` comments mean what they mean in Python. Division follows Python too: `7 / 2` is `3.5`, `7 // 2` is `3`, and `-7 % 2` is `1`. Strings count characters, so `len("你好")` is 2.
 - **Ownership without a garbage collector.** Strings, structs, lists, and maps move when you assign them. Passing a variable to a read-only parameter borrows it automatically, as in `show(name)`; a function that changes its argument says so at the call site with `&mut x`. A borrow lasts for one call, or until the end of the block for a read-only local such as `let entry = &entries[i]`, so you never write lifetime annotations. Zamak checks integer overflow, division by zero, and out-of-bounds access at run time, and it removes the checks that a conservative range analysis proves redundant.
-- **Diagnostics built for tools.** Every error has a stable code such as `ZM301`, a category, a position, and usually a suggested fix. `zam check --json` writes them as one line of JSON. Zamak reports type errors per function, so an agent can fix several of them in one pass.
-- **Learnable from one page.** In a benchmark with three models and eight small command-line tasks, each model read only a one-page language reference. All 24 Zamak programs, written in the current indentation-based syntax, passed every test on the first try. The Rust and Go versions also passed all 24 tasks on the first try, so these tasks are too easy to rank the languages. For the method, tasks, and data, see [bench/ai/live](bench/ai/live/README.md).
+- **Fast feedback.** `zam check` checks types and ownership without calling a C compiler. `zam build` caches each module by content, so a one-line edit rebuilds only the module you changed. On the project's 10-module, 5,250-line benchmark (Windows, MSVC, one machine), a one-line edit rebuilds in about 0.75 seconds, and `zam check` finishes in less than 0.1 seconds. For the method and raw numbers, see [docs/ENGINEERING.md](docs/ENGINEERING.md) and [docs/PERFORMANCE.md](docs/PERFORMANCE.md) (in Chinese).
+- **Diagnostics built for tools.** Every error has a stable code such as `ZM301`, a category, a position, and usually a suggested fix. If you use a Python spelling that Zamak writes differently, the message shows the Zamak spelling. `zam check --json` writes the diagnostics as one line of JSON. Zamak reports type errors per function, so an agent can fix several of them in one pass.
+- **Learnable from one page.** In a benchmark with three models and eight small command-line tasks, each model read only a one-page language reference. The models solved all 24 Zamak tasks, 21 of them on the first try. The three other first attempts had a missing import, a missing `?`, and a borrowed local. Zamak now names the missing `use` line and allows read-only borrows in locals, but the benchmark hasn't been rerun since. The Rust and Go versions passed 23 and 24 tasks on the first try, so these tasks are too easy to rank the languages. For the method, tasks, and data, see [bench/ai/live](bench/ai/live/README.md).
 - **Native, standalone output.** Zamak generates C and compiles it with Microsoft C++ (MSVC), GCC, or Clang. The executable runs without Zamak or Rust installed. On the integer benchmarks in [docs/PERFORMANCE.md](docs/PERFORMANCE.md), its runtime performance is in the same range as Rust and Go.
+
+## Quickstart
+
+You need Rust stable and a C compiler. For the compiler that each platform uses, see [Install Zamak](#install-zamak).
+
+```sh
+cargo install --path zam --locked   # Run in the repository root.
+zam new hello                       # Creates hello/zam.toml and hello/src/main.zm.
+zam run hello                       # Prints "hello from zamak".
+```
 
 ## Install Zamak
 
