@@ -109,8 +109,50 @@ pub fn overload(name: &str, first: Option<Type>) -> &str {
         ("std/core:abs", Some(Type::Float)) => "std/core:abs_f64",
         ("std/core:min", Some(Type::Float)) => "std/core:min_f64",
         ("std/core:max", Some(Type::Float)) => "std/core:max_f64",
+        ("std/core:pow", Some(Type::Float)) => "std/core:pow_f64",
         _ => name,
     }
+}
+/// `x in xs`、`x not in xs`：改写成 `xs.contains(x)`（字符串、列表、字典都有 contains）。
+/// `item_text` 为真时元素是字符串，变量、字段与元素按只读借用传。检查器与生成器共用。
+pub fn membership(expr: &Expr, item_text: bool) -> Option<Expr> {
+    let Expr::Binary(op, item, container) = expr else {
+        return None;
+    };
+    let negate = match op.as_str() {
+        "in" => false,
+        "not in" => true,
+        _ => return None,
+    };
+    let argument = match &**item {
+        Expr::Variable(name) if item_text => Expr::Borrow(name.clone(), false),
+        Expr::Field(local, field) if item_text => Expr::Borrow(format!("{local}.{field}"), false),
+        Expr::Index(path, index) if item_text => {
+            Expr::BorrowIndex(path.clone(), index.clone(), String::new(), false)
+        }
+        Expr::IndexField(path, index, field) if item_text => {
+            Expr::BorrowIndex(path.clone(), index.clone(), field.clone(), false)
+        }
+        item => item.clone(),
+    };
+    let call = match &**container {
+        Expr::Variable(name) => Expr::Method(name.clone(), "contains".into(), vec![argument]),
+        Expr::Field(local, field) => Expr::Method(
+            format!("{local}.{field}"),
+            "contains".into(),
+            vec![argument],
+        ),
+        container => Expr::Chain(
+            Box::new(container.clone()),
+            "contains".into(),
+            vec![argument],
+        ),
+    };
+    Some(if negate {
+        Expr::Unary('!', Box::new(call))
+    } else {
+        call
+    })
 }
 /// 方法调用的接收者：路径（`p`、`a.b`）、列表或字典的元素（`xs[i]`、`xs[i].f`）、调用结果。
 pub enum Receiver<'a> {
@@ -2192,24 +2234,8 @@ impl Parser {
     }
     /// 报错位置是常见的 Python 写法时，补一句 Zamak 的写法。
     fn python_hint(&self) -> &'static str {
-        let previous = self
-            .position
-            .checked_sub(1)
-            .and_then(|i| self.tokens.get(i));
-        match (previous, self.peek()) {
-            (_, Some(Token::Word(word))) if word == "in" => {
-                "; to test membership write s.contains(x), xs.contains(x) or m.contains(k)"
-            }
-            (_, Some(Token::Word(word))) if word == "if" => {
-                "; a conditional value is written let v = if c: a else: b"
-            }
-            (_, Some(Token::Symbol(':'))) => "; slices are written xs.slice(a, b) or s.slice(a, b)",
-            (Some(Token::Word(word)), Some(Token::Text(_))) if word == "f" => {
-                "; drop the f: every string interpolates, as in \"{n}\""
-            }
-            (Some(Token::Symbol('*')), Some(Token::Symbol('*'))) => {
-                "; powers are written math.pow(x, y) with use std/math"
-            }
+        match self.peek() {
+            Some(Token::Symbol(':')) => "; slices are written xs.slice(a, b) or s.slice(a, b)",
             _ => "",
         }
     }
@@ -2222,24 +2248,9 @@ impl Parser {
             }
             Some(Token::Word(word)) => Ok(word),
             token => Err(format!(
-                "expected identifier, found {}{}",
-                shown(token.as_ref()),
-                self.python_hint_before()
+                "expected identifier, found {}",
+                shown(token.as_ref())
             )),
-        }
-    }
-    /// `word()` 已经取走了出错的记号：按它与它前面的记号给提示。
-    fn python_hint_before(&self) -> &'static str {
-        let at = |back: usize| {
-            self.position
-                .checked_sub(back)
-                .and_then(|i| self.tokens.get(i))
-        };
-        match (at(2), at(1)) {
-            (Some(Token::Symbol('*')), Some(Token::Symbol('*'))) => {
-                "; powers are written math.pow(x, y) with use std/math"
-            }
-            _ => "",
         }
     }
     fn newlines(&mut self) {
@@ -2646,7 +2657,25 @@ impl Parser {
         Ok(path)
     }
     fn expr(&mut self) -> Result<Expr, String> {
-        self.binary(0)
+        let value = self.binary(0)?;
+        // Python 的条件表达式 `a if c else b`，等于 `if c: a else: b`。
+        if self.peek() == Some(&Token::Word("if".into())) && !self.ended_block() {
+            self.take();
+            let condition = self.binary(0)?;
+            if !self.keyword("else") {
+                return Err(format!(
+                    "expected `else` in a if c else b, found {}",
+                    shown(self.peek())
+                ));
+            }
+            let otherwise = self.expr()?;
+            return Ok(Expr::If(
+                Box::new(condition),
+                Box::new(value),
+                Box::new(otherwise),
+            ));
+        }
+        Ok(value)
     }
     /// 当前位置是不是复合赋值 `op=`：返回运算符和要跳过的记号数。
     fn compound(&self) -> Option<(String, usize)> {
@@ -2710,7 +2739,16 @@ impl Parser {
                         if equal { 2 } else { 1 },
                     )
                 }
+                Some(Token::Word(word)) if word == "in" => ("in".to_owned(), 3, 1),
+                Some(Token::Word(word))
+                    if word == "not" && next == Some(&Token::Word("in".into())) =>
+                {
+                    ("not in".to_owned(), 3, 2)
+                }
                 Some(Token::Symbol(c @ ('+' | '-'))) => (c.to_string(), 8, 1),
+                Some(Token::Symbol('*')) if next == Some(&Token::Symbol('*')) => {
+                    ("**".to_owned(), 10, 2)
+                }
                 Some(Token::Symbol(c @ ('*' | '/' | '%'))) => (c.to_string(), 9, 1),
                 _ => break,
             };
@@ -2718,6 +2756,12 @@ impl Parser {
                 break;
             }
             self.position += width;
+            if op == "**" {
+                // 右结合：`2 ** 3 ** 2` 是 `2 ** (3 ** 2)`；整数与浮点按第一个操作数选内建版本。
+                let right = self.binary(priority)?;
+                left = Expr::Call("$pow".into(), vec![left, right]);
+                continue;
+            }
             let right = self.binary(priority + 1)?;
             left = Expr::Binary(op, Box::new(left), Box::new(right));
         }
@@ -2848,11 +2892,18 @@ impl Parser {
         if self.keyword("match") {
             return self.match_value();
         }
-        if self.keyword("true") {
+        // Python 的 `True`、`False` 也可以。
+        if self.keyword("true") || self.keyword("True") {
             return Ok(Expr::Bool(true));
         }
-        if self.keyword("false") {
+        if self.keyword("false") || self.keyword("False") {
             return Ok(Expr::Bool(false));
+        }
+        // Python 的 f 串：Zamak 的字符串本来就能插值，`f"{n}"` 与 `"{n}"` 相同。
+        if self.peek() == Some(&Token::Word("f".into()))
+            && matches!(self.tokens.get(self.position + 1), Some(Token::Text(_)))
+        {
+            self.take();
         }
         if let Some(Token::Text(text)) = self.peek().cloned() {
             self.take();
@@ -5027,6 +5078,12 @@ impl<'a> Checker<'a> {
     /// `s.upper()`、`string.trim(&s).upper()`：字符串上的方法改写成 std/string 的调用。接收者不是
     /// 字符串时返回 None；是字符串但没有这个方法时报错。
     fn string_call(&self, expr: &Expr) -> Result<Option<Expr>, String> {
+        if let Expr::Binary(op, item, _) = expr {
+            if op != "in" && op != "not in" {
+                return Ok(None);
+            }
+            return Ok(membership(expr, self.ty(item).is_ok_and(is_text)));
+        }
         let (receiver, method, args) = match expr {
             Expr::Method(path, method, args) => {
                 if !self.place(path).is_ok_and(|(_, ty)| is_string(ty)) {
