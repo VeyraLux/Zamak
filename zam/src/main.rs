@@ -2,6 +2,7 @@ mod compiler;
 mod native;
 mod package;
 mod project;
+mod registry;
 
 use std::path::Path;
 
@@ -40,7 +41,9 @@ fn execute() -> project::Result<()> {
         Some("check" | "build" | "fmt" | "run") => matches!(args.len(), 1..=2),
         Some("test") => matches!(args.len(), 1..=3),
         Some("update") => matches!(args.len(), 1..=2),
-        Some("add") => matches!(args.len(), 3..=4),
+        Some("add") => matches!(args.len(), 2..=4),
+        Some("remove") => args.len() == 2,
+        Some("search" | "publish") => matches!(args.len(), 1..=2),
         Some("new") => {
             args.len() == 2
                 || (args.len() == 4 && args[2] == "--template" && args[3] == "ai")
@@ -54,7 +57,7 @@ fn execute() -> project::Result<()> {
     let missing_command = raw_args.first().is_some_and(|arg| arg == "--json");
     if !valid_shape || option_as_path || missing_command {
         return Err(
-            "usage: zam <check|build|run|test|fmt|new|add|update> [project|file] [--template ai]"
+            "usage: zam <check|build|run|test|fmt|new|add|remove|update|search|publish> [project|file] [--template ai]"
                 .into(),
         );
     }
@@ -86,40 +89,42 @@ fn execute() -> project::Result<()> {
         }
         Some("build") => { project::Project::load(input)?.build(&project::cache_dir())?; }
         Some("fmt") => format_sources(input)?,
+        // `zam add <名字>`（索引里的最新版本）、`zam add <名字> <版本范围>`、
         // `zam add <名字> <git 地址|本地目录> [rev]`：在当前目录的 zam.toml 里加一个依赖并拉取。
         Some("add") => {
-            let location = &args[2];
-            let source = if Path::new(location).is_dir() {
-                package::Source::Path(location.into())
-            } else {
-                package::Source::Git {
+            let name = &args[1];
+            let store = project::cache_dir().join("packages");
+            let source = match args.get(2) {
+                None => package::Source::Registry(registry::Requirement::parse(&format!(
+                    "^{}",
+                    package::latest(&store, name)?
+                ))?),
+                Some(location) if args.len() == 3 && requirement_like(location) => {
+                    package::Source::Registry(registry::Requirement::parse(location)?)
+                }
+                Some(location) if Path::new(location).is_dir() => {
+                    if args.len() == 4 {
+                        return Err("a path dependency takes no rev".into());
+                    }
+                    package::Source::Path(location.into())
+                }
+                Some(location) => package::Source::Git {
                     url: location.clone(),
                     rev: args.get(3).cloned().unwrap_or_else(|| "HEAD".into()),
-                }
+                },
             };
-            if args.len() == 4 && matches!(source, package::Source::Path(_)) {
-                return Err("a path dependency takes no rev".into());
+            change_manifest(|manifest| package::add(manifest, name, &source))?;
+            match &source {
+                package::Source::Registry(requirement) => eprintln!("ADD {name} {requirement}"),
+                _ => eprintln!("ADD {name}"),
             }
-            let manifest = project::Project::manifest_path(Path::new("."));
-            let original = std::fs::read(&manifest).map_err(|e| format!("{}: {e}", manifest.display()))?;
-            let lock = manifest.with_file_name("zam.lock");
-            let original_lock = std::fs::read(&lock).ok();
-            package::add(&manifest, &args[1], &source)?;
-            // 拉取或检查失败时恢复原来的 zam.toml 与 zam.lock，不留下坏掉的依赖。
-            if let Err(error) = project::Project::load(Path::new(".")) {
-                let _ = std::fs::write(&manifest, original);
-                match original_lock {
-                    Some(bytes) => {
-                        let _ = std::fs::write(&lock, bytes);
-                    }
-                    None => {
-                        let _ = std::fs::remove_file(&lock);
-                    }
-                }
-                return Err(error);
-            }
-            eprintln!("ADD {}", args[1]);
         }
+        Some("remove") => {
+            change_manifest(|manifest| package::remove(manifest, &args[1]))?;
+            eprintln!("REMOVE {}", args[1]);
+        }
+        Some("search") => search(args.get(1).map(String::as_str).unwrap_or(""))?,
+        Some("publish") => publish(input)?,
         Some("update") => {
             project::Project::load_updating(input)?;
             let lock = project::Project::manifest_path(input).with_file_name("zam.lock");
@@ -148,10 +153,179 @@ fn execute() -> project::Result<()> {
         }
         Some("demo") if args.len() == 1 => demo()?,
         Some("--version") | Some("-V") => println!("{}", env!("CARGO_PKG_VERSION")),
-        None | Some("--help") | Some("-h") => println!("zam {}\n  zam check [project|file]\n  zam build [project|file]\n  zam fmt [project|file]\n  zam run [project|file|artifact] [-- args...]\n  zam test [project|file] [filter]\n  zam add <name> <git-url|directory> [rev]\n  zam update [project]\n  zam new <directory> [--template ai]\n  zam check --json [project|file]\n  zam build --json [project|file]\n  zam demo\n  zam --version", env!("CARGO_PKG_VERSION")),
-        _ => return Err("usage: zam <check|build|run|test|fmt|new|add|update> [project|file]".into()),
+        None | Some("--help") | Some("-h") => println!("zam {}\n  zam check [project|file]\n  zam build [project|file]\n  zam fmt [project|file]\n  zam run [project|file|artifact] [-- args...]\n  zam test [project|file] [filter]\n  zam add <name> [version|git-url|directory] [rev]\n  zam remove <name>\n  zam update [project]\n  zam search [word]\n  zam publish [project]\n  zam new <directory> [--template ai]\n  zam check --json [project|file]\n  zam build --json [project|file]\n  zam demo\n  zam --version", env!("CARGO_PKG_VERSION")),
+        _ => return Err("usage: zam <check|build|run|test|fmt|new|add|remove|update|search|publish> [project|file]".into()),
     }
     Ok(())
+}
+
+/// `zam add` 的第二个参数是版本范围（`^1.2`、`1.0`、`>=1, <2`、`*`）而不是地址或目录。
+fn requirement_like(text: &str) -> bool {
+    !Path::new(text).exists()
+        && text
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_digit() || "^~=<>*".contains(c))
+}
+
+/// 改当前目录的 zam.toml，再重新加载项目（拉取依赖、更新 zam.lock）。失败时把 zam.toml 与
+/// zam.lock 恢复原样，不留下坏掉的依赖。
+fn change_manifest(edit: impl FnOnce(&Path) -> project::Result<()>) -> project::Result<()> {
+    let manifest = project::Project::manifest_path(Path::new("."));
+    let original = std::fs::read(&manifest).map_err(|e| format!("{}: {e}", manifest.display()))?;
+    let lock = manifest.with_file_name("zam.lock");
+    let original_lock = std::fs::read(&lock).ok();
+    let result = edit(&manifest).and_then(|()| project::Project::load(Path::new(".")).map(|_| ()));
+    if result.is_err() {
+        let _ = std::fs::write(&manifest, original);
+        match original_lock {
+            Some(bytes) => {
+                let _ = std::fs::write(&lock, bytes);
+            }
+            None => {
+                let _ = std::fs::remove_file(&lock);
+            }
+        }
+    }
+    result
+}
+
+/// `zam search [词]`：列出索引里名字或介绍含这个词的包。
+fn search(word: &str) -> project::Result<()> {
+    let mut index = registry::Index::new(&project::cache_dir().join("packages"));
+    let word = word.to_lowercase();
+    let mut found = 0;
+    for name in index.names()? {
+        let entry = index.entry(&name)?;
+        if !name.contains(&word) && !entry.description.to_lowercase().contains(&word) {
+            continue;
+        }
+        let latest = entry
+            .best(|_| true)
+            .map_or("-".to_owned(), |release| release.version.to_string());
+        println!("{name} {latest}  {}", entry.description);
+        found += 1;
+    }
+    if found == 0 {
+        eprintln!("no packages match {word:?} in {}", index.location);
+    }
+    Ok(())
+}
+
+/// `zam publish [项目]`：检查包能用、版本已打标签并推送，然后生成索引条目。索引是本地目录时
+/// 直接写进去；否则把条目打到 stdout，由作者向索引仓库提 pull request。
+fn publish(input: &Path) -> project::Result<()> {
+    let project = project::Project::load(input)?;
+    project.check()?;
+    let name = &project.name;
+    let version = project
+        .version
+        .ok_or("add version = \"0.1.0\" under [project] in zam.toml before publishing")?;
+    let manifest = package::manifest(&project::Project::manifest_path(input), true)?;
+    if let Some(dependency) = manifest
+        .dependencies
+        .iter()
+        .find(|(_, source)| matches!(source, package::Source::Path(_)))
+        .map(|(name, _)| name)
+    {
+        return Err(format!(
+            "published packages cannot have path dependencies; publish {dependency} too and depend on its version"
+        ));
+    }
+    let root = std::fs::canonicalize(&project.root).map_err(|e| e.to_string())?;
+    let top = package::git(&["rev-parse", "--show-toplevel"], Some(&root))
+        .map_err(|_| "publish a package from a git repository; run git init and commit it first")?;
+    if std::fs::canonicalize(&top).ok().as_deref() != Some(root.as_path()) {
+        return Err("zam.toml must be at the root of its git repository to publish it".into());
+    }
+    // 包自己的 zam.lock 不影响依赖它的项目（它们按自己的锁文件选版本），不算未提交的改动。
+    let changes: Vec<String> = package::git(&["status", "--porcelain"], Some(&root))?
+        .lines()
+        .filter(|line| !line.ends_with("zam.lock"))
+        .map(str::to_owned)
+        .collect();
+    if !changes.is_empty() {
+        return Err(format!(
+            "commit your changes before publishing; uncommitted: {}",
+            changes[..changes.len().min(5)].join(", ")
+        ));
+    }
+    let tag = format!("v{version}");
+    let commit = package::git(
+        &["rev-parse", "--verify", &format!("{tag}^{{commit}}")],
+        Some(&root),
+    )
+    .map_err(|_| format!("tag the version first: git tag {tag} && git push origin {tag}"))?;
+    let remote = package::git(&["remote", "get-url", "origin"], Some(&root))
+        .map_err(|_| "add the public repository as the origin remote before publishing")?;
+    let repository = public_url(&remote);
+    let pushed = package::git(
+        &[
+            "ls-remote",
+            "origin",
+            &format!("refs/tags/{tag}"),
+            &format!("refs/tags/{tag}^{{}}"),
+        ],
+        Some(&root),
+    )
+    .unwrap_or_default();
+    if !pushed.lines().any(|line| line.starts_with(&commit)) {
+        return Err(format!("push the tag first: git push origin {tag}"));
+    }
+    let mut index = registry::Index::new(&project::cache_dir().join("packages"));
+    let existing = index.find(name)?;
+    let quote = |text: &str| toml::Value::from(text).to_string();
+    let release = format!("\n[[versions]]\nversion = \"{version}\"\ncommit = \"{commit}\"\n");
+    let text = match &existing {
+        Some(entry) => {
+            if entry.repository != repository {
+                return Err(format!(
+                    "the name {name} is already taken by {} in the package index; choose another name",
+                    entry.repository
+                ));
+            }
+            if entry.versions.iter().any(|old| old.version == version) {
+                return Err(format!(
+                    "{name} {version} is already published; raise version in zam.toml and tag it"
+                ));
+            }
+            index.raw(name)?.unwrap_or_default().trim_end().to_owned() + "\n" + &release
+        }
+        None => format!(
+            "name = {}\ndescription = {}\nrepository = {}\n{release}",
+            quote(name),
+            quote(project.description.as_deref().unwrap_or("")),
+            quote(&repository),
+        ),
+    };
+    if project.description.as_deref().unwrap_or("").is_empty() {
+        eprintln!("WARNING add description = \"...\" under [project] so people can find {name} with zam search");
+    }
+    if let Some(dir) = index.local() {
+        let path = dir.join("packages").join(format!("{name}.toml"));
+        std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
+        std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
+        eprintln!("PUBLISH {} {version} -> {}", name, path.display());
+    } else {
+        print!("{text}");
+        eprintln!(
+            "PUBLISH {name} {version}: open a pull request to {} that {} packages/{name}.toml with the text above",
+            index.location,
+            if existing.is_some() { "replaces" } else { "adds" }
+        );
+    }
+    Ok(())
+}
+
+/// 远程地址换成别人能克隆的 https 地址：`git@github.com:a/b.git` → `https://github.com/a/b.git`。
+fn public_url(remote: &str) -> String {
+    match remote
+        .strip_prefix("git@")
+        .and_then(|rest| rest.split_once(':'))
+    {
+        Some((host, path)) => format!("https://{host}/{path}"),
+        None => remote.trim_end_matches('/').to_owned(),
+    }
 }
 
 /// 生成一个最小可运行的项目骨架。目标目录已存在就拒绝，不覆盖任何用户文件。

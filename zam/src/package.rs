@@ -3,16 +3,18 @@
 //! git 依赖按 `rev`（分支、标签或提交）解析成具体提交并写进 `zam.lock`，之后的构建只看锁定的
 //! 提交，源码树已经在缓存里时不再访问网络。路径依赖直接读本地目录，不进锁文件。
 use crate::project::{hash, identifier, Result};
+use crate::registry::{self, Index, Requirement, Version};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// 依赖的来源。
+/// 依赖的来源：git 仓库、本地目录，或公共包索引里的一个版本范围（`mathx = "^1.2"`）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Source {
     Git { url: String, rev: String },
     Path(PathBuf),
+    Registry(Requirement),
 }
 
 /// 一个包的 `zam.toml`：名字、模块目录、入口（库可以没有）、依赖与 C 代码。
@@ -22,6 +24,9 @@ pub struct Manifest {
     pub entry: Option<PathBuf>,
     pub dependencies: BTreeMap<String, Source>,
     pub native: Native,
+    // 发布到公共包索引时要写的版本号与一句话介绍。
+    pub version: Option<Version>,
+    pub description: Option<String>,
 }
 
 /// `[native]`：和包一起编译的 C 源码、头文件目录、要链接的库与库目录。路径相对包的根目录；
@@ -123,10 +128,12 @@ pub fn manifest(path: &Path, library: bool) -> Result<Manifest> {
         .get("project")
         .and_then(toml::Value::as_table)
         .ok_or("missing [project]")?;
-    if table
-        .keys()
-        .any(|key| !matches!(key.as_str(), "name" | "entry" | "modules"))
-    {
+    if table.keys().any(|key| {
+        !matches!(
+            key.as_str(),
+            "name" | "entry" | "modules" | "version" | "description"
+        )
+    }) {
         return Err("unknown project setting".into());
     }
     let setting = |key: &str| -> Result<Option<&str>> {
@@ -157,8 +164,15 @@ pub fn manifest(path: &Path, library: bool) -> Result<Manifest> {
             if !identifier(dependency) || dependency == "std" {
                 return Err(format!("invalid dependency name {dependency}"));
             }
+            // `mathx = "^1.2"`：公共包索引里的版本范围。
+            if let Some(text) = value.as_str() {
+                let requirement = Requirement::parse(text)
+                    .map_err(|e| format!("dependency {dependency}: {e}"))?;
+                dependencies.insert(dependency.clone(), Source::Registry(requirement));
+                continue;
+            }
             let spec = value.as_table().ok_or_else(|| {
-                format!("dependency {dependency} must be written as {{ git = \"...\", rev = \"...\" }} or {{ path = \"...\" }}")
+                format!("dependency {dependency} must be written as \"^1.0\", {{ git = \"...\", rev = \"...\" }} or {{ path = \"...\" }}")
             })?;
             let text = |key: &str| -> Result<Option<String>> {
                 match spec.get(key) {
@@ -171,41 +185,52 @@ pub fn manifest(path: &Path, library: bool) -> Result<Manifest> {
             };
             if spec
                 .keys()
-                .any(|key| !matches!(key.as_str(), "git" | "rev" | "path"))
+                .any(|key| !matches!(key.as_str(), "git" | "rev" | "path" | "version"))
             {
                 return Err(format!(
-                    "dependency {dependency} accepts only git, rev and path"
+                    "dependency {dependency} accepts only git, rev, path and version"
                 ));
             }
-            let source = match (text("git")?, text("path")?) {
-                (Some(url), None) => Source::Git {
+            let source = match (text("git")?, text("path")?, text("version")?) {
+                (Some(url), None, None) => Source::Git {
                     url,
                     rev: text("rev")?.unwrap_or_else(|| "HEAD".into()),
                 },
-                (None, Some(path)) if text("rev")?.is_none() => Source::Path(PathBuf::from(path)),
+                (None, Some(path), None) if text("rev")?.is_none() => {
+                    Source::Path(PathBuf::from(path))
+                }
+                (None, None, Some(version)) if text("rev")?.is_none() => Source::Registry(
+                    Requirement::parse(&version)
+                        .map_err(|e| format!("dependency {dependency}: {e}"))?,
+                ),
                 _ => {
                     return Err(format!(
-                        "dependency {dependency} needs either git (with an optional rev) or path"
+                        "dependency {dependency} needs exactly one of version, git (with an optional rev) or path"
                     ))
                 }
             };
             dependencies.insert(dependency.clone(), source);
         }
     }
+    let version = setting("version")?.map(Version::parse).transpose()?;
+    let description = setting("description")?.map(str::to_owned);
     Ok(Manifest {
         name,
         modules,
         entry,
         dependencies,
         native: native(&config)?,
+        version,
+        description,
     })
 }
 
-/// 锁文件里的一项：git 依赖解析到的提交。
+/// 锁文件里的一项：git 依赖（记 rev）或索引里的包（记 version）解析到的提交。
 #[derive(Clone, PartialEq, Eq)]
 struct Locked {
     url: String,
-    rev: String,
+    rev: Option<String>,
+    version: Option<String>,
     commit: String,
 }
 
@@ -223,18 +248,21 @@ fn read_lock(path: &Path) -> Result<BTreeMap<String, Locked>> {
         .into_iter()
         .flatten()
     {
-        let field = |key: &str| {
+        let optional = |key: &str| {
             entry
                 .get(key)
                 .and_then(toml::Value::as_str)
                 .map(str::to_owned)
-                .ok_or_else(|| format!("{}: package entry without {key}", path.display()))
+        };
+        let field = |key: &str| {
+            optional(key).ok_or_else(|| format!("{}: package entry without {key}", path.display()))
         };
         locked.insert(
             field("name")?,
             Locked {
                 url: field("git")?,
-                rev: field("rev")?,
+                rev: optional("rev"),
+                version: optional("version"),
                 commit: field("commit")?,
             },
         );
@@ -247,11 +275,16 @@ fn write_lock(path: &Path, locked: &BTreeMap<String, Locked>) -> Result<()> {
         "# Generated by zam. Commit this file so every build uses the same dependency commits.\n",
     );
     for (name, entry) in locked {
+        let (key, value) = match (&entry.version, &entry.rev) {
+            (Some(version), _) => ("version", version),
+            (None, Some(rev)) => ("rev", rev),
+            (None, None) => unreachable!("locked entries carry a version or a rev"),
+        };
         text.push_str(&format!(
-            "\n[[package]]\nname = {}\ngit = {}\nrev = {}\ncommit = {}\n",
+            "\n[[package]]\nname = {}\n{key} = {}\ngit = {}\ncommit = {}\n",
             toml::Value::from(name.as_str()),
+            toml::Value::from(value.as_str()),
             toml::Value::from(entry.url.as_str()),
-            toml::Value::from(entry.rev.as_str()),
             toml::Value::from(entry.commit.as_str()),
         ));
     }
@@ -261,7 +294,7 @@ fn write_lock(path: &Path, locked: &BTreeMap<String, Locked>) -> Result<()> {
     fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-fn git(args: &[&str], dir: Option<&Path>) -> Result<String> {
+pub fn git(args: &[&str], dir: Option<&Path>) -> Result<String> {
     let mut command = Command::new("git");
     if let Some(dir) = dir {
         command.arg("-C").arg(dir);
@@ -287,8 +320,29 @@ pub struct Package {
     pub manifest: Manifest,
 }
 
-/// 解析根项目的全部依赖（含传递依赖），需要时拉取 git 仓库并更新 `zam.lock`。
-/// `update` 为真时忽略锁文件，重新解析每个 rev。
+/// 索引里的包选定的版本。
+#[derive(Clone, PartialEq, Eq)]
+struct Choice {
+    version: Version,
+    url: String,
+    commit: String,
+}
+
+/// 按当前选定的版本走一遍依赖树的结果。
+struct Walk {
+    packages: BTreeMap<String, Package>,
+    locked: BTreeMap<String, Locked>,
+    // 索引里的包：（谁要求的, 版本范围）。
+    requirements: BTreeMap<String, Vec<(String, Requirement)>>,
+    // 每个索引里的包都已经选定版本、走到了底。
+    complete: bool,
+}
+
+/// 解析根项目的全部依赖（含传递依赖），需要时拉取 git 仓库、读公共包索引，并更新 `zam.lock`。
+/// `update` 为真时忽略锁文件：git 依赖重新解析 rev，索引里的包重新选最高的版本。
+///
+/// 索引里的包按“所有依赖方的版本范围都满足的最高版本”选；锁文件里的版本仍然满足时沿用，
+/// 不读索引，所以锁定后构建不访问网络。选定的版本带来新的依赖与范围时再选一轮，直到不变。
 pub fn resolve(
     root: &Path,
     dependencies: &BTreeMap<String, Source>,
@@ -307,15 +361,95 @@ pub fn resolve(
     } else {
         read_lock(&lock_path)?
     };
-    let mut locked = BTreeMap::new();
-    let mut packages: BTreeMap<String, Package> = BTreeMap::new();
+    let mut index: Option<Index> = None;
+    let mut choices: BTreeMap<String, Choice> = BTreeMap::new();
+    for _ in 0..64 {
+        let walk = walk(root, dependencies, store, &old, &choices)?;
+        let mut next = BTreeMap::new();
+        for (name, requirements) in &walk.requirements {
+            let accept = |version: Version| {
+                requirements
+                    .iter()
+                    .all(|(_, requirement)| requirement.matches(version))
+            };
+            let kept = choices
+                .get(name)
+                .filter(|choice| accept(choice.version))
+                .cloned()
+                .or_else(|| {
+                    old.get(name)
+                        .and_then(|entry| {
+                            let version = Version::parse(entry.version.as_deref()?).ok()?;
+                            Some(Choice {
+                                version,
+                                url: entry.url.clone(),
+                                commit: entry.commit.clone(),
+                            })
+                        })
+                        .filter(|choice| accept(choice.version))
+                });
+            let choice = match kept {
+                Some(choice) => choice,
+                None => {
+                    let index = index.get_or_insert_with(|| Index::new(store));
+                    let entry = index.entry(name)?;
+                    let release = entry
+                        .best(accept)
+                        .ok_or_else(|| registry::conflict(name, requirements, &entry))?;
+                    Choice {
+                        version: release.version,
+                        url: entry.repository.clone(),
+                        commit: release.commit.clone(),
+                    }
+                }
+            };
+            next.insert(name.clone(), choice);
+        }
+        if walk.complete && next == choices {
+            if walk.locked.is_empty() {
+                if lock_path.exists() {
+                    fs::remove_file(&lock_path).map_err(|e| e.to_string())?;
+                }
+            } else {
+                write_lock(&lock_path, &walk.locked)?;
+            }
+            return Ok(walk.packages);
+        }
+        choices = next;
+    }
+    Err(
+        "dependency versions did not settle; pin the packages that keep changing with \"=1.2.3\""
+            .into(),
+    )
+}
+
+fn walk(
+    root: &Path,
+    dependencies: &BTreeMap<String, Source>,
+    store: &Path,
+    old: &BTreeMap<String, Locked>,
+    choices: &BTreeMap<String, Choice>,
+) -> Result<Walk> {
+    let mut result = Walk {
+        packages: BTreeMap::new(),
+        locked: BTreeMap::new(),
+        requirements: BTreeMap::new(),
+        complete: true,
+    };
     let mut sources: BTreeMap<String, Source> = BTreeMap::new();
-    // （名字, 来源, 声明它的目录）：路径依赖相对声明它的包。
-    let mut pending: Vec<(String, Source, PathBuf)> = dependencies
+    // （名字, 来源, 声明它的目录, 谁要求的）：路径依赖相对声明它的包。
+    let mut pending: Vec<(String, Source, PathBuf, String)> = dependencies
         .iter()
-        .map(|(name, source)| (name.clone(), source.clone(), root.to_owned()))
+        .map(|(name, source)| {
+            (
+                name.clone(),
+                source.clone(),
+                root.to_owned(),
+                "the project".to_owned(),
+            )
+        })
         .collect();
-    while let Some((name, source, base)) = pending.pop() {
+    while let Some((name, source, base, by)) = pending.pop() {
         let source = match source {
             Source::Path(path) => Source::Path(
                 fs::canonicalize(base.join(&path)).map_err(|_| {
@@ -325,34 +459,69 @@ pub fn resolve(
                     )
                 })?,
             ),
-            git => git,
+            other => other,
         };
+        if let Source::Registry(requirement) = &source {
+            result
+                .requirements
+                .entry(name.clone())
+                .or_default()
+                .push((by.clone(), requirement.clone()));
+        }
         if let Some(existing) = sources.get(&name) {
-            if *existing != source {
+            let same = match (existing, &source) {
+                (Source::Registry(_), Source::Registry(_)) => true,
+                (a, b) => a == b,
+            };
+            if !same {
                 return Err(format!(
-                    "dependency {name} is required from two different sources; use the same git and rev everywhere"
+                    "dependency {name} is required from two different sources; use the same version, git and rev, or path everywhere"
                 ));
             }
             continue;
         }
         sources.insert(name.clone(), source.clone());
-        let dir = match &source {
-            Source::Path(dir) => dir.clone(),
+        let (dir, label, chosen) = match &source {
+            Source::Path(dir) => (dir.clone(), name.clone(), None),
             Source::Git { url, rev } => {
                 let commit = match old.get(&name) {
-                    Some(entry) if entry.url == *url && entry.rev == *rev => entry.commit.clone(),
+                    Some(entry) if entry.url == *url && entry.rev.as_ref() == Some(rev) => {
+                        entry.commit.clone()
+                    }
                     _ => fetch_commit(store, url, rev)?,
                 };
                 let dir = checkout(store, &name, url, &commit)?;
-                locked.insert(
+                result.locked.insert(
                     name.clone(),
                     Locked {
                         url: url.clone(),
-                        rev: rev.clone(),
+                        rev: Some(rev.clone()),
+                        version: None,
                         commit,
                     },
                 );
-                dir
+                (dir, name.clone(), None)
+            }
+            Source::Registry(_) => {
+                let Some(choice) = choices.get(&name) else {
+                    result.complete = false;
+                    continue;
+                };
+                let dir = checkout(store, &name, &choice.url, &choice.commit)?;
+                result.locked.insert(
+                    name.clone(),
+                    Locked {
+                        url: choice.url.clone(),
+                        rev: None,
+                        version: Some(choice.version.to_string()),
+                        commit: choice.commit.clone(),
+                    },
+                );
+                (
+                    dir,
+                    format!("{name} {}", choice.version),
+                    Some(choice.version),
+                )
             }
         };
         let manifest =
@@ -363,23 +532,37 @@ pub fn resolve(
                 manifest.name
             ));
         }
+        if let (Some(chosen), Some(declared)) = (chosen, manifest.version) {
+            if chosen != declared {
+                return Err(format!(
+                    "the package index lists {name} {chosen}, but its zam.toml at that commit says version {declared}; report it to the package author"
+                ));
+            }
+        }
         for (dependency, source) in &manifest.dependencies {
-            pending.push((dependency.clone(), source.clone(), dir.clone()));
+            pending.push((
+                dependency.clone(),
+                source.clone(),
+                dir.clone(),
+                label.clone(),
+            ));
         }
-        packages.insert(name, Package { dir, manifest });
+        result.packages.insert(name, Package { dir, manifest });
     }
-    if locked.is_empty() {
-        if lock_path.exists() {
-            fs::remove_file(&lock_path).map_err(|e| e.to_string())?;
-        }
-    } else {
-        write_lock(&lock_path, &locked)?;
-    }
-    Ok(packages)
+    Ok(result)
+}
+
+/// 索引里某个包的最新版本（不含撤回的），`zam add <名字>` 用。
+pub fn latest(store: &Path, name: &str) -> Result<Version> {
+    let entry = Index::new(store).entry(name)?;
+    entry
+        .best(|_| true)
+        .map(|release| release.version)
+        .ok_or_else(|| format!("package {name} has no versions to install yet"))
 }
 
 /// 仓库的本地镜像：`store/repos/<url 的哈希>`，没有就克隆，否则拉取最新的分支与标签。
-fn mirror(store: &Path, url: &str, refresh: bool) -> Result<PathBuf> {
+pub fn mirror(store: &Path, url: &str, refresh: bool) -> Result<PathBuf> {
     let repo = store.join("repos").join(&hash(&[url.as_bytes()])[..16]);
     if !repo.exists() {
         fs::create_dir_all(store.join("repos")).map_err(|e| e.to_string())?;
@@ -481,6 +664,7 @@ pub fn add(manifest_path: &Path, name: &str, source: &Source) -> Result<()> {
     }
     let quote = |s: &str| toml::Value::from(s).to_string();
     let line = match source {
+        Source::Registry(requirement) => format!("{name} = {}", quote(&requirement.text)),
         Source::Git { url, rev } if rev == "HEAD" => format!("{name} = {{ git = {} }}", quote(url)),
         Source::Git { url, rev } => {
             format!("{name} = {{ git = {}, rev = {} }}", quote(url), quote(rev))
@@ -506,4 +690,41 @@ pub fn add(manifest_path: &Path, name: &str, source: &Source) -> Result<()> {
         }
     };
     fs::write(manifest_path, updated).map_err(|e| format!("{}: {e}", manifest_path.display()))
+}
+
+/// `zam remove`：删掉 `[dependencies]` 里这个依赖的那一行，保留其余内容。
+pub fn remove(manifest_path: &Path, name: &str) -> Result<()> {
+    let text = fs::read_to_string(manifest_path)
+        .map_err(|e| format!("{}: {e}", manifest_path.display()))?;
+    if !manifest(manifest_path, true)?
+        .dependencies
+        .contains_key(name)
+    {
+        return Err(format!("dependency {name} is not in zam.toml"));
+    }
+    let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    let mut lines: Vec<&str> = text.lines().collect();
+    let mut section = false;
+    let mut found = None;
+    for (index, line) in lines.iter().enumerate() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            section = line == "[dependencies]";
+        } else if section
+            && line
+                .strip_prefix(name)
+                .is_some_and(|rest| rest.trim_start().starts_with('='))
+        {
+            found = Some(index);
+            break;
+        }
+    }
+    let index = found.ok_or_else(|| {
+        format!(
+            "cannot find the line for {name} under [dependencies]; remove it from zam.toml by hand"
+        )
+    })?;
+    lines.remove(index);
+    fs::write(manifest_path, lines.join(newline) + newline)
+        .map_err(|e| format!("{}: {e}", manifest_path.display()))
 }
