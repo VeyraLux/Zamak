@@ -36,7 +36,7 @@ Zamak 是为频繁构建和多 worktree 协作设计的语言原型，改完代�
 | 错误处理 | `T!string`、`fail`、`?` 传播、`catch` 处理 |
 | 编辑器 | VS Code 语法高亮、括号与引号配对 |
 
-尚未支持网络 I/O、目录遍历和线程，也还没有中心化的包仓库、语言服务器、REPL 和文档生成工具。安装方式见 [预览版说明](PREVIEW.md)。
+尚未支持网络 I/O、目录遍历和线程，也还没有语言服务器、REPL 和文档生成工具。安装方式见 [预览版说明](PREVIEW.md)。
 
 ## 快速运行
 
@@ -144,7 +144,7 @@ entry = "src/main.zm"
 modules = "src"
 ```
 
-配置包含 `[project]` 和可选的 `[dependencies]`（见下文“依赖包”）；`[project]` 只有上面三个字符串字段；路径相对配置文件，不能包含 `..`，入口要在模块目录内。`zam` 递归扫描模块目录里的 `.zm` 文件，一个文件对应一个模块，例如 `src/tools/greeting.zm` 的模块名是 `tools/greeting`。暂不支持源码符号链接。
+配置包含 `[project]` 和可选的 `[dependencies]`（见下文“依赖包”）、`[native]`（见“调用 C 函数”）；`[project]` 除了上面三个字段，还可以写发布用的 `version`（如 `"1.0.0"`）和 `description`。库可以不写 `entry`：这时 `zam check` 与 `zam test` 照常可用，没有 `main` 也行，`zam build`/`zam run` 会提示它是库；路径相对配置文件，不能包含 `..`，入口要在模块目录内。`zam` 递归扫描模块目录里的 `.zm` 文件，一个文件对应一个模块，例如 `src/tools/greeting.zm` 的模块名是 `tools/greeting`。暂不支持源码符号链接。
 
 ```zam
 use tools/greeting
@@ -159,19 +159,24 @@ fn main():
 
 ### 依赖包
 
-别人写好的 Zamak 库可以直接拿来用。依赖写在 `[dependencies]` 里，来源是 git 仓库或本地目录：
+别人写好的 Zamak 库可以直接拿来用。依赖写在 `[dependencies]` 里，来源有三种：[公共包索引](https://github.com/rayL-K/zamak-index)里的版本、git 仓库、本地目录：
 
 ```toml
 [dependencies]
+jsonx = "^1.2"                  # 包索引里 >=1.2.0、<2.0.0 的最高版本
 mathx = { git = "https://github.com/you/mathx", rev = "v1.0" }
 util = { path = "../util" }
 ```
 
-也可以用命令添加：`zam add mathx https://github.com/you/mathx v1.0`、`zam add util ../util`。`zam add` 修改当前目录的 `zam.toml` 并立即拉取，拉取或检查失败时把 `zam.toml` 与 `zam.lock` 恢复原样。
+也可以用命令添加：`zam add jsonx`（取最新版本，写成 `"^1.4.0"`）、`zam add jsonx "~1.2"`、`zam add mathx https://github.com/you/mathx v1.0`、`zam add util ../util`；`zam remove jsonx` 删除依赖；`zam search json` 在包索引里按名字和介绍查找。`zam add` 与 `zam remove` 修改当前目录的 `zam.toml` 并立即重新解析，失败时把 `zam.toml` 与 `zam.lock` 恢复原样。
+
+- **版本范围**：写法同 Cargo。`^1.2`（也可以只写 `1.2`）是 `>=1.2.0, <2.0.0`，`^0.3` 是 `>=0.3.0, <0.4.0`；`~1.2` 是 `>=1.2.0, <1.3.0`；`=1.2.3` 只要这一个版本；`>=1.0, <3.0` 用逗号连接多个条件；`*` 是任何版本。`zam` 选出所有依赖方都接受的最高版本（不选已撤回的），选不出来时报错列出谁要求了什么，例如 `the project requires mathx ^2.0.0, geo 0.1.0 requires mathx >=1.1, <2`。也可以写成 `{ version = "^1.2" }`。
+- **发布**：`zam.toml` 写上 `version` 和 `description`，提交后打标签 `git tag v1.0.0 && git push origin v1.0.0`，再运行 `zam publish`。它会检查包能编译、没有路径依赖、`zam.toml` 在仓库根目录、没有未提交的改动、标签已推送，然后打印索引条目；把它作为 `packages/<名字>.toml` 提 PR 到包索引仓库，自动检查会核对提交与版本号。发布过的版本不再改动，有问题的版本在索引里标 `yanked = true`。详见包索引仓库的说明。
+- **换索引**：环境变量 `ZAMAK_INDEX` 可以换成别的 git 地址或本地目录；本地目录时 `zam publish` 直接把条目写进去，适合自建内部索引。
 
 - **包的写法**：包就是一个普通的 Zamak 项目，`zam.toml` 里 `[project]` 的 `name` 要和依赖名相同，`entry` 可以省略（库不需要 `main`）。包可以再有自己的依赖，`zam` 会一起解析；同一个名字被要求从两个不同的来源拉取时报错。
 - **导入**：包里的 `src/geo.zm` 写成 `use mathx/geo`，调用 `geo.twice(2)`；与包同名的 `src/mathx.zm` 是包的根模块，写成 `use mathx`。包内部的模块照常互相 `use geo`。只有 `pub` 的函数、结构体和常量能被项目使用；项目自己的模块不能和依赖同名。
-- **锁定**：`rev` 可以是分支、标签或提交，省略时是默认分支。第一次构建把它解析成具体提交，写进 `zam.lock`（请提交到版本库），之后的构建都用锁定的提交，即使标签移动了也不变；`zam update` 忽略锁文件，把每个 `rev` 重新解析成最新的提交。路径依赖不进锁文件。
+- **锁定**：`rev` 可以是分支、标签或提交，省略时是默认分支。第一次构建把它解析成具体提交，包索引里的包解析成具体版本和提交，都写进 `zam.lock`（请提交到版本库）。之后的构建都用锁定的结果，即使标签移动了、索引里出了新版本也不变；锁定的版本仍满足版本范围时不读索引。`zam update` 忽略锁文件，把每个 `rev` 重新解析成最新的提交、每个包重新选最高的版本。路径依赖不进锁文件。
 - **缓存与离线**：git 仓库的镜像与检出的源码放在缓存目录的 `packages/` 下（默认 `~/.zam/cache/packages`），按提交区分、只检出一次。锁定的提交已在缓存里时构建不访问网络。拉取 git 依赖需要 PATH 上有 `git`。
 - **测试**：`zam test` 只运行项目自己的测试，不运行依赖包里的；`zam fmt` 也只整理项目自己的模块。
 
