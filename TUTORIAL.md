@@ -1178,7 +1178,7 @@ Zamak 0.1.0 的支持范围有限。编写程序时需注意以下限制：
 - 标准库包括 `std/string`（`byte_len`、`char_len`、`equal`、`parse_i64`、`parse_f64`、`trim`、`byte_at`、`slice`、`find`、`find_from`、`starts_with`、`ends_with`、`contains`、`replace`、`lower`、`upper`、`copy`、`split`、`words`、`lines`、`join`、`chars`、`codepoints`、`from_code`、`bytes`、`from_bytes`、`repeat`、`count`、`pad_left`、`pad_right`）、`std/io`（`println`、`read_line`、`read_all`）、`std/fmt`（`println`、`fixed`）、`std/math`（见第 3 节）、`std/fs`（`read`、`write`）和 `std/env`（`arg_count`、`arg`、`args`、`var`、`exit`），以及不用导入的 `abs`、`min`、`max`，没有目录遍历、网络和时间函数。
 - 错误类型可以是 `string`、结构体或枚举，没有错误堆栈。
 - 定长数组仅支持 `i64` 局部值；列表 `[T]` 的元素与字典 `{K: V}` 的值可以是 `i64`、`f64`、`bool`、`string` 或结构体，字典键只能是 `i64` 或 `string`；还没有嵌套容器（`[[i64]]`），元素字段里的列表不能再接下标。调用结果上可以接着调用方法。
-- 所有权检查覆盖 `string`、结构体、列表和字典；尚不支持线程、`unsafe` 和外部函数接口（FFI）。
+- 所有权检查覆盖 `string`、结构体、列表和字典；尚不支持线程和 `unsafe`。`extern fn` 可以调用 C 函数（见 README 的“调用 C 函数”），C 代码本身不在检查范围内。
 - 编辑器支持为 VS Code 扩展（`editors/vscode/`）：语法高亮、冒号后自动缩进、按缩进折叠；没有语言服务器、补全和调试器。
 - 本教程采用源码安装；安装步骤和平台工具链要求见 [安装说明](PREVIEW.md)。
 
