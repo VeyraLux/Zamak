@@ -640,6 +640,21 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
             "name",
             Some("remove or rename the duplicate declaration"),
         )
+    } else if message.contains("declared inside a function")
+        || message.contains("cannot call itself")
+        || message.contains("cannot be declared mut")
+    {
+        (
+            "ZM200",
+            "type",
+            Some("declare the fn at the top level of the module; a fn inside a function cannot be generic, fail, call itself or be reassigned yet"),
+        )
+    } else if message.starts_with("missing return") {
+        (
+            "ZM200",
+            "type",
+            Some("end every path of the fn body with a value or a return statement"),
+        )
     } else if message.starts_with("cannot assign immutable value ") {
         (
             "ZM302",

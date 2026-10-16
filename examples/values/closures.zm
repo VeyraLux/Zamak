@@ -1,0 +1,42 @@
+// 函数里定义的函数（闭包）：可以有多行，能读写外层的局部变量。
+use std/string
+
+fn each(words: &[string], visit: fn(&string)):
+    for word in words:
+        visit(word)
+
+fn main():
+    let words: [string] = ["apple", "kiwi", "banana", "fig"]
+
+    // 读外层变量：min_len 在函数外面定义。
+    let min_len = 4
+
+    fn long_enough(word: &string) -> bool:
+        let length = string.byte_len(word)
+
+        if length < min_len:
+            return false
+
+        length < 100
+
+    println(long_enough("apple"))
+    println(long_enough("fig"))
+
+    // 写外层变量：变量要声明成 let mut。
+    let mut total = 0
+    let mut shouted: [string] = []
+
+    fn collect(word: &string):
+        total += string.byte_len(word)
+
+        if long_enough(word):
+            shouted.push(string.upper(word))
+
+    each(&words, collect)
+    println(total)
+    println(shouted)
+
+    // 一行的匿名函数也能改外层的列表。
+    let mut lengths: [i64] = []
+    each(&words, fn(word): lengths.push(string.byte_len(word)))
+    println(lengths)

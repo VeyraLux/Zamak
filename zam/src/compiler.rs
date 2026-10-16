@@ -195,13 +195,16 @@ pub fn copied(ty: Type) -> bool {
     )
 }
 
-/// 闭包看见的外层局部变量：一律只读；owned 的值变成共享借用，数字、布尔与函数照旧。
-pub fn captured_view(ty: Type) -> Result<Type, String> {
+/// 闭包看见的外层局部变量：owned 的值变成借用，数字、布尔与函数照旧（读写的都是外层变量本身）。
+/// `mutable` 是外层变量能不能写（`let mut`，或本身是 `&mut` 借用）：能写时视图是可变借用。
+pub fn captured_view(ty: Type, mutable: bool) -> Result<Type, String> {
     Ok(match ty {
-        Type::Owned | Type::Shared | Type::Mutable => Type::Shared,
-        Type::Record(id) | Type::RecordRef(id, _) => Type::RecordRef(id, false),
-        Type::List(elem) | Type::ListRef(elem, _) => Type::ListRef(elem, false),
-        Type::Map(key, value) | Type::MapRef(key, value, _) => Type::MapRef(key, value, false),
+        Type::Owned => borrow_of(ty, mutable).expect("strings can be borrowed"),
+        Type::Shared | Type::Mutable => ty,
+        Type::Record(id) => Type::RecordRef(id, mutable),
+        Type::List(elem) => Type::ListRef(elem, mutable),
+        Type::Map(key, value) => Type::MapRef(key, value, mutable),
+        Type::RecordRef(..) | Type::ListRef(..) | Type::MapRef(..) => ty,
         Type::ArrayInt(_) => {
             return Err("fixed arrays cannot be used inside an anonymous fn; use a list".into())
         }
@@ -253,7 +256,10 @@ pub fn expr_roots(expr: &Expr, out: &mut BTreeSet<String>) {
         Expr::Unary(_, inner) | Expr::Try(inner) | Expr::ByteLen(inner) | Expr::CharLen(inner) => {
             expr_roots(inner, out)
         }
-        Expr::Catch(inner, _, _) => expr_roots(inner, out),
+        Expr::Catch(inner, _, body) => {
+            expr_roots(inner, out);
+            block_roots(body, out);
+        }
         Expr::Binary(_, a, b) | Expr::StringEqual(a, b) => {
             expr_roots(a, out);
             expr_roots(b, out);
@@ -267,16 +273,67 @@ pub fn expr_roots(expr: &Expr, out: &mut BTreeSet<String>) {
             expr_roots(scrutinee, out);
             arms.iter().for_each(|(_, v)| expr_roots(v, out));
         }
-        Expr::Lambda(_, _, body) => expr_roots(lambda_body(body), out),
+        Expr::Lambda(_, _, body) => block_roots(body, out),
         Expr::Text(_) | Expr::Int(_) | Expr::Float(_) | Expr::Bool(_) | Expr::FnRef(_) => {}
     }
 }
 
-/// 匿名函数体里的那个表达式（打印语句打印的值，或函数体本身）。
-pub fn lambda_body(body: &Block) -> &Expr {
-    match &body[0].0 {
-        Instruction::Print(expr) | Instruction::Call(expr) => expr,
-        _ => unreachable!("anonymous fn bodies hold one expression"),
+/// 匿名函数体里的那个表达式（打印语句打印的值，或函数体本身）；函数内部用 `fn name(...):` 定义的
+/// 函数体是完整的代码块（尾部的值已经改写成 return），这时是 None。
+pub fn lambda_body(body: &Block) -> Option<&Expr> {
+    match body.as_slice() {
+        [(Instruction::Print(expr) | Instruction::Call(expr), _)] => Some(expr),
+        _ => None,
+    }
+}
+
+/// 代码块里用到的局部名（路径的根），包括赋值、遍历的目标。
+pub fn block_roots(block: &Block, out: &mut BTreeSet<String>) {
+    let root = |path: &str| path.split('.').next().unwrap_or(path).to_owned();
+    for (instruction, _) in block {
+        match instruction {
+            Instruction::Let(_, _, _, value)
+            | Instruction::Print(value)
+            | Instruction::Call(value)
+            | Instruction::Fail(value)
+            | Instruction::Unpack(_, _, value)
+            | Instruction::Return(Some(value)) => expr_roots(value, out),
+            Instruction::Return(None) | Instruction::Break | Instruction::Continue => {}
+            Instruction::Assign(name, value) | Instruction::AssignField(name, _, value) => {
+                out.insert(root(name));
+                expr_roots(value, out);
+            }
+            Instruction::AssignIndex(name, index, value)
+            | Instruction::AssignIndexField(name, index, _, value) => {
+                out.insert(root(name));
+                expr_roots(index, out);
+                expr_roots(value, out);
+            }
+            Instruction::If(condition, yes, no) => {
+                expr_roots(condition, out);
+                block_roots(yes, out);
+                block_roots(no, out);
+            }
+            Instruction::While(condition, body) => {
+                expr_roots(condition, out);
+                block_roots(body, out);
+            }
+            Instruction::For(_, start, end, body) => {
+                expr_roots(start, out);
+                expr_roots(end, out);
+                block_roots(body, out);
+            }
+            Instruction::Each(_, _, path, _, body) => {
+                out.insert(root(path));
+                block_roots(body, out);
+            }
+            Instruction::Match(scrutinee, arms) => {
+                expr_roots(scrutinee, out);
+                for (_, body) in arms {
+                    block_roots(body, out);
+                }
+            }
+        }
     }
 }
 
@@ -898,8 +955,25 @@ fn substitute_block(block: &mut Block, map: &BTreeMap<u64, Type>) -> Result<(), 
 }
 
 fn substitute_catch(expr: &mut Expr, map: &BTreeMap<u64, Type>) -> Result<(), String> {
-    if let Expr::Catch(_, _, block) = expr {
-        substitute_block(block, map)?;
+    match expr {
+        Expr::Catch(_, _, block) => substitute_block(block, map)?,
+        Expr::Lambda(params, result, block) => {
+            for (_, ty) in params.iter_mut() {
+                if let Some(ty) = ty {
+                    *ty = substitute(*ty, map)?;
+                }
+            }
+            if let Some(result) = result {
+                *result = substitute(*result, map)?;
+            }
+            substitute_block(block, map)?;
+        }
+        Expr::Call(_, args) | Expr::Apply(_, args) | Expr::Method(_, _, args) => {
+            for arg in args {
+                substitute_catch(arg, map)?;
+            }
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -3162,6 +3236,36 @@ impl Parser {
                 let nested = self.suite(imports, result, "for")?;
                 Instruction::For(local, start, end, nested)
             }
+        } else if self.peek() == Some(&Token::Word("fn".into()))
+            && matches!(self.tokens.get(self.position + 1), Some(Token::Word(_)))
+        {
+            // 函数里定义的函数：可以读写外层的局部变量（闭包），只在这个函数里用。
+            self.take();
+            let outer_result = self.result;
+            let outer_generics = self.type_params.len();
+            let (name, function) = self.function(false, position, imports, None)?;
+            self.result = outer_result;
+            if function.generics.len() > outer_generics {
+                return Err(format!(
+                    "a fn declared inside a function cannot have type parameters; declare {name} at the top level"
+                ));
+            }
+            if function.error.is_some() {
+                return Err(format!(
+                    "a fn declared inside a function cannot fail yet; declare {name} at the top level, or handle the error inside it"
+                ));
+            }
+            let params = function
+                .params
+                .into_iter()
+                .map(|(param, ty)| (param, Some(ty)))
+                .collect();
+            Instruction::Let(
+                name,
+                false,
+                None,
+                Expr::Lambda(params, Some(function.result), function.body),
+            )
         } else if self.keyword("break") {
             Instruction::Break
         } else if self.keyword("continue") {
@@ -3955,7 +4059,7 @@ pub fn encode(module: &Module) -> Vec<u8> {
         .map(|(name, constant)| (name, constant.public, &constant.value))
         .collect();
     format!(
-        "ZAM-IR-30\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
+        "ZAM-IR-31\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
         module.type_names, module.imports, module.functions
     )
     .into_bytes()
@@ -4015,11 +4119,17 @@ struct Checker<'a> {
     module: &'a str,
     // 正在检查单独成句的 `f() catch e:`：调用的值没人用，catch 块处理完可以接着往下走。
     discarded: bool,
+    // 检查期间被写过的根（赋值、可变借用、改容器都经过 `thawed`）：闭包据此分出哪些捕获要可变借用。
+    written: std::cell::RefCell<BTreeSet<String>>,
+    // 绑定到名字上的闭包（`fn helper(...):`、`let f = fn(...): ...`）：它用到的外层变量与是否写它们。
+    // 每次调用或转传闭包时，这些变量在那条语句里被借用。
+    closures: BTreeMap<String, Vec<(String, bool)>>,
     // 正在检查泛型函数的副本：`copy(v)` 对 i64、f64、bool 也成立（T 可能是任何类型）。
     generic: bool,
 }
 impl<'a> Checker<'a> {
     fn thawed(&self, root: &str) -> Result<(), String> {
+        self.written.borrow_mut().insert(root.to_owned());
         if self.frozen.iter().any(|name| name == root) {
             Err(format!(
                 "borrow conflict: {root} is borrowed by an enclosing for loop"
@@ -4437,6 +4547,8 @@ impl<'a> Checker<'a> {
             module: self.module,
             generic: self.generic,
             discarded: false,
+            written: Default::default(),
+            closures: self.closures.clone(),
         }
     }
     /// 具名函数当值用时的类型。泛型函数、会失败的函数暂时不能当值。
@@ -4483,7 +4595,7 @@ impl<'a> Checker<'a> {
         result: Option<Type>,
         block: &Block,
         hint: Option<(Vec<Type>, Option<Type>)>,
-    ) -> Result<(u64, Vec<String>), String> {
+    ) -> Result<(u64, Vec<(String, bool)>), String> {
         let body = lambda_body(block);
         let prints = lambda_prints(block);
         if let Some((types, _)) = &hint {
@@ -4519,7 +4631,7 @@ impl<'a> Checker<'a> {
             types.push(ty);
         }
         let mut roots = BTreeSet::new();
-        expr_roots(body, &mut roots);
+        block_roots(block, &mut roots);
         let captures: Vec<String> = roots
             .into_iter()
             .filter(|name| self.locals.contains_key(name) && !params.iter().any(|(p, _)| p == name))
@@ -4527,11 +4639,16 @@ impl<'a> Checker<'a> {
         let mut inner = BTreeMap::new();
         for name in &captures {
             let binding = self.binding(name)?;
+            let writable = binding.mutable
+                || binding
+                    .ty
+                    .borrowable()
+                    .is_some_and(|(_, by_ref)| by_ref == Some(true));
             inner.insert(
                 name.clone(),
                 Binding {
-                    ty: captured_view(binding.ty)?,
-                    mutable: false,
+                    ty: captured_view(binding.ty, writable)?,
+                    mutable: binding.mutable,
                     live: true,
                 },
             );
@@ -4550,6 +4667,9 @@ impl<'a> Checker<'a> {
         let error = self.error.take();
         let loops = std::mem::take(&mut self.loops);
         let frozen = std::mem::take(&mut self.frozen);
+        let outer_result = self.result;
+        let closures = std::mem::take(&mut self.closures);
+        let written = self.written.take();
         let checked = (|| {
             let wanted = hint.as_ref().and_then(|(_, result)| *result);
             let result = match (result, wanted) {
@@ -4558,11 +4678,26 @@ impl<'a> Checker<'a> {
                 }
                 (Some(ty), _) | (None, Some(ty)) => ty,
                 (None, None) if prints => Type::Unit,
-                (None, None) => self.ty(body)?,
+                (None, None) => match body {
+                    Some(body) => self.ty(body)?,
+                    None => return Err("write the return type of this fn, such as -> i64".to_owned()),
+                },
             };
             if result.is_reference() {
                 return Err("borrow escape: an anonymous fn returns owned values; copy the value, such as copy(&x)".to_owned());
             }
+            let Some(body) = body else {
+                // 函数里定义的函数：完整的代码块，return 从它自己返回。
+                self.result = result;
+                let returned = self.block(block, result)?;
+                if result != Type::Unit && !returned {
+                    return Err(
+                        "missing return: this fn returns a value, but the end of its body has none; end every path with a value or return"
+                            .to_owned(),
+                    );
+                }
+                return Ok(func_type(types, result));
+            };
             if prints || result == Type::Unit {
                 if prints && result != Type::Unit {
                     return Err(
@@ -4580,7 +4715,63 @@ impl<'a> Checker<'a> {
         self.error = error;
         self.loops = loops;
         self.frozen = frozen;
-        Ok((checked?, captures))
+        self.result = outer_result;
+        let inner_closures = std::mem::replace(&mut self.closures, closures);
+        let wrote = self.written.replace(written);
+        self.written.borrow_mut().extend(wrote.iter().cloned());
+        let id = checked?;
+        // 函数体里调用的闭包用到的变量，也算这个函数用到的。
+        let mut result: Vec<(String, bool)> = captures
+            .iter()
+            .map(|name| (name.clone(), wrote.contains(name)))
+            .collect();
+        for name in &captures {
+            for (inner, writes) in self.closures.get(name).cloned().unwrap_or_default() {
+                match result.iter_mut().find(|(other, _)| *other == inner) {
+                    Some(entry) => entry.1 |= writes,
+                    None => result.push((inner, writes)),
+                }
+            }
+        }
+        drop(inner_closures);
+        Ok((id, result))
+    }
+    /// 调用或转传一个闭包：它用到的变量必须还有效，在这条语句里被借用（写的要可变借用）。
+    fn capture_loans(
+        &self,
+        user: &str,
+        captures: &[(String, bool)],
+        loans: &mut BTreeMap<String, Type>,
+    ) -> Result<(), String> {
+        for (name, writes) in captures {
+            let binding = self
+                .locals
+                .get(name)
+                .ok_or_else(|| format!("unknown variable {name}"))?;
+            if !binding.live {
+                return Err(format!("use after move: {name} (the fn {user} uses it)"));
+            }
+            if *writes {
+                self.thawed(name)?;
+            }
+            match loans.get(name) {
+                Some(Type::Mutable) => {
+                    return Err(format!("borrow conflict: {name} (the fn {user} uses it)"))
+                }
+                Some(_) if *writes => {
+                    return Err(format!(
+                        "borrow conflict: {name} (the fn {user} changes it)"
+                    ))
+                }
+                _ => {}
+            }
+            if *writes {
+                loans.insert(name.clone(), Type::Mutable);
+            } else {
+                loans.entry(name.clone()).or_insert(Type::Shared);
+            }
+        }
+        Ok(())
     }
     fn ty(&self, expr: &Expr) -> Result<Type, String> {
         match expr {
@@ -4631,6 +4822,8 @@ impl<'a> Checker<'a> {
                     module: self.module,
                     generic: self.generic,
             discarded: false,
+            written: Default::default(),
+            closures: BTreeMap::new(),
                 }
                 .ty(value)
             }
@@ -4792,12 +4985,20 @@ impl<'a> Checker<'a> {
                 }
             }
             Expr::Variable(name) if matches!(expected, Type::Func(_) | Type::FuncRef(_)) => {
+                if let Some(captures) = self.closures.get(name).cloned() {
+                    self.capture_loans(name, &captures, loans)?;
+                }
                 match (self.binding(name)?.ty, expected) {
                     (Type::Func(a), Type::Func(b) | Type::FuncRef(b))
                     | (Type::FuncRef(a), Type::FuncRef(b))
                         if a == b =>
                     {
                         Ok(())
+                    }
+                    (Type::FuncRef(_), Type::Func(_)) if self.closures.contains_key(name) => {
+                        Err(format!(
+                            "borrow escape: {name} uses local variables of this function, so it can only be called or passed as an argument, not stored or returned"
+                        ))
                     }
                     (Type::FuncRef(_), Type::Func(_)) => Err(format!(
                         "borrow escape: {name} may capture local variables of its caller; it can only be called or passed as an argument"
@@ -4824,17 +5025,11 @@ impl<'a> Checker<'a> {
                 }
                 if matches!(expected, Type::Func(_)) && !captures.is_empty() {
                     return Err(format!(
-                        "borrow escape: this fn uses the local variable {}, so it can only be passed directly as an argument",
-                        captures[0]
+                        "borrow escape: this fn uses the local variable {}, so it can only be passed directly as an argument or bound with let",
+                        captures[0].0
                     ));
                 }
-                for name in captures {
-                    if loans.get(&name) == Some(&Type::Mutable) {
-                        return Err(format!("borrow conflict: {name}"));
-                    }
-                    loans.entry(name).or_insert(Type::Shared);
-                }
-                Ok(())
+                self.capture_loans("this fn", &captures, loans)
             }
             Expr::Apply(path, args) => self.apply(path, args, expected, loans),
             Expr::Method(..) if self.field_call(expr).is_some() => {
@@ -5358,7 +5553,7 @@ impl<'a> Checker<'a> {
                     && args.iter().any(|arg| {
                         let mut roots = BTreeSet::new();
                         if let Expr::Lambda(_, _, body) = arg {
-                            expr_roots(lambda_body(body), &mut roots);
+                            block_roots(body, &mut roots);
                         }
                         roots.contains(root)
                     })
@@ -5577,6 +5772,9 @@ impl<'a> Checker<'a> {
         loans: &mut BTreeMap<String, Type>,
     ) -> Result<(), String> {
         let (params, result) = self.apply_sig(path)?;
+        if let Some(captures) = self.closures.get(path).cloned() {
+            self.capture_loans(path, &captures, loans)?;
+        }
         let callee = Function {
             public: true,
             params: params.into_iter().map(|ty| (String::new(), ty)).collect(),
@@ -5798,6 +5996,52 @@ impl<'a> Checker<'a> {
                 Instruction::Let(local, mutable, annotation, expr) => {
                     if self.locals.contains_key(local) {
                         return Err(format!("duplicate binding {local}"));
+                    }
+                    self.closures.remove(local);
+                    // 用到外层变量的匿名函数（含函数里定义的 fn）绑定到名字上：不借用，等到调用或
+                    // 转传它时，再在那条语句里借用它用到的变量。它不能存起来或返回，活不过那些变量。
+                    if let Expr::Lambda(params, result, body) = expr {
+                        let mut roots = BTreeSet::new();
+                        block_roots(body, &mut roots);
+                        if roots.contains(local) {
+                            return Err(format!(
+                                "{local} cannot call itself: a fn declared inside a function is not recursive yet; declare {local} at the top level"
+                            ));
+                        }
+                        let hint = match annotation {
+                            Some(Type::Func(id) | Type::FuncRef(id)) => {
+                                let (types, result) = func_sig(*id);
+                                Some((types, Some(result)))
+                            }
+                            Some(_) => {
+                                return Err(
+                                    "type mismatch: an anonymous fn is a function value, but another type is expected"
+                                        .into(),
+                                )
+                            }
+                            None => None,
+                        };
+                        let (id, captures) = self.lambda(params, *result, body, hint)?;
+                        if annotation.is_some_and(|ty| !matches!(ty, Type::Func(want) | Type::FuncRef(want) if want == id)) {
+                            return Err("type mismatch: this fn has a different function type".into());
+                        }
+                        if !captures.is_empty() {
+                            if *mutable {
+                                return Err(format!(
+                                    "{local} uses local variables, so it cannot be declared mut; bind another fn with a new name"
+                                ));
+                            }
+                            self.locals.insert(
+                                local.clone(),
+                                Binding {
+                                    ty: Type::FuncRef(id),
+                                    mutable: false,
+                                    live: true,
+                                },
+                            );
+                            self.closures.insert(local.clone(), captures);
+                            continue;
+                        }
                     }
                     let ty = match annotation {
                         Some(ty) => *ty,
@@ -6099,6 +6343,8 @@ pub fn check(module: &Module, entry: &str) -> Result<(), String> {
             module: name.split(':').next().unwrap_or(name),
             generic: name.ends_with(']'),
             discarded: false,
+            written: Default::default(),
+            closures: BTreeMap::new(),
         };
         let result = (|| {
             // 错误类型是字符串、结构体或枚举；C 侧结果结构体按（成功类型, 错误类型）区分。

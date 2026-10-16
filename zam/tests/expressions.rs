@@ -540,11 +540,11 @@ fn function_values_and_closures() {
         .unwrap();
     assert_eq!(stdout(&output), "14\n60\n");
     for (source, message) in [
-        ("fn main():\n    let n = 1\n    let f = fn(): n\n", "can only be passed directly as an argument"),
+        ("struct H:\n    f: fn() -> i64\n\nfn main():\n    let n = 1\n    let h = H(f: fn(): n)\n", "can only be passed directly as an argument"),
         ("struct H:\n    f: fn() -> i64\n\nfn keep(f: fn() -> i64) -> H: H(f: f)\n\nfn main(): pass\n", "may capture local variables of its caller"),
         ("fn give(f: fn() -> i64) -> fn() -> i64: f\n\nfn main(): pass\n", "may capture local variables of its caller"),
         ("fn main():\n    let f = fn(x): x\n", "cannot infer the type of parameter x"),
-        ("fn run(f: fn()): f()\n\nfn main():\n    let mut xs: [i64] = []\n    run(fn(): xs.push(1))\n", "cannot mutably borrow immutable value xs"),
+        ("fn run(f: fn()): f()\n\nfn main():\n    let xs: [i64] = []\n    run(fn(): xs.push(1))\n", "cannot mutably borrow immutable value xs"),
         ("fn both(xs: &mut [i64], f: fn() -> i64): pass\n\nfn main():\n    let mut xs: [i64] = []\n    both(&mut xs, fn(): xs.len())\n", "borrow conflict: xs"),
         ("fn run(f: fn(i64) -> i64) -> i64: f(1)\n\nfn main(): println(run(fn(a, b): a))\n", "the function takes 1 parameter(s)"),
         ("fn run(f: fn(i64) -> i64) -> i64: f(1)\n\nfn neg(b: bool) -> bool: not b\n\nfn main(): println(run(neg))\n", "neg has a different function type"),
@@ -559,5 +559,42 @@ fn function_values_and_closures() {
         assert!(!output.status.success(), "accepted {source}");
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains(message), "{source}: {stderr}");
+    }
+}
+
+#[test]
+fn local_functions_and_writable_captures() {
+    let case = Case::new("expressions", "closures");
+    assert_eq!(
+        stdout(&case.run(include_str!("../../examples/values/closures.zm"))),
+        "true\nfalse\n18\n[\"APPLE\", \"KIWI\", \"BANANA\"]\n[5, 4, 6, 3]\n"
+    );
+    // 泛型函数里的局部 fn、循环里定义的闭包、局部 fn 调用另一个、闭包里套闭包、改计数器。
+    let source = "fn apply(f: fn(i64) -> i64, x: i64) -> i64: f(x)\n\nfn each(xs: &[i64], f: fn(i64)):\n    for x in xs:\n        f(x)\n\nfn twice(f: fn()):\n    f()\n    f()\n\nfn sum_by[T](items: &[T], weight: i64, f: fn(&T) -> i64) -> i64:\n    let mut total = 0\n    fn add(x: i64):\n        total += x * weight\n    for item in items:\n        add(f(item))\n    total\n\nfn main():\n    let xs: [i64] = [1, 2, 3]\n    println(sum_by(&xs, 10, fn(x): x))\n    let mut results: [i64] = []\n    for i in 0..3:\n        fn shifted(x: i64) -> i64: x + i * 100\n        results.push(apply(shifted, 1))\n    println(results)\n    let base = 5\n    fn inner(x: i64) -> i64: x + base\n    fn outer(x: i64) -> i64: inner(x) * 2\n    println(apply(outer, 1))\n    let mut log: [i64] = []\n    fn record(x: i64):\n        each(&xs, fn(y): log.push(x * y))\n    record(2)\n    record(3)\n    println(log)\n    let mut count = 0\n    fn bump():\n        count += 1\n    twice(bump)\n    bump()\n    println(count)\n    let scale = 10\n    let times = fn(x: i64) -> i64: x * scale\n    println(times(4))\n";
+    assert_eq!(
+        stdout(&case.run(source)),
+        "60\n[1, 101, 201]\n12\n[2, 4, 6, 3, 6, 9]\n3\n40\n"
+    );
+    let header =
+        "fn run(f: fn()): f()\n\nfn take(s: string): pass\n\nfn both(xs: &[i64], f: fn()): f()\n\n";
+    for (body, message) in [
+        ("fn main():\n    let total = 0\n    fn add():\n        total += 1\n    run(add)\n", "cannot assign immutable value total"),
+        ("fn main():\n    let s = \"a\"\n    fn show(): println(s)\n    take(s)\n    run(show)\n", "use after move: s (the fn show uses it)"),
+        ("fn main():\n    let mut xs: [i64] = []\n    fn add(): xs.push(1)\n    both(&xs, add)\n", "borrow conflict: xs (the fn add changes it)"),
+        ("fn main():\n    let mut xs: [i64] = []\n    fn add(): xs.push(1)\n    fn outer(): add()\n    both(&xs, outer)\n", "borrow conflict: xs (the fn outer changes it)"),
+        ("fn main():\n    let mut xs: [i64] = [1]\n    fn add(): xs.push(1)\n    for x in &xs:\n        run(add)\n", "xs is borrowed by an enclosing for loop"),
+        ("fn make() -> fn() -> i64:\n    let n = 1\n    fn get() -> i64: n\n    get\n\nfn main(): pass\n", "get uses local variables of this function"),
+        ("struct H:\n    f: fn()\n\nfn main():\n    let n = 1\n    fn show(): println(n)\n    let h = H(f: show)\n", "show uses local variables of this function"),
+        ("fn main():\n    fn down(n: i64) -> i64:\n        if n == 0: return 0\n        down(n - 1)\n    println(down(3))\n", "down cannot call itself"),
+        ("fn main():\n    fn id[T](x: T) -> T: x\n    println(id(1))\n", "cannot have type parameters"),
+        ("fn main():\n    fn p() -> i64!string: 1\n", "cannot fail yet"),
+        ("fn main():\n    fn f(x: i64) -> i64:\n        if x > 0: return 1\n    println(f(1))\n", "missing return"),
+        ("fn main():\n    let n = 1\n    let mut f = fn(): println(n)\n", "cannot be declared mut"),
+    ] {
+        let source = format!("{header}{body}");
+        let output = case.run(&source);
+        assert!(!output.status.success(), "accepted {body}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(message), "{body}: {stderr}");
     }
 }
