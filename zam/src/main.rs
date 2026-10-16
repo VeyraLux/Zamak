@@ -649,6 +649,12 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
             "type",
             Some("declare the fn at the top level of the module; a fn inside a function cannot be generic, fail, call itself or be reassigned yet"),
         )
+    } else if message.contains("needs no ? or catch") {
+        (
+            "ZM500",
+            "error_handling",
+            Some("remove the ? or catch; only calls whose function type has !E can fail"),
+        )
     } else if message.starts_with("missing return") {
         (
             "ZM200",

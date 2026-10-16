@@ -12,7 +12,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-46");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-47");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -588,7 +588,11 @@ impl Project {
                     self.resolve_type(module, param)?;
                 }
                 self.resolve_type(module, &mut result)?;
-                *id = compiler::func_type(params, result);
+                let mut error = compiler::func_error(*id);
+                if let Some(error) = &mut error {
+                    self.resolve_type(module, error)?;
+                }
+                *id = compiler::func_type_full(params, result, error);
                 Ok(())
             }
             _ => Ok(()),

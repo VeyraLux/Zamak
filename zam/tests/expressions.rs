@@ -549,7 +549,7 @@ fn function_values_and_closures() {
         ("fn run(f: fn(i64) -> i64) -> i64: f(1)\n\nfn main(): println(run(fn(a, b): a))\n", "the function takes 1 parameter(s)"),
         ("fn run(f: fn(i64) -> i64) -> i64: f(1)\n\nfn neg(b: bool) -> bool: not b\n\nfn main(): println(run(neg))\n", "neg has a different function type"),
         ("fn id[T](x: T) -> T: x\n\nfn main():\n    let f = id\n", "generic function id needs a known function type"),
-        ("fn p(s: &string) -> i64!string: 1\n\nfn main():\n    let f = p\n", "function values cannot fail yet"),
+        ("fn p(s: &string) -> i64!string: 1\n\nfn main():\n    let f = p\n    println(f(\"1\"))\n", "fallible call f must be handled with ? or catch"),
         ("fn main():\n    let x = 1\n    let f = fn(x: i64) -> i64: x\n", "x is already declared"),
         ("fn main():\n    let f = fn(x: i64) -> i64:\n        x\n", "an anonymous fn holds one expression"),
         ("fn d(x: i64) -> i64: x\n\nfn main():\n    let f = d\n    println(f)\n", "function values cannot be printed"),
@@ -587,7 +587,7 @@ fn local_functions_and_writable_captures() {
         ("struct H:\n    f: fn()\n\nfn main():\n    let n = 1\n    fn show(): println(n)\n    let h = H(f: show)\n", "show uses local variables of this function"),
         ("fn main():\n    fn down(n: i64) -> i64:\n        if n == 0: return 0\n        down(n - 1)\n    println(down(3))\n", "down cannot call itself"),
         ("fn main():\n    fn id[T](x: T) -> T: x\n    println(id(1))\n", "cannot have type parameters"),
-        ("fn main():\n    fn p() -> i64!string: 1\n", "cannot fail yet"),
+        ("fn main():\n    fn p() -> i64!string: 1\n    println(p()?)\n", "? cannot propagate the error of p"),
         ("fn main():\n    fn f(x: i64) -> i64:\n        if x > 0: return 1\n    println(f(1))\n", "missing return"),
         ("fn main():\n    let n = 1\n    let mut f = fn(): println(n)\n", "cannot be declared mut"),
     ] {
@@ -642,4 +642,30 @@ fn calling_function_elements_directly() {
     assert_eq!(stdout(&case.run(source)), "14\n7\nhi!\ndone\n");
     let output = case.run("fn main():\n    let xs: [i64] = [1]\n    println(xs[0](2))\n");
     assert!(String::from_utf8_lossy(&output.stderr).contains("only a function value can be called"));
+}
+
+#[test]
+fn fallible_function_values() {
+    let case = Case::new("expressions", "fallible-values");
+    let source = "use std/string\n\nfn parse(s: &string) -> i64!string: string.parse_i64(s)?\n\nfn each_number(items: &[string], convert: fn(&string) -> i64!string) -> i64!string:\n    let mut total = 0\n    for item in items:\n        total += convert(item)?\n    total\n\nfn main() -> !string:\n    let good: [string] = [\"1\", \"2\", \"3\"]\n    println(each_number(&good, parse)?)\n    let bad: [string] = [\"4\", \"x\"]\n    each_number(&bad, parse) catch e:\n        println(\"caught: {e}\")\n    let limit = 10\n    fn checked(s: &string) -> i64!string:\n        let n = string.parse_i64(s)?\n        if n > limit:\n            fail \"too big: {n}\"\n        n\n    println(each_number(&good, checked)?)\n    let big: [string] = [\"50\"]\n    each_number(&big, checked) catch e:\n        println(\"caught: {e}\")\n    let steps: [fn(&string) -> i64!string] = [parse, fn(s): string.parse_i64(s)?]\n    println(steps[1](\"7\")?)\n    steps[0](\"q\") catch e:\n        println(\"caught: {e}\")\n    let f = parse\n    let n = f(\"40\")?\n    println(n + 2)\n    let saver: fn(&string) -> !string = fn(s): fail \"cannot save {s}\"\n    saver(\"x\") catch e:\n        println(e)\n";
+    assert_eq!(
+        stdout(&case.run(source)),
+        "6\ncaught: invalid integer: x\n6\ncaught: too big: 50\n7\ncaught: invalid integer: q\n42\ncannot save x\n"
+    );
+    // 错误类型是枚举时照样 match。
+    let source = "enum ParseError:\n    Empty\n    Bad(text: string)\n\nfn parse(s: &string) -> i64!ParseError:\n    if s == \"\": fail ParseError.Empty\n    fail ParseError.Bad(copy(s))\n\nfn main():\n    let f: fn(&string) -> i64!ParseError = parse\n    f(\"\") catch e:\n        match e:\n            Empty: println(\"empty\")\n            Bad(t): println(\"bad {t}\")\n    f(\"z\") catch e:\n        println(e)\n";
+    assert_eq!(stdout(&case.run(source)), "empty\nParseError.Bad(\"z\")\n");
+    let header = "use std/string\n\nfn parse(s: &string) -> i64!string: string.parse_i64(s)?\n\nfn double(x: i64) -> i64: x * 2\n\n";
+    for (body, message) in [
+        ("fn main():\n    let f = parse\n    println(f(\"1\"))\n", "fallible call f must be handled with ? or catch"),
+        ("fn main() -> !string:\n    let f = double\n    println(f(1)?)\n", "f cannot fail, so it needs no ? or catch"),
+        ("fn run(f: fn(&string) -> i64) -> i64: f(\"1\")\n\nfn main(): println(run(parse))\n", "parse can fail, but the expected function type has no !E"),
+        ("fn main():\n    let f = parse\n    println(f(\"1\")?)\n", "? cannot propagate the error of f"),
+        ("fn main():\n    let fs: [fn(&string) -> i64!string] = [parse]\n    println(fs[0](\"1\"))\n", "must be handled with ? or catch"),
+    ] {
+        let output = case.run(&format!("{header}{body}"));
+        assert!(!output.status.success(), "accepted {body}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(message), "{body}: {stderr}");
+    }
 }
