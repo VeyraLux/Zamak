@@ -472,6 +472,18 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
             "ownership",
             Some("declare the binding with `let mut` before assigning it"),
         )
+    } else if message.contains("unsupported") && message.contains("extern fn") {
+        (
+            "ZM900",
+            "unsupported",
+            Some("extern fn takes i64, f64, bool or &string and returns nothing, i64, f64, bool or string; convert other data in a small C function listed in [native] sources"),
+        )
+    } else if message.starts_with("extern fn ") || message.contains("expected fn after extern") {
+        (
+            "ZM110",
+            "syntax",
+            Some("write extern fn name(params) -> T on one line, with no body, type parameters or error type"),
+        )
     } else if message.contains("unsupported") {
         (
             "ZM900",

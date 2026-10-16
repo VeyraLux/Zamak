@@ -142,6 +142,13 @@ static void uncaught_error(S *s) {
     if (fputc('\n', stderr) == EOF) exit(1);
 }
 static S copy(S *s) { return own(s->data, s->len); }
+// extern fn 的 &string 参数：复制成以 \0 结尾的 C 字符串，调用后释放。
+static char *zam_cstr(S *s) {
+    char *p = (char*)malloc(s->len + 1);
+    if (!p) { fputs("zam: allocation failed\n", stderr); exit(1); }
+    if (s->len) memcpy(p, s->data, s->len);
+    p[s->len] = 0; return p;
+}
 static S cat(S a, S b) {
     size_t n = a.len + b.len;
     unsigned char *p = (unsigned char*)malloc(n ? n : 1);
@@ -1119,6 +1126,7 @@ pub fn builtin_functions() -> impl Iterator<Item = (String, crate::compiler::Fun
                 position: (1, 1),
                 builtin: true,
                 generics: Vec::new(),
+                external: false,
             },
         )
     })
@@ -3575,6 +3583,7 @@ fn specialization_plan(
                 || cyclic.contains(callee)
                 || target.result != Type::Int
                 || target.error.is_some()
+                || target.external
                 || !target.params.iter().all(|(_, ty)| *ty == Type::Int)
             {
                 return;
@@ -3662,6 +3671,18 @@ pub fn generate_with(module: &Module, entry: &str, unit: &str, tests: &[String])
         )
     };
     let mut source = RUNTIME.to_owned();
+    let mut used_externs = std::collections::BTreeSet::new();
+    for function in module.functions.values() {
+        if function.generics.is_empty() {
+            visit_exprs(&function.body, &mut |expr| {
+                if let Expr::Call(name, _) | Expr::FnRef(name) = expr {
+                    if module.functions.get(name).is_some_and(|f| f.external) {
+                        used_externs.insert(name.clone());
+                    }
+                }
+            });
+        }
+    }
     let record_name = |id: u64| {
         module
             .structs
@@ -3818,6 +3839,13 @@ pub fn generate_with(module: &Module, entry: &str, unit: &str, tests: &[String])
         } else {
             signature(&name)
         };
+        if function.external {
+            // 没被调用的 extern fn 不生成，用不到的 C 函数就不用链接。
+            if used_externs.contains(&name) {
+                bodies.push_str(&extern_wrapper(&name, function, &declaration));
+            }
+            continue;
+        }
         bodies.push_str(&format!("{declaration} {{\n"));
         let mut g = Generator {
             module,
@@ -4143,6 +4171,58 @@ pub fn generate_with(module: &Module, entry: &str, unit: &str, tests: &[String])
     source
 }
 
+/// `extern fn` 的包装：先给出 C 函数的原型，再按 Zamak 的调用约定包一层。`&string` 参数复制成
+/// 以 `\0` 结尾的临时 C 字符串（调用后释放），返回的 `const char *` 复制成 Zamak 字符串（NULL 是空串），
+/// C 侧保留它自己的内存。
+fn extern_wrapper(name: &str, function: &crate::compiler::Function, declaration: &str) -> String {
+    let c_name = name.rsplit(':').next().unwrap_or(name);
+    let c_type = |ty: Type| match ty {
+        Type::Int => "int64_t",
+        Type::Float => "double",
+        Type::Bool => "int",
+        Type::Shared => "const char *",
+        Type::Owned => "const char *",
+        _ => "void",
+    };
+    let params: Vec<String> = function
+        .params
+        .iter()
+        .map(|(_, ty)| c_type(*ty).to_owned())
+        .collect();
+    let mut out = format!(
+        "{} {c_name}({});\n{declaration} {{\n",
+        c_type(function.result),
+        if params.is_empty() {
+            "void".into()
+        } else {
+            params.join(", ")
+        }
+    );
+    let mut args = Vec::new();
+    let mut temps = Vec::new();
+    for (i, (_, ty)) in function.params.iter().enumerate() {
+        if *ty == Type::Shared {
+            out.push_str(&format!("char *c{i} = zam_cstr(p{i});\n"));
+            args.push(format!("c{i}"));
+            temps.push(format!("free(c{i});"));
+        } else {
+            args.push(format!("p{i}"));
+        }
+    }
+    let call = format!("{c_name}({})", args.join(", "));
+    let free = temps.join(" ");
+    out.push_str(&match function.result {
+        Type::Unit => format!("{call};\n{free}\n"),
+        Type::Owned => format!(
+            "const char *r = {call};\nS out = r ? own((const unsigned char *)r, strlen(r)) : own((const unsigned char *)\"\", 0);\n{free}\nreturn out;\n"
+        ),
+        Type::Bool => format!("int r = {call} != 0;\n{free}\nreturn r;\n"),
+        result => format!("{} r = {call};\n{free}\nreturn r;\n", c_type(result)),
+    });
+    out.push_str("}\n");
+    out
+}
+
 fn uses_msvc(tool: &str) -> bool {
     cfg!(windows)
         && Path::new(tool)
@@ -4365,6 +4445,16 @@ fn msvc_tool(environment: &BTreeMap<String, String>, name: &str) -> Result<std::
 // 先用旧缓存跑一次构建、确认仍是 OBJECT HIT 再决定不升。
 pub const OPTIONS: &str = "c11-O2-unroll-MT-Brepro-pathmap-objects-gnu-windows-lm-v8";
 pub fn compile(tool: &str, dir: &Path, source: &str) -> Result<Vec<u8>> {
+    compile_with(tool, dir, source, &[])
+}
+
+/// 带头文件目录编译一段 C 源码（`[native]` 的源码用）。
+pub fn compile_with(
+    tool: &str,
+    dir: &Path,
+    source: &str,
+    includes: &[std::path::PathBuf],
+) -> Result<Vec<u8>> {
     std::fs::write(dir.join("program.c"), source).map_err(|e| e.to_string())?;
     // 编译器记录的是工作目录的写法；临时目录经过 8.3 短名（CI 的 `RUNNER~1`）、联接或
     // 符号链接（macOS 的 /var → /private/var）时，它和规范路径不同，路径映射就会失配，
@@ -4394,6 +4484,7 @@ pub fn compile(tool: &str, dir: &Path, source: &str) -> Result<Vec<u8>> {
                 "program.c",
                 "/Fo:program.obj",
             ])
+            .args(includes.iter().map(|dir| format!("/I{}", dir.display())))
             .output()
     } else {
         // ponytail: `-g`（用户经 CC 传入）会把编译目录写进 DWARF，同一个缓存键在不同临时目录
@@ -4412,6 +4503,7 @@ pub fn compile(tool: &str, dir: &Path, source: &str) -> Result<Vec<u8>> {
                 "-o",
                 "program.obj",
             ])
+            .args(includes.iter().map(|dir| format!("-I{}", dir.display())))
             .output()
     }
     .map_err(|e| e.to_string())?;
@@ -4425,7 +4517,13 @@ pub fn compile(tool: &str, dir: &Path, source: &str) -> Result<Vec<u8>> {
     std::fs::read(dir.join("program.obj")).map_err(|e| e.to_string())
 }
 
-pub fn link(tool: &str, dir: &Path, objects: &[Vec<u8>]) -> Result<Vec<u8>> {
+pub fn link(
+    tool: &str,
+    dir: &Path,
+    objects: &[Vec<u8>],
+    libraries: &[String],
+    library_paths: &[std::path::PathBuf],
+) -> Result<Vec<u8>> {
     let mut names = Vec::new();
     // ponytail: Windows 之外统一用 .o —— clang/ld（macOS）对 .obj 的识别不如 .o 可靠，MSVC 侧不变。
     let suffix = if cfg!(windows) { "obj" } else { "o" };
@@ -4441,6 +4539,12 @@ pub fn link(tool: &str, dir: &Path, objects: &[Vec<u8>]) -> Result<Vec<u8>> {
             .envs(&environment)
             .args(["/nologo", "/Brepro", "/INCREMENTAL:NO", "/OUT:program.exe"])
             .args(&names)
+            .args(
+                library_paths
+                    .iter()
+                    .map(|path| format!("/LIBPATH:{}", path.display())),
+            )
+            .args(libraries.iter().map(|name| format!("{name}.lib")))
             .output()
     } else {
         // std/math 的函数在 Linux 上属于 libm，要显式链接；macOS 与 MinGW 也接受 -lm。
@@ -4451,7 +4555,15 @@ pub fn link(tool: &str, dir: &Path, objects: &[Vec<u8>]) -> Result<Vec<u8>> {
         if cfg!(windows) {
             command.arg("-Wl,--no-insert-timestamp");
         }
-        command.args(["-lm", "-o", "program.exe"]).output()
+        command
+            .args(
+                library_paths
+                    .iter()
+                    .map(|path| format!("-L{}", path.display())),
+            )
+            .args(libraries.iter().map(|name| format!("-l{name}")))
+            .args(["-lm", "-o", "program.exe"])
+            .output()
     }
     .map_err(|e| e.to_string())?;
     if !output.status.success() {

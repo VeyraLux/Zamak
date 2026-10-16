@@ -67,7 +67,7 @@
         },
         {
           "name": "keyword.other.zamak",
-          "match": "\\b(?:fn|pub|use|struct|enum|const|let|mut|fail)\\b"
+          "match": "\\b(?:fn|pub|extern|use|struct|enum|const|let|mut|fail)\\b"
         },
         {
           "name": "variable.language.self.zamak",
