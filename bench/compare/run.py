@@ -1,6 +1,6 @@
 """Zamak 与其他语言的对比测试：同一台机器、同样的程序，测编译时间、可执行文件体积、运行时间与峰值内存。
 
-用法：python bench/compare/run.py [--zam zam/target/release/zam.exe]
+用法：python bench/compare/run.py [--zam zam/target/release/zam.exe] [--languages zamak,c,...]
 结果写到 results/compare-<时间>/：results.json 与 summary.md。各语言的输出必须一致才算有效。
 目前只支持 Windows（峰值内存用 GetProcessMemoryInfo 读取）。
 """
@@ -19,7 +19,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PROGRAMS = Path(__file__).resolve().parent / 'programs'
-TASKS = ['hello', 'primes', 'wordfreq']
+# 任务与命令行参数。hello 测体积、启动与最小内存；其余四个来自 The Computer Language Benchmarks Game。
+TASKS = {'hello': [], 'primes': [], 'wordfreq': [], 'nbody': ['2000000'], 'spectralnorm': ['2000'],
+         'fannkuch': ['10'], 'binarytrees': ['16']}
 
 
 class Counters(ctypes.Structure):
@@ -107,14 +109,14 @@ def main():
     words = work / 'words.txt'
     make_words(words)
     languages = args.languages.split(',')
-    repeats = {'hello': 10, 'primes': 5, 'wordfreq': 5}
-    slow = {'python': {'primes': 1, 'wordfreq': 3}}
+    repeats = dict.fromkeys(TASKS, 5) | {'hello': 10}
+    slow = {'python': dict.fromkeys(TASKS, 1) | {'hello': 10, 'wordfreq': 3}}
     rows, outputs = [], {}
     for task in TASKS:
         for language in languages:
             build_s, artifact, command = build(language, task, work, args.zam)
             n = slow.get(language, {}).get(task, repeats[task])
-            samples = [run_once(command, words if task == 'wordfreq' else None) for _ in range(n)]
+            samples = [run_once(command + TASKS[task], words if task == 'wordfreq' else None) for _ in range(n)]
             outputs.setdefault(task, {})[language] = samples[0][2]
             row = {
                 'task': task, 'language': language, 'runs': n,

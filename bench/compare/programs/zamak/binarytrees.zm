@@ -1,0 +1,31 @@
+# binary-trees：反复建立、遍历、释放大量二叉树（The Computer Language Benchmarks Game）。
+use std/env
+
+struct Node:
+    children: [Node]
+
+fn make(depth: i64) -> Node:
+    if depth == 0: return Node(children: [])
+    Node(children: [make(depth - 1), make(depth - 1)])
+
+fn check(node: &Node) -> i64:
+    let mut total = 1
+    for child in node.children:
+        total += check(child)
+    total
+
+fn main() -> !string:
+    let n = int(env.arg(0)?)?
+    let max_depth = max(6, n)
+    let stretch = max_depth + 1
+    print(f"stretch tree of depth {stretch}\t check: {check(make(stretch))}")
+    let long_lived = make(max_depth)
+    let mut depth = 4
+    while depth <= max_depth:
+        let iterations = 1 << (max_depth - depth + 4)
+        let mut total = 0
+        for _ in range(iterations):
+            total += check(make(depth))
+        print(f"{iterations}\t trees of depth {depth}\t check: {total}")
+        depth += 2
+    print(f"long lived tree of depth {max_depth}\t check: {check(long_lived)}")
