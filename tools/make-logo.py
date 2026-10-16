@@ -194,3 +194,89 @@ def uri(path: Path) -> str:
 <section class="dark"><img src="{uri(DOCS / 'logo-dark.svg')}"><small>GitHub 深色主题</small></section>
 <section class="light"><img src="{uri(DOCS / 'logo-light.svg')}"><small>GitHub 浅色主题</small></section>''', encoding='utf-8')
 print('ok', WIDTH, HEIGHT, (DOCS / 'logo-dark.svg').stat().st_size)
+
+
+# ---- 方形图标：渐变底 + 白色像素 Ƶ + 一小滴光（16×16 网格，缩到 16px 时一格正好一个屏幕像素）。----
+ICON_Z = ['111111111', '111111111', '000000111', '000001110', '000011100', '011111110',
+          '001110000', '011100000', '111000000', '111111111', '111111111']
+ICON_DROP = ['00100', '01110', '01110', '11111', '11111', '01110']
+
+
+def icon() -> str:
+    def cells(bitmap, x0, y0, unit, inset, radius):
+        return ''.join(
+            f'<rect x="{x0 + c * unit + inset:.3f}" y="{y0 + r * unit + inset:.3f}" width="{unit - 2 * inset:.3f}" '
+            f'height="{unit - 2 * inset:.3f}" rx="{radius}"/>'
+            for r, row in enumerate(bitmap) for c, bit in enumerate(row) if bit == '1')
+    # 底色与标题 logo 同一条暖→冷渐变；光滴缩成 0.65 格的细像素，带一层很轻的白色柔光。
+    return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="256" height="256" role="img" aria-label="Zamak">
+  <title>Zamak</title>
+  <defs>
+    <linearGradient id="tile" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="16" y2="16">
+      <stop offset="0" stop-color="#f59e0b"/><stop offset="0.4" stop-color="#f97362"/>
+      <stop offset="0.75" stop-color="#6366f1"/><stop offset="1" stop-color="#06b6d4"/>
+    </linearGradient>
+    <filter id="soft" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="0.35" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="16" height="16" rx="3.4" fill="url(#tile)"/>
+  <g fill="#fff">{cells(ICON_Z, 1.2, 3.8, 1, 0.06, 0.2)}</g>
+  <g fill="#fff" filter="url(#soft)">{cells(ICON_DROP, 10.9, 1.5, 0.65, 0.04, 0.14)}</g>
+</svg>
+'''
+
+
+(DOCS / 'icon.svg').write_text(icon(), encoding='utf-8', newline='\n')
+print('icon ok')
+
+
+# ---- 图标的 PNG：按 8 倍超采样画，再缩到目标尺寸（需要 Pillow；没有时跳过）。----
+def icon_png(size: int):
+    from PIL import Image, ImageDraw, ImageFilter
+    k = size * 8 / 16                     # 每个网格单位的像素数（超采样后）
+    big = size * 8
+    stops = [(0, (0xf5, 0x9e, 0x0b)), (0.4, (0xf9, 0x73, 0x62)), (0.75, (0x63, 0x66, 0xf1)), (1, (0x06, 0xb6, 0xd4))]
+
+    def color(t):
+        for (a, ca), (b, cb) in zip(stops, stops[1:]):
+            if t <= b:
+                f = (t - a) / (b - a)
+                return tuple(round(x + (y - x) * f) for x, y in zip(ca, cb))
+        return stops[-1][1]
+    # 底色：沿对角线的暖→冷渐变，用圆角方块做遮罩。
+    tile = Image.new('RGB', (big, big))
+    px = tile.load()
+    for y in range(big):
+        for x in range(big):
+            px[x, y] = color((x + y) / (2 * big))
+    mask = Image.new('L', (big, big), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, big - 1, big - 1], radius=round(3.4 * k), fill=255)
+    out = Image.new('RGBA', (big, big), (0, 0, 0, 0))
+    out.paste(tile, (0, 0), mask)
+
+    def squares(bitmap, x0, y0, unit, inset, radius):
+        layer = Image.new('RGBA', (big, big), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(layer)
+        for r, row in enumerate(bitmap):
+            for c, bit in enumerate(row):
+                if bit == '1':
+                    left, top = (x0 + c * unit + inset) * k, (y0 + r * unit + inset) * k
+                    side = (unit - 2 * inset) * k
+                    draw.rounded_rectangle([left, top, left + side, top + side], radius=radius * k, fill=(255, 255, 255, 255))
+        return layer
+    out.alpha_composite(squares(ICON_Z, 1.2, 3.8, 1, 0.06, 0.2))
+    drop = squares(ICON_DROP, 10.9, 1.5, 0.65, 0.04, 0.14)
+    out.alpha_composite(drop.filter(ImageFilter.GaussianBlur(0.35 * k)))   # 光滴的柔光
+    out.alpha_composite(drop)
+    return out.resize((size, size), Image.LANCZOS)
+
+
+try:
+    icon_png(128).save(ROOT / 'editors/vscode/icon.png')
+    icon_png(32).save(DOCS / 'icon-32.png')
+    icon_png(512).save(DOCS / 'icon-512.png')
+    print('png ok')
+except ImportError:
+    print('Pillow 未安装：跳过 PNG 导出（pip install pillow）')
