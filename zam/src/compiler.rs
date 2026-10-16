@@ -2323,18 +2323,7 @@ impl Parser {
         if self.symbol(c) {
             Ok(())
         } else {
-            Err(format!(
-                "expected {c:?}, found {}{}",
-                shown(self.peek()),
-                self.python_hint()
-            ))
-        }
-    }
-    /// 报错位置是常见的 Python 写法时，补一句 Zamak 的写法。
-    fn python_hint(&self) -> &'static str {
-        match self.peek() {
-            Some(Token::Symbol(':')) => "; slices are written xs.slice(a, b) or s.slice(a, b)",
-            _ => "",
+            Err(format!("expected {c:?}, found {}", shown(self.peek())))
         }
     }
     fn word(&mut self) -> Result<String, String> {
@@ -2366,9 +2355,8 @@ impl Parser {
             None | Some(Token::Dedent) => Ok(()),
             _ if self.ended_block() => Ok(()),
             token => Err(format!(
-                "expected newline between statements, found {}{}",
-                shown(token),
-                self.python_hint()
+                "expected newline between statements, found {}",
+                shown(token)
             )),
         }
     }
@@ -3083,7 +3071,26 @@ impl Parser {
         }
         if !self.symbol('(') {
             if self.symbol('[') {
-                let index = self.expr()?;
+                // Python 的切片 `xs[a:b]`、`xs[:b]`、`s[a:]`：等于 `xs.slice(a, b)`，复制出一段。
+                let from = if self.peek() == Some(&Token::Symbol(':')) {
+                    None
+                } else {
+                    Some(self.expr()?)
+                };
+                if self.symbol(':') {
+                    let to = if self.peek() == Some(&Token::Symbol(']')) {
+                        None
+                    } else {
+                        Some(self.expr()?)
+                    };
+                    self.expect(']')?;
+                    let bounds = vec![
+                        from.unwrap_or(Expr::Int(0)),
+                        to.unwrap_or(Expr::Int(i64::MAX)),
+                    ];
+                    return self.after_call(Expr::Method(name, "slice".into(), bounds));
+                }
+                let index = from.expect("index expression");
                 self.expect(']')?;
                 // `grid[i][j]`：嵌套容器的第二层下标，读写由内层容器的 `$at`/`$put` 完成。
                 if self.symbol('[') {
@@ -5756,7 +5763,8 @@ impl<'a> Checker<'a> {
                     _ => return Err("index requires an array or list".into()),
                 };
                 if let Expr::Int(value) = index.as_ref() {
-                    if *value < 0 || (*value as u128) >= length as u128 {
+                    // 与 Python 相同，负下标从末尾数：-1 是最后一个。
+                    if (*value as i128) < -(length as i128) || (*value as i128) >= length as i128 {
                         return Err("array index out of bounds".into());
                     }
                 }

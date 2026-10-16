@@ -66,11 +66,11 @@ fn loop_backedges_and_unknown_parameters_preserve_errors() {
             "{source}\n{}", String::from_utf8_lossy(&result.stderr));
     }
     for source in [
-        "fn read(n: i64) -> i64:\n    let a = [1, 2]\n    a[n]\nfn main(): println(read(-1))",
+        "fn read(n: i64) -> i64:\n    let a = [1, 2]\n    a[n]\nfn main(): println(read(-3))",
         "fn main():\n    let mut a = [1, 2]\n    let mut i = 0\n    while i < 3:\n        a[i] = i\n        i = i + 1",
         "fn main():\n    let a = [1, 2]\n    let mut i = 0\n    while i < 3:\n        println(a[i])\n        i = i + 1",
-        "fn main():\n    let a = [1, 2]\n    let mut i = 0\n    while i < 2:\n        i = -1\n        break\n    println(a[i])",
-        "fn main():\n    let a = [1, 2]\n    let mut i = 0\n    while i < 2:\n        println(a[i])\n        i = -1\n        continue",
+        "fn main():\n    let a = [1, 2]\n    let mut i = 0\n    while i < 2:\n        i = -3\n        break\n    println(a[i])",
+        "fn main():\n    let a = [1, 2]\n    let mut i = 0\n    while i < 2:\n        println(a[i])\n        i = -3\n        continue",
     ] {
         let result = case.run(source);
         assert!(!result.status.success(), "accepted {source}");
