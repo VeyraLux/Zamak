@@ -1,0 +1,13 @@
+# 统计标准输入里的词频：输出不同的词数与最常见的词出现的次数。
+use std/io
+
+fn main() -> !string:
+    let text = io.read_all()?
+    let mut counts: {string: i64} = {}
+    for word in text.words():
+        counts[word] = counts.get(word, 0) + 1
+    let mut best = 0
+    for word, n in counts:
+        if n > best: best = n
+    print(len(counts))
+    print(best)
