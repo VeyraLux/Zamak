@@ -2,9 +2,9 @@ use crate::compiler::{
     bitwise, block_roots, borrow_of, captured_view, compound, constructed, copied, each_bindings,
     elem_from, field_function, field_path, func_error, func_sig, func_type, func_type_full,
     generic_value, instance_of, instance_with, is_string, lambda_body, lambda_prints, linked_tuple,
-    loop_list, method_args, method_signature, nest, nested, numeric, overload, record_id,
-    record_method, record_order, sort_by_type, string_method, terminates, tuple_fields, Block,
-    Elem, Expr, Instruction, Module, Pattern, Receiver, Type, COPY,
+    loop_list, membership, method_args, method_signature, nest, nested, numeric, overload,
+    record_id, record_method, record_order, sort_by_type, string_method, terminates, tuple_fields,
+    Block, Elem, Expr, Instruction, Module, Pattern, Receiver, Type, COPY,
 };
 use crate::project::Result;
 use std::collections::BTreeMap;
@@ -780,6 +780,24 @@ const BUILTINS: &[Builtin] = &[
         result: Type::Float,
         fallible: false,
         body: "return fmax(p0, p1);",
+    },
+    Builtin {
+        name: "std/core:pow",
+        params: &[Type::Int, Type::Int],
+        result: Type::Int,
+        fallible: false,
+        // `a ** b`：按位快速幂，乘法溢出与 `*` 一样报错；整数不能有负指数。
+        body: r#"if (p1 < 0) { fputs("zam: negative exponent in an integer power; use floats such as 2.0 ** -1.0\n", stderr); exit(1); }
+int64_t r = 1;
+while (p1 > 0) { if (p1 & 1) r = mul(r, p0); p1 >>= 1; if (p1 > 0) p0 = mul(p0, p0); }
+return r;"#,
+    },
+    Builtin {
+        name: "std/core:pow_f64",
+        params: &[Type::Float, Type::Float],
+        result: Type::Float,
+        fallible: false,
+        body: "return pow(p0, p1);",
     },
     Builtin {
         name: "std/time:time",
@@ -2339,6 +2357,12 @@ impl<'a> Generator<'a> {
     }
     /// 字符串上的方法改写成 std/string 的调用（检查器已确认存在）。
     fn string_call(&self, expr: &Expr) -> Option<Expr> {
+        if let Expr::Binary(op, item, _) = expr {
+            if op != "in" && op != "not in" {
+                return None;
+            }
+            return membership(expr, is_text(self.ty(item)));
+        }
         let (receiver, method, args) = match expr {
             Expr::Method(path, method, args) => {
                 let root = path.split('.').next().unwrap_or(path);
@@ -4355,6 +4379,10 @@ pub fn generate_with(module: &Module, entry: &str, unit: &str, tests: &[String])
             needed.insert(name.clone());
             visit_exprs(&function.body, &mut |expr| match expr {
                 // `copy` 不在函数表里；重载的内建函数两个版本都带上，按参数类型调用其中一个。
+                // `x in s` 在生成时改写成 s.contains(x)：字符串的 contains 一并带上。
+                Expr::Binary(op, _, _) if op == "in" || op == "not in" => {
+                    needed.insert("std/string:contains".to_owned());
+                }
                 Expr::Call(name, _) if name != COPY => {
                     for ty in [Type::Int, Type::Float] {
                         let callee = overload(name, Some(ty));

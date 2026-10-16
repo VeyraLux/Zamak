@@ -478,8 +478,6 @@ fn with_python_hint(message: String) -> String {
         Some("sum") => "add up in a loop: for x in xs: total += x",
         Some("sorted") => "sort a list in place with xs.sort() or xs.sort_by(fn(a, b): a < b)",
         Some("input") => "read a line with io.read_line()? and use std/io",
-        Some("True") => "booleans are written true and false",
-        Some("False") => "booleans are written true and false",
         Some("None") => "an optional value is written Option.None, or use a default value",
         Some("self") => "methods take the value as a normal parameter, such as fn area(p: &Point)",
         _ if message.contains(".append:") => "use .push(v) to add to the end",

@@ -1043,10 +1043,10 @@ impl Project {
             }
             // `abs`/`min`/`max`/`copy`：全局内建函数；本模块自己定义了同名函数时用自己的。
             Expr::Call(name, args)
-                if matches!(name.as_str(), "abs" | "min" | "max" | "copy")
+                if matches!(name.as_str(), "abs" | "min" | "max" | "copy" | "$pow")
                     && self.resolve(module, name).is_err() =>
             {
-                *name = format!("std/core:{name}");
+                *name = format!("std/core:{}", name.trim_start_matches('$'));
                 for arg in args {
                     self.resolve_expr(module, locals, arg)?;
                 }

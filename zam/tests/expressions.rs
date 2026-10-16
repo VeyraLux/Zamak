@@ -716,3 +716,21 @@ fn borrowed_locals() {
         case.run("fn main():\n    let xs: [i64] = [1]\n    let n = &xs[0]\n    println(n)\n");
     assert!(String::from_utf8_lossy(&output.stderr).contains("scalar references are not supported"));
 }
+
+#[test]
+fn python_expressions() {
+    let case = Case::new("expressions", "python");
+    // Python 的写法：`a if c else b`、`True`/`False`、`f"..."`、`x in xs`/`x not in xs`、`a ** b`。
+    assert_eq!(
+        stdout(&case.run("fn pick(n: i64) -> string: \"big\" if n > 5 else \"small\"\n\nfn main():\n    let n = 7\n    let ok = True\n    println(f\"n={n} ok={ok}\")\n    println(pick(n))\n    println(pick(1))\n    let v = n * 2 if not False else 0\n    println(v)\n    let w = 1 if n < 0 else 2 if n < 10 else 3\n    println(w)\n    if True and n > 1: println(\"yes\")\n")),
+        "n=7 ok=true\nbig\nsmall\n14\n2\nyes\n"
+    );
+    assert_eq!(
+        stdout(&case.run("struct P:\n    name: string\n\nfn main():\n    let names: [string] = [\"ann\", \"bob\"]\n    let name = \"bob\"\n    println(name in names)\n    println(\"zed\" in names)\n    println(\"zed\" not in names)\n    let nums = [3, 5]\n    let xs: [i64] = [1, 2, 3]\n    println(2 in xs)\n    println(9 not in xs)\n    let m = {\"k\": 1}\n    println(\"k\" in m)\n    let s = \"hello\"\n    println(\"ell\" in s)\n    println(name in s)\n    let p = P(name: \"x\")\n    println(p.name in names)\n    println(names[0] in names)\n    if \"ann\" in names and 1 in xs: println(\"both\")\n    println(\"a\" in \"cat\")\n    println(2 ** 10)\n    println(2 ** 3 ** 2)\n    println(2.0 ** 0.5)\n    println(10 ** 18)\n    println(name)\n")),
+        "true\nfalse\ntrue\ntrue\ntrue\ntrue\ntrue\nfalse\nfalse\ntrue\nboth\ntrue\n1024\n512\n1.4142135623730951\n1000000000000000000\nbob\n"
+    );
+    let output = case.run("fn main():\n    let e = -1\n    println(2 ** e)\n");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("negative exponent"));
+    let output = case.run("fn main(): println(10 ** 19)\n");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("integer arithmetic error"));
+}
