@@ -90,7 +90,6 @@ fn checker_rejects_struct_list_misuse() {
     let case = Case::new("struct-lists", "reject");
     for (body, message) in [
         ("let p = items[0]", "cannot move a struct out of items[..]"),
-        ("show(items[0])", "cannot move a struct out of items[..]"),
         (
             "let n = items[0].name",
             "owned field moves are not supported",
@@ -119,10 +118,6 @@ fn checker_rejects_struct_list_misuse() {
         (
             "let m: {string: Item} = {}\n    let x = m.get(\"a\", 1)",
             "struct values cannot be copied",
-        ),
-        (
-            "let it = Item(name: \"x\", qty: 1)\n    show(it)",
-            "expected explicit borrow of it",
         ),
         ("println(items[0].tags.len())", "unknown field tags"),
     ] {
@@ -177,10 +172,6 @@ fn compound_values_copy_compare_and_print() {
         (
             "let n = 1\n    let m = copy(&n)",
             "already copied by assignment",
-        ),
-        (
-            "let p = P(x: 1)\n    let q = copy(p)",
-            "expected explicit borrow: write copy(&x)",
         ),
         (
             "let p = P(x: 1)\n    println(p == 1)",

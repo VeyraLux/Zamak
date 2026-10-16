@@ -1047,8 +1047,23 @@ impl Project {
                     && self.resolve(module, name).is_err() =>
             {
                 *name = format!("std/core:{}", name.trim_start_matches('$'));
-                for arg in args {
+                for arg in args.iter_mut() {
                     self.resolve_expr(module, locals, arg)?;
+                    // `copy(p)` 与 `copy(&p)` 相同：局部变量、字段与元素按只读借用传。
+                    if name.as_str() == crate::compiler::COPY {
+                        let local = match arg {
+                            Expr::Variable(root)
+                            | Expr::Field(root, _)
+                            | Expr::Index(root, _)
+                            | Expr::IndexField(root, _, _) => {
+                                locals.contains(root.split('.').next().unwrap_or(root))
+                            }
+                            _ => false,
+                        };
+                        if let Some(borrow) = crate::compiler::auto_borrow(arg).filter(|_| local) {
+                            *arg = borrow;
+                        }
+                    }
                 }
             }
             Expr::Call(name, args) => {

@@ -70,7 +70,7 @@ fn main():
         ("fn f(x: string, y: &string): pass\nfn main():\n    let a = \"x\"\n    f(a, &a)", "use after move"),
         ("fn f(x: &mut string): pass\nfn main():\n    let a = \"x\"\n    f(&mut a)", "immutable"),
         ("fn f(x: &string): x = \"x\"\nfn main(): pass", "immutable"),
-        ("fn f(x: &string): pass\nfn main():\n    let a = \"x\"\n    f(a)", "explicit borrow"),
+        ("fn f(x: &mut string): pass\nfn main():\n    let mut a = \"x\"\n    f(a)", "write &mut a"),
         ("fn main(x: string): pass", "main must have"),
         ("fn f(): pass\nfn main(): return f()", "void function cannot return"),
         ("fn f() -> string: pass\nfn main(): pass", "missing string return"),

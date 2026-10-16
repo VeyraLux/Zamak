@@ -734,3 +734,17 @@ fn python_expressions() {
     let output = case.run("fn main(): println(10 ** 19)\n");
     assert!(String::from_utf8_lossy(&output.stderr).contains("integer arithmetic error"));
 }
+
+#[test]
+fn automatic_shared_borrows() {
+    let case = Case::new("expressions", "auto-borrow");
+    // 只读借用参数自动借用：变量、字段、元素直接传；copy(p) 同 copy(&p)；&mut 仍要显式写。
+    assert_eq!(
+        stdout(&case.run("struct P:\n    name: string\n    tags: [string]\n\nfn show(s: &string): println(\"<{s}>\")\nfn count(xs: &[string]) -> i64: xs.len()\nfn first(p: &P) -> i64: p.tags.len()\nfn grow(xs: &mut [string]): xs.push(\"z\")\n\nfn main():\n    let name = \"ann\"\n    show(name)\n    show(name)\n    let mut names: [string] = [\"a\", \"b\"]\n    show(names[1])\n    println(count(names))\n    let p = P(name: \"pp\", tags: [\"t\"])\n    show(p.name)\n    println(first(p))\n    println(count(p.tags))\n    println(names.contains(name))\n    let s = \"a,b\"\n    println(s.contains(name))\n    grow(&mut names)\n    println(count(names))\n")),
+        "<ann>\n<ann>\n<b>\n2\n<pp>\n1\n1\nfalse\nfalse\n3\n"
+    );
+    assert_eq!(
+        stdout(&case.run("struct P:\n    x: i64\n    s: string\n\nfn main():\n    let p = P(x: 1, s: \"a\")\n    let q = copy(p)\n    let t = copy(p.s)\n    let xs: [string] = [\"k\"]\n    let u = copy(xs[0])\n    println(q)\n    println(t + u)\n    println(p)\n")),
+        "P(x: 1, s: \"a\")\nak\nP(x: 1, s: \"a\")\n"
+    );
+}
