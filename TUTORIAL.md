@@ -454,7 +454,8 @@ fn main():
 ```
 
 - 函数里定义的函数和顶层函数写法一样，要写参数类型；它能读写外面的变量（这里改了 `total` 和 `long`，所以它们要声明成 `let mut`）。
-- 函数也能放进列表：`let steps: [fn(i64) -> i64] = [double, square]`，再 `for step in steps:` 依次调用。
+- 函数也能放进列表：`let steps: [fn(i64) -> i64] = [double, square]`，再 `for step in steps:` 依次调用，或者直接写 `steps[0](5)`。
+- 会失败的函数也能当值，函数类型带上错误类型：`fn(&string) -> i64!string`。通过它调用时和普通的失败调用一样，要写 `?` 或 `catch`。完整例子见 `examples/values/fallible_functions.zm`。
 
 ## 第 7 节：字符串、转义与插值
 
