@@ -1041,10 +1041,36 @@ impl Project {
                     self.resolve_expr(module, locals, arg)?;
                 }
             }
-            // `abs`/`min`/`max`/`copy`：全局内建函数；本模块自己定义了同名函数时用自己的。
+            // Python 的内置函数：`len(x)` 是 `x.len()`，`str(x)` 是 `"{x}"`，`sum(xs)`、`sorted(xs)`、
+            // 只给一个列表的 `min(xs)`/`max(xs)` 是列表方法。本模块自己定义了同名函数时用自己的。
             Expr::Call(name, args)
-                if matches!(name.as_str(), "abs" | "min" | "max" | "copy" | "$pow")
+                if args.len() == 1
+                    && matches!(
+                        name.as_str(),
+                        "len" | "str" | "sum" | "sorted" | "min" | "max"
+                    )
                     && self.resolve(module, name).is_err() =>
+            {
+                let method = name.clone();
+                let mut arg = args.remove(0);
+                self.resolve_expr(module, locals, &mut arg)?;
+                *expr = match (method.as_str(), arg) {
+                    ("str", arg) => Expr::Format(vec![arg]),
+                    (_, Expr::Variable(local)) if locals.contains(&local) => {
+                        Expr::Method(local, method, Vec::new())
+                    }
+                    (_, Expr::Field(local, field)) if locals.contains(&local) => {
+                        Expr::Method(format!("{local}.{field}"), method, Vec::new())
+                    }
+                    (_, arg) => Expr::Chain(Box::new(arg), method, Vec::new()),
+                };
+            }
+            // `abs`/`min`/`max`/`copy`/`int`/`float`：全局内建函数；本模块自己定义了同名函数时用自己的。
+            Expr::Call(name, args)
+                if matches!(
+                    name.as_str(),
+                    "abs" | "min" | "max" | "copy" | "int" | "float" | "$pow"
+                ) && self.resolve(module, name).is_err() =>
             {
                 *name = format!("std/core:{}", name.trim_start_matches('$'));
                 for arg in args.iter_mut() {

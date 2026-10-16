@@ -823,6 +823,20 @@ while (p1 > 0) { if (p1 & 1) r = mul(r, p0); p1 >>= 1; if (p1 > 0) p0 = mul(p0, 
 return r;"#,
     },
     Builtin {
+        name: "std/core:int",
+        params: &[Type::Int],
+        result: Type::Int,
+        fallible: false,
+        body: "return p0;",
+    },
+    Builtin {
+        name: "std/core:float",
+        params: &[Type::Float],
+        result: Type::Float,
+        fallible: false,
+        body: "return p0;",
+    },
+    Builtin {
         name: "std/core:pow_f64",
         params: &[Type::Float, Type::Float],
         result: Type::Float,
@@ -2075,6 +2089,12 @@ fn comparable_list_helpers(elem: Elem) -> String {
         ),
         Elem::Record(_) | Elem::Nested(_) | Elem::Func(_) => return String::new(),
     };
+    // `xs.sum()`：整数求和与 `+` 一样检查溢出。
+    let sum = match elem {
+        Elem::Int => format!("static int64_t sum{l}({l} *l) {{ int64_t s = 0; size_t i; for (i = 0; i < l->len; i++) s = add(s, l->data[i]); return s; }}\n"),
+        Elem::Float => format!("static double sum{l}({l} *l) {{ double s = 0.0; size_t i; for (i = 0; i < l->len; i++) s += l->data[i]; return s; }}\n"),
+        _ => String::new(),
+    };
     format!(
         "static int cmp{l}({t} *a, {t} *b) {{ return {compare}; }}
 static void sort{l}({l} *l) {{
@@ -2099,7 +2119,10 @@ static void sort{l}({l} *l) {{
 static int64_t index{l}({l} *l, {param} v) {{ size_t i; for (i = 0; i < l->len; i++) {{ {t} x = l->data[i]; if ({equal}) return (int64_t)i; }} return -1; }}
 static int has{l}({l} *l, {param} v) {{ return index{l}(l, v) >= 0; }}
 static {l} slice{l}({l} *l, int64_t from, int64_t to) {{ {l} out = {{0}}; int64_t i; if (from < 0 || to < from || (uint64_t)to > l->len) list_bounds(); for (i = from; i < to; i++) {{ {t} x = l->data[i]; push{l}(&out, {copy}); }} return out; }}
-"
+static {l} sorted{l}({l} *l) {{ {l} out = slice{l}(l, 0, (int64_t)l->len); sort{l}(&out); return out; }}
+static {t} min{l}({l} *l) {{ size_t i, best = 0; if (!l->len) {{ fputs(\"zam: min() of an empty list\\n\", stderr); exit(1); }} for (i = 1; i < l->len; i++) if (cmp{l}(&l->data[i], &l->data[best]) < 0) best = i; {{ {t} x = l->data[best]; return {copy}; }} }}
+static {t} max{l}({l} *l) {{ size_t i, best = 0; if (!l->len) {{ fputs(\"zam: max() of an empty list\\n\", stderr); exit(1); }} for (i = 1; i < l->len; i++) if (cmp{l}(&l->data[i], &l->data[best]) > 0) best = i; {{ {t} x = l->data[best]; return {copy}; }} }}
+{sum}"
     )
 }
 fn ctype(ty: Type) -> String {
@@ -4433,7 +4456,7 @@ pub fn generate_with(module: &Module, entry: &str, unit: &str, tests: &[String])
                     needed.insert("std/string:contains".to_owned());
                 }
                 Expr::Call(name, _) if name != COPY => {
-                    for ty in [Type::Int, Type::Float] {
+                    for ty in [Type::Int, Type::Float, Type::Owned] {
                         let callee = overload(name, Some(ty));
                         if module
                             .functions
