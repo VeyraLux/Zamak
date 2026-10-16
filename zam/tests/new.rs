@@ -60,7 +60,16 @@ fn new_scaffolds_a_runnable_project_and_refuses_existing() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{stderr}");
     assert!(output.stdout.is_empty());
-    assert!(ai.join("AI.md").exists());
+    // Claude Code 的 Skill 与其他助手读的 AGENTS.md：内容相同，都含语言参考。
+    let skill = std::fs::read_to_string(ai.join(".claude/skills/zamak/SKILL.md")).unwrap();
+    assert!(
+        skill.starts_with("---\nname: zamak\ndescription: "),
+        "{skill}"
+    );
+    let agents = std::fs::read_to_string(ai.join("AGENTS.md")).unwrap();
+    assert!(agents.contains("zam check --json ."));
+    assert!(agents.contains("## Language reference"));
+    assert!(skill.ends_with(&agents));
     assert!(ai.join("README.md").exists());
     assert!(zam(&["check", "--json", ai.to_str().unwrap()])
         .status
