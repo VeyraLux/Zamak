@@ -4,8 +4,8 @@ use crate::compiler::{
     func_type_full, generic_value, instance_of, instance_with, is_string, lambda_body,
     lambda_prints, linked_tuple, loop_list, membership, method_args, method_signature, nest,
     nested, numeric, overload, promote, record_id, record_method, record_order, sort_by_type,
-    string_method, terminates, tuple_fields, Block, Elem, Expr, Instruction, Module, Pattern,
-    Receiver, Type, COPY,
+    string_alias, string_method, terminates, tuple_fields, Block, Elem, Expr, Instruction, Module,
+    Pattern, Receiver, Type, COPY,
 };
 use crate::project::Result;
 use std::collections::BTreeMap;
@@ -1571,6 +1571,65 @@ while (a < b && (p0->data[a] == ' ' || p0->data[a] == '\t' || p0->data[a] == '\n
 while (b > a && (p0->data[b - 1] == ' ' || p0->data[b - 1] == '\t' || p0->data[b - 1] == '\n' || p0->data[b - 1] == '\r')) b--;
 return own(p0->data + a, b - a);"#,
     },
+    // Python 的 lstrip/rstrip 与 is* 判断（空白与 trim 相同；isalpha 把非 ASCII 字符算作字母）。
+    Builtin {
+        name: "std/string:lstrip",
+        params: &[Type::Shared],
+        result: Type::Owned,
+        fallible: false,
+        body: r#"size_t a = 0;
+while (a < p0->len && (p0->data[a] == ' ' || p0->data[a] == '\t' || p0->data[a] == '\n' || p0->data[a] == '\r')) a++;
+return own(p0->data + a, p0->len - a);"#,
+    },
+    Builtin {
+        name: "std/string:rstrip",
+        params: &[Type::Shared],
+        result: Type::Owned,
+        fallible: false,
+        body: r#"size_t b = p0->len;
+while (b > 0 && (p0->data[b - 1] == ' ' || p0->data[b - 1] == '\t' || p0->data[b - 1] == '\n' || p0->data[b - 1] == '\r')) b--;
+return own(p0->data, b);"#,
+    },
+    Builtin {
+        name: "std/string:isdigit",
+        params: &[Type::Shared],
+        result: Type::Bool,
+        fallible: false,
+        body: r#"size_t i;
+if (!p0->len) return 0;
+for (i = 0; i < p0->len; i++) if (p0->data[i] < '0' || p0->data[i] > '9') return 0;
+return 1;"#,
+    },
+    Builtin {
+        name: "std/string:isalpha",
+        params: &[Type::Shared],
+        result: Type::Bool,
+        fallible: false,
+        body: r#"size_t i; unsigned char c;
+if (!p0->len) return 0;
+for (i = 0; i < p0->len; i++) { c = p0->data[i]; if (c < 0x80 && !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))) return 0; }
+return 1;"#,
+    },
+    Builtin {
+        name: "std/string:isalnum",
+        params: &[Type::Shared],
+        result: Type::Bool,
+        fallible: false,
+        body: r#"size_t i; unsigned char c;
+if (!p0->len) return 0;
+for (i = 0; i < p0->len; i++) { c = p0->data[i]; if (c < 0x80 && !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))) return 0; }
+return 1;"#,
+    },
+    Builtin {
+        name: "std/string:isspace",
+        params: &[Type::Shared],
+        result: Type::Bool,
+        fallible: false,
+        body: r#"size_t i;
+if (!p0->len) return 0;
+for (i = 0; i < p0->len; i++) if (p0->data[i] != ' ' && p0->data[i] != '\t' && p0->data[i] != '\n' && p0->data[i] != '\r') return 0;
+return 1;"#,
+    },
     Builtin {
         name: "std/string:byte_at",
         params: &[Type::Shared, Type::Int],
@@ -2780,6 +2839,11 @@ impl<'a> Generator<'a> {
     }
     /// 按形参类型传值：owned 移交，标量按值，借用传指针。
     fn argument(&mut self, arg: &Expr, ty: Type) -> String {
+        // 列表字面量借给 `&[T]`：按形参的元素类型生成临时列表，语句结束时释放。
+        if let (Expr::Array(_), Type::ListRef(elem, false)) = (arg, ty) {
+            let value = self.expr_as(arg, Type::List(elem));
+            return format!("&{value}");
+        }
         if owned(ty) {
             let value = self.expr_as(arg, ty);
             self.moved(&value, ty)
@@ -3353,6 +3417,10 @@ impl<'a> Generator<'a> {
             Expr::Variable(name) if by_value(self.locals[name].1) => {
                 let (value, ty) = self.locals[name].clone();
                 self.scalar(&value, ty)
+            }
+            // 借用的字符串在要 owned 的地方复制一份（检查器已放行）。
+            Expr::Variable(name) if matches!(self.locals[name].1, Type::Shared | Type::Mutable) => {
+                self.temporary(&format!("copy({})", self.pointer(name)))
             }
             Expr::Variable(name) => self.temporary(&format!("take({})", self.pointer(name))),
             Expr::Borrow(name, _) => self.pointer(name),
@@ -4616,7 +4684,7 @@ pub fn generate_with(module: &Module, entry: &str, unit: &str, tests: &[String])
                 | Expr::ElementMethod(_, _, _, method, _)
                 | Expr::Chain(_, method, _) => {
                     // 字符串上的方法就是 std/string 的同名函数：把它的 C 实现一并带上。
-                    let string = format!("std/string:{method}");
+                    let string = format!("std/string:{}", string_alias(method));
                     if module.functions.contains_key(&string) {
                         needed.insert(string);
                     }
