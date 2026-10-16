@@ -1065,6 +1065,32 @@ lang -> Zamak
 - 字符串位置都以字节计。`slice` 与数组下标一样在越界时终止程序；需要先判断的场景，先用 `string.byte_len` 或 `string.find` 检查范围。
 - 目前没有目录遍历、追加写入、网络和时间函数。
 
+### 时间与随机数
+
+`std/random` 生成随机数，`std/time` 读时钟。下面的程序掷 5 次骰子，再看看花了多久：
+
+```zamak
+use std/random
+use std/time
+
+fn main():
+    let start = time.monotonic()
+
+    for i in 0..5:
+        println(random.randint(1, 6))
+
+    let seconds = time.monotonic() - start
+    println(seconds >= 0.0)
+    println(time.iso_utc(0.0))
+```
+
+最后一行总是 `1970-01-01T00:00:00Z`，前 5 行每次运行都不一样。要点：
+
+- `random.randint(1, 6)` 两端都包含，能掷出 1 到 6；`random.randrange(0, 6)` 不含 6，和 `for i in 0..6` 一样。`random.random()` 给出 0 到 1 之间的 `f64`。
+- 运行前调用 `random.seed(42)`，每次得到的就是同一串数，写测试时很有用。
+- `time.monotonic()` 量时间间隔，`time.time()` 是 1970 年以来的秒数，`time.sleep(0.5)` 暂停半秒，`time.iso_local(time.time())` 显示本地的日期和时间。
+- 完整的猜数字游戏见 `examples/io/guess.zm`：`zam run examples/io/guess.zm`。
+
 ## 第 14 节：命令行工具
 
 ```text
@@ -1179,7 +1205,7 @@ Zamak 0.1.0 的支持范围有限。编写程序时需注意以下限制：
 
 - `match` 匹配枚举变体，或者整数、字符、字符串、布尔字面量（`1 | 2 | 3:`、`"go":`），还不支持区间和守卫条件；尚不支持 trait/接口；`for` 支持整数区间 `a..b` 以及遍历 `&列表`、`&字典`。
 - 尚不提供包管理器、交互式执行环境（REPL）、文档生成工具或重构工具。
-- 标准库包括 `std/string`（`byte_len`、`char_len`、`equal`、`parse_i64`、`parse_f64`、`trim`、`byte_at`、`slice`、`find`、`find_from`、`starts_with`、`ends_with`、`contains`、`replace`、`lower`、`upper`、`copy`、`split`、`words`、`lines`、`join`、`chars`、`codepoints`、`from_code`、`bytes`、`from_bytes`、`repeat`、`count`、`pad_left`、`pad_right`）、`std/io`（`println`、`read_line`、`read_all`）、`std/fmt`（`println`、`fixed`）、`std/math`（见第 3 节）、`std/fs`（`read`、`write`）和 `std/env`（`arg_count`、`arg`、`args`、`var`、`exit`），以及不用导入的 `abs`、`min`、`max`，没有目录遍历、网络和时间函数。
+- 标准库包括 `std/string`（`byte_len`、`char_len`、`equal`、`parse_i64`、`parse_f64`、`trim`、`byte_at`、`slice`、`find`、`find_from`、`starts_with`、`ends_with`、`contains`、`replace`、`lower`、`upper`、`copy`、`split`、`words`、`lines`、`join`、`chars`、`codepoints`、`from_code`、`bytes`、`from_bytes`、`repeat`、`count`、`pad_left`、`pad_right`）、`std/io`（`println`、`read_line`、`read_all`）、`std/fmt`（`println`、`fixed`）、`std/math`（见第 3 节）、`std/fs`（`read`、`write`）、`std/env`（`arg_count`、`arg`、`args`、`var`、`exit`）、`std/time`（`time`、`monotonic`、`sleep`、`iso_utc`、`iso_local`）和 `std/random`（`randint`、`randrange`、`random`、`uniform`、`seed`），以及不用导入的 `abs`、`min`、`max`，还没有目录遍历和网络。
 - 错误类型可以是 `string`、结构体或枚举，没有错误堆栈。
 - 定长数组仅支持 `i64` 局部值；列表 `[T]` 的元素与字典 `{K: V}` 的值可以是 `i64`、`f64`、`bool`、`string` 或结构体，字典键只能是 `i64` 或 `string`；还没有嵌套容器（`[[i64]]`），元素字段里的列表不能再接下标。调用结果上可以接着调用方法。
 - 所有权检查覆盖 `string`、结构体、列表和字典；尚不支持线程和 `unsafe`。`extern fn` 可以调用 C 函数（见 README 的“调用 C 函数”），C 代码本身不在检查范围内。
