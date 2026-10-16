@@ -1,9 +1,9 @@
 use crate::compiler::{
     bitwise, block_roots, borrow_of, captured_view, compound, constructed, copied, each_bindings,
-    field_function, field_path, func_sig, func_type, instance_of, instance_with, lambda_body,
-    lambda_prints, linked_tuple, method_args, method_signature, nest, nested, numeric, overload,
-    record_id, record_method, record_order, sort_by_type, terminates, tuple_fields, Block, Elem,
-    Expr, Instruction, Module, Pattern, Receiver, Type, COPY,
+    field_function, field_path, func_sig, func_type, generic_value, instance_of, instance_with,
+    lambda_body, lambda_prints, linked_tuple, method_args, method_signature, nest, nested, numeric,
+    overload, record_id, record_method, record_order, sort_by_type, terminates, tuple_fields,
+    Block, Elem, Expr, Instruction, Module, Pattern, Receiver, Type, COPY,
 };
 use crate::project::Result;
 use std::collections::BTreeMap;
@@ -2571,6 +2571,14 @@ impl<'a> Generator<'a> {
                 local
             }
             // 匿名函数按目标函数类型确定参数与返回类型（参数类型可以省略）。
+            // 泛型函数当值：按目标函数类型生成的副本。
+            (Expr::FnRef(name), Type::Func(id) | Type::FuncRef(id))
+                if !self.module.functions[name].generics.is_empty() =>
+            {
+                let instance = generic_value(&self.module.functions, name, id)
+                    .expect("checked generic function value");
+                self.function_value(&instance)
+            }
             (Expr::Lambda(params, _, body), Type::Func(_) | Type::FuncRef(_)) => {
                 self.lambda(params, body, ty)
             }
@@ -2952,11 +2960,19 @@ impl<'a> Generator<'a> {
                 )
             }
             Expr::Binary(op, left, right)
-                if matches!(op.as_str(), "==" | "!=") && compound(self.value_type(left)) =>
+                if matches!(op.as_str(), "==" | "!=")
+                    && self
+                        .known_type(left)
+                        .or(self.known_type(right))
+                        .is_some_and(compound) =>
             {
-                let ty = self.value_type(left);
-                let a = self.operand(left);
-                let b = self.operand(right);
+                // 一边是自己看不出类型的构造（`Option.None`）时按另一边的类型生成。
+                let ty = self
+                    .known_type(left)
+                    .or(self.known_type(right))
+                    .expect("checked comparison");
+                let a = self.operand_as(left, ty);
+                let b = self.operand_as(right, ty);
                 self.values = true;
                 let test = native_values::equal(ty, &a, &b);
                 self.scalar(
@@ -3321,6 +3337,21 @@ impl<'a> Generator<'a> {
             _ => self.ty(expr),
         };
         ty.borrowable().map_or(ty, |(owned, _)| owned)
+    }
+    /// 只读使用时的类型；泛型类型的构造推断不出类型实参时是 None。
+    fn known_type(&self, expr: &Expr) -> Option<Type> {
+        match expr {
+            Expr::Record(..) | Expr::Variant(..) => self.constructed(expr).map(Type::Record),
+            _ => Some(self.value_type(expr)),
+        }
+    }
+    /// 同 `operand`，推断不出类型的构造按 `ty` 生成。
+    fn operand_as(&mut self, expr: &Expr, ty: Type) -> String {
+        if self.known_type(expr).is_some() {
+            return self.operand(expr);
+        }
+        let value = self.expr_as(expr, ty);
+        format!("&{value}")
     }
     /// 只读使用一个值的指针：变量、字段、元素直接取地址，其他表达式先求值成临时值。
     fn operand(&mut self, expr: &Expr) -> String {
@@ -4217,6 +4248,17 @@ pub fn generate_with(module: &Module, entry: &str, unit: &str, tests: &[String])
                                     && function.generics.is_empty()
                             })
                             .map(|(name, _)| name.clone()),
+                    );
+                }
+                // 泛型函数当值时用的是按类型生成的副本，模板本身不生成。
+                Expr::FnRef(name) if !module.functions[name].generics.is_empty() => {
+                    let prefix = format!("{name}[");
+                    needed.extend(
+                        module
+                            .functions
+                            .keys()
+                            .filter(|key| key.starts_with(&prefix))
+                            .cloned(),
                     );
                 }
                 Expr::FnRef(name) => {

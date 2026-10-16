@@ -548,7 +548,7 @@ fn function_values_and_closures() {
         ("fn both(xs: &mut [i64], f: fn() -> i64): pass\n\nfn main():\n    let mut xs: [i64] = []\n    both(&mut xs, fn(): xs.len())\n", "borrow conflict: xs"),
         ("fn run(f: fn(i64) -> i64) -> i64: f(1)\n\nfn main(): println(run(fn(a, b): a))\n", "the function takes 1 parameter(s)"),
         ("fn run(f: fn(i64) -> i64) -> i64: f(1)\n\nfn neg(b: bool) -> bool: not b\n\nfn main(): println(run(neg))\n", "neg has a different function type"),
-        ("fn id[T](x: T) -> T: x\n\nfn main():\n    let f: fn(i64) -> i64 = id\n", "generic function id cannot be used as a value"),
+        ("fn id[T](x: T) -> T: x\n\nfn main():\n    let f = id\n", "generic function id needs a known function type"),
         ("fn p(s: &string) -> i64!string: 1\n\nfn main():\n    let f = p\n", "function values cannot fail yet"),
         ("fn main():\n    let x = 1\n    let f = fn(x: i64) -> i64: x\n", "x is already declared"),
         ("fn main():\n    let f = fn(x: i64) -> i64:\n        x\n", "an anonymous fn holds one expression"),
@@ -615,4 +615,21 @@ fn lists_and_maps_of_functions() {
         stdout(&case.run("fn main():\n    let mut fs: [i64] = []\n    fs.push(1)\n    let io = \"x\"\n    println(fs)\n    println(io)\n")),
         "[1]\nx\n"
     );
+}
+
+#[test]
+fn equality_infers_constructors_and_generic_function_values() {
+    let case = Case::new("expressions", "infer-values");
+    // == / != 一边是看不出类型的构造时，按另一边的类型构造。
+    let source = "enum Shape:\n    Circle(r: f64)\n    Empty\n\nfn find(xs: &[i64], n: i64) -> Option[i64]:\n    for i, x in xs:\n        if x == n: return Option.Some(i)\n    Option.None\n\nfn main():\n    let xs: [i64] = [4, 5]\n    println(find(&xs, 9) == Option.None)\n    println(Option.None == find(&xs, 5))\n    println(find(&xs, 5) == Option.Some(1))\n    println(find(&xs, 5) != Option.Some(0))\n    let s = Shape.Circle(1.0)\n    println(s == Shape.Empty)\n    let nested: Option[Option[i64]] = Option.Some(Option.None)\n    println(nested == Option.Some(Option.None))\n";
+    assert_eq!(
+        stdout(&case.run(source)),
+        "true\nfalse\ntrue\ntrue\nfalse\ntrue\n"
+    );
+    let output = case.run("fn main():\n    println(Option.None == Option.None)\n");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("cannot infer T for Option"));
+
+    // 泛型函数按期望的函数类型生成副本，当实参、绑定、列表元素都行。
+    let source = "fn identity[T](x: T) -> T: x\n\nfn largest[T](items: &[T]) -> T:\n    let mut best = items[0]\n    for item in items:\n        if item > best: best = item\n    best\n\nfn apply(f: fn(i64) -> i64, x: i64) -> i64: f(x)\n\nfn pick(lists: &[[i64]], f: fn(&[i64]) -> i64) -> [i64]:\n    let mut out: [i64] = []\n    for list in lists:\n        out.push(f(list))\n    out\n\nfn main():\n    println(apply(identity, 7))\n    let f: fn(string) -> string = identity\n    println(f(\"hi\"))\n    let grid: [[i64]] = [[1, 9], [4, 2]]\n    println(pick(&grid, largest))\n    let steps: [fn(f64) -> f64] = [identity]\n    println(steps.len())\n";
+    assert_eq!(stdout(&case.run(source)), "7\nhi\n[9, 4]\n1\n");
 }
