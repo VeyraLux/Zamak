@@ -1756,6 +1756,7 @@ fn elem_suffix(elem: Elem) -> String {
             Type::Map(key, value) => format!("M{}{}", elem_suffix(key), elem_suffix(value)),
             _ => unreachable!("nested elements are containers"),
         },
+        Elem::Func(id) => format!("F{id}"),
     }
 }
 fn map_name(key: Elem, value: Elem) -> String {
@@ -2015,7 +2016,7 @@ fn comparable_list_helpers(elem: Elem) -> String {
             "string_equal(&x, v)",
             "copy(&x)",
         ),
-        Elem::Record(_) | Elem::Nested(_) => return String::new(),
+        Elem::Record(_) | Elem::Nested(_) | Elem::Func(_) => return String::new(),
     };
     format!(
         "static int cmp{l}({t} *a, {t} *b) {{ return {compare}; }}
