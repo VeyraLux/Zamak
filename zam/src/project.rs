@@ -425,7 +425,14 @@ impl Project {
             for import in &input.module.imports {
                 if !matches!(
                     import.as_str(),
-                    "std/io" | "std/fmt" | "std/string" | "std/fs" | "std/env" | "std/math"
+                    "std/io"
+                        | "std/fmt"
+                        | "std/string"
+                        | "std/fs"
+                        | "std/env"
+                        | "std/math"
+                        | "std/time"
+                        | "std/random"
                 ) && !self.modules.contains_key(import)
                 {
                     return Err(format!("{id}: missing module {import}"));
@@ -1064,7 +1071,16 @@ impl Project {
                     if locals.contains(root)
                         && (receiver.contains('.')
                             || !(imported
-                                || matches!(root, "io" | "fmt" | "string" | "fs" | "env" | "math")))
+                                || matches!(
+                                    root,
+                                    "io" | "fmt"
+                                        | "string"
+                                        | "fs"
+                                        | "env"
+                                        | "math"
+                                        | "time"
+                                        | "random"
+                                )))
                     {
                         let mut args = std::mem::take(args);
                         for arg in &mut args {

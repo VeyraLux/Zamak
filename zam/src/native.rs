@@ -15,13 +15,17 @@ mod native_values;
 #[path = "native_ranges.rs"]
 mod ranges;
 
-const RUNTIME: &str = r#"#include <stdio.h>
+const RUNTIME: &str = r#"#if !defined(_WIN32) && !defined(__APPLE__)
+#define _POSIX_C_SOURCE 200809L
+#endif
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <math.h>
+#include <time.h>
 static void arithmetic_error(void) { fputs("zam: integer arithmetic error\n", stderr); exit(1); }
 // 移位量只能是 0–63；左移按无符号做（丢掉移出的位，不算溢出），右移是算术右移（向负无穷取整）。
 static int64_t zam_shl(int64_t a, int64_t n) { if (n < 0 || n > 63) arithmetic_error(); return (int64_t)((uint64_t)a << n); }
@@ -223,7 +227,99 @@ __declspec(dllimport) wchar_t *__stdcall GetCommandLineW(void);
 __declspec(dllimport) int __stdcall MultiByteToWideChar(unsigned int, unsigned long, const char *, int, wchar_t *, int);
 __declspec(dllimport) int __stdcall WideCharToMultiByte(unsigned int, unsigned long, const wchar_t *, int, char *, int, const char *, int *);
 __declspec(dllimport) int __stdcall ReadConsoleW(void *, void *, unsigned long, unsigned long *, void *);
+__declspec(dllimport) void __stdcall GetSystemTimePreciseAsFileTime(void *);
+__declspec(dllimport) int __stdcall QueryPerformanceCounter(long long *);
+__declspec(dllimport) int __stdcall QueryPerformanceFrequency(long long *);
+__declspec(dllimport) void __stdcall Sleep(unsigned long);
 #endif
+// std/random 的状态：整个程序共用一份，定义在入口模块的目标文件里。
+extern uint64_t zam_random_state[4];
+extern int zam_random_seeded;
+// std/time：墙上时间（1970 年以来的秒）与单调时间（只用来量间隔）。
+static double zam_time_now(void) {
+#ifdef _WIN32
+    uint64_t ticks; GetSystemTimePreciseAsFileTime(&ticks);
+    return (double)(ticks - 116444736000000000ULL) / 1e7;
+#else
+    struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+#endif
+}
+static double zam_time_monotonic(void) {
+#ifdef _WIN32
+    long long count, frequency; QueryPerformanceCounter(&count); QueryPerformanceFrequency(&frequency);
+    return (double)(count / frequency) + (double)(count % frequency) / (double)frequency;
+#else
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+#endif
+}
+// 公历日期与 1970-01-01 起的天数互换（Howard Hinnant 的算法，对任何年份都成立）。
+static void zam_civil(int64_t days, int64_t *y, int64_t *m, int64_t *d) {
+    int64_t z = days + 719468, era = (z >= 0 ? z : z - 146096) / 146097;
+    int64_t doe = z - era * 146097, yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100), mp = (5 * doy + 2) / 153;
+    *d = doy - (153 * mp + 2) / 5 + 1; *m = mp < 10 ? mp + 3 : mp - 9; *y = yoe + era * 400 + (*m <= 2);
+}
+static int64_t zam_days(int64_t y, int64_t m, int64_t d) {
+    int64_t era, yoe, doy, doe; y -= m <= 2;
+    era = (y >= 0 ? y : y - 399) / 400; yoe = y - era * 400;
+    doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1; doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + doe - 719468;
+}
+static void zam_time_check(double t) {
+    if (t != t || t > 2.5e14 || t < -2.5e14) { fputs("zam: time value out of range\n", stderr); exit(1); }
+}
+// t 秒（向下取整）加上 offset 秒的时区偏移，写成 `2026-10-16T03:04:05`，再接上 zone。
+static S zam_time_text(double t, int64_t offset, const char *zone) {
+    char text[64]; int64_t secs, days, rest, y, m, d; int n;
+    zam_time_check(t);
+    secs = (int64_t)floor(t) + offset;
+    days = (secs >= 0 ? secs : secs - 86399) / 86400; rest = secs - days * 86400;
+    zam_civil(days, &y, &m, &d);
+    n = snprintf(text, sizeof text, "%04" PRId64 "-%02" PRId64 "-%02" PRId64 "T%02" PRId64 ":%02" PRId64 ":%02" PRId64 "%s",
+        y, m, d, rest / 3600, rest / 60 % 60, rest % 60, zone);
+    return own((const unsigned char *)text, (size_t)n);
+}
+// 本地时区在 t 时刻相对 UTC 的偏移（秒），由 localtime 的日期反推，各平台都能用。
+static int64_t zam_local_offset(double t) {
+    time_t when = (time_t)floor(t); struct tm *local = localtime(&when);
+    if (!local) return 0;
+    return zam_days(local->tm_year + 1900, local->tm_mon + 1, local->tm_mday) * 86400
+        + local->tm_hour * 3600 + local->tm_min * 60 + local->tm_sec - (int64_t)when;
+}
+// xoshiro256**：快、周期长、统计性质好，不适合密码学用途。种子用 splitmix64 展开。
+static uint64_t zam_splitmix(uint64_t *x) {
+    uint64_t z = (*x += 0x9E3779B97F4A7C15ULL);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL; z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+    return z ^ (z >> 31);
+}
+static void zam_random_seed(uint64_t seed) {
+    int i; for (i = 0; i < 4; i++) zam_random_state[i] = zam_splitmix(&seed);
+    zam_random_seeded = 1;
+}
+static uint64_t zam_rotl(uint64_t x, int k) { return (x << k) | (x >> (64 - k)); }
+static uint64_t zam_random_next(void) {
+    uint64_t *s = zam_random_state, result, t;
+    if (!zam_random_seeded) {
+        // 没调用 random.seed 时用当前时间、单调时钟与栈地址混出种子，每次运行都不同。
+        int marker; double now = zam_time_now(), mono = zam_time_monotonic(); uint64_t a, b;
+        memcpy(&a, &now, sizeof a); memcpy(&b, &mono, sizeof b);
+        zam_random_seed(a ^ (b * 0x9E3779B97F4A7C15ULL) ^ (uint64_t)(uintptr_t)&marker);
+    }
+    result = zam_rotl(s[1] * 5, 7) * 9; t = s[1] << 17;
+    s[2] ^= s[0]; s[3] ^= s[1]; s[1] ^= s[2]; s[0] ^= s[3]; s[2] ^= t; s[3] = zam_rotl(s[3], 45);
+    return result;
+}
+// [0, range) 里均匀的整数；range 为 0 表示整个 64 位范围。拒绝采样去掉取模偏差。
+static uint64_t zam_random_below(uint64_t range) {
+    uint64_t limit, r;
+    if (!range) return zam_random_next();
+    limit = (0 - range) % range;
+    do r = zam_random_next(); while (r < limit);
+    return r % range;
+}
+static double zam_random_unit(void) { return (double)(zam_random_next() >> 11) * (1.0 / 9007199254740992.0); }
 extern int zam_argc;
 extern char **zam_argv;
 static void zam_alloc_failed(void) { fputs("zam: allocation failed\n", stderr); exit(1); }
@@ -597,6 +693,92 @@ const BUILTINS: &[Builtin] = &[
         result: Type::Float,
         fallible: false,
         body: "return fmax(p0, p1);",
+    },
+    Builtin {
+        name: "std/time:time",
+        params: &[],
+        result: Type::Float,
+        fallible: false,
+        body: "return zam_time_now();",
+    },
+    Builtin {
+        name: "std/time:monotonic",
+        params: &[],
+        result: Type::Float,
+        fallible: false,
+        body: "return zam_time_monotonic();",
+    },
+    Builtin {
+        name: "std/time:sleep",
+        params: &[Type::Float],
+        result: Type::Unit,
+        fallible: false,
+        // 负数、NaN 当作 0；超过一天的等待按一天封顶，避免换算时溢出。
+        body: r#"double seconds = p0 > 0 ? (p0 < 86400.0 ? p0 : 86400.0) : 0.0;
+fflush(stdout);
+#ifdef _WIN32
+Sleep((unsigned long)(seconds * 1000.0 + 0.5));
+#else
+{ struct timespec ts; ts.tv_sec = (time_t)seconds; ts.tv_nsec = (long)((seconds - (double)ts.tv_sec) * 1e9);
+  while (nanosleep(&ts, &ts) != 0) {} }
+#endif"#,
+    },
+    Builtin {
+        name: "std/time:iso_utc",
+        params: &[Type::Float],
+        result: Type::Owned,
+        fallible: false,
+        body: r#"return zam_time_text(p0, 0, "Z");"#,
+    },
+    Builtin {
+        name: "std/time:iso_local",
+        params: &[Type::Float],
+        result: Type::Owned,
+        fallible: false,
+        body: r#"char zone[16]; int64_t offset, minutes;
+zam_time_check(p0);
+offset = zam_local_offset(p0); minutes = (offset < 0 ? -offset : offset) / 60;
+snprintf(zone, sizeof zone, "%c%02d:%02d", offset < 0 ? '-' : '+', (int)(minutes / 60), (int)(minutes % 60));
+return zam_time_text(p0, offset, zone);"#,
+    },
+    Builtin {
+        name: "std/random:seed",
+        params: &[Type::Int],
+        result: Type::Unit,
+        fallible: false,
+        body: "zam_random_seed((uint64_t)p0);",
+    },
+    Builtin {
+        name: "std/random:random",
+        params: &[],
+        result: Type::Float,
+        fallible: false,
+        body: "return zam_random_unit();",
+    },
+    Builtin {
+        name: "std/random:uniform",
+        params: &[Type::Float, Type::Float],
+        result: Type::Float,
+        fallible: false,
+        body: "return p0 + (p1 - p0) * zam_random_unit();",
+    },
+    Builtin {
+        name: "std/random:randint",
+        params: &[Type::Int, Type::Int],
+        result: Type::Int,
+        fallible: false,
+        // 两端都包含，与 Python 的 random.randint 相同。
+        body: r#"if (p0 > p1) { fputs("zam: random.randint needs a <= b\n", stderr); exit(1); }
+return (int64_t)((uint64_t)p0 + zam_random_below((uint64_t)p1 - (uint64_t)p0 + 1));"#,
+    },
+    Builtin {
+        name: "std/random:randrange",
+        params: &[Type::Int, Type::Int],
+        result: Type::Int,
+        fallible: false,
+        // 不含终点，与 for i in a..b 相同。
+        body: r#"if (p0 >= p1) { fputs("zam: random.randrange needs start < stop\n", stderr); exit(1); }
+return (int64_t)((uint64_t)p0 + zam_random_below((uint64_t)p1 - (uint64_t)p0));"#,
     },
     Builtin {
         name: "std/env:exit",
@@ -4113,7 +4295,7 @@ pub fn generate_with(module: &Module, entry: &str, unit: &str, tests: &[String])
     source.push_str(&bodies);
     if entry.split_once(':').unwrap().0 == unit && !tests.is_empty() {
         // 测试程序：`程序 模块:test_x` 只运行这一个测试；失败的 assert 与运行时错误都以非零退出。
-        source.push_str("int zam_argc;\nchar **zam_argv;\n");
+        source.push_str("int zam_argc;\nchar **zam_argv;\nuint64_t zam_random_state[4];\nint zam_random_seeded;\n");
         let mut dispatch = String::new();
         for test in tests {
             let function = &module.functions[test];
@@ -4144,7 +4326,7 @@ pub fn generate_with(module: &Module, entry: &str, unit: &str, tests: &[String])
         ));
     } else if entry.split_once(':').unwrap().0 == unit {
         // argv 留给 std/env（Unix）；Windows 下 std/env 改读 GetCommandLineW 以拿到 UTF-8。
-        source.push_str("int zam_argc;\nchar **zam_argv;\n");
+        source.push_str("int zam_argc;\nchar **zam_argv;\nuint64_t zam_random_state[4];\nint zam_random_seeded;\n");
         if let Some(error) = module.functions[entry].error {
             let structure = fallible_name(module.functions[entry].result, Some(error));
             // 未捕获的错误写到 stderr：字符串原样，结构体与枚举按 println 的格式。
