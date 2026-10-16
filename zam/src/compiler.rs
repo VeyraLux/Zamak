@@ -5501,6 +5501,11 @@ impl<'a> Checker<'a> {
         if let Some(call) = self.string_call(expr)? {
             return self.expr(&call, expected, loans);
         }
+        // 期望 f64 的位置给整数（`let x: f64 = 1`、`area(2)`）：与 Python 一样当小数用。
+        // C 侧这些位置都是赋值、带原型的参数、return 或字段初始化，int64_t 自动转成 double。
+        if expected == Type::Float && matches!(self.ty(expr), Ok(Type::Int)) {
+            return self.expr(expr, Type::Int, loans);
+        }
         // 只读借用参数：变量、字段与元素自动借用（`show(name)` 等于 `show(&name)`）。
         if temporary_borrow(expected).is_some() {
             if let Some(borrow) = auto_borrow(expr) {

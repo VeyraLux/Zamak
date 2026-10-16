@@ -37,7 +37,7 @@ fn main() -> !string:
 
 - `f64` literals need a digit on both sides of the point or an exponent: `1.5`, `0.25`, `2e-3`, `1_000.5`.
 - `f64` follows IEEE 754 and never overflows; dividing by zero (`/`, `//`, `%`) stops the program, as in Python. Use `math.inf` for infinity.
-- Mixing `i64` and `f64` in arithmetic or comparisons converts the integer to `f64`, as in Python: `x * 2`, `1 + 0.5`, `n < 2.5`. A variable or parameter declared `f64` still needs an `f64` value (`let x: f64 = 2.0` or `f64(n)`). Convert with `f64(n)`/`float(n)` and `i64(x)`/`int(x)` (truncates toward zero; stops the program on `NaN` or out-of-range values). Round first with `math.round(x)` if needed.
+- Mixing `i64` and `f64` in arithmetic or comparisons converts the integer to `f64`, as in Python: `x * 2`, `1 + 0.5`, `n < 2.5`. An integer is also accepted wherever an `f64` is expected: `let x: f64 = 2`, `area(2)`, `Circle(r: 1)`, `xs.push(3)` on `[f64]`. Convert with `f64(n)`/`float(n)` and `i64(x)`/`int(x)` (truncates toward zero; stops the program on `NaN` or out-of-range values). Round first with `math.round(x)` if needed.
 - `println(x)` and `"{x}"` print the shortest text that reads back as the same value: `0.1`, `2.0`, `1e16`, `2.5e-7`. For a fixed number of decimals use `fmt.fixed(x, 2) -> string` (`use std/fmt`).
 - `[f64]` lists and `{K: f64}` map values work like `i64` ones. Map keys cannot be `f64`.
 
