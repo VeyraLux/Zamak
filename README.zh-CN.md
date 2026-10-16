@@ -95,12 +95,19 @@ Zamak 是为频繁构建和多 worktree 协作设计的语言原型，改完代�
 
 ## 与其他语言对比
 
-Zamak 想把 C、Rust、Go 与 Python 各自最擅长的部分融合在一起。下面的图在同一台机器上用各语言运行同样的小程序，柱子越短越好。
+Zamak 想把 C、Rust、Go 与 Python 各自最擅长的部分融合在一起。下面的图在同一台机器上用各语言运行同样的程序：四个来自 [The Computer Language Benchmarks Game](https://benchmarksgame-team.pages.debian.net/benchmarksgame/)，两个是日常任务。柱子越短越好。
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/compare-dark.svg"/>
-    <img src="docs/compare-light.svg" alt="Zamak、C、Rust、Go、Java、Node.js 与 Python 的运行时间、可执行文件体积、峰值内存与启动时间" width="920"/>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/compare-speed-dark.svg"/>
+    <img src="docs/compare-speed-light.svg" alt="Zamak、C、Rust、Go、Java、Node.js 与 Python 运行 n-body、spectral-norm、fannkuch-redux、binary-trees、质数计数与词频统计的时间" width="920"/>
+  </picture>
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/compare-footprint-dark.svg"/>
+    <img src="docs/compare-footprint-light.svg" alt="Zamak、C、Rust、Go、Java、Node.js 与 Python 的可执行文件体积、启动时间与峰值内存" width="920"/>
   </picture>
 </p>
 
@@ -113,7 +120,26 @@ Zamak 想把 C、Rust、Go 与 Python 各自最擅长的部分融合在一起。
 | 独立的原生可执行文件 | ✓ | ✓ | ✓ | ✓ | ✗ |
 | 不写生命周期标注 | ✓ | ✓ | ✗ | ✓ | ✓ |
 
-Zamak 并非处处领先：在侧重字符串与哈希表的词频统计中，它比 Java、Node.js 和 Python 快，但比 C、Rust 和 Go 慢。测试方法、完整结果与复现步骤见 [bench/compare](bench/compare/README.md)。
+在这些程序上，Zamak 大多与 C、Rust 处在同一档，同时在每次构建里都检查溢出与越界。spectral-norm 约比 C 慢 3 倍，词频统计慢 2 到 3 倍，两者都在改进计划中。测试方法、完整结果与复现步骤见 [bench/compare](bench/compare/README.md)。
+
+## 配合 AI 编程助手使用
+
+Zamak 把 AI 编程助手当作一等读者。新建一个助手可以马上上手的项目：
+
+```sh
+zam new hello --template ai
+```
+
+项目里会多出两份说明：
+
+- **`.claude/skills/zamak/SKILL.md`**：Claude Code 的 Skill，读写 Zamak 代码时自动加载。
+- **`AGENTS.md`**：内容相同，供 Codex、Cursor、GitHub Copilot 等读取 `AGENTS.md` 的助手使用。
+
+两份说明都包含“检查 → 修复”的工作循环和一页纸语言参考，助手从第一行代码起就能写对。它们由编进 `zam` 的参考生成，新项目总与你安装的版本一致。
+
+工作中，助手从 `zam check --json` 读取诊断：每条都有稳定的错误码（如 `ZM301`）、位置，通常还有修改建议。
+
+让助手直接检查、构建、运行代码并查询标准库的 MCP 服务器（`zam mcp`）正在计划中。
 
 ## 快速运行
 
@@ -178,7 +204,7 @@ error[ZM301]: use after move: name
 
 `zam new <directory>` 生成一个最小可运行的骨架：`zam.toml`（`name`、`entry = "src/main.zm"`、`modules = "src"`）、打印一句问候的 `src/main.zm`，以及忽略 `build/` 的 `.gitignore`。创建的文件路径以 `NEW <path>` 写到 stderr，stdout 保持为空。骨架已经格式化，可以直接 `zam run`。目标目录已存在时报错退出，不覆盖任何文件；目录名要是合法标识符，因为它会写进 `zam.toml` 的 `name`。
 
-面向 AI 协作可以用 `zam new <directory> --template ai`，额外生成 `AI.md` 与 `README.md`，写明 check --json → 最小修复 → fmt → check → build → run 的工作循环。
+面向 AI 协作可以用 `zam new <directory> --template ai`，额外生成 `.claude/skills/zamak/SKILL.md`（Claude Code 的 Skill）、`AGENTS.md`（Codex、Cursor、GitHub Copilot 等读取，内容与 Skill 相同）与 `README.md`。两份说明写明 check --json → 最小修复 → fmt → check → build → run 的工作循环，并附上完整的一页纸语言参考；参考编进 `zam`（`main.rs` 的 `REFERENCE`，来源是 `bench/ai/live/zamak-reference.md`），新项目总与安装的版本一致。MCP 服务器（`zam mcp`）在计划中。
 
 ### 测试
 

@@ -76,12 +76,19 @@ not: 1
 
 ## How Zamak compares
 
-Zamak brings together what C, Rust, Go, and Python each do best. The charts below run the same small programs in each language on one machine. Shorter bars are better.
+Zamak brings together what C, Rust, Go, and Python each do best. These charts run the same programs in each language on one machine: four from [The Computer Language Benchmarks Game](https://benchmarksgame-team.pages.debian.net/benchmarksgame/) and two everyday tasks. Shorter bars are better.
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/compare-dark.svg"/>
-    <img src="docs/compare-light.svg" alt="Run time, executable size, peak memory, and startup time of Zamak, C, Rust, Go, Java, Node.js, and Python" width="920"/>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/compare-speed-dark.svg"/>
+    <img src="docs/compare-speed-light.svg" alt="Run time of n-body, spectral-norm, fannkuch-redux, binary-trees, primes, and word frequency in Zamak, C, Rust, Go, Java, Node.js, and Python" width="920"/>
+  </picture>
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/compare-footprint-dark.svg"/>
+    <img src="docs/compare-footprint-light.svg" alt="Executable size, startup time, and peak memory of Zamak, C, Rust, Go, Java, Node.js, and Python" width="920"/>
   </picture>
 </p>
 
@@ -94,7 +101,26 @@ Zamak brings together what C, Rust, Go, and Python each do best. The charts belo
 | Standalone native executable | ✓ | ✓ | ✓ | ✓ | ✗ |
 | No lifetime annotations | ✓ | ✓ | ✗ | ✓ | ✓ |
 
-Zamak isn't ahead everywhere: on a word-counting task that stresses strings and hash maps, it's faster than Java, Node.js, and Python but slower than C, Rust, and Go. For the method, the full results, and how to run the benchmark yourself, see [bench/compare](bench/compare/README.md).
+Zamak runs in the same range as C and Rust on most of these programs, while it checks overflow and bounds in every build. It's about 3 times slower than C on spectral-norm and 2 to 3 times slower on word frequency; both are planned improvements. For the method, the full results, and how to run the benchmark yourself, see [bench/compare](bench/compare/README.md).
+
+## Use Zamak with your AI agent
+
+Zamak treats AI coding agents as first-class readers. To start a project that your agent can work on right away, run:
+
+```sh
+zam new hello --template ai
+```
+
+The project includes:
+
+- **`.claude/skills/zamak/SKILL.md`**, a skill that Claude Code loads whenever it reads or writes Zamak.
+- **`AGENTS.md`**, the same guide for Codex, Cursor, GitHub Copilot, and other agents that read `AGENTS.md`.
+
+Both files contain the check-fix loop and the one-page language reference, so your agent writes Zamak correctly from its first line. They come from the reference built into `zam`, so a new project always matches the version you have installed.
+
+While it works, your agent reads diagnostics from `zam check --json`. Every diagnostic has a stable code, such as `ZM301`, a position, and usually a suggested fix.
+
+An MCP server (`zam mcp`) that lets agents check, build, and run code and look up the standard library is planned.
 
 ## Quickstart
 
@@ -224,7 +250,7 @@ error[ZM301]: use after move: name
 {"command":"check","ok":false,"diagnostics":[{"file":"moved.zm","line":8,"column":5,"function":"main:main","code":"ZM301","category":"ownership","message":"use after move: name","suggestion":"borrow the value or move it only after the last use"}]}
 ```
 
-For the list of error codes and the recommended loop for AI agents (check, make the smallest fix, format, check, build, and run), see [docs/AI_WORKFLOW.md](docs/AI_WORKFLOW.md) (in Chinese). To give a coding agent instructions for this loop, create your project with `zam new <dir> --template ai`, which adds an `AI.md` file.
+For the list of error codes and the recommended loop for AI agents (check, make the smallest fix, format, check, build, and run), see [docs/AI_WORKFLOW.md](docs/AI_WORKFLOW.md) (in Chinese).
 
 ## Current limitations
 

@@ -3058,14 +3058,13 @@ impl Parser {
         }
         if self.symbol('[') {
             let mut values = Vec::new();
-            if !self.symbol(']') {
-                loop {
-                    values.push(self.expr()?);
-                    if self.symbol(']') {
-                        break;
-                    }
-                    self.expect(',')?;
+            // 与 Python 相同，最后一项后面可以多写一个逗号：`[a, b,]`。
+            while !self.symbol(']') {
+                values.push(self.expr()?);
+                if self.symbol(']') {
+                    break;
                 }
+                self.expect(',')?;
             }
             return Ok(Expr::Array(values));
         }

@@ -269,17 +269,14 @@ Import a module with `use std/<name>` and call `name.function(...)`. `println(x)
 
 ```
 use std/io
-use std/string
 
 fn main() -> !string:
     let text = io.read_all()?
-    let words = string.words(&text)
     let mut counts: {string: i64} = {}
 
-    for word in &words:
+    for word in text.words():
         counts[word] = counts.get(word, 0) + 1
 
-    for word in &counts:
-        let n = counts[word]
-        println("{word}: {n}")
+    for word, n in counts:
+        print(f"{word}: {n}")
 ```

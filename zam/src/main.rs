@@ -329,6 +329,32 @@ fn public_url(remote: &str) -> String {
 }
 
 /// 生成一个最小可运行的项目骨架。目标目录已存在就拒绝，不覆盖任何用户文件。
+/// 一页纸语言参考：AI 实测里交给模型的同一份文本，也是 `zam new --template ai` 生成的 Skill 的正文。
+const REFERENCE: &str = include_str!("../../bench/ai/live/zamak-reference.md");
+
+/// Skill 的 description：告诉助手什么时候加载它。
+const SKILL_DESCRIPTION: &str = "Write, check, fix, and run Zamak code (.zm files, zam.toml projects). Use it whenever you read or change Zamak source, read zam diagnostics, or run zam commands.";
+
+/// 给 AI 编程助手的说明：工作循环在前，语言参考在后。
+fn agent_guide() -> String {
+    format!(
+        "# Working on this Zamak project\n\n\
+         Zamak is a statically typed language that compiles to native executables. Read the language reference below before you write code, and follow it closely: it describes the language as `zam {}` implements it.\n\n\
+         ## Loop\n\n\
+         1. Run `zam check --json .`. Each diagnostic has `file`, `line`, `column`, `function`, a stable `code` such as `ZM301`, a `category`, and usually a `suggestion`.\n\
+         2. Make the smallest change that fixes the reported error. Syntax errors are reported one at a time; type and ownership errors are reported once per function, so you can fix several functions in one pass.\n\
+         3. Run `zam fmt .`, then check again.\n\
+         4. When the check passes, run `zam build .` and `zam run .`. If the project has tests (`fn test_name():` functions that use `assert condition`), run `zam test .`.\n\
+         5. To add a library, run `zam add <name>` (from the package index) or `zam add <name> <git-url> [rev]`, then `use <name>`.\n\n\
+         Don't guess at features the reference doesn't describe; if a construct is missing, write it with the features that exist.\n\n\
+         {}",
+        env!("CARGO_PKG_VERSION"),
+        REFERENCE.replacen("# Zamak language reference", "## Language reference", 1)
+            .replace("\n## ", "\n### ")
+            .replacen("### Language reference", "## Language reference", 1)
+    )
+}
+
 fn new_project(directory: &Path, ai_template: bool) -> project::Result<()> {
     let name = directory
         .file_name()
@@ -352,13 +378,17 @@ fn new_project(directory: &Path, ai_template: bool) -> project::Result<()> {
         (directory.join(".gitignore"), "build/\n".to_string()),
     ];
     if ai_template {
+        // 给 AI 编程助手的说明：Claude Code 读 Skill，Codex、Cursor、Copilot 等读 AGENTS.md。
+        // 两份内容相同，都由编进 zam 的一页纸语言参考生成，参考改了新项目就跟着更新。
+        let guide = agent_guide();
         files.push((
-            directory.join("AI.md"),
-            "# AI 工作循环\n\n1. 运行 `zam check --json <project>`。\n2. 根据 `file`、`line`、`column`、`function`、`code`、`category` 和 `suggestion` 定位最小修复。\n3. 修改后运行 `zam fmt <project>`，再重新检查。\n4. 通过后运行 `zam build <project>` 和 `zam run <project>`；有测试时运行 `zam test <project>`（`fn test_x():` 里用 `assert 条件` 检查）。\n5. 需要第三方库时运行 `zam add <名字> <git 地址> [rev]`，再 `use 名字` 或 `use 名字/模块`。\n\n语法错误只报第一条；类型与所有权错误每个函数各报一条，可以一轮修完再检查。保持每次修改小而明确。常见的 Python 写法都能用：`len(xs)`、`for i in range(n)`、`x in xs`、`a if c else b`、`xs[-1]`、`xs[1:3]`、`sum(xs)`、`sorted(xs)`、`int(s)?`、`str(n)`、`2 ** 10`，注释写 `#`；除法也与 Python 相同（`7 / 2` 是 `3.5`，整除写 `7 // 2`）。字符串可以用方法写法：`s.upper()`、`line.trim().len()`、`csv.split(\",\")`；`print(x)` 与 Python 一样打印一行。变量传给只读借用参数时自动借用（`show(name)`），要让函数修改它时写 `&mut name`。代码块靠缩进（与 Python 相同）：`if`、`for`、`fn` 等块头以 `:` 结尾，块内多缩进 4 个空格，用 `elif` 而不是 `else if`，逻辑运算写 `and`、`or`、`not`，结构体字面量写成 `Point(x: 1, y: 2)`。泛型写作 `fn f[T](x: T)`、`struct Box[T]:`，类型写 `Box[i64]`，可能没有值时用内置的 `Option[T]`（`Option.Some(v)`、`Option.None`）。函数类型写作 `fn(i64) -> bool`，匿名函数写作 `fn(x): x * 2`（同一行一个表达式）；多行的逻辑在函数里再定义 `fn name(x: i64) -> i64:`。它们能读外面的变量，也能改 `let mut` 的变量，可以调用、用 let 绑定、当实参传，但不能存起来或返回。会失败的函数类型写作 `fn(&string) -> i64!string`，通过它调用要 `?` 或 `catch`。当前版本暂不支持网络 I/O 和线程；C 函数用 `extern fn` 声明；枚举用 `match` 判断，分支要覆盖所有变体；浮点数是 `f64`（字面量 `1.5`，和 `i64` 一起运算时整数自动变小数，`f64(n)`、`i64(x)` 显式转换，数学函数见 `std/math`）；可增长列表写作 `[i64]`/`[f64]`/`[bool]`/`[string]`/`[Point]`，字典写作 `{string: i64}` 等（空列表、空字典要标注类型），结构体用 `&Point`/`&mut Point` 借用、不能复制，文件、目录、标准输入与命令行参数见 `std/fs`、`std/path`、`std/io`、`std/env`，时间与随机数见 `std/time`、`std/random`。\n".to_string(),
+            directory.join(".claude/skills/zamak/SKILL.md"),
+            format!("---\nname: zamak\ndescription: {SKILL_DESCRIPTION}\n---\n\n{guide}"),
         ));
+        files.push((directory.join("AGENTS.md"), guide));
         files.push((
             directory.join("README.md"),
-            "# Zamak 项目\n\n```powershell\nzam check --json .\nzam fmt .\nzam build .\nzam run .\n```\n\n错误修复优先查看结构化诊断；不要猜测未支持的语言特性。\n".to_string(),
+            format!("# {name}\n\nA Zamak project. Your AI coding agent reads `AGENTS.md` (or the Claude Code skill in `.claude/skills/zamak`) for the language reference and the check-fix loop.\n\n```sh\nzam check --json .\nzam fmt .\nzam build .\nzam run .\nzam test .\n```\n"),
         ));
     }
     for (path, text) in files {
