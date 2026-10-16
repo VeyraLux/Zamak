@@ -36,7 +36,7 @@ fn gcd(a: i64, b: i64) -> i64:
     return left
 
 fn lcm(a: i64, b: i64) -> i64:
-    return a / gcd(a, b) * b
+    return a // gcd(a, b) * b
 
 fn greet(text: &string) -> string:
     return "问候：{text}"

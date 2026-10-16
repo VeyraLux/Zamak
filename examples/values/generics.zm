@@ -1,4 +1,4 @@
-// 泛型函数：fn name[T](...)，按调用时的实参类型生成专门的版本。
+# 泛型函数：fn name[T](...)，按调用时的实参类型生成专门的版本。
 
 fn largest[T](items: &[T]) -> T:
     let mut best = items[0]

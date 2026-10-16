@@ -113,6 +113,30 @@ pub fn overload(name: &str, first: Option<Type>) -> &str {
         _ => name,
     }
 }
+/// 算术与比较按 Python 的规则：整数与小数混用时整数先变成小数，`/` 永远得到小数
+/// （`7 / 2` 是 3.5，整除写 `7 // 2`）。转换是内部的 `Unary('f', x)`。检查器与生成器共用。
+pub fn promote(expr: &Expr, left: Type, right: Type) -> Option<Expr> {
+    let Expr::Binary(op, a, b) = expr else {
+        return None;
+    };
+    if !matches!(
+        op.as_str(),
+        "+" | "-" | "*" | "/" | "//" | "%" | "<" | "<=" | ">" | ">=" | "==" | "!="
+    ) {
+        return None;
+    }
+    let float = |side: &Expr| match side {
+        Expr::Int(n) => Expr::Float(*n as f64),
+        side => Expr::Unary('f', Box::new(side.clone())),
+    };
+    let (a, b) = match (left, right) {
+        (Type::Int, Type::Float) => (float(a), (**b).clone()),
+        (Type::Float, Type::Int) => ((**a).clone(), float(b)),
+        (Type::Int, Type::Int) if op == "/" => (float(a), float(b)),
+        _ => return None,
+    };
+    Some(Expr::Binary(op.clone(), Box::new(a), Box::new(b)))
+}
 /// 只读借用参数自动借用：`show(name)`、`show(p.name)`、`show(xs[i])` 等于写了 `&`。
 /// 只改写变量、字段与元素；`&mut` 仍要显式写。检查器与生成器共用。
 pub fn auto_borrow(expr: &Expr) -> Option<Expr> {
@@ -1464,6 +1488,7 @@ fn fold(expr: &Expr, constants: &BTreeMap<String, Constant>) -> Result<Expr, Str
             ('-', Expr::Float(x)) => Expr::Float(-x),
             ('~', Expr::Int(n)) => Expr::Int(!n),
             ('!', Expr::Bool(b)) => Expr::Bool(!b),
+            ('f', Expr::Int(n)) => Expr::Float(n as f64),
             _ => return Err("type mismatch in constant".into()),
         },
         Expr::Binary(op, left, right) => {
@@ -1482,13 +1507,37 @@ fn fold(expr: &Expr, constants: &BTreeMap<String, Constant>) -> Result<Expr, Str
             let comparison = matches!(op.as_str(), "==" | "!=" | "<" | "<=" | ">" | ">=");
             match (a, b) {
                 (Expr::Int(x), Expr::Int(y)) if comparison => compare(x.cmp(&y)),
+                (Expr::Int(x), Expr::Int(y)) if op == "/" => {
+                    if y == 0 {
+                        return Err("division by zero in a constant".into());
+                    }
+                    Expr::Float(x as f64 / y as f64)
+                }
                 (Expr::Int(x), Expr::Int(y)) => Expr::Int(
                     match op.as_str() {
                         "+" => x.checked_add(y),
                         "-" => x.checked_sub(y),
                         "*" => x.checked_mul(y),
                         "/" => x.checked_div(y),
-                        "%" => x.checked_rem(y),
+                        "//" => x
+                            .checked_div_euclid(y)
+                            .map(|_| x.div_euclid(y))
+                            .and_then(|_| {
+                                let q = x.checked_div(y)?;
+                                Some(if x % y != 0 && (x < 0) != (y < 0) {
+                                    q - 1
+                                } else {
+                                    q
+                                })
+                            }),
+                        "%" if y == -1 => Some(0),
+                        "%" => x.checked_rem(y).map(|r| {
+                            if r != 0 && (r < 0) != (y < 0) {
+                                r + y
+                            } else {
+                                r
+                            }
+                        }),
                         "&" => Some(x & y),
                         "|" => Some(x | y),
                         "^" => Some(x ^ y),
@@ -1509,8 +1558,19 @@ fn fold(expr: &Expr, constants: &BTreeMap<String, Constant>) -> Result<Expr, Str
                     "+" => x + y,
                     "-" => x - y,
                     "*" => x * y,
+                    "/" | "//" | "%" if y == 0.0 => {
+                        return Err("division by zero in a constant".into())
+                    }
                     "/" => x / y,
-                    "%" => x % y,
+                    "//" => (x / y).floor(),
+                    "%" => {
+                        let r = x % y;
+                        if r != 0.0 && (r < 0.0) != (y < 0.0) {
+                            r + y
+                        } else {
+                            r
+                        }
+                    }
                     _ => return Err("type mismatch in constant".into()),
                 }),
                 (Expr::Bool(x), Expr::Bool(y)) => Expr::Bool(match op.as_str() {
@@ -1522,10 +1582,26 @@ fn fold(expr: &Expr, constants: &BTreeMap<String, Constant>) -> Result<Expr, Str
                 }),
                 (Expr::Text(x), Expr::Text(y)) if comparison => compare(x.cmp(&y)),
                 (Expr::Text(x), Expr::Text(y)) if op == "+" => Expr::Text(x + &y),
-                (Expr::Int(_), Expr::Float(_)) | (Expr::Float(_), Expr::Int(_)) => {
-                    return Err(format!(
-                        "type mismatch: {op} mixes i64 and f64 in a constant; write integers as 1.0"
-                    ))
+                // 整数与小数混用：整数变成小数（与 Python 相同）。
+                (Expr::Int(x), Expr::Float(y)) => {
+                    return fold(
+                        &Expr::Binary(
+                            op.clone(),
+                            Box::new(Expr::Float(x as f64)),
+                            Box::new(Expr::Float(y)),
+                        ),
+                        constants,
+                    )
+                }
+                (Expr::Float(x), Expr::Int(y)) => {
+                    return fold(
+                        &Expr::Binary(
+                            op.clone(),
+                            Box::new(Expr::Float(x)),
+                            Box::new(Expr::Float(y as f64)),
+                        ),
+                        constants,
+                    )
                 }
                 _ => return Err("type mismatch in constant".into()),
             }
@@ -1559,8 +1635,6 @@ fn lex(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>, bool), String> 
     let mut indents = vec![0usize];
     // 还没闭合的括号：（括号字符, 位置）。括号层数就是它的长度。
     let mut open: Vec<(char, SourcePosition)> = Vec::new();
-    // 括号里出现 `//` 的行：多半是把 Python 的整除写成了注释。
-    let mut comment_in_parens = None;
     let mut pending = false;
     let (mut code, mut indented) = (0usize, 0usize);
     for (index, raw) in physical.iter().enumerate() {
@@ -1574,7 +1648,7 @@ fn lex(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>, bool), String> 
                 .position(|c| !c.is_whitespace())
                 .unwrap_or(chars.len());
             let rest = &chars[start..];
-            if rest.is_empty() || rest[0] == '#' || rest.starts_with(&['/', '/']) {
+            if rest.is_empty() || rest[0] == '#' {
                 continue;
             }
             if let Some(tab) = chars[..start].iter().position(|c| *c == '\t') {
@@ -1615,11 +1689,10 @@ fn lex(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>, bool), String> 
                     continue;
                 }
                 '#' => break,
-                '/' if at(i + 1) == Some('/') => {
-                    if !open.is_empty() {
-                        comment_in_parens.get_or_insert(line);
-                    }
-                    break;
+                '/' if at(i + 1) == Some('/') && chars[..i].iter().all(|c| c.is_whitespace()) => {
+                    return Err(error(
+                        "comments start with #; // is floor division, as in 7 // 2",
+                    ));
                 }
                 '"' => {
                     let mut text = String::new();
@@ -1794,14 +1867,8 @@ fn lex(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>, bool), String> 
         }
     }
     if let Some((c, (line, column))) = open.last() {
-        let hint = match comment_in_parens {
-            Some(at) => {
-                format!("; // on line {at} starts a comment, and integer division is written a / b")
-            }
-            None => String::new(),
-        };
         return Err(format!(
-            "line {line}, column {column}: '{c}' was never closed{hint}"
+            "line {line}, column {column}: '{c}' was never closed"
         ));
     }
     let end = (
@@ -2699,6 +2766,7 @@ impl Parser {
             _ => None,
         };
         match (at(0)?, at(1), at(2)) {
+            ('/', Some('/'), Some('=')) => Some(("//".to_owned(), 3)),
             (c @ ('+' | '-' | '*' | '/' | '%' | '&' | '|' | '^'), Some('='), _) => {
                 Some((c.to_string(), 2))
             }
@@ -2763,6 +2831,9 @@ impl Parser {
                 Some(Token::Symbol(c @ ('+' | '-'))) => (c.to_string(), 8, 1),
                 Some(Token::Symbol('*')) if next == Some(&Token::Symbol('*')) => {
                     ("**".to_owned(), 10, 2)
+                }
+                Some(Token::Symbol('/')) if next == Some(&Token::Symbol('/')) => {
+                    ("//".to_owned(), 9, 2)
                 }
                 Some(Token::Symbol(c @ ('*' | '/' | '%'))) => (c.to_string(), 9, 1),
                 _ => break,
@@ -5093,9 +5164,12 @@ impl<'a> Checker<'a> {
     /// `s.upper()`、`string.trim(&s).upper()`：字符串上的方法改写成 std/string 的调用。接收者不是
     /// 字符串时返回 None；是字符串但没有这个方法时报错。
     fn string_call(&self, expr: &Expr) -> Result<Option<Expr>, String> {
-        if let Expr::Binary(op, item, _) = expr {
+        if let Expr::Binary(op, item, other) = expr {
             if op != "in" && op != "not in" {
-                return Ok(None);
+                return Ok(match (self.ty(item), self.ty(other)) {
+                    (Ok(left), Ok(right)) => promote(expr, left, right),
+                    _ => None,
+                });
             }
             return Ok(membership(expr, self.ty(item).is_ok_and(is_text)));
         }
@@ -5271,10 +5345,11 @@ impl<'a> Checker<'a> {
             Expr::Catch(inner, _, _) => self.ty(inner),
             Expr::Unary('!', _) => Ok(Type::Bool),
             Expr::Unary('~', _) => Ok(Type::Int),
+            Expr::Unary('f', _) => Ok(Type::Float),
             Expr::Unary(_, value) => Ok(numeric(self.ty(value)?)),
             Expr::Binary(op, left, _) if op == "+" && is_text(self.ty(left)?) => Ok(Type::Owned),
             Expr::Binary(op, _, _) if bitwise(op) => Ok(Type::Int),
-            Expr::Binary(op, left, _) => Ok(if matches!(op.as_str(), "+" | "-" | "*" | "/" | "%") {
+            Expr::Binary(op, left, _) => Ok(if matches!(op.as_str(), "+" | "-" | "*" | "/" | "//" | "%") {
                 numeric(self.ty(left)?)
             } else {
                 Type::Bool
@@ -5794,6 +5869,12 @@ impl<'a> Checker<'a> {
                 let ty = match op {
                     '!' => Type::Bool,
                     '~' => Type::Int,
+                    'f' => {
+                        if expected != Type::Float {
+                            return Err("type mismatch".into());
+                        }
+                        return self.expr(value, Type::Int, loans);
+                    }
                     _ => numeric(self.ty(value)?),
                 };
                 if *op == '~' && self.ty(value)? != Type::Int {
@@ -5851,6 +5932,7 @@ impl<'a> Checker<'a> {
                 if expected != ty {
                     return Err(match (ty, expected) {
                         (Type::Int, Type::Float) => "type mismatch: this i64 expression is used as f64; convert it with f64(...)".into(),
+                        (Type::Float, Type::Int) if op == "/" => "type mismatch: / always gives f64 (as in Python); use // for integer division".into(),
                         (Type::Float, Type::Int) => "type mismatch: this f64 expression is used as i64; convert it with i64(...)".into(),
                         _ => "type mismatch".into(),
                     });
@@ -6958,10 +7040,10 @@ mod tests {
 
     #[test]
     fn format_reindents_to_four_spaces_and_keeps_comments_and_text() {
-        let source = "fn main():\n  //块里的注释\n  let x =1\n  if true:\n      println(x)  //行尾注释\n      #井号注释\n  let y = {\n  \"a\": 1,\n      }\n";
+        let source = "fn main():\n  #块里的注释\n  let x =1\n  if true:\n      println(x)  #行尾注释\n      #井号注释\n  let y = {\n  \"a\": 1,\n      }\n";
         assert_eq!(
             format(source).unwrap(),
-            "fn main():\n    //块里的注释\n    let x =1\n\n    if true:\n        println(x)  //行尾注释\n        #井号注释\n\n    let y = {\n        \"a\": 1,\n    }\n"
+            "fn main():\n    #块里的注释\n    let x =1\n\n    if true:\n        println(x)  #行尾注释\n        #井号注释\n\n    let y = {\n        \"a\": 1,\n    }\n"
         );
     }
 
@@ -6981,10 +7063,10 @@ mod tests {
 
     #[test]
     fn format_spaces_multi_line_statements_and_top_level_declarations() {
-        let source = "use std/io\nuse std/string\nstruct P:\n    x: i64\n// 说明\nfn f(n: i64) -> i64:\n    if n < 1: return n\n    let a = 1\n    while a < n:\n        a = a + 1\n    # 结束\n    for i in 0..n:\n        println(i)\n    if a > 1:\n        println(1)\n    elif a > 0:\n        println(2)\n    else:\n        println(3)\n\n\n    a\nfn main():\n    match f(3):\n        _: pass\n";
+        let source = "use std/io\nuse std/string\nstruct P:\n    x: i64\n# 说明\nfn f(n: i64) -> i64:\n    if n < 1: return n\n    let a = 1\n    while a < n:\n        a = a + 1\n    # 结束\n    for i in 0..n:\n        println(i)\n    if a > 1:\n        println(1)\n    elif a > 0:\n        println(2)\n    else:\n        println(3)\n\n\n    a\nfn main():\n    match f(3):\n        _: pass\n";
         assert_eq!(
             format(source).unwrap(),
-            "use std/io\nuse std/string\n\nstruct P:\n    x: i64\n\n// 说明\nfn f(n: i64) -> i64:\n    if n < 1: return n\n    let a = 1\n\n    while a < n:\n        a = a + 1\n\n    # 结束\n    for i in 0..n:\n        println(i)\n\n    if a > 1:\n        println(1)\n    elif a > 0:\n        println(2)\n    else:\n        println(3)\n\n    a\n\nfn main():\n    match f(3):\n        _: pass\n"
+            "use std/io\nuse std/string\n\nstruct P:\n    x: i64\n\n# 说明\nfn f(n: i64) -> i64:\n    if n < 1: return n\n    let a = 1\n\n    while a < n:\n        a = a + 1\n\n    # 结束\n    for i in 0..n:\n        println(i)\n\n    if a > 1:\n        println(1)\n    elif a > 0:\n        println(2)\n    else:\n        println(3)\n\n    a\n\nfn main():\n    match f(3):\n        _: pass\n"
         );
         let once = format(source).unwrap();
         assert_eq!(format(&once).unwrap(), once);

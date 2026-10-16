@@ -88,12 +88,10 @@ impl Interval {
                     *products.iter().max().unwrap(),
                 )
             }
+            // Python 的余数符号跟除数：除数为正时结果总在 0..k-1。
             "%" if rhs.lo == rhs.hi && rhs.lo > 0 => {
                 let limit = rhs.lo - 1;
-                let value = Self {
-                    lo: if self.lo >= 0 { 0 } else { -limit },
-                    hi: if self.hi <= 0 { 0 } else { limit },
-                };
+                let value = Self { lo: 0, hi: limit };
                 // This is a successful-result fact, not permission to remove checks.
                 return (value, false);
             }
@@ -213,7 +211,7 @@ impl Analysis {
                 if matches!(op.as_str(), "+" | "-" | "*") {
                     record(&mut self.arithmetic, key, safe, collect);
                 }
-                if matches!(op.as_str(), "/" | "%") {
+                if matches!(op.as_str(), "//" | "%") {
                     // These intervals describe successful operand evaluation. Checks
                     // inside the operands remain independent of this division proof.
                     record(
@@ -727,7 +725,7 @@ fn scalar_variables(expr: &Expr) -> Option<BTreeSet<String>> {
         Expr::Int(_) => Some(BTreeSet::new()),
         Expr::Variable(name) => Some(BTreeSet::from([name.clone()])),
         Expr::Unary('-', inner) => scalar_variables(inner),
-        Expr::Binary(op, left, right) if matches!(op.as_str(), "+" | "-" | "*" | "/" | "%") => {
+        Expr::Binary(op, left, right) if matches!(op.as_str(), "+" | "-" | "*" | "//" | "%") => {
             let mut names = scalar_variables(left)?;
             names.extend(scalar_variables(right)?);
             Some(names)
@@ -1110,7 +1108,7 @@ mod tests {
     #[test]
     fn nonnegative_division_proofs_and_codegen_keep_signed_fallback() {
         let module = crate::compiler::parse(
-            "fn main(n: i64, d: i64):\n    println(n / d)\n    println(n % d)",
+            "fn main(n: i64, d: i64):\n    println(n // d)\n    println(n % d)",
         )
         .unwrap();
         let f = &module.functions["main"];
@@ -1139,11 +1137,11 @@ mod tests {
         }
         for (source, unsigned) in [
             (
-                "fn main():\n    let n = 9223372036854775807\n    println(n / 4)\n    println(n % 4)",
+                "fn main():\n    let n = 9223372036854775807\n    println(n // 4)\n    println(n % 4)",
                 true,
             ),
             (
-                "fn main(n: i64):\n    println(n / 3)\n    println(n % 3)",
+                "fn main(n: i64):\n    println(n // 3)\n    println(n % 3)",
                 false,
             ),
         ] {
@@ -1163,15 +1161,20 @@ mod tests {
                 .unwrap()
                 .0;
             assert_eq!(body.contains("(int64_t)((uint64_t)"), unsigned, "{body}");
-            assert!(body.contains(" / "), "{body}");
-            assert!(body.contains(" % "), "{body}");
+            if unsigned {
+                assert!(body.contains(" / "), "{body}");
+                assert!(body.contains(" % "), "{body}");
+            } else {
+                assert!(body.contains("zam_floordiv_k("), "{body}");
+                assert!(body.contains("zam_mod_k("), "{body}");
+            }
         }
     }
 
     #[test]
     fn dynamic_positive_divisors_keep_runtime_width_dispatch() {
         let mut module = crate::compiler::parse(
-            "fn main():\n    let n = 9223372036854775807\n    let d = 3\n    println(n / d)\n    println(n % d)",
+            "fn main():\n    let n = 9223372036854775807\n    let d = 3\n    println(n // d)\n    println(n % d)",
         ).unwrap();
         let f = module.functions.remove("main").unwrap();
         module.functions.insert("case:main".into(), f);
@@ -1180,8 +1183,8 @@ mod tests {
             .split_once("void f636173653a6d61696e(void) {\n")
             .unwrap()
             .1;
-        assert!(body.contains("quotient("), "{body}");
-        assert!(body.contains("remainder("), "{body}");
+        assert!(body.contains("zam_floordiv("), "{body}");
+        assert!(body.contains("zam_mod("), "{body}");
         assert!(!body.contains("(int64_t)((uint64_t)"), "{body}");
     }
 
@@ -1189,7 +1192,7 @@ mod tests {
     fn nonnegative_division_repeated_visits_and_rollback_fail_closed() {
         for source in [
             "fn main():\n    let mut i = 0\n    let mut n = 3\n    while i < 2:\n        println(n % 7)\n        n = -3\n        i = i + 1",
-            "fn main():\n    let mut i = 0\n    let mut n = 3\n    while i < 2:\n        println(n / 7)\n        n = -3\n        i = i + 1",
+            "fn main():\n    let mut i = 0\n    let mut n = 3\n    while i < 2:\n        println(n // 7)\n        n = -3\n        i = i + 1",
             "fn main():\n    let mut i = 9223372036854775806\n    let mut n = 3\n    while i <= 9223372036854775807:\n        println(n % 7)\n        n = -3\n        i = i + 1",
         ] {
             let module = crate::compiler::parse(source).unwrap();
@@ -1203,7 +1206,7 @@ mod tests {
     #[test]
     fn successful_operand_interval_never_removes_inner_overflow_check() {
         let module =
-            crate::compiler::parse("fn main(n: i64):\n    if n >= 0: println((n + 1) / 4)")
+            crate::compiler::parse("fn main(n: i64):\n    if n >= 0: println((n + 1) // 4)")
                 .unwrap();
         let f = &module.functions["main"];
         let Instruction::If(_, body, _) = &f.body[0].0 else {
@@ -1260,8 +1263,8 @@ mod tests {
     fn positive_remainder_describes_success_without_authorizing_checks() {
         for (input, expected) in [
             (Interval { lo: 0, hi: MAX }, Interval { lo: 0, hi: 39 }),
-            (Interval { lo: MIN, hi: 0 }, Interval { lo: -39, hi: 0 }),
-            (Interval::TOP, Interval { lo: -39, hi: 39 }),
+            (Interval { lo: MIN, hi: 0 }, Interval { lo: 0, hi: 39 }),
+            (Interval::TOP, Interval { lo: 0, hi: 39 }),
         ] {
             assert_eq!(
                 input.arithmetic("%", Interval::point(40)),
@@ -1291,7 +1294,7 @@ mod tests {
         let body = body.split_once("{\n").unwrap().1;
         assert!(!body.contains("add("), "{body}");
         assert!(body.contains(" + "), "{body}");
-        assert!(body.contains(" % "), "{body}");
+        assert!(body.contains("zam_mod_k("), "{body}");
     }
 
     #[test]

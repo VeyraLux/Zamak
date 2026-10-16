@@ -1,5 +1,5 @@
-// extern fn 声明 C 函数：没有函数体，调用时直接执行同名的 C 函数。
-// C 代码写在 c/textutil.c，zam.toml 的 [native] 让它和项目一起编译。
+# extern fn 声明 C 函数：没有函数体，调用时直接执行同名的 C 函数。
+# C 代码写在 c/textutil.c，zam.toml 的 [native] 让它和项目一起编译。
 
 extern fn text_vowels(text: &string) -> i64
 extern fn text_greeting(name: &string) -> string
@@ -7,7 +7,7 @@ extern fn text_scale(value: f64, times: i64) -> f64
 extern fn text_is_even(n: i64) -> bool
 extern fn text_log(message: &string)
 
-// C 标准库里的函数也能直接声明，签名要和 C 的一致。
+# C 标准库里的函数也能直接声明，签名要和 C 的一致。
 extern fn sqrt(x: f64) -> f64
 
 fn main():

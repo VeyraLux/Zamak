@@ -1,4 +1,4 @@
-// 日常表达式：if 表达式、复合赋值、字符串拼接与比较、插值里的表达式、io.print 与 io.eprintln。
+# 日常表达式：if 表达式、复合赋值、字符串拼接与比较、插值里的表达式、io.print 与 io.eprintln。
 use std/io
 use std/string
 
@@ -29,7 +29,7 @@ fn main():
     total += 5
     total -= 1
     total *= 3
-    total /= 2
+    total //= 2
     total %= 8
     println(total)
     let mut xs: [i64] = [1, 2, 3]

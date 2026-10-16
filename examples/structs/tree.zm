@@ -1,4 +1,4 @@
-// 经由列表的递归结构体：树的构造、递归遍历与释放。
+# 经由列表的递归结构体：树的构造、递归遍历与释放。
 struct Node:
     name: string
     children: [Node]

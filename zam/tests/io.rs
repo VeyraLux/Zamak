@@ -239,7 +239,7 @@ fn time_and_random() {
     );
     failure(
         &sandbox.run(
-            "use std/time\n\nfn main(): println(time.iso_utc(0.0 / 0.0))\n",
+            "use std/math\nuse std/time\n\nfn main(): println(time.iso_utc(math.inf - math.inf))\n",
             NONE,
             None,
         ),

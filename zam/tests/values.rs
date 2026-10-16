@@ -1,5 +1,28 @@
 use std::{fs, process::Command};
 
+/// Python 的 `//`：商向下取整；除以零或溢出时为 None。
+fn floor_div(a: i64, b: i64) -> Option<i64> {
+    let q = a.checked_div(b)?;
+    Some(if a % b != 0 && (a < 0) != (b < 0) {
+        q - 1
+    } else {
+        q
+    })
+}
+
+/// Python 的 `%`：余数的符号跟除数；除以零时为 None，`x % -1` 是 0。
+fn floor_mod(a: i64, b: i64) -> Option<i64> {
+    if b == -1 {
+        return Some(0);
+    }
+    let r = a.checked_rem(b)?;
+    Some(if r != 0 && (r < 0) != (b < 0) {
+        r + b
+    } else {
+        r
+    })
+}
+
 #[test]
 fn constant_divisors_preserve_signed_arithmetic() {
     let root = std::env::temp_dir().join(format!("zam-constant-divisors-{}", std::process::id()));
@@ -20,7 +43,7 @@ fn constant_divisors_preserve_signed_arithmetic() {
     let mut source = String::new();
     for (index, divisor) in divisors.iter().enumerate() {
         source.push_str(&format!(
-            "fn quotient{index}(value: i64) -> i64: value / {divisor}\nfn remainder{index}(value: i64) -> i64: value % {divisor}\n"
+            "fn quotient{index}(value: i64) -> i64: value // {divisor}\nfn remainder{index}(value: i64) -> i64: value % {divisor}\n"
         ));
     }
     source.push_str("fn probe() -> i64:\n    println(99)\n    return -7\nfn main():\n");
@@ -32,13 +55,13 @@ fn constant_divisors_preserve_signed_arithmetic() {
             ));
             expected.push_str(&format!(
                 "{}\n{}\n",
-                numerator.checked_div(*divisor).unwrap(),
-                numerator.checked_rem(*divisor).unwrap()
+                floor_div(numerator, *divisor).unwrap(),
+                floor_mod(numerator, *divisor).unwrap()
             ));
         }
     }
-    source.push_str("    println(probe() / 2)\n    println(probe() % -3)\n");
-    expected.push_str("99\n-3\n99\n-1\n");
+    source.push_str("    println(probe() // 2)\n    println(probe() % -3)\n");
+    expected.push_str("99\n-4\n99\n-1\n");
     fs::write(&file, source).unwrap();
     let result = Command::new(env!("CARGO_BIN_EXE_zam"))
         .arg("run")
@@ -74,12 +97,12 @@ fn variable_divisors_preserve_width_and_sign_boundaries() {
         i64::MAX,
     ];
     let mut source = String::from(
-        "fn q(a: i64, b: i64) -> i64: a / b\nfn r(a: i64, b: i64) -> i64: a % b\nfn main():\n",
+        "fn q(a: i64, b: i64) -> i64: a // b\nfn r(a: i64, b: i64) -> i64: a % b\nfn main():\n",
     );
     let mut expected = String::new();
     for a in values {
         for b in values {
-            if let (Some(q), Some(r)) = (a.checked_div(b), a.checked_rem(b)) {
+            if let (Some(q), Some(r)) = (floor_div(a, b), floor_mod(a, b)) {
                 source.push_str(&format!(
                     "    println(q({a}, {b}))\n    println(r({a}, {b}))\n"
                 ));
@@ -170,19 +193,19 @@ fn scalar_values_and_checked_arithmetic() {
         "-9223372036854775808 - 1",
         "9223372036854775807 * 2",
         "-9223372036854775808 * -1",
-        "1 / 0",
+        "1 // 0",
         "1 % 0",
-        "-9223372036854775808 / -1",
-        "-9223372036854775808 % -1",
+        "1 / 0",
+        "-9223372036854775808 // -1",
         "-(-9223372036854775808)",
     ] {
         fs::write(&file, format!("fn main(): println({expression})")).unwrap();
         let result = invoke("run");
         assert!(!result.status.success(), "accepted {expression}");
+        let stderr = String::from_utf8_lossy(&result.stderr);
         assert!(
-            String::from_utf8_lossy(&result.stderr).contains("integer arithmetic error"),
-            "{}",
-            String::from_utf8_lossy(&result.stderr)
+            stderr.contains("integer arithmetic error") || stderr.contains("division by zero"),
+            "{stderr}"
         );
     }
     fs::write(&file, include_str!("../../examples/values/arrays.zm")).unwrap();

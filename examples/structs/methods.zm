@@ -1,4 +1,4 @@
-// 结构体和枚举的方法：&self 只读，&mut self 修改，self 移入；没有 self 的是关联函数，用类型名调用。
+# 结构体和枚举的方法：&self 只读，&mut self 修改，self 移入；没有 self 的是关联函数，用类型名调用。
 use std/math
 
 struct Vec2:

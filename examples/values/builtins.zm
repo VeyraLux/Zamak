@@ -1,4 +1,4 @@
-// 全局 abs/min/max 对整数和浮点数都能用；env.var 读环境变量，env.exit 指定退出码。
+# 全局 abs/min/max 对整数和浮点数都能用；env.var 读环境变量，env.exit 指定退出码。
 use std/env
 
 fn main():

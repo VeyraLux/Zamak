@@ -1,7 +1,7 @@
 use std/string
 use html
 
-// 行内格式：`代码`、**粗体**、*强调*、[文字](链接)。其余文本转义后原样输出。
+# 行内格式：`代码`、**粗体**、*强调*、[文字](链接)。其余文本转义后原样输出。
 pub fn render(text: &string) -> string:
     let mut out: [string] = []
     let size = string.byte_len(text)
@@ -24,7 +24,7 @@ pub fn render(text: &string) -> string:
                 plain = next
         elif byte == '*' and i + 1 < size and string.byte_at(text, i + 1) == '*':
             let mut close = string.find_from(text, "**", i + 2)
-            // `***` 结尾时，前一个 `*` 属于里面的强调，粗体取最后两个。
+            # `***` 结尾时，前一个 `*` 属于里面的强调，粗体取最后两个。
             while close > 0 and close + 2 < size and string.byte_at(text, close + 2) == '*':
                 close = close + 1
 
@@ -66,7 +66,7 @@ pub fn render(text: &string) -> string:
     flush(text, plain, size, &mut out)
     string.join(&out, "")
 
-// 把 [from, to) 之间还没处理的普通文本转义后放进输出。
+# 把 [from, to) 之间还没处理的普通文本转义后放进输出。
 fn flush(text: &string, from: i64, to: i64, out: &mut [string]):
     if to > from:
         let piece = string.slice(text, from, to)

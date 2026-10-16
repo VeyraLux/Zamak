@@ -1,4 +1,4 @@
-// Fixed-size integer kernels. Intermediate and repeated checksums fit i64.
+# Fixed-size integer kernels. Intermediate and repeated checksums fit i64.
 fn gcd(a: i64, b: i64) -> i64:
     let mut x = a
     let mut y = b
@@ -28,7 +28,7 @@ fn prime_batch(seed: i64) -> i64:
         let mut d = 2
         let mut prime = true
 
-        while d <= n / d:
+        while d <= n // d:
             if n % d == 0:
                 prime = false
                 break
@@ -107,7 +107,7 @@ fn binary_search_batch(seed: i64) -> i64:
         let mut hi = 63
 
         while lo <= hi:
-            let mid = (lo + hi) / 2
+            let mid = (lo + hi) // 2
 
             if values[mid] == target:
                 found = found + mid + 1

@@ -33,7 +33,7 @@ fn negative_modulus_and_nested_generic_fallback_keep_behavior() {
     );
     assert_eq!(
         String::from_utf8_lossy(&remainder_inputs.stdout),
-        "-2\n0\n-14\n-12\n-10\n-8\n-6\n-4\n-2\n"
+        "14\n0\n2\n4\n6\n8\n10\n12\n14\n"
     );
     let failed = case.run("fn unknown() -> i64: 9223372036854775807\nfn add(n: i64) -> i64: n + 1\nfn main(): println(add(unknown()))");
     assert!(!failed.status.success());

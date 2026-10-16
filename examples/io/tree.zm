@@ -1,5 +1,5 @@
-// 像 tree 命令一样列出目录：子目录后面加 /，文件后面写大小，最后汇总。
-// zam run examples/io/tree.zm -- examples
+# 像 tree 命令一样列出目录：子目录后面加 /，文件后面写大小，最后汇总。
+# zam run examples/io/tree.zm -- examples
 use std/env
 use std/fs
 use std/path

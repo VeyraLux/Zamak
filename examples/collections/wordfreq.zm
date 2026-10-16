@@ -3,8 +3,8 @@ use std/fs
 use std/io
 use std/string
 
-// 统计词频，按次数从高到低输出前 N 个；次数相同的按首次出现的先后。
-// 用法：zam run examples/collections/wordfreq.zm -- <文件> [N]，不给文件就读标准输入。
+# 统计词频，按次数从高到低输出前 N 个；次数相同的按首次出现的先后。
+# 用法：zam run examples/collections/wordfreq.zm -- <文件> [N]，不给文件就读标准输入。
 fn main() -> !string:
     let args = env.args()
     let mut text = ""
@@ -25,7 +25,7 @@ fn main() -> !string:
     for word in &words:
         counts[word] = counts.get(word, 0) + 1
 
-    // 稳定的插入排序：只交换列表里的位置，不复制字符串。
+    # 稳定的插入排序：只交换列表里的位置，不复制字符串。
     let mut order = counts.keys()
 
     for i in 1..order.len():
