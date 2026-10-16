@@ -290,6 +290,38 @@ pub fn loop_list<'e>(local: &str, expr: &'e Expr) -> Option<&'e Expr> {
     }
 }
 
+/// 字符串值上的方法：`s.upper()` 就是 `string.upper(&s)`——std/string 里同名、第一个参数是
+/// `&string` 的函数；`s.len()` 是字节数，`s.char_len()` 按字符计。`receiver` 是借用接收者的
+/// 表达式（变量写成 `&s`，调用结果原样作临时值）。不是字符串方法时返回 None。检查器与生成器共用。
+pub fn string_method(
+    functions: &BTreeMap<String, Function>,
+    receiver: Expr,
+    method: &str,
+    args: &[Expr],
+) -> Option<Expr> {
+    match method {
+        "len" | "byte_len" if args.is_empty() => return Some(Expr::ByteLen(Box::new(receiver))),
+        "char_len" if args.is_empty() => return Some(Expr::CharLen(Box::new(receiver))),
+        _ => {}
+    }
+    let name = format!("std/string:{method}");
+    let function = functions.get(&name)?;
+    if function.params.first().map(|(_, ty)| *ty) != Some(Type::Shared) {
+        return None;
+    }
+    Some(Expr::Call(
+        name,
+        std::iter::once(receiver)
+            .chain(args.iter().cloned())
+            .collect(),
+    ))
+}
+
+/// 字符串类型（owned 或借用）。
+pub fn is_string(ty: Type) -> bool {
+    matches!(ty, Type::Owned | Type::Shared | Type::Mutable)
+}
+
 /// 能接住临时值的只读借用类型：返回被借用的 owned 类型。
 pub fn temporary_borrow(expected: Type) -> Option<Type> {
     match expected {
@@ -4916,7 +4948,36 @@ impl<'a> Checker<'a> {
         }
         Ok(())
     }
+    /// `s.upper()`、`string.trim(&s).upper()`：字符串上的方法改写成 std/string 的调用。接收者不是
+    /// 字符串时返回 None；是字符串但没有这个方法时报错。
+    fn string_call(&self, expr: &Expr) -> Result<Option<Expr>, String> {
+        let (receiver, method, args) = match expr {
+            Expr::Method(path, method, args) => {
+                if !self.place(path).is_ok_and(|(_, ty)| is_string(ty)) {
+                    return Ok(None);
+                }
+                (Expr::Borrow(path.clone(), false), method, args)
+            }
+            Expr::Chain(inner, method, args) => {
+                if !self.ty(inner).is_ok_and(is_string) {
+                    return Ok(None);
+                }
+                ((**inner).clone(), method, args)
+            }
+            _ => return Ok(None),
+        };
+        string_method(self.functions, receiver, method, args)
+            .map(Some)
+            .ok_or_else(|| {
+                format!(
+                    "unknown method .{method} for a string; string methods are the std/string functions, such as s.len(), s.upper(), s.split(\",\") or s.contains(\"x\")"
+                )
+            })
+    }
     fn ty(&self, expr: &Expr) -> Result<Type, String> {
+        if let Some(call) = self.string_call(expr)? {
+            return self.ty(&call);
+        }
         match expr {
             Expr::FnRef(name) => self.fn_value(name),
             Expr::Invoke(callee, _) => match self.value_type(callee)? {
@@ -5118,6 +5179,9 @@ impl<'a> Checker<'a> {
         expected: Type,
         loans: &mut BTreeMap<String, Type>,
     ) -> Result<(), String> {
+        if let Some(call) = self.string_call(expr)? {
+            return self.expr(&call, expected, loans);
+        }
         // 求出来的值（调用结果、字符串拼接、if/match 的值）借给只读借用参数：先成为临时值，
         // 语句结束时释放，例如 `string.parse_i64(string.trim(&line))`、`total(&xs.slice(0, 2))`。
         if let Some(owned) = temporary_borrow(expected) {

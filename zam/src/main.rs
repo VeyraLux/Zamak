@@ -618,6 +618,7 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
         || message.contains("unknown type name")
         || message.contains("reserved type name")
         || message.contains("unknown variant ")
+        || message.contains("unknown method .")
     {
         (
             "ZM201",
