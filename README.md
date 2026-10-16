@@ -135,6 +135,7 @@ fn main() -> !string:
 - **Constants.** Declare `const LIMIT = 100` at the top level. Zamak computes the value at compile time from literals, earlier constants, and operators.
 - **Modules.** Each file is a module. Import one with `use name`, and export items with `pub fn`, `pub struct`, and `pub const`.
 - **Packages.** Add a library from a Git repository with `zam add mathx https://github.com/you/mathx v1.0`, or from a local directory with `zam add util ../util`. `zam.toml` lists dependencies under `[dependencies]`, and `zam.lock` pins each Git dependency to a commit so every build uses the same code, offline too. Import a package's modules as `use mathx` or `use mathx/geo`. Run `zam update` to move to the latest commit of each `rev`.
+- **C libraries.** Declare a C function with `extern fn sqrt(x: f64) -> f64` and call it like any other function. Parameters can be `i64`, `f64`, `bool`, or `&string` (passed as a `const char *` that ends with `\0`), and results can be those types or `string`. List C files, include directories, and libraries in a `[native]` section of `zam.toml`, such as `sources = ["c/shim.c"]` and `libraries = ["sqlite3"]`. A package can carry its own `[native]` section, so a Zamak library can wrap a C library for other projects. See `examples/ffi`.
 - **Operators.** Integers support the bitwise operators `&`, `|`, `^`, `~`, `<<`, and `>>` with Python's precedence, and literals such as `0xFF`, `0b1010`, and `0o17`.
 - **Strings.** Join strings with `+`, compare them with `==` or `<`, and update variables with `+=`, `-=`, `*=`, `/=`, and `%=`. Interpolation accepts expressions such as `"{a + b}"` and `"{xs[0]}"`.
 - **Standard library.** `std/io` reads standard input and prints to standard output or standard error, `std/fs` reads and writes whole files, and `std/env` reads arguments and environment variables and sets the exit status. `abs`, `min`, and `max` work on both `i64` and `f64` without an import. `std/string` measures, compares, parses, trims, searches, replaces, converts case, slices, splits, joins, pads, and repeats strings, and converts them to and from characters, code points, and UTF-8 bytes. `std/math` provides square roots, powers, logarithms, trigonometry, rounding, and the constants `math.pi`, `math.e`, and `math.inf`.
@@ -168,7 +169,7 @@ For the list of error codes and the recommended loop for AI agents (check, make 
 
 ## Current limitations
 
-Zamak doesn't support threads, a foreign function interface (FFI), networking, or directory listing yet. There's no package registry, language server, or read-eval-print loop (REPL) yet. When you use an unsupported construct, `zam check` reports a diagnostic instead of compiling incorrect code.
+Zamak doesn't support threads, networking, or directory listing yet. C functions take and return only numbers, booleans, and strings; pass pointers and structs through a small C wrapper. There's no package registry, language server, or read-eval-print loop (REPL) yet. When you use an unsupported construct, `zam check` reports a diagnostic instead of compiling incorrect code.
 
 ## Editor and agent support
 
