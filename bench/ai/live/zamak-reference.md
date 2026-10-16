@@ -46,6 +46,7 @@ fn main() -> !string:
 - Escapes: `\n \r \t \" \\`.
 - Interpolation: `"{name}"` inserts a variable or a field path such as `"{p.age}"`. Any expression without string literals or braces may appear inside: `"{a + b}"`, `"{xs[i]}"`, `"{string.upper(&s)}"`. `{{` and `}}` produce literal braces.
 - Build strings with `+`, interpolation or `string.join`.
+- Method form needs no import: any `std/string` function whose first parameter is `&string` can be called on a string, as in `s.upper()`, `line.trim().len()`, `csv.split(",")`, `s.contains("x")`. `s.len()` counts bytes, `s.char_len()` counts characters.
 
 ## Ownership and borrowing
 
@@ -238,7 +239,7 @@ let area = match s:
 
 ## Standard library
 
-Import a module with `use std/<name>` and call `name.function(...)`. `println(x)` needs no import and prints one `string`, `i64`, `f64` or `bool` followed by a newline.
+Import a module with `use std/<name>` and call `name.function(...)`. `println(x)` and `print(x)` need no import and print one value followed by a newline (like Python's `print`); `io.print` prints without a newline. A call result can be passed to a read-only borrow parameter directly: `string.parse_i64(string.trim(&line))`. `for` can loop over a call result: `for name in fs.list(dir)?:`.
 
 - `std/io`: `io.print(&text)` (no newline), `io.eprintln(&text)` (standard error), `io.read_line(&mut line) -> bool!string` reads the next line into `line` without its trailing `\n` or `\r\n` and returns `false` at end of input (typical loop: `let mut line = ""` then `while io.read_line(&mut line)?:`); `io.read_all() -> string!string`.
 - `std/env`: `env.args() -> [string]` (program arguments, without the program name), `env.arg(i) -> string!string`, `env.arg_count() -> i64`, `env.var(&name) -> string!string` (an environment variable), `env.exit(code)` (ends the program with status 0 to 255; a `catch` block may end with it instead of `return`).
