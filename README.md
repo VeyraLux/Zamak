@@ -29,9 +29,9 @@
 
 <br/>
 
-<p align="center"><strong>Open source · MIT or Apache-2.0 · native executables, no garbage collector</strong></p>
-<h3 align="center">A statically typed language that reads like Python and compiles to native code.</h3>
-<p align="center">Write code the way you write Python, and get a standalone executable. Every error has a stable code and a suggested fix, so you and your AI coding agent know what to change.</p>
+<p align="center"><strong>Open source · Native code · Ownership without garbage collection</strong></p>
+<h3 align="center">Written with clarity. Compiled with precision.</h3>
+<p align="center">Zamak is a statically typed language for people and AI agents alike. Its syntax stays light and familiar. Its compiler produces standalone native executables. Ownership manages memory without a garbage collector, and every error comes with a stable code and a fix you can act on.</p>
 <p align="center">Made by <strong>VeyraLux</strong>.</p>
 
 <br/>
@@ -67,7 +67,7 @@ not: 1
 
 ## Features
 
-- **Python habits work.** `len(xs)`, `for i in range(n)`, `x in xs`, `a if c else b`, `xs[-1]`, `xs[1:3]`, `sum(xs)`, `sorted(xs)`, `int(s)`, `str(n)`, `2 ** 10`, `f"..."`, and `#` comments mean what they mean in Python. Division follows Python too: `7 / 2` is `3.5`, `7 // 2` is `3`, and `-7 % 2` is `1`. Strings count characters, so `len("你好")` is 2.
+- **Familiar syntax.** If you have written Python, you can read Zamak without adjusting. `len(xs)`, `for i in range(n)`, `x in xs`, `a if c else b`, `xs[-1]`, `xs[1:3]`, `sum(xs)`, `sorted(xs)`, `int(s)`, `str(n)`, `2 ** 10`, `f"..."`, and `#` comments mean what they mean in Python. Division follows Python too: `7 / 2` is `3.5`, `7 // 2` is `3`, and `-7 % 2` is `1`. Strings count characters, so `len("你好")` is 2.
 - **Ownership without a garbage collector.** Strings, structs, lists, and maps move when you assign them. Passing a variable to a read-only parameter borrows it automatically, as in `show(name)`; a function that changes its argument says so at the call site with `&mut x`. A borrow lasts for one call, or until the end of the block for a read-only local such as `let entry = &entries[i]`, so you never write lifetime annotations. Zamak checks integer overflow, division by zero, and out-of-bounds access at run time, and it removes the checks that a conservative range analysis proves redundant.
 - **Fast feedback.** `zam check` checks types and ownership without calling a C compiler. `zam build` caches each module by content, so a one-line edit rebuilds only the module you changed. On the project's 10-module, 5,250-line benchmark (Windows, MSVC, one machine), a one-line edit rebuilds in about 0.75 seconds, and `zam check` finishes in less than 0.1 seconds. For the method and raw numbers, see [docs/ENGINEERING.md](docs/ENGINEERING.md) and [docs/PERFORMANCE.md](docs/PERFORMANCE.md) (in Chinese).
 - **Diagnostics built for tools.** Every error has a stable code such as `ZM301`, a category, a position, and usually a suggested fix. If you use a Python spelling that Zamak writes differently, the message shows the Zamak spelling. `zam check --json` writes the diagnostics as one line of JSON. Zamak reports type errors per function, so an agent can fix several of them in one pass.
