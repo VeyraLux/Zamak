@@ -4490,7 +4490,7 @@ pub fn encode(module: &Module) -> Vec<u8> {
         .map(|(name, constant)| (name, constant.public, &constant.value))
         .collect();
     format!(
-        "ZAM-IR-32\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
+        "ZAM-IR-33\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
         module.type_names, module.imports, module.functions
     )
     .into_bytes()

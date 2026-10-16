@@ -861,7 +861,7 @@ fn main():
 要点：
 
 - `string` 使用所有权管理。赋值给另一变量，或传给 `text: string` 这样的值参数时，会转移所有权（移动），原变量随后不能再读取。本例的 `consume` 接收字符串所有权。
-- 只需读取字符串时，使用共享借用：将 `&message` 传给 `text: &string`。
+- 只需读取字符串时，使用共享借用：将 `&message` 传给 `text: &string`。参数是只读借用时也可以直接写 `show(message)`，编译器自动借用，不会移走 `message`。
 - 需要修改字符串时，使用可变借用：将 `&mut message` 传给 `text: &mut string`，原变量必须通过 `let mut` 声明。
 - 借用仅在本次函数调用期间有效；`show` 和 `update` 返回后，`message` 仍可使用。同一次调用中，共享借用可以有多个，可变借用必须独占。借用不能返回。只读借用可以存进局部变量，例如 `let entry = &entries[i]`；在所在代码块结束前，`entries` 不能被修改。
 - 所有权和借用检查发生在编译期，运行 `zam check` 即可检查。诊断信息示例为 `line 4, column 1: main:main: use after move: a`。
