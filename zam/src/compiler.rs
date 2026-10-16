@@ -986,6 +986,21 @@ fn substitute_catch(expr: &mut Expr, map: &BTreeMap<u64, Type>) -> Result<(), St
     Ok(())
 }
 
+/// 泛型函数当值用（`let f: fn(i64) -> i64 = identity`）：按期望的函数类型的参数推断类型参数，
+/// 返回专门副本的名字。检查器与生成器共用。
+pub fn generic_value(
+    functions: &BTreeMap<String, Function>,
+    name: &str,
+    expected: u64,
+) -> Result<String, String> {
+    let actuals: Vec<Option<Type>> = func_sig(expected)
+        .0
+        .into_iter()
+        .map(|ty| Some(ty.borrowable().map_or(ty, |(owned, _)| owned)))
+        .collect();
+    instance(functions, name, &actuals)
+}
+
 /// 调用泛型函数：按实参类型（已去掉借用）推断类型参数，返回专门副本的名字，没生成过就生成。
 /// 不是泛型函数时原样返回名字。
 pub fn instance(
@@ -4575,7 +4590,7 @@ impl<'a> Checker<'a> {
         let short = name.rsplit(':').next().unwrap_or(name);
         if !function.generics.is_empty() {
             return Err(format!(
-                "generic function {short} cannot be used as a value yet; wrap it, such as fn(x: i64): {short}(x)"
+                "generic function {short} needs a known function type to be used as a value; annotate it, such as let f: fn(i64) -> i64 = {short}"
             ));
         }
         if function.error.is_some() {
@@ -4988,6 +5003,16 @@ impl<'a> Checker<'a> {
     ) -> Result<(), String> {
         match expr {
             Expr::FnRef(name) => {
+                let generic = self
+                    .functions
+                    .get(name)
+                    .is_some_and(|function| !function.generics.is_empty());
+                let name = &match expected {
+                    Type::Func(id) | Type::FuncRef(id) if generic => {
+                        generic_value(self.functions, name, id)?
+                    }
+                    _ => name.clone(),
+                };
                 let Type::Func(found) = self.fn_value(name)? else {
                     unreachable!("function value")
                 };
@@ -5404,14 +5429,20 @@ impl<'a> Checker<'a> {
                         "type mismatch: {op} compares i64, f64, bool and string values; structs, enums, lists and maps only support == and !="
                     ));
                 }
-                // 结构体、枚举、列表、字典的 == / !=：逐项比较，两边都只读，不移动。
-                if matches!(op.as_str(), "==" | "!=") && compound(self.value_type(left)?) {
-                    let ty = self.value_type(left)?;
-                    if self.value_type(right)? != ty {
-                        return Err(format!(
-                            "type mismatch: {op} compares two values of the same type"
-                        ));
+                // 结构体、枚举、列表、字典的 == / !=：逐项比较，两边都只读，不移动。一边自己看不出
+                // 类型时（`x == Option.None`）按另一边的类型构造。
+                let shared = match (self.value_type(left), self.value_type(right)) {
+                    (Ok(ty), other) | (other, Ok(ty)) if compound(ty) => {
+                        if other.as_ref().is_ok_and(|other| *other != ty) {
+                            return Err(format!(
+                                "type mismatch: {op} compares two values of the same type"
+                            ));
+                        }
+                        Some(ty)
                     }
+                    _ => None,
+                };
+                if let (true, Some(ty)) = (matches!(op.as_str(), "==" | "!="), shared) {
                     if expected != Type::Bool {
                         return Err("type mismatch".into());
                     }
