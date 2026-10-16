@@ -9,7 +9,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const DEFAULT_INDEX: &str = "https://github.com/rayL-K/zamak-index";
+pub const DEFAULT_INDEX: &str = "https://github.com/VeyraLux/zamak-index";
 
 /// 版本号 `主.次.修订`，三段都是不带前导零的十进制数。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
