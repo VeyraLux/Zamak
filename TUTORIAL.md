@@ -523,6 +523,37 @@ total=162 length=6
 - `==` `!=` 比较内容是否相同，`<` `<=` `>` `>=` 按字节顺序比较，结果是 `bool`。
 - 字符串不能和整数相加，例如 `"n=" + 1` 会报错；用插值 `"n={n}"`。
 
+### 字符串方法
+
+字符串上可以直接用 `.` 调用常用函数，不用导入任何模块：
+
+```zamak
+fn main():
+    let line = "  Hello, Zamak  "
+    let text = line.trim()
+    print(text.upper())
+    print(text.len())
+    print(text.contains("Zamak"))
+
+    for part in text.split(", "):
+        print(part)
+```
+
+```text
+HELLO, ZAMAK
+12
+true
+Hello
+Zamak
+```
+
+要点：
+
+- `print(x)` 和 `println(x)` 一样，打印后换行，与 Python 的 `print` 相同。
+- `text.len()` 是字节数，`text.char_len()` 按字符计；一个汉字占 3 个字节、算 1 个字符。
+- 这些方法就是 `std/string` 里的函数：`text.upper()` 等于 `string.upper(&text)`，完整列表见第 13 节的表。
+- `for part in text.split(", "):` 直接遍历函数返回的列表。
+
 ## 第 8 节：数组、列表与字典
 
 Zamak 有两种数组：长度固定的定长数组 `[i64; N]`，以及可以增减元素的列表 `[T]`。按键存取数据用字典 `{K: V}`，见本节最后。
