@@ -141,6 +141,13 @@ pub fn promote(expr: &Expr, left: Type, right: Type) -> Option<Expr> {
     };
     Some(Expr::Binary(op.clone(), Box::new(a), Box::new(b)))
 }
+/// `s[i]` 改写成 `string.char_at(&s, i)`。检查器与生成器共用。
+pub fn char_at(path: &str, index: &Expr) -> Expr {
+    Expr::Call(
+        "std/string:char_at".into(),
+        vec![Expr::Borrow(path.to_owned(), false), index.clone()],
+    )
+}
 /// 只读借用参数自动借用：`show(name)`、`show(p.name)`、`show(xs[i])` 等于写了 `&`。
 /// 只改写变量、字段与元素；`&mut` 仍要显式写。检查器与生成器共用。
 pub fn auto_borrow(expr: &Expr) -> Option<Expr> {
@@ -399,7 +406,8 @@ pub fn string_method(
     args: &[Expr],
 ) -> Option<Expr> {
     match method {
-        "len" | "byte_len" if args.is_empty() => return Some(Expr::ByteLen(Box::new(receiver))),
+        "byte_len" if args.is_empty() => return Some(Expr::ByteLen(Box::new(receiver))),
+        "len" if args.is_empty() => return Some(Expr::CharLen(Box::new(receiver))),
         "char_len" if args.is_empty() => return Some(Expr::CharLen(Box::new(receiver))),
         _ => {}
     }
@@ -5207,6 +5215,13 @@ impl<'a> Checker<'a> {
     /// `s.upper()`、`string.trim(&s).upper()`：字符串上的方法改写成 std/string 的调用。接收者不是
     /// 字符串时返回 None；是字符串但没有这个方法时报错。
     fn string_call(&self, expr: &Expr) -> Result<Option<Expr>, String> {
+        // `s[i]`：第 i 个字符（与 Python 相同，负数从末尾数）。
+        if let Expr::Index(path, index) = expr {
+            if self.place(path).is_ok_and(|(_, ty)| is_string(ty)) {
+                return Ok(Some(char_at(path, index)));
+            }
+            return Ok(None);
+        }
         if let Expr::Binary(op, item, other) = expr {
             if op != "in" && op != "not in" {
                 return Ok(match (self.ty(item), self.ty(other)) {
@@ -5429,7 +5444,7 @@ impl<'a> Checker<'a> {
             Expr::Variable(name) if is_text(self.binding(name)?.ty) => Ok(()),
             Expr::Field(_, _) if self.ty(expr)? == Type::Owned => Ok(()),
             Expr::Borrow(_, _) => self.expr(expr, Type::Shared, &mut loans.clone()),
-            Expr::Index(local, index) if self.ty(expr)? == Type::Owned => self.expr(
+            Expr::Index(local, index) if self.ty(expr)? == Type::Owned && self.place(local)?.1.container().is_some() => self.expr(
                 &Expr::BorrowIndex(local.clone(), index.clone(), String::new(), false),
                 Type::Shared,
                 &mut loans.clone(),
@@ -6513,7 +6528,27 @@ impl<'a> Checker<'a> {
                 }
                 Instruction::Each(local, second, path, mutable, nested) => {
                     // 列表遍历元素（两个名字时先是下标），字典遍历键（两个名字时还有值），都按插入顺序。
-                    let container = self.container(path, *mutable, &loans).map_err(|error| {
+                    // `for ch in s:`：逐个字符（与 Python 相同），按字符串列表的规则绑定；字符串被冻结。
+                    let string = self.place(path).is_ok_and(|(_, ty)| is_string(ty));
+                    if string && *mutable {
+                        return Err(
+                            "a string cannot be changed through a for loop; build a new string instead"
+                                .into(),
+                        );
+                    }
+                    if string {
+                        self.expr(
+                            &Expr::Borrow(path.clone(), false),
+                            Type::Shared,
+                            &mut loans.clone(),
+                        )?;
+                    }
+                    let container = if string {
+                        Ok(Type::List(Elem::Str))
+                    } else {
+                        self.container(path, *mutable, &loans)
+                    }
+                    .map_err(|error| {
                         if path.starts_with("$for") {
                             "type mismatch: for x in VALUE needs a list or map; to count, write a range such as for i in 0..n".to_owned()
                         } else if error.ends_with("is not a list or map") {
@@ -6846,6 +6881,7 @@ impl<'a> Checker<'a> {
                         self.ty(expr)?;
                     } else if matches!(expr, Expr::Index(_, _) | Expr::IndexField(_, _, _))
                         && ty == Type::Owned
+                        && self.string_call(expr)?.is_none()
                     {
                         self.text_operand(expr, &mut loans)?;
                     } else if let Expr::BorrowIndex(_, _, _, _) = expr {

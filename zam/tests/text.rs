@@ -51,9 +51,9 @@ fn string_search_replace_and_case() {
         stdout(&output),
         "4\n4\n-1\n7\ntrue\nfalse\ntrue\nfalse\ntrue\nfalse\na + b + a + b\n-\na-b-a-b\n文文\nhello, 世界 abc\nHELLO, 世界 ABC\n"
     );
+    // 与 Python 相同：起点超过末尾时找不到，不报错。
     let output = case.run("use std/string\nfn main():\n    let s = \"ab\"\n    println(string.find_from(&s, \"a\", 3))\n");
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("zam: string index out of bounds"));
+    assert_eq!(stdout(&output), "-1\n");
 }
 
 /// 按字符处理：chars/codepoints/from_code/bytes/from_bytes/repeat/count/pad_left/pad_right。

@@ -12,7 +12,7 @@ fn encode(line: &string) -> string:
         while end < size and string.byte_at(line, end) == string.byte_at(line, start):
             end = end + 1
 
-        let piece = string.slice(line, start, start + 1)
+        let piece = string.byte_slice(line, start, start + 1)
         let count = end - start
         parts.push("{piece}{count}")
         start = end

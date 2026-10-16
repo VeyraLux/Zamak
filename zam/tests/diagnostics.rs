@@ -660,7 +660,6 @@ fn python_habits_get_the_zamak_spelling() {
     let path = std::env::temp_dir().join(format!("zam-python-{}.zm", std::process::id()));
     for (line, hint) in [
         ("xs.append(3)", "use .push(v)"),
-        ("println(s[0])", "s.slice(i, i + 1)"),
         ("let t = s + n", "interpolate them"),
     ] {
         let source = format!(

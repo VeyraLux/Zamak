@@ -555,7 +555,7 @@ Zamak
 要点：
 
 - `print(x)` 和 `println(x)` 一样，打印后换行，与 Python 的 `print` 相同。
-- `text.len()` 是字节数，`text.char_len()` 按字符计；一个汉字占 3 个字节、算 1 个字符。
+- `text.len()` 与 `len(text)` 按字符计，与 Python 相同：`len("你好")` 是 `2`。`text[0]` 是第一个字符，`text[-1]` 是最后一个，`text[1:3]` 切出一段，`for ch in text:` 逐个字符遍历。要按 UTF-8 字节处理时用 `text.byte_len()`、`text.byte_at(i)`、`text.byte_slice(a, b)`。
 - 这些方法就是 `std/string` 里的函数：`text.upper()` 等于 `string.upper(&text)`，完整列表见第 13 节的表。
 - `for part in text.split(", "):` 直接遍历函数返回的列表。
 

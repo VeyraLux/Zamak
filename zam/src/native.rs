@@ -1,6 +1,6 @@
 use crate::compiler::{
-    auto_borrow, bitwise, block_roots, borrow_of, captured_view, compound, constructed, copied,
-    each_bindings, elem_from, field_function, field_path, func_error, func_sig, func_type,
+    auto_borrow, bitwise, block_roots, borrow_of, captured_view, char_at, compound, constructed,
+    copied, each_bindings, elem_from, field_function, field_path, func_error, func_sig, func_type,
     func_type_full, generic_value, instance_of, instance_with, is_string, lambda_body,
     lambda_prints, linked_tuple, loop_list, membership, method_args, method_signature, nest,
     nested, numeric, overload, promote, record_id, record_method, record_order, sort_by_type,
@@ -160,17 +160,37 @@ static int zam_write(FILE *f, const unsigned char *p, size_t n) {
 #endif
     return !n || fwrite(p, 1, n, f) == n;
 }
-typedef struct { unsigned char *data; size_t len; } S;
+// chars 缓存字符数，0 表示还没数过；chars == len 说明全是 ASCII，字符位置就是字节位置。
+// 规则：任何改了 data 或 len 的地方都要把 chars 清零。
+typedef struct { unsigned char *data; size_t len; size_t chars; } S;
 static S own(const unsigned char *p, size_t n) {
-    S s; s.data = (unsigned char*)malloc(n ? n : 1); s.len = n;
+    S s; s.data = (unsigned char*)malloc(n ? n : 1); s.len = n; s.chars = 0;
     if (!s.data) { fputs("zam: allocation failed\n", stderr); exit(1); }
     if (n) memcpy(s.data, p, n); return s;
 }
-static void drop(S *s) { free(s->data); s->data = NULL; s->len = 0; }
-static S take(S *s) { S value = *s; s->data = NULL; s->len = 0; return value; }
+static void drop(S *s) { free(s->data); s->data = NULL; s->len = 0; s->chars = 0; }
+static S take(S *s) { S value = *s; s->data = NULL; s->len = 0; s->chars = 0; return value; }
 static int64_t byte_len(S *s) { if ((uintmax_t)s->len > INT64_MAX) arithmetic_error(); return (int64_t)s->len; }
 // ponytail: 按 UTF-8 续字节计数，不校验编码合法性；非法字节按其起始字节计一个字符。
-static int64_t char_len(S *s) { int64_t n = 0; for (size_t i = 0; i < s->len; i++) { if ((s->data[i] & 0xC0) != 0x80) n++; } return n; }
+static size_t zam_chars(S *s) {
+    if (!s->chars && s->len) { size_t n = 0, i; for (i = 0; i < s->len; i++) if ((s->data[i] & 0xC0) != 0x80) n++; s->chars = n; }
+    return s->chars;
+}
+static int64_t char_len(S *s) { return (int64_t)zam_chars(s); }
+// 第 k 个字符从哪个字节开始（k 等于字符数时是末尾）。
+static size_t zam_byte_of(S *s, size_t k) {
+    size_t i, n = 0;
+    if (zam_chars(s) == s->len) return k < s->len ? k : s->len;
+    for (i = 0; i < s->len; i++) if ((s->data[i] & 0xC0) != 0x80) { if (n == k) return i; n++; }
+    return s->len;
+}
+// 字节位置 b 之前有几个字符。
+static size_t zam_char_of(S *s, size_t b) {
+    size_t i, n = 0;
+    if (zam_chars(s) == s->len) return b;
+    for (i = 0; i < b && i < s->len; i++) if ((s->data[i] & 0xC0) != 0x80) n++;
+    return n;
+}
 static int string_equal(S *a, S *b) { return a->len == b->len && (!a->len || memcmp(a->data,b->data,a->len) == 0); }
 static int string_compare(S *a, S *b) {
     size_t n = a->len < b->len ? a->len : b->len;
@@ -202,7 +222,7 @@ static S cat(S a, S b) {
     if (a.len) memcpy(p, a.data, a.len);
     if (b.len) memcpy(p + a.len, b.data, b.len);
     drop(&a); drop(&b);
-    S s; s.data = p; s.len = n; return s;
+    S s; s.data = p; s.len = n; s.chars = 0; return s;
 }
 static S from_int(int64_t value) {
     char buffer[32];
@@ -479,7 +499,7 @@ static size_t zam_utf8_put(int64_t c, unsigned char *out) {
 }
 // 按字符数（不计 UTF-8 续字节）补空格到 width；left 为 1 时空格加在左边。
 static S zam_pad(S *s, int64_t width, int left) {
-    size_t chars = 0, i, extra; S out;
+    size_t chars = 0, i, extra; S out; out.chars = 0;
     for (i = 0; i < s->len; i++) if ((s->data[i] & 0xC0) != 0x80) chars++;
     if (width <= 0 || (uint64_t)width <= chars) return copy(s);
     extra = (size_t)width - chars;
@@ -592,7 +612,7 @@ static int zam_read_all(FILE *file, S *out) {
         n += got;
     }
     if (ferror(file)) { free(p); return 0; }
-    out->data = p; out->len = n;
+    out->data = p; out->len = n; out->chars = 0;
     return 1;
 }
 // 标准输入是 Windows 控制台时按 UTF-16 读（ReadConsoleW），转成 UTF-8 再逐字节交出去，
@@ -659,7 +679,7 @@ static int zam_stdin_all(S *out) {
             p[n++] = (unsigned char)c;
         }
         if (zam_console_error) { free(p); return 0; }
-        out->data = p; out->len = n;
+        out->data = p; out->len = n; out->chars = 0;
         return 1;
     }
 #endif
@@ -718,6 +738,7 @@ static void zam_parse_args(void) {
         }
         zam_wargs[count].data = bytes;
         zam_wargs[count].len = (size_t)n;
+        zam_wargs[count].chars = 0;
         count++;
     }
     zam_wcount = (int64_t)count;
@@ -1040,7 +1061,7 @@ return F_Ls_ok(out);"#,
 if (!p0->len) return F_void_err(zam_message("cannot create directory ", p0));
 for (i = 1; i <= p0->len; i++) {
     if (i == p0->len || zam_separator(p0->data[i])) {
-        S prefix; prefix.data = p0->data; prefix.len = i;
+        S prefix; prefix.data = p0->data; prefix.len = i; prefix.chars = 0;
         if (zam_kind(&prefix, NULL) == 0) zam_mkdir_one(&prefix);
     }
 }
@@ -1089,7 +1110,7 @@ return F_void_ok();"#,
         result: Type::Owned,
         fallible: false,
         // b 是绝对路径（/x、\x、C:x）时就是 b；否则用 / 连接，不重复分隔符。
-        body: r#"S out; size_t n = p0->len;
+        body: r#"S out; size_t n = p0->len; out.chars = 0;
 int absolute = p1->len && (zam_separator(p1->data[0]) || (p1->len > 1 && p1->data[1] == ':'));
 if (absolute || !p0->len) return copy(p1);
 if (!p1->len) return copy(p0);
@@ -1221,7 +1242,7 @@ return (int64_t)p0;"#,
         params: &[Type::Float, Type::Int],
         result: Type::Owned,
         fallible: false,
-        body: r#"char text[48]; int n; S s;
+        body: r#"char text[48]; int n; S s; s.chars = 0;
 if (p1 < 0 || p1 > 30) { fputs("zam: fmt.fixed digits must be between 0 and 30\n", stderr); exit(1); }
 if (p0 != p0 || p0 == HUGE_VAL || p0 == -HUGE_VAL) return own((const unsigned char*)text, zam_f64_text(p0, text));
 n = snprintf(NULL, 0, "%.*f", (int)p1, p0);
@@ -1300,7 +1321,7 @@ while ((c = zam_stdin_getc()) != EOF) {
 }
 if (zam_stdin_error()) { free(p); return F_int_err(zam_message("cannot read standard input", NULL)); }
 if (n && p[n - 1] == '\r') n--;
-drop(p0); p0->data = p; p0->len = n;
+drop(p0); p0->data = p; p0->len = n; p0->chars = 0;
 return F_int_ok(any);"#,
     },
     Builtin {
@@ -1368,6 +1389,22 @@ return out;"#,
         params: &[Type::Shared, Type::Shared, Type::Int],
         result: Type::Int,
         fallible: false,
+        // 位置按字符算；start 为负时从末尾数，超过末尾时找不到（与 Python 的 str.find 相同）。
+        body: r#"size_t i, n = zam_chars(p0), start;
+if (p2 < 0) p2 += (int64_t)n;
+if (p2 < 0) p2 = 0;
+if ((uint64_t)p2 > n) return -1;
+start = zam_byte_of(p0, (size_t)p2);
+if (!p1->len) return p2;
+if (p1->len > p0->len) return -1;
+for (i = start; i + p1->len <= p0->len; i++) if (memcmp(p0->data + i, p1->data, p1->len) == 0) return (int64_t)zam_char_of(p0, i);
+return -1;"#,
+    },
+    Builtin {
+        name: "std/string:byte_find_from",
+        params: &[Type::Shared, Type::Shared, Type::Int],
+        result: Type::Int,
+        fallible: false,
         body: r#"size_t i;
 if (p2 < 0 || (uint64_t)p2 > p0->len) zam_string_bounds();
 if (!p1->len) return p2;
@@ -1416,7 +1453,7 @@ while (i < p0->len) {
     if (i + p1->len <= p0->len && memcmp(p0->data + i, p1->data, p1->len) == 0) { if (p2->len) memcpy(p + at, p2->data, p2->len); at += p2->len; i += p1->len; }
     else p[at++] = p0->data[i++];
 }
-s.data = p; s.len = n;
+s.data = p; s.len = n; s.chars = 0;
 return s;"#,
     },
     Builtin {
@@ -1503,7 +1540,7 @@ for (i = 0; i < p0->len; i++) {
     if (i && p1->len) { memcpy(p + at, p1->data, p1->len); at += p1->len; }
     if (p0->data[i].len) { memcpy(p + at, p0->data[i].data, p0->data[i].len); at += p0->data[i].len; }
 }
-s.data = p; s.len = n;
+s.data = p; s.len = n; s.chars = 0;
 return s;"#,
     },
     Builtin {
@@ -1544,6 +1581,30 @@ return p0->data[p1];"#,
     },
     Builtin {
         name: "std/string:slice",
+        params: &[Type::Shared, Type::Int, Type::Int],
+        result: Type::Owned,
+        fallible: false,
+        // 位置按字符算，负数从末尾数，越界收拢（与 Python 的 s[a:b] 相同）。
+        body: r#"size_t a, b;
+zam_clamp(&p1, &p2, zam_chars(p0));
+a = zam_byte_of(p0, (size_t)p1); b = zam_byte_of(p0, (size_t)p2);
+return own(p0->data + a, b - a);"#,
+    },
+    Builtin {
+        name: "std/string:char_at",
+        params: &[Type::Shared, Type::Int],
+        result: Type::Owned,
+        fallible: false,
+        // `s[i]`：第 i 个字符（负数从末尾数），越界时终止程序。
+        body: r#"size_t n = zam_chars(p0), a, b;
+if (p1 < 0) p1 += (int64_t)n;
+if (p1 < 0 || (uint64_t)p1 >= n) zam_string_bounds();
+a = zam_byte_of(p0, (size_t)p1); b = a + 1;
+while (b < p0->len && (p0->data[b] & 0xC0) == 0x80) b++;
+return own(p0->data + a, b - a);"#,
+    },
+    Builtin {
+        name: "std/string:byte_slice",
         params: &[Type::Shared, Type::Int, Type::Int],
         result: Type::Owned,
         fallible: false,
@@ -1597,7 +1658,7 @@ return own(text, n);"#,
 if (!p) zam_alloc_failed();
 for (i = 0; i < p0->len; i++) { if (p0->data[i] < 0 || p0->data[i] > 255) { free(p); return F_S_err(zam_message("byte out of range", NULL)); } p[i] = (unsigned char)p0->data[i]; }
 for (i = 0; i < p0->len; i += n) { n = zam_utf8_next(p + i, p0->len - i, &c); if (!n) { free(p); return F_S_err(zam_message("invalid UTF-8", NULL)); } }
-s.data = p; s.len = p0->len;
+s.data = p; s.len = p0->len; s.chars = 0;
 return F_S_ok(s);"#,
     },
     Builtin {
@@ -1611,7 +1672,7 @@ if (p0->len && count > SIZE_MAX / p0->len) zam_alloc_failed();
 p = (unsigned char*)malloc(p0->len * count ? p0->len * count : 1);
 if (!p) zam_alloc_failed();
 for (i = 0; i < count; i++) if (p0->len) memcpy(p + i * p0->len, p0->data, p0->len);
-s.data = p; s.len = p0->len * count;
+s.data = p; s.len = p0->len * count; s.chars = 0;
 return s;"#,
     },
     Builtin {
@@ -1642,6 +1703,17 @@ return (int64_t)n;"#,
     },
     Builtin {
         name: "std/string:find",
+        params: &[Type::Shared, Type::Shared],
+        result: Type::Int,
+        fallible: false,
+        body: r#"size_t i;
+if (!p1->len) return 0;
+if (p1->len > p0->len) return -1;
+for (i = 0; i + p1->len <= p0->len; i++) if (memcmp(p0->data + i, p1->data, p1->len) == 0) return (int64_t)zam_char_of(p0, i);
+return -1;"#,
+    },
+    Builtin {
+        name: "std/string:byte_find",
         params: &[Type::Shared, Type::Shared],
         result: Type::Int,
         fallible: false,
@@ -2421,6 +2493,13 @@ impl<'a> Generator<'a> {
     }
     /// 字符串上的方法改写成 std/string 的调用（检查器已确认存在）。
     fn string_call(&self, expr: &Expr) -> Option<Expr> {
+        if let Expr::Index(path, index) = expr {
+            let root = path.split('.').next().unwrap_or(path);
+            if self.locals.contains_key(root) && is_string(self.place_ty(path)) {
+                return Some(char_at(path, index));
+            }
+            return None;
+        }
         if let Expr::Binary(op, item, other) = expr {
             if op != "in" && op != "not in" {
                 // 构造（`Option.None`）要按另一边定类型，不是数字运算。
@@ -2606,6 +2685,10 @@ impl<'a> Generator<'a> {
     }
     /// 字符串操作数的只读指针：变量、字段与元素直接取地址，其他表达式先求值成临时串。
     fn text_value(&mut self, expr: &Expr) -> String {
+        if let Some(call) = self.string_call(expr) {
+            let value = self.expr(&call);
+            return format!("&{value}");
+        }
         match expr {
             Expr::Variable(name) | Expr::Borrow(name, _) => self.pointer(name),
             Expr::Field(local, field) => format!("&{}", self.field(local, field)),
@@ -3787,6 +3870,39 @@ impl<'a> Generator<'a> {
                     let value = self.expr_as(expr, ty);
                     self.locals.insert(name.clone(), (value, ty));
                 }
+                // `for ch in s:`：在 UTF-8 字节上逐个切出字符。每个字符是一个临时字符串：continue 与
+                // 正常的下一轮在 for 的递增部分释放，break 在循环后释放，return 经 owners 释放（drop 可重复）。
+                Instruction::Each(name, second, path, _, nested)
+                    if is_string(self.place_ty(path)) =>
+                {
+                    let source = self.scalar(&self.pointer(path), Type::Shared);
+                    let [ch, at, end, index] = [0, 1, 2, 3].map(|k| format!("v{}", self.next + k));
+                    self.next += 4;
+                    self.code.push_str(&format!(
+                        "S {ch} = {{0}}; size_t {at}, {end} = 0, {index};\n\
+                         for ({at} = 0, {index} = 0; {at} < {source}->len; drop(&{ch}), {at} = {end}, {index}++) {{\n\
+                         {end} = {at} + 1;\n\
+                         while ({end} < {source}->len && ({source}->data[{end}] & 0xC0) == 0x80) {end}++;\n\
+                         {ch} = own({source}->data + {at}, {end} - {at});\n"
+                    ));
+                    self.owners.push((ch.clone(), Type::Owned));
+                    let names: Vec<&String> = std::iter::once(name).chain(second).collect();
+                    let mut items = vec![(format!("(&{ch})"), Type::Shared)];
+                    if second.is_some() {
+                        items.insert(0, (format!("(int64_t){index}"), Type::Int));
+                    }
+                    for (name, item) in names.iter().zip(items) {
+                        self.locals.insert((*name).clone(), item);
+                    }
+                    self.loops.push(self.owners.len());
+                    self.block(nested, result_type);
+                    self.loops.pop();
+                    for name in names {
+                        self.locals.remove(name);
+                    }
+                    self.owners.pop();
+                    self.code.push_str(&format!("}}\ndrop(&{ch});\n"));
+                }
                 Instruction::Each(name, second, path, mutable, nested) => {
                     let container = self.place_ty(path).container().expect("checked loop");
                     let borrowed = match container {
@@ -4462,9 +4578,17 @@ pub fn generate_with(module: &Module, entry: &str, unit: &str, tests: &[String])
             needed.insert(name.clone());
             visit_exprs(&function.body, &mut |expr| match expr {
                 // `copy` 不在函数表里；重载的内建函数两个版本都带上，按参数类型调用其中一个。
+                // `s[i]` 在生成时改写成 string.char_at：一并带上。
+                Expr::Index(..) => {
+                    if module.functions.contains_key("std/string:char_at") {
+                        needed.insert("std/string:char_at".to_owned());
+                    }
+                }
                 // `x in s` 在生成时改写成 s.contains(x)：字符串的 contains 一并带上。
                 Expr::Binary(op, _, _) if op == "in" || op == "not in" => {
-                    needed.insert("std/string:contains".to_owned());
+                    if module.functions.contains_key("std/string:contains") {
+                        needed.insert("std/string:contains".to_owned());
+                    }
                 }
                 Expr::Call(name, _) if name != COPY => {
                     for ty in [Type::Int, Type::Float, Type::Owned] {

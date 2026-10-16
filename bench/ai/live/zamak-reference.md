@@ -46,8 +46,9 @@ fn main() -> !string:
 - Escapes: `\n \r \t \" \\`.
 - Interpolation: `"{name}"` inserts a variable or a field path such as `"{p.age}"`. Any expression without string literals or braces may appear inside: `"{a + b}"`, `"{xs[i]}"`, `"{string.upper(&s)}"`. `{{` and `}}` produce literal braces.
 - Build strings with `+`, interpolation or `string.join`.
-- Method form needs no import: any `std/string` function whose first parameter is `&string` can be called on a string variable, as in `s.upper()`, `line.trim().len()`, `csv.split(",")`, `s.contains("x")`. `s.len()` and `len(s)` count bytes, `s.char_len()` counts characters.
-- Slices: `s[a:b]`, `s[:b]`, `s[a:]` (byte offsets; negative counts from the end; out-of-range bounds are clamped, as in Python).
+- Method form needs no import: any `std/string` function whose first parameter is `&string` can be called on a string variable, as in `s.upper()`, `line.trim().len()`, `csv.split(",")`, `s.contains("x")`. `s.len()` and `len(s)` count characters, as in Python (`len("你好")` is 2); `s.byte_len()` counts UTF-8 bytes.
+- Indexes and slices count characters, as in Python: `s[0]` is the first character (a string), `s[-1]` the last, and `s[a:b]`, `s[:b]`, `s[a:]` copy a part (negative counts from the end; out-of-range bounds are clamped).
+- `for ch in s:` loops over the characters (each `ch` is a one-character string); `for i, ch in s:` also gives the position.
 
 ## Ownership and borrowing
 
@@ -252,11 +253,11 @@ Import a module with `use std/<name>` and call `name.function(...)`. `println(x)
 - `std/fmt`: `fmt.fixed(x, digits) -> string` (0 to 30 digits).
 - `std/time`: `time.time() -> f64` (seconds since 1970), `time.monotonic() -> f64` (for measuring durations), `time.sleep(seconds: f64)`, `time.iso_utc(t) -> string` (`1970-01-01T00:00:00Z`), `time.iso_local(t) -> string`.
 - `std/random`: `random.randint(a, b) -> i64` (both ends included), `random.randrange(a, b) -> i64` (b excluded), `random.random() -> f64` in [0, 1), `random.uniform(a, b) -> f64`, `random.seed(n)`.
-- `std/string` (all positions are byte offsets):
-  - `byte_len(&s) -> i64`, `char_len(&s) -> i64`, `byte_at(&s, i) -> i64`
+- `std/string` (positions count characters, as in Python; the `byte_*` functions use UTF-8 byte offsets):
+  - `len(&s) -> i64` (characters), `byte_len(&s) -> i64`, `char_at(&s, i) -> string` (same as `s[i]`), `byte_at(&s, i) -> i64` (the byte value)
   - `equal(&a, &b) -> bool`, `starts_with(&s, &p) -> bool`, `ends_with(&s, &p) -> bool`, `contains(&s, &p) -> bool`
-  - `find(&s, &needle) -> i64` and `find_from(&s, &needle, start) -> i64` (-1 when absent)
-  - `slice(&s, start, end) -> string` (bytes `start..end`), `trim(&s) -> string`, `lower(&s) -> string`, `upper(&s) -> string`, `replace(&s, &from, &to) -> string`, `copy(&s) -> string`
+  - `find(&s, &needle) -> i64` and `find_from(&s, &needle, start) -> i64` (-1 when absent); `byte_find`, `byte_find_from` return byte offsets
+  - `slice(&s, start, end) -> string` (same as `s[start:end]`), `byte_slice(&s, start, end) -> string` (byte offsets; stops the program inside a multi-byte character), `trim(&s) -> string`, `lower(&s) -> string`, `upper(&s) -> string`, `replace(&s, &from, &to) -> string`, `copy(&s) -> string`
   - `parse_i64(&s) -> i64!string` (decimal, optional sign, no surrounding spaces), `parse_f64(&s) -> f64!string` (decimal with optional fraction and exponent)
   - `split(&s, &sep) -> [string]` (keeps empty fields), `words(&s) -> [string]` (splits on whitespace), `lines(&s) -> [string]` (drops `\r`; no empty item after a final newline), `join(&list, &sep) -> string`
   - `chars(&s) -> [string]` (one string per character), `codepoints(&s) -> [i64]`, `from_code(n) -> string`, `bytes(&s) -> [i64]`, `from_bytes(&list) -> string!string`
