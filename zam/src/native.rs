@@ -3646,6 +3646,29 @@ impl<'a> Generator<'a> {
                     self.locals.remove(name);
                     self.code.push_str("}\n");
                 }
+                // `let x = &place`：局部变量存的是指针。
+                Instruction::Let(
+                    name,
+                    _,
+                    None,
+                    expr @ (Expr::Borrow(_, false) | Expr::BorrowIndex(_, _, _, false)),
+                ) => {
+                    let owned = match expr {
+                        Expr::Borrow(path, _) => self.place_ty(path),
+                        Expr::BorrowIndex(path, _, field, _) => self.element_ty(path, field),
+                        _ => unreachable!("borrow expression"),
+                    };
+                    let owned = owned.borrowable().map_or(owned, |(owned, _)| owned);
+                    let ty = borrow_of(owned, false).expect("checked local borrow");
+                    let pointer = match expr {
+                        Expr::Borrow(path, _) => {
+                            let pointer = self.pointer(path);
+                            self.scalar(&pointer, ty)
+                        }
+                        _ => self.expr(expr),
+                    };
+                    self.locals.insert(name.clone(), (pointer, ty));
+                }
                 Instruction::Let(name, _, annotation, expr) => {
                     let ty = match (annotation, loop_list(name, expr)) {
                         (Some(ty), _) => *ty,

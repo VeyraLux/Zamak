@@ -343,6 +343,17 @@ impl Project {
                 .iter()
                 .filter(|path| path.rsplit('/').next() == Some(alias))
                 .collect();
+            // 标准库模块忘了导入：直接说要加哪一行。
+            if matches.is_empty()
+                && matches!(
+                    alias,
+                    "io" | "fmt" | "string" | "fs" | "env" | "math" | "time" | "random" | "path"
+                )
+            {
+                return Err(format!(
+                    "{module}: {call} requires use std/{alias}; add `use std/{alias}` at the top of the file"
+                ));
+            }
             if matches.len() != 1 {
                 return Err(format!("{module}: ambiguous or missing import for {call}"));
             }

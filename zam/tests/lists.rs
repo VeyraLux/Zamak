@@ -190,7 +190,7 @@ fn checker_rejects_list_misuse() {
             "scalar references are not supported",
         ),
         (
-            "let xs: [string] = [\"a\"]\n    let r = &xs[0]",
+            "let xs: [string] = [\"a\"]\n    let r: &string = &xs[0]",
             "borrow escape",
         ),
         (

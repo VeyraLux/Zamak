@@ -700,3 +700,19 @@ fn string_methods() {
     let output = case.run("fn main():\n    let s = \"a\"\n    println(s.nope())\n");
     assert!(String::from_utf8_lossy(&output.stderr).contains("unknown method .nope for a string"));
 }
+
+#[test]
+fn borrowed_locals() {
+    let case = Case::new("expressions", "borrowed-locals");
+    // `let x = &place` 把只读借用存进局部变量；到代码块结束，被借用的根不能改、不能移走。
+    let source = "struct Entry:\n    word: string\n    count: i64\n\nfn show(e: &Entry): println(\"{e.word}={e.count}\")\n\nfn main():\n    let mut entries: [Entry] = [Entry(word: \"a\", count: 2), Entry(word: \"b\", count: 5)]\n    for i in 0..entries.len():\n        let entry = &entries[i]\n        println(entry.word.upper())\n        show(entry)\n        println(entry.count * 10)\n    entries.push(Entry(word: \"c\", count: 1))\n    let name = &entries[2].word\n    println(name.len())\n    let all = &entries\n    println(all.len())\n";
+    assert_eq!(stdout(&case.run(source)), "A\na=2\n20\nB\nb=5\n50\n1\n3\n");
+    let output = case.run("fn main():\n    let mut names: [string] = [\"a\"]\n    let n = &names[0]\n    names.push(\"b\")\n    println(n)\n");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("borrow conflict: names is borrowed"));
+    let output = case
+        .run("fn get(xs: &[string]) -> string:\n    let n = &xs[0]\n    n\n\nfn main(): pass\n");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("cannot move borrowed value n"));
+    let output =
+        case.run("fn main():\n    let xs: [i64] = [1]\n    let n = &xs[0]\n    println(n)\n");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("scalar references are not supported"));
+}

@@ -51,7 +51,7 @@ fn main() -> !string:
 ## Ownership and borrowing
 
 - Assigning or passing a `string`, struct, enum, list or map moves it; using it afterwards is an error. `i64`, `f64` and `bool` are copied.
-- Parameters typed `&string`, `&[T]`, `&{K: V}`, `&Point` borrow read-only; `&mut string`, `&mut [T]`, `&mut {K: V}`, `&mut Point` borrow mutably. At the call site write `&x` or `&mut x` (the owner must be `let mut` for `&mut`). Borrows only exist for the duration of a call: they cannot be stored in variables, struct fields, or returned.
+- Parameters typed `&string`, `&[T]`, `&{K: V}`, `&Point` borrow read-only; `&mut string`, `&mut [T]`, `&mut {K: V}`, `&mut Point` borrow mutably. At the call site write `&x` or `&mut x` (the owner must be `let mut` for `&mut`). Borrows cannot be stored in struct fields or returned. A read-only borrow can be kept in a local without a type annotation: `let entry = &entries[i]`, `let name = &p.name`; until the end of that block the borrowed variable cannot be changed or moved. Numbers and bools are copied instead: `let n = xs[i]`.
 - A `&string` parameter also accepts a string literal or interpolation directly: `string.find(&s, ",")`.
 - Inside a function, a parameter that is already a borrow is passed on without `&`: `fn f(s: &string): g(s)`.
 

@@ -301,7 +301,7 @@ const REAL_SOURCE_CODES: &[(&str, &str, &str)] = &[
         "ownership",
     ),
     (
-        "fn main():\n    let s = \"x\"\n    let r = &s\n",
+        "fn main():\n    let s = \"x\"\n    let r: &string = &s\n",
         "ZM422",
         "ownership",
     ),

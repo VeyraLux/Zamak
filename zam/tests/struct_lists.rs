@@ -103,7 +103,7 @@ fn checker_rejects_struct_list_misuse() {
             "for it in &items:\n        items.push(Item(name: \"x\", qty: 1))",
             "borrowed by an enclosing for loop",
         ),
-        ("let r = &items[0]", "borrow escape"),
+        ("let r: &Item = &items[0]", "borrow escape"),
         (
             "let fixed: [Item] = []\n    fixed[0].qty = 1",
             "cannot mutably borrow immutable value fixed",
