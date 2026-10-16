@@ -1,0 +1,43 @@
+# spectral-norm：用幂迭代求一个无穷矩阵的谱范数（The Computer Language Benchmarks Game）。
+use std/env
+use std/fmt
+use std/math
+
+fn a(i: i64, j: i64) -> f64: 1.0 / ((i + j) * (i + j + 1) // 2 + i + 1)
+
+fn times(u: &[f64], out: &mut [f64]):
+    for i in range(len(u)):
+        let mut s = 0.0
+        for j in range(len(u)):
+            s += a(i, j) * u[j]
+        out[i] = s
+
+fn times_transposed(u: &[f64], out: &mut [f64]):
+    for i in range(len(u)):
+        let mut s = 0.0
+        for j in range(len(u)):
+            s += a(j, i) * u[j]
+        out[i] = s
+
+fn at_times(u: &[f64], out: &mut [f64], tmp: &mut [f64]):
+    times(u, tmp)
+    times_transposed(tmp, out)
+
+fn main() -> !string:
+    let n = int(env.arg(0)?)?
+    let mut u: [f64] = []
+    let mut v: [f64] = []
+    let mut tmp: [f64] = []
+    for _ in range(n):
+        u.push(1.0)
+        v.push(0.0)
+        tmp.push(0.0)
+    for _ in range(10):
+        at_times(u, &mut v, &mut tmp)
+        at_times(v, &mut u, &mut tmp)
+    let mut vbv = 0.0
+    let mut vv = 0.0
+    for i in range(n):
+        vbv += u[i] * v[i]
+        vv += v[i] * v[i]
+    print(fmt.fixed(math.sqrt(vbv / vv), 9))

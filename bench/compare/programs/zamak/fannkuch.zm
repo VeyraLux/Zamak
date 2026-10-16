@@ -1,0 +1,50 @@
+# fannkuch-redux：遍历 n 个数的全部排列，数出“翻煎饼”的次数（The Computer Language Benchmarks Game）。
+use std/env
+
+fn main() -> !string:
+    let n = int(env.arg(0)?)?
+    let mut perm1: [i64] = []
+    let mut perm: [i64] = []
+    let mut count: [i64] = []
+    for i in range(n):
+        perm1.push(i)
+        perm.push(0)
+        count.push(0)
+    let mut max_flips = 0
+    let mut checksum = 0
+    let mut permutation = 0
+    let mut r = n
+    while True:
+        while r != 1:
+            count[r - 1] = r
+            r -= 1
+        for i in range(n):
+            perm[i] = perm1[i]
+        let mut flips = 0
+        let mut k = perm[0]
+        while k != 0:
+            # 把前 k + 1 个数倒过来。
+            let mut lo = 0
+            let mut hi = k
+            while lo < hi:
+                perm.swap(lo, hi)
+                lo += 1
+                hi -= 1
+            flips += 1
+            k = perm[0]
+        max_flips = max(max_flips, flips)
+        checksum += flips if permutation % 2 == 0 else -flips
+        # 下一个排列。
+        while True:
+            if r == n:
+                print(checksum)
+                print(f"Pfannkuchen({n}) = {max_flips}")
+                return
+            let first = perm1[0]
+            for i in range(r):
+                perm1[i] = perm1[i + 1]
+            perm1[r] = first
+            count[r] -= 1
+            if count[r] > 0: break
+            r += 1
+        permutation += 1
