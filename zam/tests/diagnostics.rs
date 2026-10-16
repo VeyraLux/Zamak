@@ -659,10 +659,6 @@ fn python_habits_get_the_zamak_spelling() {
     // 常见的 Python 写法：报错末尾给出 Zamak 的写法，记号按源码样子显示。
     let path = std::env::temp_dir().join(format!("zam-python-{}.zm", std::process::id()));
     for (line, hint) in [
-        ("println(len(xs))", "write x.len()"),
-        ("for i in range(3): println(i)", "for i in 0..n"),
-        ("println(str(n))", "interpolate instead"),
-        ("println(int(\"5\"))", "s.parse_i64()?"),
         ("xs.append(3)", "use .push(v)"),
         ("let ys = xs[1:]", "xs.slice(a, b)"),
         ("println(s[0])", "s.slice(i, i + 1)"),

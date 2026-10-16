@@ -470,13 +470,6 @@ fn with_python_hint(message: String) -> String {
         .iter()
         .find_map(|prefix| message.rsplit_once(prefix).map(|(_, name)| name));
     let hint = match name {
-        Some("len") => "write x.len() for a string, list or map",
-        Some("range") => "write a range: for i in 0..n",
-        Some("str") => "interpolate instead: \"{n}\"",
-        Some("int") => "parse with s.parse_i64()? (or catch the error)",
-        Some("float") => "parse with s.parse_f64()? (or catch the error)",
-        Some("sum") => "add up in a loop: for x in xs: total += x",
-        Some("sorted") => "sort a list in place with xs.sort() or xs.sort_by(fn(a, b): a < b)",
         Some("input") => "read a line with io.read_line()? and use std/io",
         Some("None") => "an optional value is written Option.None, or use a default value",
         Some("self") => "methods take the value as a normal parameter, such as fn area(p: &Point)",

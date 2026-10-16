@@ -757,3 +757,13 @@ fn python_division() {
         "3.5\n2.0\n3\n-4\n1\n2\n-2\n3.0\n0.5\n3.5\n3.5\ntrue\n3.5\n-4\n3\n30\n3.5\n2\n"
     );
 }
+
+#[test]
+fn python_builtins() {
+    let case = Case::new("expressions", "python-builtins");
+    // Python 的内置函数：len、sum、min/max（两个数或一个列表）、sorted、str、int/float（转换或解析，解析会失败）、for i in range(...)。
+    assert_eq!(
+        stdout(&case.run("struct P:\n    tags: [string]\n\nfn main() -> !string:\n    let xs: [i64] = [3, 1, 2]\n    let fs: [f64] = [1.5, 2.5]\n    let words: [string] = [\"pear\", \"apple\", \"fig\"]\n    println(len(xs))\n    println(len(\"héllo\"))\n    println(len({\"a\": 1}))\n    println(sum(xs))\n    println(sum(fs))\n    println(min(xs))\n    println(max(words))\n    println(min(3, 9))\n    println(sorted(xs))\n    println(sorted(words))\n    println(xs)\n    println(str(42) + \"!\")\n    println(str(xs))\n    println(int(\"12\")? + 1)\n    println(int(3.9))\n    println(float(2))\n    println(float(\"2.5\")?)\n    let s = \"7\"\n    println(int(s)? * 2)\n    for i in range(3): print(i)\n    for i in range(2, 4): print(i)\n    let p = P(tags: [\"b\", \"a\"])\n    println(len(p.tags))\n    println(sorted(p.tags))\n    let csv = \"a,b,c\"\n    println(len(csv.split(\",\")))\n    let bad = int(\"x\") catch e:\n        println(e)\n        return\n")),
+        "3\n6\n1\n6\n4.0\n1\npear\n3\n[1, 2, 3]\n[\"apple\", \"fig\", \"pear\"]\n[3, 1, 2]\n42!\n[3, 1, 2]\n13\n3\n2.0\n2.5\n14\n0\n1\n2\n2\n3\n2\n[\"a\", \"b\"]\n3\ninvalid integer: x\n"
+    );
+}

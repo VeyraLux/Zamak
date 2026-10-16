@@ -110,6 +110,10 @@ pub fn overload(name: &str, first: Option<Type>) -> &str {
         ("std/core:min", Some(Type::Float)) => "std/core:min_f64",
         ("std/core:max", Some(Type::Float)) => "std/core:max_f64",
         ("std/core:pow", Some(Type::Float)) => "std/core:pow_f64",
+        ("std/core:int", Some(Type::Float)) => "std/core:i64",
+        ("std/core:int", Some(ty)) if is_text(ty) => "std/string:parse_i64",
+        ("std/core:float", Some(Type::Int)) => "std/core:f64",
+        ("std/core:float", Some(ty)) if is_text(ty) => "std/string:parse_f64",
         _ => name,
     }
 }
@@ -597,6 +601,9 @@ pub fn method_signature(receiver: Type, method: &str) -> Option<(bool, Vec<Type>
         (Type::List(elem), "slice") if elem.comparable() => {
             (false, vec![Type::Int, Type::Int], Type::List(elem))
         }
+        (Type::List(elem @ (Elem::Int | Elem::Float)), "sum") => (false, Vec::new(), elem.ty()),
+        (Type::List(elem), "min" | "max") if elem.comparable() => (false, Vec::new(), elem.ty()),
+        (Type::List(elem), "sorted") if elem.comparable() => (false, Vec::new(), Type::List(elem)),
         (Type::Map(_, _), "clear") => (true, Vec::new(), Type::Unit),
         (Type::Map(_, value), "values") if value.copyable() => {
             (false, Vec::new(), Type::List(value))
@@ -628,15 +635,24 @@ pub fn sort_by_type(elem: Elem) -> u64 {
 fn supported_methods(container: Type, method: &str) -> &'static str {
     match container {
         Type::List(Elem::Record(_))
-            if matches!(method, "sort" | "contains" | "index_of" | "slice") =>
+            if matches!(
+                method,
+                "sort" | "sorted" | "contains" | "index_of" | "slice" | "min" | "max"
+            ) =>
         {
             "struct elements cannot be compared or copied yet"
         }
-        Type::List(_) if matches!(method, "sort" | "contains" | "index_of" | "slice") => {
-            "sort, contains, index_of and slice need i64, f64, bool or string elements"
+        Type::List(_) if method == "sum" => "sum needs i64 or f64 elements",
+        Type::List(_)
+            if matches!(
+                method,
+                "sort" | "sorted" | "contains" | "index_of" | "slice" | "min" | "max"
+            ) =>
+        {
+            "sort, sorted, contains, index_of, slice, min and max need i64, f64, bool or string elements"
         }
         Type::List(_) => {
-            "lists support len, push, pop, insert, remove, swap, reverse, clear, extend, sort, sort_by, contains, index_of and slice"
+            "lists support len, push, pop, insert, remove, swap, reverse, clear, extend, sort, sorted, sort_by, contains, index_of, slice, sum, min and max"
         }
         _ if method.starts_with('$') => {
             "indexing twice, such as grid[i][j], reads i64, f64, bool and string elements; borrow deeper levels with for row in &grid"
@@ -3592,6 +3608,26 @@ impl Parser {
                 Instruction::Each(local, second, path, mutable, nested)
             } else {
                 let start = self.expr()?;
+                // Python 的 `for i in range(n)`、`range(a, b)`：就是区间循环。
+                if let Expr::Call(name, args) = &start {
+                    if name == "range" && self.peek() == Some(&Token::Symbol(':')) {
+                        let (from, to) = match args.as_slice() {
+                            [to] => (Expr::Int(0), to.clone()),
+                            [from, to] => (from.clone(), to.clone()),
+                            _ => {
+                                return Err(
+                                    "range takes one or two arguments, such as range(n) or range(a, b); for a step, use while"
+                                        .into(),
+                                )
+                            }
+                        };
+                        if second.is_some() {
+                            return Err("a range has one loop variable: for i in range(n)".into());
+                        }
+                        let nested = self.suite(imports, result, "for")?;
+                        return Ok(Some(Instruction::For(local, from, to, nested)));
+                    }
+                }
                 // `for name in fs.list(dir)?:`：遍历一个值（调用结果、字面量）。先把它存进隐藏变量，
                 // 循环借用那个变量；值在循环前求一次。
                 if self.peek() == Some(&Token::Symbol(':')) {
