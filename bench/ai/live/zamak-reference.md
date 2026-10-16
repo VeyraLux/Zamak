@@ -120,7 +120,7 @@ fn main():
     println(f(21))
 ```
 
-A function type is `fn(T1, T2) -> R` (no `-> R` means no result). Pass a named function by name (`double`, `util.double`) or write an anonymous fn `fn(x: i64) -> i64: x * 2`; its body is one expression (or one `println(...)`) on the same line, and parameter types may be omitted when the expected function type is known. An anonymous fn can read the enclosing function's variables (never change them); such a closure can only be passed directly as an argument, and a function-typed parameter can only be called or passed on. Functions without captures can be stored in variables, struct fields, and returned. A struct field of function type is called like a method: `button.on_click(1)`.
+A function type is `fn(T1, T2) -> R` (no `-> R` means no result). Pass a named function by name (`double`, `util.double`) or write an anonymous fn `fn(x: i64) -> i64: x * 2`; its body is one expression (or one `println(...)`) on the same line, and parameter types may be omitted when the expected function type is known. For longer code, declare `fn name(x: i64) -> i64:` with an indented body inside the function. Anonymous and nested fns can read the enclosing function's variables and change those declared with `let mut`; such a closure can be called, bound with `let`, and passed as an argument, but not stored in a struct or list or returned. A function-typed parameter can only be called or passed on. Functions without captures can be stored in variables, struct fields, lists (`[fn(i64) -> i64]`) and maps, and returned. A generic function can be passed where the function type is known: `apply(identity, 7)`. A struct field of function type is called like a method: `button.on_click(1)`.
 
 ## Assertions and tests
 
@@ -149,6 +149,7 @@ else:
 - A function that can fail declares `-> T!string` (returns T or an error message) or `-> !string` (only fails).
 - `fail "message"` returns an error. Interpolation works: `fail "bad line {n}"`.
 - `call()?` returns the error to the caller (the current function must also be declared `!string`).
+- `x == Option.None` works: a constructor on one side of `==` takes the type of the other side.
 - `call() catch e:` handles the error in place; `e` is the error value. When the call's value is used (`let v = f() catch e:`), the block must end every path with `return` or `fail` (or `break`/`continue` inside a loop). When the call has no value or stands alone as a statement, the program continues after the block.
 - The error type can also be a struct or an enum: `fn parse(t: &string) -> i64!ParseError`, `fail ParseError.Empty`, and `match e:` inside `catch`. `?` only passes an error to a function with the same error type; convert others in a `catch` block.
 

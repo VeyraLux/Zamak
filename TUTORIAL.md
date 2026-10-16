@@ -420,7 +420,41 @@ fn main():
 
 - 具名函数直接写名字当值传，比如 `is_short`。
 - 匿名函数的冒号后面在同一行写一个表达式。参数类型能从函数类型推断时可以省略，`fn(w): ...` 里的 `w` 就是 `&string`。
-- 匿名函数可以读外面的变量（这里的 `min_len`），但不能改。用到外面变量的匿名函数只能直接当实参传，不能存进变量。
+- 匿名函数可以读外面的变量（这里的 `min_len`）。外面用 `let mut` 声明的变量也能改，比如 `fn(w): seen.push(w)`。
+- 用到外面变量的函数可以调用、用 `let` 绑定、当实参传，但不能存进结构体或列表，也不能从函数返回。
+
+逻辑超过一行时，在函数里面再定义一个函数：
+
+```zamak
+use std/string
+
+fn each(words: &[string], visit: fn(&string)):
+    for word in words:
+        visit(word)
+
+fn main():
+    let words: [string] = ["apple", "kiwi", "fig"]
+    let mut total = 0
+    let mut long: [string] = []
+
+    fn collect(word: &string):
+        total += string.byte_len(word)
+
+        if string.byte_len(word) > 3:
+            long.push(string.upper(word))
+
+    each(&words, collect)
+    println(total)
+    println(long)
+```
+
+```text
+12
+["APPLE", "KIWI"]
+```
+
+- 函数里定义的函数和顶层函数写法一样，要写参数类型；它能读写外面的变量（这里改了 `total` 和 `long`，所以它们要声明成 `let mut`）。
+- 函数也能放进列表：`let steps: [fn(i64) -> i64] = [double, square]`，再 `for step in steps:` 依次调用。
 
 ## 第 7 节：字符串、转义与插值
 
