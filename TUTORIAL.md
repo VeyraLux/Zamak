@@ -927,7 +927,7 @@ hello from zamak
 
 ### 使用别人写的库
 
-大家写好的 Zamak 库登记在[包索引](https://github.com/rayL-K/zamak-index)里。先搜一搜，再在项目目录里用一条命令加进来：
+大家写好的 Zamak 库登记在[包索引](https://github.com/VeyraLux/zamak-index)里。先搜一搜，再在项目目录里用一条命令加进来：
 
 ```text
 zam search math

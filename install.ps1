@@ -1,9 +1,9 @@
 # Install the latest Zamak compiler on Windows x64:
-#   irm https://raw.githubusercontent.com/rayL-K/Zamak/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/VeyraLux/Zamak/main/install.ps1 | iex
 # Environment: ZAMAK_HOME (install directory, default %LOCALAPPDATA%\zamak), ZAMAK_VERSION (e.g. 0.1.0),
 # ZAMAK_NO_MODIFY_PATH=1 to leave the user PATH untouched.
 $ErrorActionPreference = 'Stop'
-$repo = 'rayL-K/Zamak'
+$repo = 'VeyraLux/Zamak'
 $archive = 'zamak-windows-x64.zip'
 if ($env:ZAMAK_DOWNLOAD_BASE) {
     $base = $env:ZAMAK_DOWNLOAD_BASE

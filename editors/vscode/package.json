@@ -21,7 +21,7 @@
   "icon": "icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/rayL-K/Zamak.git",
+    "url": "https://github.com/VeyraLux/Zamak.git",
     "directory": "editors/vscode"
   },
   "contributes": {

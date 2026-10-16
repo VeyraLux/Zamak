@@ -1,10 +1,10 @@
 #!/bin/sh
 # Install the latest Zamak compiler on Linux x64 or macOS arm64:
-#   curl -fsSL https://raw.githubusercontent.com/rayL-K/Zamak/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/VeyraLux/Zamak/main/install.sh | sh
 # Environment: ZAMAK_HOME (install directory, default ~/.zamak), ZAMAK_VERSION (e.g. 0.1.0).
 set -eu
 
-repo="rayL-K/Zamak"
+repo="VeyraLux/Zamak"
 case "$(uname -s)-$(uname -m)" in
     Linux-x86_64) name=linux-x64 ;;
     Darwin-arm64) name=macos-arm64 ;;

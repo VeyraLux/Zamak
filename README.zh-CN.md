@@ -4,7 +4,7 @@
 
 面向快速构建的静态类型原生语言原型。
 
-[![CI](https://github.com/rayL-K/Zamak/actions/workflows/ci.yml/badge.svg)](https://github.com/rayL-K/Zamak/actions/workflows/ci.yml)
+[![CI](https://github.com/VeyraLux/Zamak/actions/workflows/ci.yml/badge.svg)](https://github.com/VeyraLux/Zamak/actions/workflows/ci.yml)
 
 [教程](TUTORIAL.md) · [预览版安装](PREVIEW.md) · [参与开发](CONTRIBUTING.md) · [AI 工作流](docs/AI_WORKFLOW.md) · [案例验证](docs/VALIDATION.md) · [工程指标](docs/ENGINEERING.md)
 
@@ -159,7 +159,7 @@ fn main():
 
 ### 依赖包
 
-别人写好的 Zamak 库可以直接拿来用。依赖写在 `[dependencies]` 里，来源有三种：[公共包索引](https://github.com/rayL-K/zamak-index)里的版本、git 仓库、本地目录：
+别人写好的 Zamak 库可以直接拿来用。依赖写在 `[dependencies]` 里，来源有三种：[公共包索引](https://github.com/VeyraLux/zamak-index)里的版本、git 仓库、本地目录：
 
 ```toml
 [dependencies]
