@@ -1,6 +1,7 @@
 # 构建缓存与生成物（可重建，不入库）
 bench/*
 !bench/ai/
+!bench/compare/
 results/
 dist/
 

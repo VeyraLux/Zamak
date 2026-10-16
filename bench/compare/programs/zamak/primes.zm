@@ -1,0 +1,13 @@
+# 试除法数出 100 万以内的质数。
+fn main():
+    let mut count = 0
+    for n in range(2, 1_000_000):
+        let mut prime = True
+        let mut d = 2
+        while d * d <= n:
+            if n % d == 0:
+                prime = False
+                break
+            d += 1
+        if prime: count += 1
+    print(count)
