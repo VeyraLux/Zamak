@@ -1,10 +1,10 @@
 use crate::compiler::{
     bitwise, block_roots, borrow_of, captured_view, compound, constructed, copied, each_bindings,
     elem_from, field_function, field_path, func_error, func_sig, func_type, func_type_full,
-    generic_value, instance_of, instance_with, lambda_body, lambda_prints, linked_tuple, loop_list,
-    method_args, method_signature, nest, nested, numeric, overload, record_id, record_method,
-    record_order, sort_by_type, terminates, tuple_fields, Block, Elem, Expr, Instruction, Module,
-    Pattern, Receiver, Type, COPY,
+    generic_value, instance_of, instance_with, is_string, lambda_body, lambda_prints, linked_tuple,
+    loop_list, method_args, method_signature, nest, nested, numeric, overload, record_id,
+    record_method, record_order, sort_by_type, string_method, terminates, tuple_fields, Block,
+    Elem, Expr, Instruction, Module, Pattern, Receiver, Type, COPY,
 };
 use crate::project::Result;
 use std::collections::BTreeMap;
@@ -2337,7 +2337,27 @@ impl<'a> Generator<'a> {
         field_function(&self.module.structs, self.place_ty(path), method)?;
         Some((format!("{path}.{method}"), args.clone()))
     }
+    /// 字符串上的方法改写成 std/string 的调用（检查器已确认存在）。
+    fn string_call(&self, expr: &Expr) -> Option<Expr> {
+        let (receiver, method, args) = match expr {
+            Expr::Method(path, method, args) => {
+                let root = path.split('.').next().unwrap_or(path);
+                if !self.locals.contains_key(root) || !is_string(self.place_ty(path)) {
+                    return None;
+                }
+                (Expr::Borrow(path.clone(), false), method, args)
+            }
+            Expr::Chain(inner, method, args) if is_string(self.ty(inner)) => {
+                ((**inner).clone(), method, args)
+            }
+            _ => return None,
+        };
+        string_method(&self.module.functions, receiver, method, args)
+    }
     fn ty(&self, expr: &Expr) -> Type {
+        if let Some(call) = self.string_call(expr) {
+            return self.ty(&call);
+        }
         match expr {
             Expr::Invoke(callee, _) => match self.value_type(callee) {
                 Type::Func(id) | Type::FuncRef(id) => func_sig(id).1,
@@ -2743,6 +2763,9 @@ impl<'a> Generator<'a> {
         )
     }
     fn expr(&mut self, expr: &Expr) -> String {
+        if let Some(call) = self.string_call(expr) {
+            return self.expr(&call);
+        }
         match expr {
             Expr::FnRef(name) => self.function_value(name),
             Expr::Invoke(callee, args) => {
@@ -4334,6 +4357,11 @@ pub fn generate_with(module: &Module, entry: &str, unit: &str, tests: &[String])
                 Expr::Method(_, method, _)
                 | Expr::ElementMethod(_, _, _, method, _)
                 | Expr::Chain(_, method, _) => {
+                    // 字符串上的方法就是 std/string 的同名函数：把它的 C 实现一并带上。
+                    let string = format!("std/string:{method}");
+                    if module.functions.contains_key(&string) {
+                        needed.insert(string);
+                    }
                     // 泛型类型的方法调用的是副本（`Stack.push[Int]`），模板本身不生成。
                     let suffix = format!(".{method}");
                     let instance = format!(".{method}[");

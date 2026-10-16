@@ -687,3 +687,16 @@ fn python_style_conveniences() {
     let output = case.run("fn make() -> [i64]: [1]\n\nfn grow(xs: &mut [i64]): xs.push(1)\n\nfn main(): grow(&mut make())\n");
     assert!(String::from_utf8_lossy(&output.stderr).contains("cannot mutably borrow a call result"));
 }
+
+#[test]
+fn string_methods() {
+    let case = Case::new("expressions", "string-methods");
+    // 字符串上的方法就是 std/string 的同名函数，不用导入；len 是字节数，char_len 按字符计。
+    let source = "struct P:\n    name: string\n\nfn shout(s: &string) -> string: s.upper() + \"!\"\n\nfn main():\n    let s = \"Hello, World\"\n    println(s.len())\n    println(s.upper())\n    println(s.lower().contains(\"world\"))\n    println(s.split(\", \"))\n    for part in s.split(\", \"):\n        println(part.char_len())\n    let line = \"  42  \"\n    println(line.trim().len())\n    let p = P(name: \"zam\")\n    println(p.name.upper())\n    println(shout(&p.name))\n    let hi = \"你好\"\n    println(hi.char_len())\n    println(hi.len())\n    println(s.find(\"World\"))\n    println(s.slice(0, 5).repeat(2))\n";
+    assert_eq!(
+        stdout(&case.run(source)),
+        "12\nHELLO, WORLD\ntrue\n[\"Hello\", \"World\"]\n5\n5\n2\nZAM\nZAM!\n2\n6\n7\nHelloHello\n"
+    );
+    let output = case.run("fn main():\n    let s = \"a\"\n    println(s.nope())\n");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unknown method .nope for a string"));
+}
