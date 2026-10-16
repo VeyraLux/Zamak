@@ -74,6 +74,28 @@ not: 1
 - **Learnable from one page.** In a benchmark with three models and eight small command-line tasks, each model read only a one-page language reference. The models solved all 24 Zamak tasks, 21 of them on the first try. The three other first attempts had a missing import, a missing `?`, and a borrowed local. Zamak now names the missing `use` line and allows read-only borrows in locals, but the benchmark hasn't been rerun since. The Rust and Go versions passed 23 and 24 tasks on the first try, so these tasks are too easy to rank the languages. For the method, tasks, and data, see [bench/ai/live](bench/ai/live/README.md).
 - **Native, standalone output.** Zamak generates C and compiles it with Microsoft C++ (MSVC), GCC, or Clang. The executable runs without Zamak or Rust installed. On the integer benchmarks in [docs/PERFORMANCE.md](docs/PERFORMANCE.md), its runtime performance is in the same range as Rust and Go.
 
+## How Zamak compares
+
+Zamak brings together what C, Rust, Go, and Python each do best. The charts below run the same small programs in each language on one machine. Shorter bars are better.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/compare-dark.svg"/>
+    <img src="docs/compare-light.svg" alt="Run time, executable size, peak memory, and startup time of Zamak, C, Rust, Go, Java, Node.js, and Python" width="920"/>
+  </picture>
+</p>
+
+| | Zamak | C | Rust | Go | Python |
+| --- | :---: | :---: | :---: | :---: | :---: |
+| Memory safe by default | ✓ | ✗ | ✓ | ✓ | ✓ |
+| No garbage collector | ✓ | ✓ | ✓ | ✗ | ✗ |
+| Integer overflow checked in release builds | ✓ | ✗ | ✗ | ✗ | not needed |
+| Array bounds checked | ✓ | ✗ | ✓ | ✓ | ✓ |
+| Standalone native executable | ✓ | ✓ | ✓ | ✓ | ✗ |
+| No lifetime annotations | ✓ | ✓ | ✗ | ✓ | ✓ |
+
+Zamak isn't ahead everywhere: on a word-counting task that stresses strings and hash maps, it's faster than Java, Node.js, and Python but slower than C, Rust, and Go. For the method, the full results, and how to run the benchmark yourself, see [bench/compare](bench/compare/README.md).
+
 ## Quickstart
 
 You need Rust stable and a C compiler. For the compiler that each platform uses, see [Install Zamak](#install-zamak).

@@ -93,6 +93,28 @@ Zamak 是为频繁构建和多 worktree 协作设计的语言原型，改完代�
 
 尚未支持网络 I/O 和线程，也还没有语言服务器、REPL 和文档生成工具。安装方式见 [预览版说明](PREVIEW.md)。
 
+## 与其他语言对比
+
+Zamak 想把 C、Rust、Go 与 Python 各自最擅长的部分融合在一起。下面的图在同一台机器上用各语言运行同样的小程序，柱子越短越好。
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/compare-dark.svg"/>
+    <img src="docs/compare-light.svg" alt="Zamak、C、Rust、Go、Java、Node.js 与 Python 的运行时间、可执行文件体积、峰值内存与启动时间" width="920"/>
+  </picture>
+</p>
+
+| | Zamak | C | Rust | Go | Python |
+| --- | :---: | :---: | :---: | :---: | :---: |
+| 默认内存安全 | ✓ | ✗ | ✓ | ✓ | ✓ |
+| 没有垃圾回收 | ✓ | ✓ | ✓ | ✗ | ✗ |
+| 发布版检查整数溢出 | ✓ | ✗ | ✗ | ✗ | 不需要 |
+| 检查数组越界 | ✓ | ✗ | ✓ | ✓ | ✓ |
+| 独立的原生可执行文件 | ✓ | ✓ | ✓ | ✓ | ✗ |
+| 不写生命周期标注 | ✓ | ✓ | ✗ | ✓ | ✓ |
+
+Zamak 并非处处领先：在侧重字符串与哈希表的词频统计中，它比 Java、Node.js 和 Python 快，但比 C、Rust 和 Go 慢。测试方法、完整结果与复现步骤见 [bench/compare](bench/compare/README.md)。
+
 ## 快速运行
 
 第一次使用可以先读 [入门教程](TUTORIAL.md)。Windows 预览包和各平台的工具链要求见 [安装说明](PREVIEW.md)。
