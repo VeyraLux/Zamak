@@ -168,10 +168,6 @@ fn checker_rejects_misused_builtins() {
     let sandbox = Sandbox::new("reject");
     for (source, message) in [
         (
-            "use std/fs\nfn main() -> !string:\n    let p = \"x\"\n    let t = fs.read(p)?\n",
-            "expected explicit borrow",
-        ),
-        (
             "use std/fs\nfn main():\n    let p = \"x\"\n    let t = fs.read(&p)\n",
             "fallible call",
         ),

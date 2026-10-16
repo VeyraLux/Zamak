@@ -113,6 +113,21 @@ pub fn overload(name: &str, first: Option<Type>) -> &str {
         _ => name,
     }
 }
+/// 只读借用参数自动借用：`show(name)`、`show(p.name)`、`show(xs[i])` 等于写了 `&`。
+/// 只改写变量、字段与元素；`&mut` 仍要显式写。检查器与生成器共用。
+pub fn auto_borrow(expr: &Expr) -> Option<Expr> {
+    Some(match expr {
+        Expr::Variable(name) => Expr::Borrow(name.clone(), false),
+        Expr::Field(local, field) => Expr::Borrow(format!("{local}.{field}"), false),
+        Expr::Index(path, index) => {
+            Expr::BorrowIndex(path.clone(), index.clone(), String::new(), false)
+        }
+        Expr::IndexField(path, index, field) => {
+            Expr::BorrowIndex(path.clone(), index.clone(), field.clone(), false)
+        }
+        _ => return None,
+    })
+}
 /// `x in xs`、`x not in xs`：改写成 `xs.contains(x)`（字符串、列表、字典都有 contains）。
 /// `item_text` 为真时元素是字符串，变量、字段与元素按只读借用传。检查器与生成器共用。
 pub fn membership(expr: &Expr, item_text: bool) -> Option<Expr> {
@@ -5322,6 +5337,12 @@ impl<'a> Checker<'a> {
         if let Some(call) = self.string_call(expr)? {
             return self.expr(&call, expected, loans);
         }
+        // 只读借用参数：变量、字段与元素自动借用（`show(name)` 等于 `show(&name)`）。
+        if temporary_borrow(expected).is_some() {
+            if let Some(borrow) = auto_borrow(expr) {
+                return self.expr(&borrow, expected, loans);
+            }
+        }
         // 求出来的值（调用结果、字符串拼接、if/match 的值）借给只读借用参数：先成为临时值，
         // 语句结束时释放，例如 `string.parse_i64(string.trim(&line))`、`total(&xs.slice(0, 2))`。
         if let Some(owned) = temporary_borrow(expected) {
@@ -5890,7 +5911,11 @@ impl<'a> Checker<'a> {
                 let requested = match expr {
                     Expr::Borrow(_, mutable) => *mutable,
                     _ if by_ref.is_some() => want_mutable,
-                    _ => return Err(format!("expected explicit borrow of {name}")),
+                    _ => {
+                        return Err(format!(
+                            "expected explicit borrow of {name}; write &mut {name} to let the function change it"
+                        ))
+                    }
                 };
                 if requested != want_mutable {
                     return Err(format!("borrow type mismatch for {name}"));

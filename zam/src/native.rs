@@ -1,10 +1,11 @@
 use crate::compiler::{
-    bitwise, block_roots, borrow_of, captured_view, compound, constructed, copied, each_bindings,
-    elem_from, field_function, field_path, func_error, func_sig, func_type, func_type_full,
-    generic_value, instance_of, instance_with, is_string, lambda_body, lambda_prints, linked_tuple,
-    loop_list, membership, method_args, method_signature, nest, nested, numeric, overload,
-    record_id, record_method, record_order, sort_by_type, string_method, terminates, tuple_fields,
-    Block, Elem, Expr, Instruction, Module, Pattern, Receiver, Type, COPY,
+    auto_borrow, bitwise, block_roots, borrow_of, captured_view, compound, constructed, copied,
+    each_bindings, elem_from, field_function, field_path, func_error, func_sig, func_type,
+    func_type_full, generic_value, instance_of, instance_with, is_string, lambda_body,
+    lambda_prints, linked_tuple, loop_list, membership, method_args, method_signature, nest,
+    nested, numeric, overload, record_id, record_method, record_order, sort_by_type, string_method,
+    terminates, tuple_fields, Block, Elem, Expr, Instruction, Module, Pattern, Receiver, Type,
+    COPY,
 };
 use crate::project::Result;
 use std::collections::BTreeMap;
@@ -2601,6 +2602,9 @@ impl<'a> Generator<'a> {
     }
     /// 借用参数位置上的值：变量、显式借用或列表元素借用，结果都是指针。
     fn borrowed(&mut self, expr: &Expr) -> String {
+        if let Some(borrow) = auto_borrow(expr).filter(|_| !matches!(expr, Expr::Variable(_))) {
+            return self.borrowed(&borrow);
+        }
         match expr {
             Expr::Variable(name) | Expr::Borrow(name, _) => self.pointer(name),
             Expr::BorrowIndex(_, _, _, _) => self.expr(expr),

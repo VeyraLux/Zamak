@@ -179,10 +179,6 @@ fn checker_rejects_map_misuse() {
             "let mut m: {string: i64} = {\"a\": 1}\n    for k in &m:\n        m.remove(k)",
             "borrowed by an enclosing for loop",
         ),
-        (
-            "let mut m: {string: i64} = {}\n    let k = \"a\"\n    m[k] = 1",
-            "expected explicit borrow of k",
-        ),
         ("let m: {string: i64} = {}\n    println(m[1])", "mismatch"),
         (
             "let mut m: {string: i64} = {}\n    m.push(1)",

@@ -53,10 +53,10 @@
   },
   {
     "id": "borrow-missing-ampersand",
-    "source": "fn take(text: &string) -> i64:\n    return 1\nfn main():\n    let text = \"x\"\n    println(take(text))\n",
+    "source": "fn take(text: &mut string) -> i64:\n    return 1\nfn main():\n    let mut text = \"x\"\n    println(take(text))\n",
     "expected_code": "ZM425",
     "patches": [
-      { "find": "take(text)", "replace": "take(&text)" }
+      { "find": "take(text)", "replace": "take(&mut text)" }
     ],
     "expected_output": "1\n"
   },
@@ -174,12 +174,12 @@
     "expected_location": { "file": "src/main.zm", "line": 5, "column": 5 },
     "id": "multi-module-borrow",
     "files": [
-      { "path": "main.zm", "source": "use greeting\n\nfn main():\n    let message: string = \"hi\"\n    greeting.show(message)\n" },
-      { "path": "greeting.zm", "source": "pub fn show(text: &string):\n    println(text)\n" }
+      { "path": "main.zm", "source": "use greeting\n\nfn main():\n    let mut message: string = \"hi\"\n    greeting.show(message)\n" },
+      { "path": "greeting.zm", "source": "pub fn show(text: &mut string):\n    println(text)\n" }
     ],
     "expected_code": "ZM425",
     "patches": [
-      { "find": "greeting.show(message)", "replace": "greeting.show(&message)" }
+      { "find": "greeting.show(message)", "replace": "greeting.show(&mut message)" }
     ],
     "expected_output": "hi\n"
   },

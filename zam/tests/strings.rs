@@ -21,7 +21,6 @@ fn borrowed_byte_length() {
     for source in [
         "fn main():\n    let s = \"x\"\n    println(string.byte_len(&s))",
         "use std/string\nfn main(): string.byte_len()",
-        "use std/string\nfn main():\n    let s = \"x\"\n    string.byte_len(s)",
         "use std/string\nfn main():\n    let n = 1\n    string.byte_len(&n)",
         "use std/string\nfn main():\n    let mut s = \"x\"\n    string.byte_len(&mut s)",
         "use std/string\nfn main():\n    let s = \"x\"\n    let moved = s\n    string.byte_len(&s)",
@@ -33,7 +32,6 @@ fn borrowed_byte_length() {
     for source in [
         "fn main():\n    let s = \"x\"\n    println(string.char_len(&s))",
         "use std/string\nfn main(): string.char_len()",
-        "use std/string\nfn main():\n    let s = \"x\"\n    string.char_len(s)",
         "use std/string\nfn main():\n    let n = 1\n    string.char_len(&n)",
         "use std/string\nfn main():\n    let mut s = \"x\"\n    string.char_len(&mut s)",
         "use std/string\nfn main():\n    let s = \"x\"\n    let moved = s\n    string.char_len(&s)",
@@ -54,7 +52,6 @@ fn borrowed_byte_length() {
     );
     for source in [
         "use std/string\nfn main():\n    let s = \"x\"\n    string.equal(&s)",
-        "use std/string\nfn main():\n    let s = \"x\"\n    string.equal(&s, s)",
         "use std/string\nfn main():\n    let mut s = \"x\"\n    string.equal(&s, &mut s)",
         "use std/string\nfn probe(s: &mut string, flag: bool): pass\nfn main():\n    let mut s = \"x\"\n    probe(&mut s, string.equal(&s, &s))",
         "use std/string\nfn main():\n    let s = \"x\"\n    let n: i64 = string.equal(&s, &s)",
