@@ -1398,6 +1398,13 @@ impl Project {
                         let (linked, entry, identity) = (&linked, &entry, &identity);
                         scope.spawn(move || -> Result<(String, String, Option<Vec<u8>>)> {
                             let source = native::generate_with(linked, entry, id, tests);
+                            // 调试生成的 C：`ZAMAK_DUMP_C=<目录>` 时把每个模块的 C 源码写出来。
+                            if let Some(dir) = env::var_os("ZAMAK_DUMP_C") {
+                                let name = id.replace(['/', ':'], "_");
+                                let _ = fs::create_dir_all(&dir);
+                                let _ =
+                                    fs::write(Path::new(&dir).join(format!("{name}.c")), &source);
+                            }
                             let key = hash(&[
                                 VERSION.as_bytes(),
                                 source.as_bytes(),

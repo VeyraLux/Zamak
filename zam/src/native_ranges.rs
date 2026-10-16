@@ -9,9 +9,14 @@ pub(super) struct Proofs {
     unsigned_division: BTreeSet<usize>,
     index: BTreeSet<usize>,
     assignment_index: BTreeSet<usize>,
+    // 列表下标（按下标表达式的地址）：已证明 0 <= 下标 < 列表长度，可以不经检查直接访问。
+    list_index: BTreeSet<usize>,
     calls: BTreeMap<usize, Vec<Interval>>,
 }
 impl Proofs {
+    pub(super) fn list_index(&self, index: &Expr) -> bool {
+        self.list_index.contains(&(index as *const Expr as usize))
+    }
     pub(super) fn call_inputs(&self, expr: &Expr) -> Option<&[Interval]> {
         self.calls
             .get(&(expr as *const Expr as usize))
@@ -107,6 +112,10 @@ impl Interval {
 struct Fact {
     value: Interval,
     length: Option<usize>,
+    // 值小于某个长度不变的列表的长度（编号见 Analysis::stable）：`for i in range(len(xs))` 的 i。
+    below: Option<u32>,
+    // 值等于某个长度不变的列表的长度：`let n = len(xs)` 的 n。
+    len_of: Option<u32>,
 }
 type Env = BTreeMap<String, Fact>;
 type State = Option<Env>;
@@ -120,9 +129,17 @@ fn join(a: State, b: State) -> State {
                     if fact.length != other.length {
                         fact.length = None;
                     }
+                    if fact.below != other.below {
+                        fact.below = None;
+                    }
+                    if fact.len_of != other.len_of {
+                        fact.len_of = None;
+                    }
                 } else {
                     fact.value = Interval::TOP;
                     fact.length = None;
+                    fact.below = None;
+                    fact.len_of = None;
                 }
             }
             Some(a)
@@ -132,8 +149,9 @@ fn join(a: State, b: State) -> State {
 #[derive(Clone, Copy)]
 enum Head<'a> {
     Condition(&'a Expr),
-    // `for name in start..end`: the immutable counter and its whole range.
-    Range(&'a str, Interval),
+    // `for name in start..end`: the immutable counter, its whole range, and the list whose
+    // length bounds it (if any).
+    Range(&'a str, Interval, Option<u32>),
 }
 #[derive(Default)]
 struct Flow {
@@ -159,7 +177,70 @@ struct Analysis {
     unsigned_division: BTreeMap<usize, bool>,
     index: BTreeMap<usize, bool>,
     assignment_index: BTreeMap<usize, bool>,
+    list_index: BTreeMap<usize, bool>,
+    // 整个函数里长度不变的列表（没有 push/pop/insert/remove/clear/extend、没有整体赋值、
+    // 没有以 &mut 传出）：名字 → 编号。只有它们的 `len` 才能当作下标的上界。
+    stable: BTreeMap<String, u32>,
     calls: BTreeMap<usize, Vec<Interval>>,
+}
+/// 整个函数里长度不变、且取过 `len` 的列表：名字 → 编号。改长度的方法、`&mut xs`
+/// 与对 xs 的整体赋值（包括匿名函数与 catch 块里的）都会让它不算稳定。Zamak 没有别名，
+/// 列表的长度只能在本函数里被改，所以这样的列表在整个函数里长度恒定。
+fn stable_lists(body: &Block) -> BTreeMap<String, u32> {
+    fn assigned(block: &Block, out: &mut BTreeSet<String>) {
+        for (instruction, _) in block {
+            match instruction {
+                Instruction::Assign(name, _) => {
+                    out.insert(name.clone());
+                }
+                Instruction::If(_, yes, no) => {
+                    assigned(yes, out);
+                    assigned(no, out);
+                }
+                Instruction::While(_, body)
+                | Instruction::For(_, _, _, body)
+                | Instruction::Each(_, _, _, _, body) => assigned(body, out),
+                Instruction::Match(_, arms) => {
+                    for (_, body) in arms {
+                        assigned(body, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let root = |path: &str| path.split('.').next().unwrap_or(path).to_owned();
+    let mut lengths = BTreeSet::new();
+    let mut unstable = BTreeSet::new();
+    let mut nested = Vec::new();
+    super::visit_exprs(body, &mut |expr| match expr {
+        Expr::Method(name, method, args) if method == "len" && args.is_empty() => {
+            lengths.insert(name.clone());
+        }
+        Expr::Method(name, method, _)
+            if matches!(
+                method.as_str(),
+                "push" | "pop" | "insert" | "remove" | "clear" | "extend"
+            ) =>
+        {
+            unstable.insert(root(name));
+        }
+        Expr::Borrow(name, true) => {
+            unstable.insert(root(name));
+        }
+        Expr::Lambda(_, _, block) | Expr::Catch(_, _, block) => nested.push(block),
+        _ => {}
+    });
+    assigned(body, &mut unstable);
+    for block in nested {
+        assigned(block, &mut unstable);
+    }
+    lengths
+        .into_iter()
+        .filter(|name| !name.contains('.') && !unstable.contains(name))
+        .enumerate()
+        .map(|(id, name)| (name, id as u32))
+        .collect()
 }
 fn record(map: &mut BTreeMap<usize, bool>, key: usize, safe: bool, collect: bool) {
     if collect {
@@ -174,6 +255,31 @@ fn safe_index(env: &Env, name: &str, range: Interval) -> bool {
         .is_some_and(|length| range.lo >= 0 && range.hi < length as i128)
 }
 impl Analysis {
+    /// `len(xs)`（xs 长度不变）或等于它的变量：对应的列表编号。
+    fn length_of(&self, expr: &Expr, env: &Env) -> Option<u32> {
+        match expr {
+            Expr::Method(name, method, args) if method == "len" && args.is_empty() => {
+                self.stable.get(name).copied()
+            }
+            Expr::Variable(name) => env.get(name).and_then(|f| f.len_of),
+            _ => None,
+        }
+    }
+    /// 列表下标：下标变量已知 >= 0 且小于这个列表的长度时，记为不必检查。
+    fn list_proof(&mut self, list: &str, index: &Expr, env: &Env, collect: bool) {
+        let safe = match (self.stable.get(list), index) {
+            (Some(id), Expr::Variable(name)) => env
+                .get(name)
+                .is_some_and(|f| f.below == Some(*id) && f.value.lo >= 0),
+            _ => false,
+        };
+        record(
+            &mut self.list_index,
+            index as *const Expr as usize,
+            safe,
+            collect,
+        );
+    }
     fn expr(&mut self, expr: &Expr, env: &Env, collect: bool) -> Interval {
         let key = expr as *const Expr as usize;
         match expr {
@@ -226,6 +332,7 @@ impl Analysis {
             Expr::Index(name, index) => {
                 let range = self.expr(index, env, collect);
                 record(&mut self.index, key, safe_index(env, name, range), collect);
+                self.list_proof(name, index, env, collect);
                 Interval::TOP
             }
             Expr::Catch(inner, binding, block) => {
@@ -236,6 +343,8 @@ impl Analysis {
                     Fact {
                         value: Interval::TOP,
                         length: None,
+                        below: None,
+                        len_of: None,
                     },
                 );
                 // Checked catch handlers always return; none of their assignments flow out.
@@ -294,6 +403,9 @@ impl Analysis {
                 if let Expr::ElementMethod(_, index, _, _, _) | Expr::Chain(index, _, _) = expr {
                     self.expr(index, env, collect);
                 }
+                if let Expr::ElementMethod(path, index, _, _, _) = expr {
+                    self.list_proof(path, index, env, collect);
+                }
                 for value in values {
                     self.expr(value, env, collect);
                 }
@@ -304,8 +416,9 @@ impl Analysis {
                     Interval::TOP
                 }
             }
-            Expr::BorrowIndex(_, index, _, _) | Expr::IndexField(_, index, _) => {
+            Expr::BorrowIndex(path, index, _, _) | Expr::IndexField(path, index, _) => {
                 self.expr(index, env, collect);
+                self.list_proof(path, index, env, collect);
                 Interval::TOP
             }
             Expr::MapLit(entries) => {
@@ -430,7 +543,20 @@ impl Analysis {
                     (_, Expr::Variable(name)) => env.get(name).and_then(|f| f.length),
                     _ => None,
                 };
-                env.insert(name.clone(), Fact { value, length });
+                let below = match expr {
+                    Expr::Variable(name) => env.get(name).and_then(|f| f.below),
+                    _ => None,
+                };
+                let len_of = self.length_of(expr, &env);
+                env.insert(
+                    name.clone(),
+                    Fact {
+                        value,
+                        length,
+                        below,
+                        len_of,
+                    },
+                );
             }
             Instruction::Unpack(names, _, expr) => {
                 self.expr(expr, &env, collect);
@@ -440,6 +566,8 @@ impl Analysis {
                         Fact {
                             value: Interval::TOP,
                             length: None,
+                            below: None,
+                            len_of: None,
                         },
                     );
                 }
@@ -448,10 +576,13 @@ impl Analysis {
                 let value = self.expr(expr, &env, collect);
                 if let Some(fact) = env.get_mut(name) {
                     fact.value = value;
+                    fact.below = None;
+                    fact.len_of = None;
                 }
             }
             Instruction::AssignIndex(name, index, value) => {
                 let range = self.expr(index, &env, collect);
+                self.list_proof(name, index, &env, collect);
                 record(
                     &mut self.assignment_index,
                     instruction as *const Instruction as usize,
@@ -460,8 +591,9 @@ impl Analysis {
                 );
                 self.expr(value, &env, collect);
             }
-            Instruction::AssignIndexField(_, index, _, value) => {
+            Instruction::AssignIndexField(name, index, _, value) => {
                 self.expr(index, &env, collect);
+                self.list_proof(name, index, &env, collect);
                 self.expr(value, &env, collect);
             }
             Instruction::AssignField(_, _, expr)
@@ -521,7 +653,7 @@ impl Analysis {
                 if let Some(second) = second {
                     env.remove(second);
                 }
-                return self.loop_flow(Head::Range(name, Interval::TOP), body, env, collect);
+                return self.loop_flow(Head::Range(name, Interval::TOP, None), body, env, collect);
             }
             Instruction::For(name, start, end, body) => {
                 let first = self.expr(start, &env, collect);
@@ -544,7 +676,9 @@ impl Analysis {
                     lo: first.lo,
                     hi: bound.hi - 1,
                 };
-                return self.loop_flow(Head::Range(name, counter), body, env, collect);
+                // `range(len(xs))`、`range(a, n)`（n = len(xs)）：计数器小于 xs 的长度。
+                let below = self.length_of(end, &env);
+                return self.loop_flow(Head::Range(name, counter, below), body, env, collect);
             }
         }
         Flow {
@@ -561,7 +695,7 @@ impl Analysis {
     ) -> (State, Flow) {
         let (inside, outside) = match head {
             Head::Condition(condition) => self.condition(condition, header.clone(), collect),
-            Head::Range(name, counter) => {
+            Head::Range(name, counter, below) => {
                 // The checker keeps the counter immutable, so every trip sees the full range.
                 let mut inside = header.clone();
                 inside.insert(
@@ -569,6 +703,8 @@ impl Analysis {
                     Fact {
                         value: counter,
                         length: None,
+                        below,
+                        len_of: None,
                     },
                 );
                 (Some(inside), Some(header.clone()))
@@ -647,6 +783,8 @@ impl Analysis {
                         hi: value,
                     },
                     length: None,
+                    below: None,
+                    len_of: None,
                 },
             );
             let flow = self.block(body, env, collect);
@@ -870,6 +1008,8 @@ fn opaque(env: &Env, bindings: &[String]) -> Env {
             Fact {
                 value: Interval::TOP,
                 length: None,
+                below: None,
+                len_of: None,
             },
         );
     }
@@ -992,11 +1132,16 @@ pub(super) fn analyze_with_ranges(function: &Function, inputs: &[Interval]) -> P
                     } else {
                         None
                     },
+                    below: None,
+                    len_of: None,
                 },
             )
         })
         .collect();
-    let mut analysis = Analysis::default();
+    let mut analysis = Analysis {
+        stable: stable_lists(&function.body),
+        ..Analysis::default()
+    };
     analysis.block(&function.body, env, true);
     let safe = |map: BTreeMap<usize, bool>| {
         map.into_iter()
@@ -1008,6 +1153,7 @@ pub(super) fn analyze_with_ranges(function: &Function, inputs: &[Interval]) -> P
         unsigned_division: safe(analysis.unsigned_division),
         index: safe(analysis.index),
         assignment_index: safe(analysis.assignment_index),
+        list_index: safe(analysis.list_index),
         calls: analysis.calls,
     }
 }
