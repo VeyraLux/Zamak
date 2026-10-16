@@ -222,7 +222,7 @@ fn scalar_values_and_checked_arithmetic() {
         "fn main(): let a: [i64; 1025] = [1]",
         "fn main(): let a: [i64; 2] = [1, true]",
         "fn main():\n    let a = [1, 2]\n    println(a[2])",
-        "fn main():\n    let a = [1, 2]\n    println(a[-1])",
+        "fn main():\n    let a = [1, 2]\n    println(a[-3])",
         "fn main():\n    let a = [1, 2]\n    a[0] = 3",
         "fn take(a: [i64; 2]): pass\nfn main(): pass",
         "fn make() -> [i64; 2]: return [1, 2]\nfn main(): pass",

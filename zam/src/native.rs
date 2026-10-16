@@ -106,7 +106,18 @@ static double zam_fmod(double a, double b) {
     if (r != 0.0 && ((r < 0.0) != (b < 0.0))) r += b;
     return r;
 }
+// Python 的切片边界：负数从末尾数，再收拢到 0..len，结束不早于开始。
+static void zam_clamp(int64_t *from, int64_t *to, size_t length) {
+    int64_t n = (int64_t)length;
+    if (*from < 0) *from += n;
+    if (*to < 0) *to += n;
+    if (*from < 0) *from = 0;
+    if (*from > n) *from = n;
+    if (*to > n) *to = n;
+    if (*to < *from) *to = *from;
+}
 static int64_t checked_index(int64_t index, size_t length) {
+    if (index < 0) index += (int64_t)length;
     if (index < 0 || (uintmax_t)index >= length) { fputs("zam: array index out of bounds\n", stderr); exit(1); }
     return index;
 }
@@ -1536,7 +1547,7 @@ return p0->data[p1];"#,
         params: &[Type::Shared, Type::Int, Type::Int],
         result: Type::Owned,
         fallible: false,
-        body: r#"if (p1 < 0 || p2 < p1 || (uint64_t)p2 > p0->len) zam_string_bounds();
+        body: r#"zam_clamp(&p1, &p2, p0->len);
 // 不能从 UTF-8 多字节字符中间切开。
 if (((uint64_t)p1 < p0->len && (p0->data[p1] & 0xC0) == 0x80) || ((uint64_t)p2 < p0->len && (p0->data[p2] & 0xC0) == 0x80)) zam_string_bounds();
 return own(p0->data + p1, (size_t)(p2 - p1));"#,
@@ -2023,11 +2034,11 @@ static void push{l}({l} *l, {t} v) {{
     }}
     l->data[l->len++] = v;
 }}
-static {t} *at{l}({l} *l, int64_t i) {{ if (i < 0 || (uint64_t)i >= l->len) list_bounds(); return &l->data[i]; }}
+static {t} *at{l}({l} *l, int64_t i) {{ if (i < 0) i += (int64_t)l->len; if (i < 0 || (uint64_t)i >= l->len) list_bounds(); return &l->data[i]; }}
 static {t} pop{l}({l} *l) {{ if (!l->len) list_empty(); return l->data[--l->len]; }}
-static void swap{l}({l} *l, int64_t i, int64_t j) {{ {t} tmp; if (i < 0 || j < 0 || (uint64_t)i >= l->len || (uint64_t)j >= l->len) list_bounds(); tmp = l->data[i]; l->data[i] = l->data[j]; l->data[j] = tmp; }}
-static void insert{l}({l} *l, int64_t i, {t} v) {{ if (i < 0 || (uint64_t)i > l->len) list_bounds(); push{l}(l, v); memmove(&l->data[i + 1], &l->data[i], (l->len - 1 - (size_t)i) * sizeof({t})); l->data[i] = v; }}
-static {t} removeat{l}({l} *l, int64_t i) {{ {t} v; if (i < 0 || (uint64_t)i >= l->len) list_bounds(); v = l->data[i]; memmove(&l->data[i], &l->data[i + 1], (l->len - 1 - (size_t)i) * sizeof({t})); l->len--; return v; }}
+static void swap{l}({l} *l, int64_t i, int64_t j) {{ {t} tmp; if (i < 0) i += (int64_t)l->len; if (j < 0) j += (int64_t)l->len; if (i < 0 || j < 0 || (uint64_t)i >= l->len || (uint64_t)j >= l->len) list_bounds(); tmp = l->data[i]; l->data[i] = l->data[j]; l->data[j] = tmp; }}
+static void insert{l}({l} *l, int64_t i, {t} v) {{ if (i < 0) i += (int64_t)l->len; if (i < 0) i = 0; if ((uint64_t)i > l->len) i = (int64_t)l->len; push{l}(l, v); memmove(&l->data[i + 1], &l->data[i], (l->len - 1 - (size_t)i) * sizeof({t})); l->data[i] = v; }}
+static {t} removeat{l}({l} *l, int64_t i) {{ {t} v; if (i < 0) i += (int64_t)l->len; if (i < 0 || (uint64_t)i >= l->len) list_bounds(); v = l->data[i]; memmove(&l->data[i], &l->data[i + 1], (l->len - 1 - (size_t)i) * sizeof({t})); l->len--; return v; }}
 static void reverse{l}({l} *l) {{ size_t i, j; for (i = 0, j = l->len; i + 1 < j; i++, j--) {{ {t} tmp = l->data[i]; l->data[i] = l->data[j - 1]; l->data[j - 1] = tmp; }} }}
 static void clear{l}({l} *l) {{ {drop_items}l->len = 0; }}
 static void extend{l}({l} *l, {l} o) {{ size_t i; for (i = 0; i < o.len; i++) push{l}(l, o.data[i]); free(o.data); }}
@@ -2118,7 +2129,7 @@ static void sort{l}({l} *l) {{
 }}
 static int64_t index{l}({l} *l, {param} v) {{ size_t i; for (i = 0; i < l->len; i++) {{ {t} x = l->data[i]; if ({equal}) return (int64_t)i; }} return -1; }}
 static int has{l}({l} *l, {param} v) {{ return index{l}(l, v) >= 0; }}
-static {l} slice{l}({l} *l, int64_t from, int64_t to) {{ {l} out = {{0}}; int64_t i; if (from < 0 || to < from || (uint64_t)to > l->len) list_bounds(); for (i = from; i < to; i++) {{ {t} x = l->data[i]; push{l}(&out, {copy}); }} return out; }}
+static {l} slice{l}({l} *l, int64_t from, int64_t to) {{ {l} out = {{0}}; int64_t i; zam_clamp(&from, &to, l->len); for (i = from; i < to; i++) {{ {t} x = l->data[i]; push{l}(&out, {copy}); }} return out; }}
 static {l} sorted{l}({l} *l) {{ {l} out = slice{l}(l, 0, (int64_t)l->len); sort{l}(&out); return out; }}
 static {t} min{l}({l} *l) {{ size_t i, best = 0; if (!l->len) {{ fputs(\"zam: min() of an empty list\\n\", stderr); exit(1); }} for (i = 1; i < l->len; i++) if (cmp{l}(&l->data[i], &l->data[best]) < 0) best = i; {{ {t} x = l->data[best]; return {copy}; }} }}
 static {t} max{l}({l} *l) {{ size_t i, best = 0; if (!l->len) {{ fputs(\"zam: max() of an empty list\\n\", stderr); exit(1); }} for (i = 1; i < l->len; i++) if (cmp{l}(&l->data[i], &l->data[best]) > 0) best = i; {{ {t} x = l->data[best]; return {copy}; }} }}

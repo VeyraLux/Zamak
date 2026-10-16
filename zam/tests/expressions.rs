@@ -767,3 +767,13 @@ fn python_builtins() {
         "3\n6\n1\n6\n4.0\n1\npear\n3\n[1, 2, 3]\n[\"apple\", \"fig\", \"pear\"]\n[3, 1, 2]\n42!\n[3, 1, 2]\n13\n3\n2.0\n2.5\n14\n0\n1\n2\n2\n3\n2\n[\"a\", \"b\"]\n3\ninvalid integer: x\n"
     );
 }
+
+#[test]
+fn python_indexing() {
+    let case = Case::new("expressions", "python-indexing");
+    // 与 Python 相同：负下标从末尾数；切片 xs[a:b]（可省略两端、可为负）越界收拢；insert 收拢位置；s[a:b] 切字符串。
+    assert_eq!(
+        stdout(&case.run("fn main():\n    let mut xs: [i64] = [10, 20, 30, 40, 50]\n    println(xs[-1])\n    println(xs[-5])\n    println(xs[1:3])\n    println(xs[:2])\n    println(xs[3:])\n    println(xs[-2:])\n    println(xs[:-1])\n    println(xs[10:])\n    println(xs[3:1])\n    println(xs[1:].len())\n    xs[-1] = 99\n    println(xs)\n    xs.insert(-1, 7)\n    xs.insert(100, 8)\n    xs.insert(-100, 1)\n    println(xs)\n    println(xs.remove(-1))\n    let s = \"hello\"\n    println(s[1:4])\n    println(s[-3:])\n    println(s[:100])\n    let words: [string] = [\"a\", \"b\", \"c\"]\n    println(words[-1])\n    println(words[1:])\n    let i = -2\n    println(xs[i])\n")),
+        "50\n10\n[20, 30]\n[10, 20]\n[40, 50]\n[40, 50]\n[10, 20, 30, 40]\n[]\n[]\n4\n[10, 20, 30, 40, 99]\n[1, 10, 20, 30, 40, 7, 99, 8]\n8\nell\nllo\nhello\nc\n[\"b\", \"c\"]\n7\n"
+    );
+}

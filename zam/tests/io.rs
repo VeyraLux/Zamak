@@ -154,10 +154,6 @@ fn string_helpers_parse_slice_and_search() {
             "use std/string\nfn main():\n    let text = \"中\"\n    println(string.slice(&text, 0, 1))\n",
             "string index out of bounds",
         ),
-        (
-            "use std/string\nfn main():\n    let text = \"ab\"\n    println(string.slice(&text, 2, 1))\n",
-            "string index out of bounds",
-        ),
     ] {
         failure(&sandbox.run(source, NONE, None), message);
     }

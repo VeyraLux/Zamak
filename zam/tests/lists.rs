@@ -121,7 +121,7 @@ fn runtime_bounds_abort() {
             "zam: pop from empty list",
         ),
         (
-            "use std/string\nfn main():\n    let xs: [string] = [\"a\"]\n    println(string.byte_len(&xs[-1]))\n",
+            "use std/string\nfn main():\n    let xs: [string] = [\"a\"]\n    println(string.byte_len(&xs[-2]))\n",
             "zam: list index out of bounds",
         ),
         (
@@ -264,19 +264,12 @@ fn list_and_map_methods() {
     assert_eq!(stdout(&output), "-2.0 0.0 -0.0 0.0 NaN\nb\ncaa\n0\n");
     for (body, message) in [
         (
-            "let mut xs: [i64] = [1]\n    xs.insert(2, 0)",
-            "zam: list index out of bounds",
-        ),
-        (
             "let mut xs: [i64] = [1]\n    println(xs.remove(1))",
             "zam: list index out of bounds",
         ),
+        // 负下标从末尾数，越过开头才越界。
         (
-            "let xs: [i64] = [1]\n    let ys = xs.slice(1, 0)",
-            "zam: list index out of bounds",
-        ),
-        (
-            "let xs: [i64] = [1]\n    let ys = xs.slice(0, 2)",
+            "let xs: [i64] = [1]\n    println(xs[-2])",
             "zam: list index out of bounds",
         ),
     ] {

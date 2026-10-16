@@ -156,7 +156,7 @@ fn common_case_rejections_and_runtime_overflow() {
     for source in [
         "fn main(): let values: [i64; 3] = [1, 2]",
         "fn main():\n    let values = [1, 2]\n    println(values[2])",
-        "fn main():\n    let values = [1, 2]\n    println(values[-1])",
+        "fn main():\n    let values = [1, 2]\n    println(values[-3])",
         "fn main():\n    let mut values = [1, 2]\n    values[0] = true",
         "fn main(): println(1 == true)",
     ] {
