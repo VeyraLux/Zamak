@@ -153,10 +153,10 @@
   },
   {
     "id": "borrow-escape",
-    "source": "fn main():\n    let message = \"hi\"\n    let stored = &message\n    println(stored)\n",
+    "source": "fn main():\n    let message = \"hi\"\n    let stored: &string = &message\n    println(stored)\n",
     "expected_code": "ZM422",
     "patches": [
-      { "find": "let stored = &message", "replace": "let stored = message" }
+      { "find": "let stored: &string = &message", "replace": "let stored = &message" }
     ],
     "expected_output": "hi\n"
   },
