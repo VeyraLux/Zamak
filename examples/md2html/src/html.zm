@@ -10,11 +10,11 @@ pub fn escape(text: &string) -> string:
         let entity = entity_of(string.byte_at(text, i))
 
         if string.byte_len(&entity) > 0:
-            parts.push(string.slice(text, start, i))
+            parts.push(string.byte_slice(text, start, i))
             parts.push(entity)
             start = i + 1
 
-    parts.push(string.slice(text, start, size))
+    parts.push(string.byte_slice(text, start, size))
     string.join(&parts, "")
 
 fn entity_of(byte: i64) -> string:

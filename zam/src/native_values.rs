@@ -18,6 +18,7 @@ static void zam_append(S *out, const void *p, size_t n) {
     }
     memcpy(out->data + out->len, p, n);
     out->len += n;
+    out->chars = 0;
 }
 static void zam_show_int(S *out, int64_t v) { char b[32]; int n = snprintf(b, sizeof b, "%" PRId64, v); zam_append(out, b, (size_t)n); }
 static void zam_show_f64(S *out, double v) { char b[48]; size_t n = zam_f64_text(v, b); zam_append(out, b, n); }

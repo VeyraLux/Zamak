@@ -43,7 +43,7 @@ pub fn render(text: &string) -> string:
             close_paragraph(&mut para, &mut out)
             close_block(open, &mut out)
             open = 0
-            let title = string.slice(&trimmed, level + 1, string.byte_len(&trimmed))
+            let title = string.byte_slice(&trimmed, level + 1, string.byte_len(&trimmed))
             let body = inline.render(&title)
             out.push("<h{level}>{body}</h{level}>")
             continue
@@ -77,7 +77,7 @@ pub fn render(text: &string) -> string:
 
                 open = kind
 
-            let item = string.slice(&trimmed, skip, string.byte_len(&trimmed))
+            let item = string.byte_slice(&trimmed, skip, string.byte_len(&trimmed))
             let body = inline.render(&item)
             out.push("<li>{body}</li>")
             continue
@@ -90,7 +90,7 @@ pub fn render(text: &string) -> string:
                 out.push("<blockquote>")
                 open = 4
 
-            let quote = string.slice(&trimmed, 2, string.byte_len(&trimmed))
+            let quote = string.byte_slice(&trimmed, 2, string.byte_len(&trimmed))
             let body = inline.render(&quote)
             out.push("<p>{body}</p>")
             continue

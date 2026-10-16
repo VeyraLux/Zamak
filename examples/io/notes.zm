@@ -16,7 +16,7 @@ fn main() -> !string:
         fail "missing ="
 
     let key = string.slice(&back, 0, at)
-    let value = string.slice(&back, at + 1, string.byte_len(&back))
+    let value = string.slice(&back, at + 1, len(back))
     println(key)
     println(value)
     println(string.char_len(&value))

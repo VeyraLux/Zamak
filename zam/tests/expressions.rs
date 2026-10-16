@@ -694,7 +694,7 @@ fn string_methods() {
     let source = "struct P:\n    name: string\n\nfn shout(s: &string) -> string: s.upper() + \"!\"\n\nfn main():\n    let s = \"Hello, World\"\n    println(s.len())\n    println(s.upper())\n    println(s.lower().contains(\"world\"))\n    println(s.split(\", \"))\n    for part in s.split(\", \"):\n        println(part.char_len())\n    let line = \"  42  \"\n    println(line.trim().len())\n    let p = P(name: \"zam\")\n    println(p.name.upper())\n    println(shout(&p.name))\n    let hi = \"你好\"\n    println(hi.char_len())\n    println(hi.len())\n    println(s.find(\"World\"))\n    println(s.slice(0, 5).repeat(2))\n";
     assert_eq!(
         stdout(&case.run(source)),
-        "12\nHELLO, WORLD\ntrue\n[\"Hello\", \"World\"]\n5\n5\n2\nZAM\nZAM!\n2\n6\n7\nHelloHello\n"
+        "12\nHELLO, WORLD\ntrue\n[\"Hello\", \"World\"]\n5\n5\n2\nZAM\nZAM!\n2\n2\n7\nHelloHello\n"
     );
     let output = case.run("fn main():\n    let s = \"a\"\n    println(s.nope())\n");
     assert!(String::from_utf8_lossy(&output.stderr).contains("unknown method .nope for a string"));
@@ -764,7 +764,7 @@ fn python_builtins() {
     // Python 的内置函数：len、sum、min/max（两个数或一个列表）、sorted、str、int/float（转换或解析，解析会失败）、for i in range(...)。
     assert_eq!(
         stdout(&case.run("struct P:\n    tags: [string]\n\nfn main() -> !string:\n    let xs: [i64] = [3, 1, 2]\n    let fs: [f64] = [1.5, 2.5]\n    let words: [string] = [\"pear\", \"apple\", \"fig\"]\n    println(len(xs))\n    println(len(\"héllo\"))\n    println(len({\"a\": 1}))\n    println(sum(xs))\n    println(sum(fs))\n    println(min(xs))\n    println(max(words))\n    println(min(3, 9))\n    println(sorted(xs))\n    println(sorted(words))\n    println(xs)\n    println(str(42) + \"!\")\n    println(str(xs))\n    println(int(\"12\")? + 1)\n    println(int(3.9))\n    println(float(2))\n    println(float(\"2.5\")?)\n    let s = \"7\"\n    println(int(s)? * 2)\n    for i in range(3): print(i)\n    for i in range(2, 4): print(i)\n    let p = P(tags: [\"b\", \"a\"])\n    println(len(p.tags))\n    println(sorted(p.tags))\n    let csv = \"a,b,c\"\n    println(len(csv.split(\",\")))\n    let bad = int(\"x\") catch e:\n        println(e)\n        return\n")),
-        "3\n6\n1\n6\n4.0\n1\npear\n3\n[1, 2, 3]\n[\"apple\", \"fig\", \"pear\"]\n[3, 1, 2]\n42!\n[3, 1, 2]\n13\n3\n2.0\n2.5\n14\n0\n1\n2\n2\n3\n2\n[\"a\", \"b\"]\n3\ninvalid integer: x\n"
+        "3\n5\n1\n6\n4.0\n1\npear\n3\n[1, 2, 3]\n[\"apple\", \"fig\", \"pear\"]\n[3, 1, 2]\n42!\n[3, 1, 2]\n13\n3\n2.0\n2.5\n14\n0\n1\n2\n2\n3\n2\n[\"a\", \"b\"]\n3\ninvalid integer: x\n"
     );
 }
 
@@ -775,5 +775,19 @@ fn python_indexing() {
     assert_eq!(
         stdout(&case.run("fn main():\n    let mut xs: [i64] = [10, 20, 30, 40, 50]\n    println(xs[-1])\n    println(xs[-5])\n    println(xs[1:3])\n    println(xs[:2])\n    println(xs[3:])\n    println(xs[-2:])\n    println(xs[:-1])\n    println(xs[10:])\n    println(xs[3:1])\n    println(xs[1:].len())\n    xs[-1] = 99\n    println(xs)\n    xs.insert(-1, 7)\n    xs.insert(100, 8)\n    xs.insert(-100, 1)\n    println(xs)\n    println(xs.remove(-1))\n    let s = \"hello\"\n    println(s[1:4])\n    println(s[-3:])\n    println(s[:100])\n    let words: [string] = [\"a\", \"b\", \"c\"]\n    println(words[-1])\n    println(words[1:])\n    let i = -2\n    println(xs[i])\n")),
         "50\n10\n[20, 30]\n[10, 20]\n[40, 50]\n[40, 50]\n[10, 20, 30, 40]\n[]\n[]\n4\n[10, 20, 30, 40, 99]\n[1, 10, 20, 30, 40, 7, 99, 8]\n8\nell\nllo\nhello\nc\n[\"b\", \"c\"]\n7\n"
+    );
+}
+
+#[test]
+fn python_strings() {
+    let case = Case::new("expressions", "python-strings");
+    // 字符串位置按字符算（与 Python 相同）：len、s[i]、s[a:b]、find；按字节用 byte_*；for ch in s 逐字符遍历，break/continue/return 都释放当前字符。
+    assert_eq!(
+        stdout(&case.run("fn main():\n    let s = \"你好, world\"\n    println(len(s))\n    println(s.byte_len())\n    println(s[0])\n    println(s[-1])\n    println(s[0:2])\n    println(s[4:])\n    println(s.find(\"world\"))\n    println(s.find_from(\"o\", 8))\n    println(s.byte_find(\"world\"))\n    println(s.slice(-5, 100))\n    let e = \"héllo\"\n    println(len(e))\n    println(e[1])\n    let ascii = \"abcdef\"\n    println(ascii[2:4] + ascii[-1])\n    let mut total = 0\n    for i in range(len(s)):\n        if s[i] == \"o\": total += 1\n    println(total)\n    let mut grow = \"ab\"\n    grow += \"中\"\n    println(len(grow))\n    println(grow[2])\n")),
+        "9\n13\n你\nd\n你好\nworld\n4\n-1\n8\nworld\n5\né\ncdf\n1\n3\n中\n"
+    );
+    assert_eq!(
+        stdout(&case.run("fn first_vowel(s: &string) -> string:\n    for ch in s:\n        if ch in \"aeiou\": return copy(ch)\n    return \"-\"\n\nfn main():\n    let s = \"a中b\"\n    for ch in s:\n        print(ch)\n    for i, ch in s:\n        print(\"{i}{ch}\")\n    let mut n = 0\n    for ch in \"hello world\":\n        if ch == \" \": break\n        if ch == \"l\": continue\n        n += 1\n    println(n)\n    println(first_vowel(\"xyz\"))\n    println(first_vowel(\"strong\"))\n    let words: [string] = [\"ab\", \"c\"]\n    for w in words:\n        for ch in w:\n            print(ch.upper())\n")),
+        "a\n中\nb\n0a\n1中\n2b\n3\n-\no\nA\nB\nC\n"
     );
 }

@@ -143,7 +143,7 @@ fn string_helpers_parse_slice_and_search() {
     let program = "use std/string\nfn show(text: &string) -> !string:\n    let value = string.parse_i64(text)?\n    println(value)\nfn try(text: string):\n    show(&text) catch e:\n        println(e)\n        return\nfn main():\n    try(\"9223372036854775807\")\n    try(\"-9223372036854775808\")\n    try(\"+42\")\n    try(\"9223372036854775808\")\n    try(\"-\")\n    try(\"\")\n    try(\"1 \")\n    let padded = \" \\t 中 文 \\r\\n\"\n    let trimmed = string.trim(&padded)\n    println(\"[{trimmed}]\")\n    let text = \"a中b\"\n    println(string.byte_at(&text, 1))\n    println(string.slice(&text, 1, 4))\n    let needle = \"b\"\n    let missing = \"z\"\n    let empty = \"\"\n    println(string.find(&text, &needle))\n    println(string.find(&text, &missing))\n    println(string.find(&text, &empty))\n";
     assert_eq!(
         stdout(&sandbox.run(program, NONE, None)),
-        "9223372036854775807\n-9223372036854775808\n42\ninteger out of range: 9223372036854775808\ninvalid integer: -\ninvalid integer: \ninvalid integer: 1 \n[中 文]\n228\n中\n4\n-1\n0\n"
+        "9223372036854775807\n-9223372036854775808\n42\ninteger out of range: 9223372036854775808\ninvalid integer: -\ninvalid integer: \ninvalid integer: 1 \n[中 文]\n228\n中b\n2\n-1\n0\n"
     );
     for (source, message) in [
         (
@@ -151,7 +151,7 @@ fn string_helpers_parse_slice_and_search() {
             "string index out of bounds",
         ),
         (
-            "use std/string\nfn main():\n    let text = \"中\"\n    println(string.slice(&text, 0, 1))\n",
+            "use std/string\nfn main():\n    let text = \"中\"\n    println(string.byte_slice(&text, 0, 1))\n",
             "string index out of bounds",
         ),
     ] {
