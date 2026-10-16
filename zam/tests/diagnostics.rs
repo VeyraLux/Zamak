@@ -653,3 +653,43 @@ fn project_check_errors_report_module_path() {
     }
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn python_habits_get_the_zamak_spelling() {
+    // 常见的 Python 写法：报错末尾给出 Zamak 的写法，记号按源码样子显示。
+    let path = std::env::temp_dir().join(format!("zam-python-{}.zm", std::process::id()));
+    for (line, hint) in [
+        ("println(len(xs))", "write x.len()"),
+        ("for i in range(3): println(i)", "for i in 0..n"),
+        ("println(str(n))", "interpolate instead"),
+        ("println(int(\"5\"))", "s.parse_i64()?"),
+        ("let b = True", "booleans are written true and false"),
+        ("xs.append(3)", "use .push(v)"),
+        (
+            "println(\"a\" in s)",
+            "found `in`; to test membership write s.contains(x)",
+        ),
+        ("println(n if n > 1 else 0)", "let v = if c: a else: b"),
+        ("let ys = xs[1:]", "xs.slice(a, b)"),
+        ("println(f\"{n}\")", "drop the f"),
+        ("println(n ** 2)", "math.pow(x, y)"),
+        ("println(n // 2)", "integer division is written a / b"),
+        ("println(s[0])", "s.slice(i, i + 1)"),
+        ("let t = s + n", "interpolate them"),
+    ] {
+        let source = format!(
+            "fn main():\n    let mut xs: [i64] = [1, 2]\n    let s = \"abc\"\n    let n = 7\n    {line}\n"
+        );
+        fs::write(&path, &source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_zam"))
+            .arg("check")
+            .arg(&path)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "accepted {line}");
+        assert!(stderr.contains(hint), "{line}: {stderr}");
+        assert!(!stderr.contains("Some("), "{line}: {stderr}");
+    }
+    let _ = fs::remove_file(path);
+}

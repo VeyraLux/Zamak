@@ -450,6 +450,7 @@ fn diagnostic(entry: &str, error: &str) -> Diagnostic {
         }
         None => (None, rest.clone()),
     };
+    let message = with_python_hint(message);
     let (code, category, suggestion) = classify(&message);
     Diagnostic {
         file,
@@ -463,7 +464,38 @@ fn diagnostic(entry: &str, error: &str) -> Diagnostic {
     }
 }
 
+/// 把 Python 的内置名写成未知函数/变量时，在报错末尾补上 Zamak 的写法。
+fn with_python_hint(message: String) -> String {
+    let name = ["unknown function ", "unknown variable "]
+        .iter()
+        .find_map(|prefix| message.rsplit_once(prefix).map(|(_, name)| name));
+    let hint = match name {
+        Some("len") => "write x.len() for a string, list or map",
+        Some("range") => "write a range: for i in 0..n",
+        Some("str") => "interpolate instead: \"{n}\"",
+        Some("int") => "parse with s.parse_i64()? (or catch the error)",
+        Some("float") => "parse with s.parse_f64()? (or catch the error)",
+        Some("sum") => "add up in a loop: for x in xs: total += x",
+        Some("sorted") => "sort a list in place with xs.sort() or xs.sort_by(fn(a, b): a < b)",
+        Some("input") => "read a line with io.read_line()? and use std/io",
+        Some("True") => "booleans are written true and false",
+        Some("False") => "booleans are written true and false",
+        Some("None") => "an optional value is written Option.None, or use a default value",
+        Some("self") => "methods take the value as a normal parameter, such as fn area(p: &Point)",
+        _ if message.contains(".append:") => "use .push(v) to add to the end",
+        _ => return message,
+    };
+    format!("{message}; {hint}")
+}
+
 fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>) {
+    if message.contains("index requires an array, list or map") {
+        return (
+            "ZM200",
+            "type",
+            Some("index a list, array or map; slice a string instead"),
+        );
+    }
     if message.contains("unexpected character") {
         (
             "ZM100",

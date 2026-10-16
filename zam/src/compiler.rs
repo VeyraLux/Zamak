@@ -14,6 +14,20 @@ enum Token {
     Dedent,
 }
 
+/// 报错里的记号写成源码里的样子。
+fn shown(token: Option<&Token>) -> String {
+    match token {
+        Some(Token::Word(word)) => format!("`{word}`"),
+        Some(Token::Text(text)) => format!("the string \"{text}\""),
+        Some(Token::Number(number) | Token::Float(number)) => format!("the number {number}"),
+        Some(Token::Symbol(c)) => format!("{c:?}"),
+        Some(Token::Newline) => "the end of the line".to_owned(),
+        Some(Token::Indent) => "an indented line".to_owned(),
+        Some(Token::Dedent) => "the end of the block".to_owned(),
+        None => "the end of the file".to_owned(),
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Type {
     Owned,
@@ -1488,6 +1502,8 @@ fn lex(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>, bool), String> 
     let mut indents = vec![0usize];
     // 还没闭合的括号：（括号字符, 位置）。括号层数就是它的长度。
     let mut open: Vec<(char, SourcePosition)> = Vec::new();
+    // 括号里出现 `//` 的行：多半是把 Python 的整除写成了注释。
+    let mut comment_in_parens = None;
     let mut pending = false;
     let (mut code, mut indented) = (0usize, 0usize);
     for (index, raw) in physical.iter().enumerate() {
@@ -1542,7 +1558,12 @@ fn lex(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>, bool), String> 
                     continue;
                 }
                 '#' => break,
-                '/' if at(i + 1) == Some('/') => break,
+                '/' if at(i + 1) == Some('/') => {
+                    if !open.is_empty() {
+                        comment_in_parens.get_or_insert(line);
+                    }
+                    break;
+                }
                 '"' => {
                     let mut text = String::new();
                     let mut j = i + 1;
@@ -1716,8 +1737,14 @@ fn lex(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>, bool), String> 
         }
     }
     if let Some((c, (line, column))) = open.last() {
+        let hint = match comment_in_parens {
+            Some(at) => {
+                format!("; // on line {at} starts a comment, and integer division is written a / b")
+            }
+            None => String::new(),
+        };
         return Err(format!(
-            "line {line}, column {column}: '{c}' was never closed"
+            "line {line}, column {column}: '{c}' was never closed{hint}"
         ));
     }
     let end = (
@@ -2156,7 +2183,34 @@ impl Parser {
         if self.symbol(c) {
             Ok(())
         } else {
-            Err(format!("expected {c:?}, found {:?}", self.peek()))
+            Err(format!(
+                "expected {c:?}, found {}{}",
+                shown(self.peek()),
+                self.python_hint()
+            ))
+        }
+    }
+    /// 报错位置是常见的 Python 写法时，补一句 Zamak 的写法。
+    fn python_hint(&self) -> &'static str {
+        let previous = self
+            .position
+            .checked_sub(1)
+            .and_then(|i| self.tokens.get(i));
+        match (previous, self.peek()) {
+            (_, Some(Token::Word(word))) if word == "in" => {
+                "; to test membership write s.contains(x), xs.contains(x) or m.contains(k)"
+            }
+            (_, Some(Token::Word(word))) if word == "if" => {
+                "; a conditional value is written let v = if c: a else: b"
+            }
+            (_, Some(Token::Symbol(':'))) => "; slices are written xs.slice(a, b) or s.slice(a, b)",
+            (Some(Token::Word(word)), Some(Token::Text(_))) if word == "f" => {
+                "; drop the f: every string interpolates, as in \"{n}\""
+            }
+            (Some(Token::Symbol('*')), Some(Token::Symbol('*'))) => {
+                "; powers are written math.pow(x, y) with use std/math"
+            }
+            _ => "",
         }
     }
     fn word(&mut self) -> Result<String, String> {
@@ -2167,7 +2221,25 @@ impl Parser {
                 ))
             }
             Some(Token::Word(word)) => Ok(word),
-            token => Err(format!("expected identifier, found {token:?}")),
+            token => Err(format!(
+                "expected identifier, found {}{}",
+                shown(token.as_ref()),
+                self.python_hint_before()
+            )),
+        }
+    }
+    /// `word()` 已经取走了出错的记号：按它与它前面的记号给提示。
+    fn python_hint_before(&self) -> &'static str {
+        let at = |back: usize| {
+            self.position
+                .checked_sub(back)
+                .and_then(|i| self.tokens.get(i))
+        };
+        match (at(2), at(1)) {
+            (Some(Token::Symbol('*')), Some(Token::Symbol('*'))) => {
+                "; powers are written math.pow(x, y) with use std/math"
+            }
+            _ => "",
         }
     }
     fn newlines(&mut self) {
@@ -2185,7 +2257,9 @@ impl Parser {
             None | Some(Token::Dedent) => Ok(()),
             _ if self.ended_block() => Ok(()),
             token => Err(format!(
-                "expected newline between statements, found {token:?}"
+                "expected newline between statements, found {}{}",
+                shown(token),
+                self.python_hint()
             )),
         }
     }
@@ -2204,8 +2278,8 @@ impl Parser {
             ));
         }
         Err(format!(
-            "expected ':' at the end of the {header} line, found {:?}",
-            self.peek()
+            "expected ':' at the end of the {header} line, found {}",
+            shown(self.peek())
         ))
     }
     /// 冒号之后换行、缩进进去的一块。
@@ -5049,6 +5123,10 @@ impl<'a> Checker<'a> {
                 Type::ArrayInt(_) => Ok(Type::Int),
                 Type::List(elem) | Type::ListRef(elem, _) => Ok(elem.ty()),
                 Type::Map(_, value) | Type::MapRef(_, value, _) => Ok(value.ty()),
+                ty if is_text(ty) => Err(
+                    "index requires an array, list or map; take one character of a string with s.slice(i, i + 1)"
+                        .into(),
+                ),
                 _ => Err("index requires an array, list or map".into()),
             },
             Expr::MapLit(entries) => {
@@ -5172,7 +5250,10 @@ impl<'a> Checker<'a> {
                 &mut loans.clone(),
             ),
             _ if self.ty(expr)? == Type::Owned => self.expr(expr, Type::Owned, loans),
-            _ => Err("type mismatch: expected a string".into()),
+            _ => Err(
+                "type mismatch: expected a string; to join other values, interpolate them as in \"{s}{n}\""
+                    .into(),
+            ),
         }
     }
     fn expr(
