@@ -1,6 +1,6 @@
 # Zamak language reference
 
-Zamak is a statically typed language compiled to native code. Blocks are defined by indentation, like Python. Statements are separated by newlines; there are no semicolons. Comments start with `//` or `#`; there are no block comments.
+Zamak is a statically typed language compiled to native code. Blocks are defined by indentation, like Python. Statements are separated by newlines; there are no semicolons. Comments start with `#`; there are no block comments (`//` is floor division, as in Python).
 
 ## Program shape
 
@@ -10,7 +10,7 @@ use std/string
 
 fn main() -> !string:
     let text = io.read_all()?
-    println(string.byte_len(&text))
+    println(len(text))
 ```
 
 `main` takes no parameters. It returns nothing (`fn main():`) or may fail (`fn main() -> !string:`). If `main` fails, the error message is written to standard error and the program exits with status 1. To print a line to standard error, use `io.eprintln(&text)`.
@@ -29,15 +29,15 @@ fn main() -> !string:
 - `let x = 1`, `let mut x = 1`, `let mut x: i64 = 1`. Only `let mut` bindings can be reassigned. A name cannot be declared twice in the same function scope chain (no shadowing).
 - Top-level constants: `const LIMIT = 100`, `const RATE: f64 = 0.25`, `const NAME = "x"`. Names are UPPER_CASE; the value is computed at compile time from literals, earlier constants and operators. `pub const` is visible from other modules as `config.LIMIT`.
 - Integer literals may use `_` between digits: `1_000_000`. Character literals like `'a'`, `'#'`, `'\n'`, `'\''` are `i64` Unicode code points (useful with `string.byte_at`).
-- Operators: `+ - * / %`, `== != < <= > >=`, unary `-`, parentheses. Logical operators are the words `and`, `or`, `not`, as in Python: `if a > 0 and not done:`. They short-circuit, and their precedence from lowest to highest is `or`, `and`, `not`, comparisons. `&&`, `||` and prefix `!` are errors; `!` only appears in error types such as `i64!string`. Bitwise operators on `i64`: `& | ^ ~ << >>` with Python's precedence (`x & 1 == 1` is `(x & 1) == 1`); shift counts must be 0 to 63. Integer literals may be written `0xFF`, `0b1010`, `0o17`. Compound assignment `+= -= *= /= %= &= |= ^= <<= >>=` works on variables, fields and elements. On strings, `+` concatenates (`a + b` makes a new string and moves neither side) and `== != < <= > >=` compare contents. Strings and integers cannot be mixed: `"n=" + 1` is an error; use interpolation.
+- Operators: `+ - * / // % **`, `== != < <= > >=`, `in`, `not in`, unary `-`, parentheses. Division follows Python: `/` always gives `f64` (`7 / 2` is `3.5`), `//` is floor division (`-7 // 2` is `-4`), `%` takes the sign of the divisor (`-7 % 2` is `1`), `**` is a power (`2 ** 10` is `1024`, right-associative). `x in xs` / `x not in xs` test membership in a list, map (keys) or string (substring). `True`/`False` are accepted for `true`/`false`, and `f"..."` is the same as `"..."`. Logical operators are the words `and`, `or`, `not`, as in Python: `if a > 0 and not done:`. They short-circuit, and their precedence from lowest to highest is `or`, `and`, `not`, comparisons. `&&`, `||` and prefix `!` are errors; `!` only appears in error types such as `i64!string`. Bitwise operators on `i64`: `& | ^ ~ << >>` with Python's precedence (`x & 1 == 1` is `(x & 1) == 1`); shift counts must be 0 to 63. Integer literals may be written `0xFF`, `0b1010`, `0o17`. Compound assignment `+= -= *= /= //= %= &= |= ^= <<= >>=` works on variables, fields and elements. On strings, `+` concatenates (`a + b` makes a new string and moves neither side) and `== != < <= > >=` compare contents. Strings and integers cannot be mixed: `"n=" + 1` is an error; use interpolation.
 - Integer overflow, division by zero, and out-of-range indexes stop the program with an error.
 - Structs, enums, lists and maps support `==` and `!=` (field by field; maps ignore order) and can be printed with `println(x)` or `"{x}"`, which shows `Point(x: 1, y: 2)`, `Shape.Circle(1.5)`, `[1, 2]`, `{"a": 1}` with strings quoted. `copy(&x)` makes a deep copy of a string, list, map, struct or enum. Comparing, printing and copying never move the value.
 
 ## Floats
 
 - `f64` literals need a digit on both sides of the point or an exponent: `1.5`, `0.25`, `2e-3`, `1_000.5`.
-- `f64` follows IEEE 754: `+ - * / %` and comparisons never stop the program; dividing by zero gives `inf` or `NaN`.
-- There is no implicit conversion between `i64` and `f64`. `x * 2` is an error when `x` is `f64`; write `x * 2.0`. Convert with `f64(n)` and `i64(x)` (truncates toward zero; stops the program on `NaN` or out-of-range values). Round first with `math.round(x)` if needed.
+- `f64` follows IEEE 754 and never overflows; dividing by zero (`/`, `//`, `%`) stops the program, as in Python. Use `math.inf` for infinity.
+- Mixing `i64` and `f64` in arithmetic or comparisons converts the integer to `f64`, as in Python: `x * 2`, `1 + 0.5`, `n < 2.5`. A variable or parameter declared `f64` still needs an `f64` value (`let x: f64 = 2.0` or `f64(n)`). Convert with `f64(n)`/`float(n)` and `i64(x)`/`int(x)` (truncates toward zero; stops the program on `NaN` or out-of-range values). Round first with `math.round(x)` if needed.
 - `println(x)` and `"{x}"` print the shortest text that reads back as the same value: `0.1`, `2.0`, `1e16`, `2.5e-7`. For a fixed number of decimals use `fmt.fixed(x, 2) -> string` (`use std/fmt`).
 - `[f64]` lists and `{K: f64}` map values work like `i64` ones. Map keys cannot be `f64`.
 
@@ -46,12 +46,13 @@ fn main() -> !string:
 - Escapes: `\n \r \t \" \\`.
 - Interpolation: `"{name}"` inserts a variable or a field path such as `"{p.age}"`. Any expression without string literals or braces may appear inside: `"{a + b}"`, `"{xs[i]}"`, `"{string.upper(&s)}"`. `{{` and `}}` produce literal braces.
 - Build strings with `+`, interpolation or `string.join`.
-- Method form needs no import: any `std/string` function whose first parameter is `&string` can be called on a string, as in `s.upper()`, `line.trim().len()`, `csv.split(",")`, `s.contains("x")`. `s.len()` counts bytes, `s.char_len()` counts characters.
+- Method form needs no import: any `std/string` function whose first parameter is `&string` can be called on a string variable, as in `s.upper()`, `line.trim().len()`, `csv.split(",")`, `s.contains("x")`. `s.len()` and `len(s)` count bytes, `s.char_len()` counts characters.
+- Slices: `s[a:b]`, `s[:b]`, `s[a:]` (byte offsets; negative counts from the end; out-of-range bounds are clamped, as in Python).
 
 ## Ownership and borrowing
 
 - Assigning or passing a `string`, struct, enum, list or map moves it; using it afterwards is an error. `i64`, `f64` and `bool` are copied.
-- Parameters typed `&string`, `&[T]`, `&{K: V}`, `&Point` borrow read-only; `&mut string`, `&mut [T]`, `&mut {K: V}`, `&mut Point` borrow mutably. At the call site write `&x` or `&mut x` (the owner must be `let mut` for `&mut`). Borrows cannot be stored in struct fields or returned. A read-only borrow can be kept in a local without a type annotation: `let entry = &entries[i]`, `let name = &p.name`; until the end of that block the borrowed variable cannot be changed or moved. Numbers and bools are copied instead: `let n = xs[i]`.
+- Parameters typed `&string`, `&[T]`, `&{K: V}`, `&Point` borrow read-only, and a variable, field or element is borrowed automatically: `show(name)`, `show(p.name)`, `show(xs[i])` (writing `&name` also works). Parameters typed `&mut string`, `&mut [T]`, `&mut {K: V}`, `&mut Point` borrow mutably and need an explicit `&mut x` at the call site (the owner must be `let mut`). Borrows cannot be stored in struct fields or returned. A read-only borrow can be kept in a local without a type annotation: `let entry = &entries[i]`, `let name = &p.name`; until the end of that block the borrowed variable cannot be changed or moved. Numbers and bools are copied instead: `let n = xs[i]`.
 - A `&string` parameter also accepts a string literal or interpolation directly: `string.find(&s, ",")`.
 - Inside a function, a parameter that is already a borrow is passed on without `&`: `fn f(s: &string): g(s)`.
 
@@ -76,7 +77,7 @@ fn largest[T](items: &[T]) -> T:
     best
 ```
 
-Type parameters are uppercase names in brackets after the function name. Calls do not name the types (`largest(&numbers)`); each type parameter must appear in a parameter type so it can be inferred. The body is checked for each concrete type used.
+Type parameters are uppercase names in brackets after the function name. Calls do not name the types (`largest(numbers)`); each type parameter must appear in a parameter type so it can be inferred. The body is checked for each concrete type used.
 
 ## Generic types and Option
 
@@ -95,7 +96,7 @@ fn find(names: &[string], wanted: &string) -> Option[i64]:
 fn main():
     let mut s: Stack[string] = Stack(items: [])
     s.push("a")
-    match find(&s.items, "a"):
+    match find(s.items, "a"):
         Some(i): println("at {i}")
         None: println("missing")
 ```
@@ -116,7 +117,7 @@ fn count_if(xs: &[string], keep: fn(&string) -> bool) -> i64:
 fn main():
     let words: [string] = ["apple", "kiwi"]
     let min_len = 5
-    println(count_if(&words, fn(w): string.byte_len(w) >= min_len))
+    println(count_if(words, fn(w): len(w) >= min_len))
     let f = double
     println(f(21))
 ```
@@ -139,9 +140,9 @@ else:
 ```
 
 - Conditions must be `bool`; compare with `==` (a single `=` in a condition is an error). There is no `else if`; write `elif`.
-- To choose a value, use an if expression on one line: `let v = if c: a elif d: b else: e`; it needs `else`, and each branch is a single expression.
+- To choose a value, write `let v = a if c else b` (as in Python) or `let v = if c: a elif d: b else: e`; it needs `else`, and each branch is a single expression.
 - `while cond:`, `break`, `continue`.
-- `for i in start..end:` iterates integers from `start` up to but not including `end`. `for x in xs:` is the same as `for x in &xs:` (it borrows, it does not move).
+- `for i in range(n):`, `for i in range(a, b):` and `for i in a..b:` iterate integers up to but not including the end (no step; use `while` for one). `for x in xs:` is the same as `for x in &xs:` (it borrows, it does not move).
 - `for x in &list:` iterates list elements and `for i, x in &list:` also gives the index; `for k in &map:` iterates map keys in insertion order and `for k, v in &map:` gives keys and values. String elements/keys are read-only borrows.
 - `for x in &mut list:` and `for k, v in &mut map:` change elements in place: assigning `x = x * 2` writes the element, struct elements allow `x.field += 1`. Elements cannot be added or removed inside these loops.
 
@@ -188,7 +189,7 @@ struct Point:
 
 ## Tuples
 
-- Type `(i64, string)`, value `(3, "three")`, items `t.0`, `t.1`. A function returns several values as a tuple: `fn divmod(a: i64, b: i64) -> (i64, i64): (a / b, a % b)`.
+- Type `(i64, string)`, value `(3, "three")`, items `t.0`, `t.1`. A function returns several values as a tuple: `fn divmod(a: i64, b: i64) -> (i64, i64): (a // b, a % b)`.
 - `let (q, r) = divmod(17, 5)` unpacks a tuple (`_` skips an item); the tuple is moved. Tuples can be stored in lists (`[(string, i64)]`), compared with `==` and printed.
 
 ## Enums and match
@@ -220,8 +221,9 @@ let area = match s:
 - Nested elements: `grid[i][j]` reads and writes an inner element (two levels at most; string elements are read as copies), `grid[i].push(x)` and `m[k].len()` call methods on an inner container, `for row in &grid:` gives `&[i64]`, and `&grid[i]` borrows a row. `grid[i]` alone cannot be taken out.
 
 - `let mut xs: [i64] = []` (an empty list needs a type annotation), `let xs: [string] = ["a", "b"]`.
-- `xs.len()`, `xs.push(v)`, `xs.pop()` (removes and returns the last element), `xs.insert(i, v)`, `xs.remove(i)` (removes and returns element `i`), `xs.swap(i, j)`, `xs.reverse()`, `xs.clear()`, `xs.extend(ys)` (moves all of `ys` to the end).
-- For `i64`, `f64`, `bool` and `string` elements: `xs.sort()` (ascending, stable), `xs.contains(v)`, `xs.index_of(v)` (-1 when absent), `xs.slice(a, b)` (a new list of elements `a..b`). String arguments are borrows: `names.contains("amy")`.
+- `xs.len()` (or `len(xs)`), `xs.push(v)`, `xs.pop()` (removes and returns the last element), `xs.insert(i, v)` (clamps `i` like Python), `xs.remove(i)` (removes and returns element `i`), `xs.swap(i, j)`, `xs.reverse()`, `xs.clear()`, `xs.extend(ys)` (moves all of `ys` to the end).
+- For `i64`, `f64`, `bool` and `string` elements: `xs.sort()` (ascending, stable, in place), `xs.sorted()` or `sorted(xs)` (a sorted copy), `xs.contains(v)` or `v in xs`, `xs.index_of(v)` (-1 when absent), `xs.min()`/`min(xs)` and `xs.max()`/`max(xs)` (stop the program on an empty list). For `i64` and `f64` elements: `xs.sum()` or `sum(xs)`.
+- Indexes and slices follow Python: `xs[-1]` is the last element; `xs[a:b]`, `xs[:b]`, `xs[a:]` (and `xs.slice(a, b)`) copy a part, with negative bounds counted from the end and out-of-range bounds clamped.
 - Any list: `xs.sort_by(fn(a, b): a.age < b.age)` sorts in place (stable); the fn returns true when `a` goes before `b`.
 - `xs[i]` reads an `i64`/`f64`/`bool` element and `xs[i] = v` writes. A string element cannot be taken out with `xs[i]`; pass `&xs[i]` to a `&string` parameter or copy it with `string.copy(&xs[i])`.
 - Struct elements: read and write fields with `xs[i].field` (also `+=`), pass `&xs[i]` / `&mut xs[i]` to `&Point` / `&mut Point` parameters, pass `&xs[i].name` to a `&string` parameter, call `xs[i].tags.push(v)`. `for p in &xs` gives a read-only `&Point`. Structs move on assignment: `let p = xs[i]` is an error; write `copy(&xs[i])` for an independent copy, `xs.pop()` to take the last one out, `xs.swap(i, j)` to reorder, and `xs[i] = Point(...)` to replace. `xs[i].tags[j]` is not supported.
@@ -243,7 +245,7 @@ Import a module with `use std/<name>` and call `name.function(...)`. `println(x)
 
 - `std/io`: `io.print(&text)` (no newline), `io.eprintln(&text)` (standard error), `io.read_line(&mut line) -> bool!string` reads the next line into `line` without its trailing `\n` or `\r\n` and returns `false` at end of input (typical loop: `let mut line = ""` then `while io.read_line(&mut line)?:`); `io.read_all() -> string!string`.
 - `std/env`: `env.args() -> [string]` (program arguments, without the program name), `env.arg(i) -> string!string`, `env.arg_count() -> i64`, `env.var(&name) -> string!string` (an environment variable), `env.exit(code)` (ends the program with status 0 to 255; a `catch` block may end with it instead of `return`).
-- `abs(x)`, `min(a, b)`, `max(a, b)` need no import and work on `i64` or `f64` (both arguments of the same type).
+- Built-in functions need no import, as in Python: `len(x)` (string bytes, list or map size), `str(x)` (same as `"{x}"`), `int(x)` (truncates an `f64`; parses a string and can fail, so write `int(s)?` or catch it), `float(x)` (converts an `i64`; parses a string and can fail), `abs(x)`, `min(a, b)`, `max(a, b)` (both of the same type), `min(xs)`, `max(xs)`, `sum(xs)`, `sorted(xs)`.
 - `std/fs`: `fs.read(&path) -> string!string`, `fs.write(&path, &text) -> !string`, `fs.append(&path, &text) -> !string`, `fs.exists(&path) -> bool`, `fs.is_file`, `fs.is_dir`, `fs.size(&path) -> i64!string`, `fs.list(&dir) -> [string]!string` (sorted names), `fs.mkdir(&path) -> !string` (creates parents), `fs.remove(&path) -> !string` (file or empty directory), `fs.rename(&from, &to) -> !string`.
 - `std/path` (text only): `path.join(&a, &b) -> string`, `path.parent`, `path.name`, `path.stem`, `path.suffix` (`.txt`, or empty).
 - `std/math` (all `f64`): `sqrt`, `pow(x, y)`, `exp`, `log` (natural), `log10`, `sin`, `cos`, `tan`, `atan`, `atan2(y, x)`, `floor`, `ceil`, `round` (half away from zero), `trunc`, `abs`, `min(a, b)`, `max(a, b)`, `is_nan(x) -> bool`; constants `math.pi`, `math.e`, `math.inf`.
