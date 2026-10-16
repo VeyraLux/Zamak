@@ -43,7 +43,10 @@ fn for_ranges_run_once_per_counter_and_reject_misuse() {
         ),
         ("fn main():\n    for i in 0..\"x\": pass", "type mismatch"),
         ("fn main():\n    for i 0..3: pass", "expected `in`"),
-        ("fn main():\n    for i in 3: pass", "expected `..`"),
+        (
+            "fn main():\n    for i in 3: pass",
+            "needs a list or map; to count, write a range",
+        ),
         (
             "fn main():\n    let s = \"x\"\n    for i in 0..3:\n        let t = s",
             "loop moves",

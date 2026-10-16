@@ -734,6 +734,16 @@ impl Project {
     ) -> Result<()> {
         for (instruction, position) in body {
             let position = *position;
+            // `print(x)` 与 Python 一样打印一行（同 println）；模块自己定义了 print 时用自己的。
+            if let Instruction::Call(Expr::Call(name, args)) = instruction {
+                if name == "print"
+                    && args.len() <= 1
+                    && !self.modules[module].module.functions.contains_key("print")
+                {
+                    let value = args.pop().unwrap_or_else(|| Expr::Text(String::new()));
+                    *instruction = Instruction::Print(value);
+                }
+            }
             if let Instruction::Let(_, _, Some(ty), _) = instruction {
                 self.resolve_type(module, ty)
                     .map_err(|error| self.located(module, position, error))?;
