@@ -149,7 +149,7 @@ else:
 - A function that can fail declares `-> T!string` (returns T or an error message) or `-> !string` (only fails).
 - `fail "message"` returns an error. Interpolation works: `fail "bad line {n}"`.
 - `call()?` returns the error to the caller (the current function must also be declared `!string`).
-- `call() catch e:` handles the error in place; `e` is the error value; the block must end every path with `return` or `fail` (or `break`/`continue` inside a loop).
+- `call() catch e:` handles the error in place; `e` is the error value. When the call's value is used (`let v = f() catch e:`), the block must end every path with `return` or `fail` (or `break`/`continue` inside a loop). When the call has no value or stands alone as a statement, the program continues after the block.
 - The error type can also be a struct or an enum: `fn parse(t: &string) -> i64!ParseError`, `fail ParseError.Empty`, and `match e:` inside `catch`. `?` only passes an error to a function with the same error type; convert others in a `catch` block.
 
 ```
@@ -242,7 +242,8 @@ Import a module with `use std/<name>` and call `name.function(...)`. `println(x)
 - `std/io`: `io.print(&text)` (no newline), `io.eprintln(&text)` (standard error), `io.read_line(&mut line) -> bool!string` reads the next line into `line` without its trailing `\n` or `\r\n` and returns `false` at end of input (typical loop: `let mut line = ""` then `while io.read_line(&mut line)?:`); `io.read_all() -> string!string`.
 - `std/env`: `env.args() -> [string]` (program arguments, without the program name), `env.arg(i) -> string!string`, `env.arg_count() -> i64`, `env.var(&name) -> string!string` (an environment variable), `env.exit(code)` (ends the program with status 0 to 255; a `catch` block may end with it instead of `return`).
 - `abs(x)`, `min(a, b)`, `max(a, b)` need no import and work on `i64` or `f64` (both arguments of the same type).
-- `std/fs`: `fs.read(&path) -> string!string`, `fs.write(&path, &text) -> !string`.
+- `std/fs`: `fs.read(&path) -> string!string`, `fs.write(&path, &text) -> !string`, `fs.append(&path, &text) -> !string`, `fs.exists(&path) -> bool`, `fs.is_file`, `fs.is_dir`, `fs.size(&path) -> i64!string`, `fs.list(&dir) -> [string]!string` (sorted names), `fs.mkdir(&path) -> !string` (creates parents), `fs.remove(&path) -> !string` (file or empty directory), `fs.rename(&from, &to) -> !string`.
+- `std/path` (text only): `path.join(&a, &b) -> string`, `path.parent`, `path.name`, `path.stem`, `path.suffix` (`.txt`, or empty).
 - `std/math` (all `f64`): `sqrt`, `pow(x, y)`, `exp`, `log` (natural), `log10`, `sin`, `cos`, `tan`, `atan`, `atan2(y, x)`, `floor`, `ceil`, `round` (half away from zero), `trunc`, `abs`, `min(a, b)`, `max(a, b)`, `is_nan(x) -> bool`; constants `math.pi`, `math.e`, `math.inf`.
 - `std/fmt`: `fmt.fixed(x, digits) -> string` (0 to 30 digits).
 - `std/time`: `time.time() -> f64` (seconds since 1970), `time.monotonic() -> f64` (for measuring durations), `time.sleep(seconds: f64)`, `time.iso_utc(t) -> string` (`1970-01-01T00:00:00Z`), `time.iso_local(t) -> string`.
