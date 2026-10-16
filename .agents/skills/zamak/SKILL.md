@@ -104,6 +104,8 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 
 ## 常见诊断（照文本改代码）
 
+- Python 习惯写法在报错末尾带 Zamak 写法：未知函数/变量（`len`、`range`、`str`、`int`、`float`、`sum`、`sorted`、`input`、`True`/`False`/`None`、`self`、`.append`）由 `main.rs::with_python_hint` 补；语法位置（`x in s`、`a if c else b`、`xs[1:]`、`f"..."`、`**`、括号里的 `//`）由解析器 `python_hint` / `python_hint_before` 与 `lex` 补；记号在报错里经 `compiler::shown` 按源码样子显示。
+
 - `fallible call f must be handled with ?` → 调用处漏了 `?` 或 `catch`。
 - `? cannot propagate the error of f from this function` → 当前函数签名缺少 `!E`，或错误类型不同。
 - `fail requires a function that declares an error type` → 在非 `!E` 函数里用了 `fail`。
