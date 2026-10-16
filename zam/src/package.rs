@@ -15,12 +15,83 @@ pub enum Source {
     Path(PathBuf),
 }
 
-/// 一个包的 `zam.toml`：名字、模块目录、入口（库可以没有）与依赖。
+/// 一个包的 `zam.toml`：名字、模块目录、入口（库可以没有）、依赖与 C 代码。
 pub struct Manifest {
     pub name: String,
     pub modules: PathBuf,
     pub entry: Option<PathBuf>,
     pub dependencies: BTreeMap<String, Source>,
+    pub native: Native,
+}
+
+/// `[native]`：和包一起编译的 C 源码、头文件目录、要链接的库与库目录。路径相对包的根目录；
+/// `include` 与 `library_paths` 也可以是绝对路径（系统里装好的库）。
+#[derive(Clone, Debug, Default)]
+pub struct Native {
+    pub sources: Vec<PathBuf>,
+    pub include: Vec<PathBuf>,
+    pub libraries: Vec<String>,
+    pub library_paths: Vec<PathBuf>,
+}
+
+fn native(config: &toml::Table) -> Result<Native> {
+    let Some(table) = config.get("native") else {
+        return Ok(Native::default());
+    };
+    let table = table.as_table().ok_or("[native] must be a table")?;
+    if let Some(key) = table.keys().find(|key| {
+        !matches!(
+            key.as_str(),
+            "sources" | "include" | "libraries" | "library_paths"
+        )
+    }) {
+        return Err(format!(
+            "unknown native setting {key}; [native] accepts sources, include, libraries and library_paths"
+        ));
+    }
+    let list = |key: &str| -> Result<Vec<String>> {
+        match table.get(key) {
+            None => Ok(Vec::new()),
+            Some(value) => value
+                .as_array()
+                .and_then(|items| {
+                    items
+                        .iter()
+                        .map(|item| item.as_str().map(str::to_owned))
+                        .collect::<Option<Vec<_>>>()
+                })
+                .ok_or_else(|| format!("native.{key} must be a list of strings")),
+        }
+    };
+    let mut sources = Vec::new();
+    for source in list("sources")? {
+        let path = relative(&source)?;
+        if path.extension().is_none_or(|ext| ext != "c") {
+            return Err(format!("native source {source} must be a .c file"));
+        }
+        sources.push(path);
+    }
+    let libraries = list("libraries")?;
+    if let Some(bad) = libraries.iter().find(|name| {
+        name.is_empty()
+            || name.starts_with('-')
+            || !name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '+'))
+    }) {
+        return Err(format!(
+            "invalid library name {bad:?}; write the bare name, such as \"sqlite3\" for libsqlite3 or sqlite3.lib"
+        ));
+    }
+    Ok(Native {
+        sources,
+        include: list("include")?.into_iter().map(PathBuf::from).collect(),
+        libraries,
+        library_paths: list("library_paths")?
+            .into_iter()
+            .map(PathBuf::from)
+            .collect(),
+    })
 }
 
 /// 项目内的相对路径：不能为空，不能有 `..` 或绝对路径。
@@ -44,9 +115,9 @@ pub fn manifest(path: &Path, library: bool) -> Result<Manifest> {
         .map_err(|e| format!("{}: invalid zam.toml: {e}", path.display()))?;
     if config
         .keys()
-        .any(|key| !matches!(key.as_str(), "project" | "dependencies"))
+        .any(|key| !matches!(key.as_str(), "project" | "dependencies" | "native"))
     {
-        return Err("zam.toml accepts only [project] and [dependencies]".into());
+        return Err("zam.toml accepts only [project], [dependencies] and [native]".into());
     }
     let table = config
         .get("project")
@@ -126,6 +197,7 @@ pub fn manifest(path: &Path, library: bool) -> Result<Manifest> {
         modules,
         entry,
         dependencies,
+        native: native(&config)?,
     })
 }
 

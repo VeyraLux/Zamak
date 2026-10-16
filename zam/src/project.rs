@@ -12,7 +12,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-44");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-45");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -92,6 +92,8 @@ pub struct Project {
     pub root: PathBuf,
     entry: String,
     modules: BTreeMap<String, Input>,
+    // 项目与各个依赖包的 `[native]`：（包的根目录, 设置）。
+    native: Vec<(PathBuf, package::Native)>,
 }
 
 fn is_source(path: &Path) -> bool {
@@ -240,6 +242,7 @@ impl Project {
                         package: None,
                     },
                 )]),
+                native: Vec::new(),
             });
         }
         let manifest = Self::manifest_path(input);
@@ -265,6 +268,7 @@ impl Project {
         if !modules.contains_key(&entry) {
             return Err(format!("missing entry module {entry}"));
         }
+        let mut native = vec![(root.clone(), config.native.clone())];
         if let Some(update) = dependencies {
             let packages = package::resolve(
                 &root,
@@ -282,6 +286,7 @@ impl Project {
                     ));
                 }
                 load_package(dependency, package, &mut modules, parse)?;
+                native.push((package.dir.clone(), package.manifest.native.clone()));
             }
         }
         Ok(Self {
@@ -289,6 +294,7 @@ impl Project {
             root,
             entry,
             modules,
+            native,
         })
     }
 
@@ -1362,15 +1368,65 @@ impl Project {
             object_keys.push(key);
             objects.push(bytes);
         }
+        // `[native]` 的 C 源码：各自编成目标文件，按源码与头文件的内容缓存。
+        let mut libraries = Vec::new();
+        let mut library_paths = Vec::new();
+        for (root, settings) in &self.native {
+            // 编译在缓存的临时目录里进行，路径都换成绝对路径。
+            let absolute = |path: PathBuf| std::path::absolute(&path).unwrap_or(path);
+            let includes: Vec<PathBuf> = settings
+                .include
+                .iter()
+                .map(|dir| absolute(root.join(dir)))
+                .collect();
+            let headers = header_digest(&includes)?;
+            for source in &settings.sources {
+                let path = root.join(source);
+                let text = fs::read(&path)
+                    .map_err(|e| format!("native source {}: {e}", path.display()))?;
+                let mut dirs = vec![absolute(path.parent().unwrap_or(root).to_owned())];
+                dirs.extend(includes.iter().cloned());
+                let key = hash(&[
+                    VERSION.as_bytes(),
+                    b"native source",
+                    &text,
+                    headers.as_bytes(),
+                    identity.as_bytes(),
+                    native::OPTIONS.as_bytes(),
+                    env::consts::OS.as_bytes(),
+                    env::consts::ARCH.as_bytes(),
+                ]);
+                let (bytes, hit) = native_cached(cache, &key, "obj", |scratch| {
+                    native::compile_with(&tool, scratch, &String::from_utf8_lossy(&text), &dirs)
+                })?;
+                eprintln!(
+                    "OBJECT {} {:.12} {}",
+                    if hit { "HIT" } else { "MISS" },
+                    key,
+                    source.display()
+                );
+                object_keys.push(key);
+                objects.push(bytes);
+            }
+            libraries.extend(settings.libraries.iter().cloned());
+            library_paths.extend(
+                settings
+                    .library_paths
+                    .iter()
+                    .map(|dir| absolute(root.join(dir))),
+            );
+        }
+        let link_settings = format!("{libraries:?}\n{library_paths:?}");
         let app_key = hash(&[
             VERSION.as_bytes(),
             object_keys.join("\n").as_bytes(),
             identity.as_bytes(),
             native::OPTIONS.as_bytes(),
+            link_settings.as_bytes(),
         ]);
         let link_started = Instant::now();
         let (bytes, hit) = native_cached(cache, &app_key, "exe", |scratch| {
-            native::link(&tool, scratch, &objects)
+            native::link(&tool, scratch, &objects, &libraries, &library_paths)
         })?;
         let link_ms = link_started.elapsed().as_secs_f64() * 1000.0;
         eprintln!("LINK {} {:.12}", if hit { "HIT" } else { "MISS" }, app_key);
@@ -1447,6 +1503,33 @@ fn run_test(artifact: &Path, test: &str) -> (bool, String) {
             (false, output)
         }
     }
+}
+
+/// 头文件目录里所有 `.h` 文件（递归）的内容摘要：头文件改了，用到它的 C 源码要重新编译。
+fn header_digest(dirs: &[PathBuf]) -> Result<String> {
+    fn walk(dir: &Path, base: &Path, parts: &mut Vec<Vec<u8>>) -> Result<()> {
+        let Ok(items) = fs::read_dir(dir) else {
+            return Ok(());
+        };
+        let mut items: Vec<_> = items.filter_map(|item| item.ok()).collect();
+        items.sort_by_key(|item| item.file_name());
+        for item in items {
+            let path = item.path();
+            if path.is_dir() {
+                walk(&path, base, parts)?;
+            } else if path.extension().is_some_and(|ext| ext == "h") {
+                let name = path.strip_prefix(base).unwrap_or(&path);
+                parts.push(name.to_string_lossy().replace('\\', "/").into_bytes());
+                parts.push(fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?);
+            }
+        }
+        Ok(())
+    }
+    let mut parts = Vec::new();
+    for dir in dirs {
+        walk(dir, dir, &mut parts)?;
+    }
+    Ok(hash(&parts.iter().map(Vec::as_slice).collect::<Vec<_>>()))
 }
 
 /// 并行编译的并发度：默认取可用核数，内存封顶 8；`ZAMAK_JOBS=1` 可关掉并行。

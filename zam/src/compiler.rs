@@ -663,6 +663,29 @@ pub struct Function {
     // 泛型函数的类型参数（`fn largest[T](...)`）。泛型函数本身不检查也不生成，
     // 调用时按实参类型生成专门的副本（`largest[Int]`）。
     pub generics: Vec<String>,
+    // `extern fn sqrt(x: f64) -> f64`：没有函数体，调用同名的 C 函数。
+    pub external: bool,
+}
+
+/// `extern fn` 能用的参数与返回类型：数值、布尔、只读字符串参数（C 侧是 `const char *`）、
+/// 返回字符串（从 C 的 `const char *` 复制一份）。
+pub fn extern_signature(name: &str, params: &[(String, Type)], result: Type) -> Result<(), String> {
+    for (param, ty) in params {
+        if !matches!(ty, Type::Int | Type::Float | Type::Bool | Type::Shared) {
+            return Err(format!(
+                "unsupported type for parameter {param} of extern fn {name}; extern functions take i64, f64, bool or &string, so pass other data through a small C wrapper"
+            ));
+        }
+    }
+    if !matches!(
+        result,
+        Type::Unit | Type::Int | Type::Float | Type::Bool | Type::Owned
+    ) {
+        return Err(format!(
+            "unsupported return type for extern fn {name}; extern functions return nothing, i64, f64, bool or string"
+        ));
+    }
+    Ok(())
 }
 
 /// 泛型函数的类型参数在类型里写成一个特殊的结构体编号。
@@ -1730,13 +1753,13 @@ pub fn format(source: &str) -> Result<String, String> {
             after_line.insert(logical[end].last, line.depth);
         }
     }
-    // 顶层声明之间（连续的 use、连续的单行 const 除外），空行放在声明前面紧挨着的注释之前。
+    // 顶层声明之间（连续的 use、const、extern fn 除外），空行放在声明前面紧挨着的注释之前。
     let top: Vec<usize> = (0..logical.len())
         .filter(|&i| logical[i].depth == 0)
         .collect();
     for pair in top.windows(2) {
         let (a, b) = (&logical[pair[0]], &logical[pair[1]]);
-        if (a.head == "use" && b.head == "use") || (a.head == "const" && b.head == "const") {
+        if a.head == b.head && matches!(a.head.as_str(), "use" | "const" | "extern") {
             continue;
         }
         before_line.insert(b.first);
@@ -2755,6 +2778,77 @@ impl Parser {
         name: String,
         generics: Vec<String>,
     ) -> Result<(String, Function), String> {
+        let (params, result, error) = self.signature(owner)?;
+        self.imports = imports.to_vec();
+        self.result = result;
+        let mut body = self.suite(imports, result, "fn")?;
+        untail(&mut body, true, &self.implicit);
+        Ok((
+            name,
+            Function {
+                public,
+                params,
+                result,
+                error,
+                body,
+                position: start,
+                builtin: false,
+                generics,
+                external: false,
+            },
+        ))
+    }
+    /// `extern fn name(...) -> T`：只有签名，没有函数体。
+    fn external(
+        &mut self,
+        public: bool,
+        start: SourcePosition,
+    ) -> Result<(String, Function), String> {
+        if !self.keyword("fn") {
+            return Err("expected fn after extern, such as extern fn sqrt(x: f64) -> f64".into());
+        }
+        let name = self.word()?;
+        if name.starts_with(char::is_uppercase) {
+            return Err(format!(
+                "function names must start with a lowercase letter: {name}; wrap the C function in a small C function with a lowercase name"
+            ));
+        }
+        if self.peek() == Some(&Token::Symbol('[')) {
+            return Err(format!("extern fn {name} cannot have type parameters"));
+        }
+        let (params, result, error) = self.signature(None)?;
+        if error.is_some() {
+            return Err(format!(
+                "extern fn {name} cannot declare an error type; return a status value and check it in Zamak"
+            ));
+        }
+        extern_signature(&name, &params, result)?;
+        if self.symbol(':') {
+            return Err(format!(
+                "extern fn {name} has no body; its code is the C function {name}"
+            ));
+        }
+        Ok((
+            name,
+            Function {
+                public,
+                params,
+                result,
+                error: None,
+                body: Vec::new(),
+                position: start,
+                builtin: false,
+                generics: Vec::new(),
+                external: true,
+            },
+        ))
+    }
+    /// 参数列表与返回类型（`(a: i64) -> T!E`）。
+    #[allow(clippy::type_complexity)]
+    fn signature(
+        &mut self,
+        owner: Option<&str>,
+    ) -> Result<(Vec<(String, Type)>, Type, Option<Type>), String> {
         self.expect('(')?;
         let mut params = Vec::new();
         if !self.symbol(')') {
@@ -2811,23 +2905,7 @@ impl Parser {
         } else {
             (Type::Unit, None)
         };
-        self.imports = imports.to_vec();
-        self.result = result;
-        let mut body = self.suite(imports, result, "fn")?;
-        untail(&mut body, true, &self.implicit);
-        Ok((
-            name,
-            Function {
-                public,
-                params,
-                result,
-                error,
-                body,
-                position: start,
-                builtin: false,
-                generics,
-            },
-        ))
+        Ok((params, result, error))
     }
     /// 名字后面的 `[T, U]`：类型参数列表，没有时为空。
     fn generics(&mut self) -> Result<Vec<String>, String> {
@@ -3829,11 +3907,16 @@ pub fn parse(source: &str) -> Result<Module, String> {
                 p.separator()?;
                 continue;
             }
-            if !p.keyword("fn") {
-                return Err("expected use, const, struct, enum or fn declaration".into());
-            }
-            let imports = module.imports.clone();
-            let (name, function) = p.function(public, start, &imports, None)?;
+            let (name, function) = if p.keyword("extern") {
+                p.external(public, start)?
+            } else if p.keyword("fn") {
+                let imports = module.imports.clone();
+                p.function(public, start, &imports, None)?
+            } else {
+                return Err(
+                    "expected use, const, struct, enum, fn or extern fn declaration".into(),
+                );
+            };
             if module.structs.contains_key(&name) {
                 return Err(format!("duplicate declaration {name}"));
             }
@@ -3872,7 +3955,7 @@ pub fn encode(module: &Module) -> Vec<u8> {
         .map(|(name, constant)| (name, constant.public, &constant.value))
         .collect();
     format!(
-        "ZAM-IR-29\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
+        "ZAM-IR-30\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
         module.type_names, module.imports, module.functions
     )
     .into_bytes()
@@ -5496,6 +5579,7 @@ impl<'a> Checker<'a> {
             position: self.position,
             builtin: false,
             generics: Vec::new(),
+            external: false,
         };
         self.call(path, &callee, args, expected, loans)
     }
@@ -5990,7 +6074,7 @@ pub fn check(module: &Module, entry: &str) -> Result<(), String> {
     }
     let mut errors = Vec::new();
     for (name, function) in &module.functions {
-        if function.builtin || !function.generics.is_empty() {
+        if function.builtin || function.external || !function.generics.is_empty() {
             continue;
         }
         let mut checker = Checker {

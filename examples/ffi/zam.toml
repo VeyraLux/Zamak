@@ -1,0 +1,9 @@
+[project]
+name = "ffi"
+entry = "src/main.zm"
+modules = "src"
+
+# 和项目一起编译的 C 代码；要链接现成的库时写 libraries = ["sqlite3"]。
+[native]
+sources = ["c/textutil.c"]
+include = ["c"]
