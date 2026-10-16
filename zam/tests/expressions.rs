@@ -709,8 +709,9 @@ fn borrowed_locals() {
     let output = case.run("fn main():\n    let mut names: [string] = [\"a\"]\n    let n = &names[0]\n    names.push(\"b\")\n    println(n)\n");
     assert!(String::from_utf8_lossy(&output.stderr).contains("borrow conflict: names is borrowed"));
     let output = case
-        .run("fn get(xs: &[string]) -> string:\n    let n = &xs[0]\n    n\n\nfn main(): pass\n");
-    assert!(String::from_utf8_lossy(&output.stderr).contains("cannot move borrowed value n"));
+        .run("fn get(xs: &[string]) -> string:\n    let n = &xs[0]\n    n\n\nfn main():\n    let xs: [string] = [\"k\"]\n    println(get(xs))\n    println(xs)\n");
+    // 借用的字符串在要 owned 的地方复制一份（与 Python 一样按值使用），原列表不变。
+    assert_eq!(stdout(&output), "k\n[\"k\"]\n");
     let output =
         case.run("fn main():\n    let xs: [i64] = [1]\n    let n = &xs[0]\n    println(n)\n");
     assert!(String::from_utf8_lossy(&output.stderr).contains("scalar references are not supported"));
@@ -789,5 +790,15 @@ fn python_strings() {
     assert_eq!(
         stdout(&case.run("fn first_vowel(s: &string) -> string:\n    for ch in s:\n        if ch in \"aeiou\": return copy(ch)\n    return \"-\"\n\nfn main():\n    let s = \"a中b\"\n    for ch in s:\n        print(ch)\n    for i, ch in s:\n        print(\"{i}{ch}\")\n    let mut n = 0\n    for ch in \"hello world\":\n        if ch == \" \": break\n        if ch == \"l\": continue\n        n += 1\n    println(n)\n    println(first_vowel(\"xyz\"))\n    println(first_vowel(\"strong\"))\n    let words: [string] = [\"ab\", \"c\"]\n    for w in words:\n        for ch in w:\n            print(ch.upper())\n")),
         "a\n中\nb\n0a\n1中\n2b\n3\n-\no\nA\nB\nC\n"
+    );
+}
+
+#[test]
+fn python_string_methods() {
+    let case = Case::new("expressions", "python-string-methods");
+    // 字面量上调方法、sep.join(xs)、Python 的 strip/startswith/endswith/ljust/rjust/lstrip/rstrip/is*，借用的字符串在要 owned 的地方自动复制。
+    assert_eq!(
+        stdout(&case.run("fn first_vowel(s: &string) -> string:\n    for ch in s:\n        if ch in \"aeiou\": return ch\n    return \"-\"\n\nfn shout(s: &string) -> string: s.upper()\n\nfn keep(s: &string) -> string: s\n\nfn main():\n    println(\"a,b,c\".split(\",\"))\n    println(\", \".join([\"x\", \"y\"]))\n    let words: [string] = [\"p\", \"q\"]\n    let sep = \"-\"\n    println(sep.join(words))\n    println(\"  hi  \".strip().upper() + \"!\")\n    println(\"Hello\".lower().len())\n    println(first_vowel(\"strong\"))\n    println(shout(\"abc\"))\n    let k = keep(\"orig\")\n    println(k)\n    let mut out: [string] = []\n    for w in words:\n        out.push(w)\n    println(out)\n    println(words)\n    println(\"  x \".lstrip() + \"|\" + \" y  \".rstrip() + \"|\")\n    println(\"2024\".isdigit())\n    println(\"ab中\".isalpha())\n    println(\"a1\".isalnum())\n    println(\" \\t\".isspace())\n    println(\"file.txt\".endswith(\".txt\"))\n    println(\"ab\".rjust(4) + \"|\")\n")),
+        "[\"a\", \"b\", \"c\"]\nx, y\np-q\nHI!\n5\no\nABC\norig\n[\"p\", \"q\"]\n[\"p\", \"q\"]\nx | y|\ntrue\ntrue\ntrue\ntrue\ntrue\n  ab|\n"
     );
 }

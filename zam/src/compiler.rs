@@ -399,6 +399,18 @@ pub fn loop_list<'e>(local: &str, expr: &'e Expr) -> Option<&'e Expr> {
 /// 字符串值上的方法：`s.upper()` 就是 `string.upper(&s)`——std/string 里同名、第一个参数是
 /// `&string` 的函数；`s.len()` 是字节数，`s.char_len()` 按字符计。`receiver` 是借用接收者的
 /// 表达式（变量写成 `&s`，调用结果原样作临时值）。不是字符串方法时返回 None。检查器与生成器共用。
+/// Python 的字符串方法名对应的 std/string 函数：`s.strip()` 是 trim，`s.startswith(p)` 是
+/// starts_with，`ljust`/`rjust` 补空格。检查器、生成器与“用到哪些函数”的收集共用。
+pub fn string_alias(method: &str) -> &str {
+    match method {
+        "strip" => "trim",
+        "startswith" => "starts_with",
+        "endswith" => "ends_with",
+        "ljust" => "pad_right",
+        "rjust" => "pad_left",
+        method => method,
+    }
+}
 pub fn string_method(
     functions: &BTreeMap<String, Function>,
     receiver: Expr,
@@ -409,9 +421,15 @@ pub fn string_method(
         "byte_len" if args.is_empty() => return Some(Expr::ByteLen(Box::new(receiver))),
         "len" if args.is_empty() => return Some(Expr::CharLen(Box::new(receiver))),
         "char_len" if args.is_empty() => return Some(Expr::CharLen(Box::new(receiver))),
+        "join" if args.len() == 1 => {
+            return Some(Expr::Call(
+                "std/string:join".into(),
+                vec![args[0].clone(), receiver],
+            ))
+        }
         _ => {}
     }
-    let name = format!("std/string:{method}");
+    let name = format!("std/string:{}", string_alias(method));
     let function = functions.get(&name)?;
     if function.params.first().map(|(_, ty)| *ty) != Some(Type::Shared) {
         return None;
@@ -3005,7 +3023,20 @@ impl Parser {
         }
         if let Some(Token::Text(text)) = self.peek().cloned() {
             self.take();
-            return self.literal(&text);
+            let value = self.literal(&text)?;
+            // `"a,b".split(",")`、`", ".join(words)`：字面量上调用字符串方法。
+            if self.member_follows() {
+                self.take();
+                let method = self.member()?;
+                if !self.symbol('(') {
+                    return Err(format!(
+                        "expected ( after .{method}; a string has methods such as \"a,b\".split(\",\")"
+                    ));
+                }
+                let args = self.arguments()?;
+                return self.after_call(Expr::Chain(Box::new(value), method, args));
+            }
+            return Ok(value);
         }
         if self.symbol('{') {
             // 字典字面量：`{k: v, k2: v2}`，条目之间用逗号，可以分行写。
@@ -5482,6 +5513,10 @@ impl<'a> Checker<'a> {
             if produces_value(expr) && self.value_type(expr).is_ok_and(|ty| ty == owned) {
                 return self.expr(expr, owned, loans);
             }
+            // 列表字面量借给 `&[T]`：`", ".join(["a", "b"])`、`total([1, 2])`。
+            if matches!(expr, Expr::Array(_)) && matches!(owned, Type::List(_)) {
+                return self.expr(expr, owned, loans);
+            }
         }
         match expr {
             Expr::FnRef(name) => {
@@ -6023,6 +6058,10 @@ impl<'a> Checker<'a> {
                 self.expr(right, operand, loans)
             }
             Expr::Variable(name) if expected == Type::Owned => {
+                // 借用的字符串（参数、for 循环变量、借用局部）：复制一份，不移动。
+                if matches!(self.binding(name)?.ty, Type::Shared | Type::Mutable) {
+                    return Ok(());
+                }
                 if self.binding(name)?.ty != Type::Owned {
                     return Err(format!("cannot move borrowed value {name}"));
                 }

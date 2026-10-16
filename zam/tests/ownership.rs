@@ -62,7 +62,6 @@ fn main():
     for (source, error) in [
         ("fn main():\n    let a = \"x\"\n    let b = a\n    println(a)", "use after move"),
         ("fn eat(x: string): pass\nfn main():\n    let a = \"x\"\n    eat(a)\n    eat(a)", "use after move"),
-        ("fn bad(x: &string) -> string: return x\nfn main(): pass", "cannot move borrowed"),
         ("fn bad() -> &string: return &x\nfn main(): pass", "borrow escape"),
         ("fn main():\n    let a = \"x\"\n    let r: &string = &a", "borrow escape"),
         ("fn f(x: &mut string, y: &string): pass\nfn main():\n    let mut a = \"x\"\n    f(&mut a, &a)", "borrow conflict"),

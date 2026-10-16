@@ -48,6 +48,8 @@ fn main() -> !string:
 - Build strings with `+`, interpolation or `string.join`.
 - Method form needs no import: any `std/string` function whose first parameter is `&string` can be called on a string variable, as in `s.upper()`, `line.trim().len()`, `csv.split(",")`, `s.contains("x")`. `s.len()` and `len(s)` count characters, as in Python (`len("你好")` is 2); `s.byte_len()` counts UTF-8 bytes.
 - Indexes and slices count characters, as in Python: `s[0]` is the first character (a string), `s[-1]` the last, and `s[a:b]`, `s[:b]`, `s[a:]` copy a part (negative counts from the end; out-of-range bounds are clamped).
+- Methods also work on literals and Python names work: `"a,b".split(",")`, `", ".join(words)`, `s.strip()`, `s.lstrip()`, `s.rstrip()`, `s.startswith(p)`, `s.endswith(p)`, `s.isdigit()`, `s.isalpha()`, `s.isalnum()`, `s.isspace()`, `s.ljust(n)`, `s.rjust(n)`.
+- A borrowed string is copied automatically where an owned string is needed: `return ch`, `out.push(w)` inside `for w in words`.
 - `for ch in s:` loops over the characters (each `ch` is a one-character string); `for i, ch in s:` also gives the position.
 
 ## Ownership and borrowing
