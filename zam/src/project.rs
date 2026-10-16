@@ -1069,21 +1069,8 @@ impl Project {
                         .imports
                         .iter()
                         .any(|path| path.rsplit('/').next() == Some(root));
-                    if locals.contains(root)
-                        && (receiver.contains('.')
-                            || !(imported
-                                || matches!(
-                                    root,
-                                    "io" | "fmt"
-                                        | "string"
-                                        | "fs"
-                                        | "env"
-                                        | "math"
-                                        | "time"
-                                        | "random"
-                                        | "path"
-                                )))
-                    {
+                    // 局部变量与没导入的标准库同名（`let fs = ...`）时是方法调用；导入了同名模块才算模块调用。
+                    if locals.contains(root) && (receiver.contains('.') || !imported) {
                         let mut args = std::mem::take(args);
                         for arg in &mut args {
                             self.resolve_expr(module, locals, arg)?;

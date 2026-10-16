@@ -598,3 +598,21 @@ fn local_functions_and_writable_captures() {
         assert!(stderr.contains(message), "{body}: {stderr}");
     }
 }
+
+#[test]
+fn lists_and_maps_of_functions() {
+    let case = Case::new("expressions", "function-lists");
+    let source = "fn double(x: i64) -> i64: x * 2\n\nfn square(x: i64) -> i64: x * x\n\nfn main():\n    let mut steps: [fn(i64) -> i64] = [double, square]\n    steps.push(fn(x): x + 1)\n    let mut value = 3\n    for step in steps:\n        value = step(value)\n    println(value)\n    let f = steps[1]\n    println(f(5))\n    let mut commands: {string: fn(i64) -> i64} = {}\n    commands[\"double\"] = double\n    commands[\"square\"] = square\n    for name in commands:\n        let run = commands[name]\n        println(\"{name} {run(4)}\")\n    let picked = commands.get(\"cube\", double)\n    println(picked(9))\n    println(commands.values().len())\n    let copied = copy(&steps)\n    println(copied == steps)\n    println(steps)\n";
+    assert_eq!(
+        stdout(&case.run(source)),
+        "37\n25\ndouble 8\nsquare 16\n18\n2\ntrue\n[<fn>, <fn>, <fn>]\n"
+    );
+    // 用到局部变量的闭包不能放进列表（列表会活得比变量久）。
+    let output = case.run("fn main():\n    let k = 2\n    let mut ops: [fn(i64) -> i64] = []\n    ops.push(fn(x): x * k)\n");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("this fn uses the local variable k"));
+    // 局部变量和没导入的标准库模块同名时照常是变量。
+    assert_eq!(
+        stdout(&case.run("fn main():\n    let mut fs: [i64] = []\n    fs.push(1)\n    let io = \"x\"\n    println(fs)\n    println(io)\n")),
+        "[1]\nx\n"
+    );
+}

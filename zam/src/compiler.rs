@@ -427,7 +427,7 @@ pub fn method_signature(receiver: Type, method: &str) -> Option<(bool, Vec<Type>
             (false, vec![Type::Int, Type::Int], Type::List(elem))
         }
         (Type::Map(_, _), "clear") => (true, Vec::new(), Type::Unit),
-        (Type::Map(_, value), "values") if value.comparable() => {
+        (Type::Map(_, value), "values") if value.copyable() => {
             (false, Vec::new(), Type::List(value))
         }
         (Type::Map(key, _), "contains") => (false, vec![key.key_arg()], Type::Bool),
@@ -439,7 +439,7 @@ pub fn method_signature(receiver: Type, method: &str) -> Option<(bool, Vec<Type>
             (false, vec![key.key_arg()], value.ty())
         }
         (Type::Map(key, value), "$put") => (true, vec![key.key_arg(), value.ty()], Type::Unit),
-        (Type::Map(key, value), "get") if value.comparable() => {
+        (Type::Map(key, value), "get") if value.copyable() => {
             (false, vec![key.key_arg(), value.ty()], value.ty())
         }
         (Type::Map(key, _), "remove") => (true, vec![key.key_arg()], Type::Bool),
@@ -487,6 +487,8 @@ pub enum Elem {
     Record(u64),
     // 内层是列表或字典（`[[i64]]`、`{string: [string]}`）：编号由内层类型的结构算出，见 `nest`。
     Nested(u64),
+    // 函数值 `[fn(i64) -> i64]`：编号是函数类型（`func_sig`）。按值复制，不释放。
+    Func(u64),
 }
 
 /// 嵌套容器的内层类型表：编号 → 列表或字典类型。编号只取决于类型的结构，同样的类型在任何
@@ -599,6 +601,7 @@ impl Elem {
             Elem::Str => Type::Owned,
             Elem::Record(id) => Type::Record(id),
             Elem::Nested(id) => nested(id),
+            Elem::Func(id) => Type::Func(id),
         }
     }
     /// `for x in &items` 拿到的元素：标量按值，字符串、结构体与内层容器是只读借用。
@@ -613,6 +616,10 @@ impl Elem {
     /// 能比较、能复制的元素：标量与字符串。
     pub fn comparable(self) -> bool {
         matches!(self, Elem::Int | Elem::Float | Elem::Bool | Elem::Str)
+    }
+    /// 能整个读出来（复制一份）的元素：能比较的元素与函数值。
+    pub fn copyable(self) -> bool {
+        self.comparable() || matches!(self, Elem::Func(_))
     }
     /// 字典键作为参数时的类型：字符串键只读借用，整数键按值。
     pub fn key_arg(self) -> Type {
@@ -803,6 +810,7 @@ pub fn elem_from(ty: Type) -> Option<Elem> {
         Type::Owned => Elem::Str,
         Type::Record(id) => Elem::Record(id),
         Type::List(_) | Type::Map(_, _) => nest(ty),
+        Type::Func(id) => Elem::Func(id),
         _ => return None,
     })
 }
@@ -2200,6 +2208,13 @@ impl Parser {
     /// 列表元素与字典值：标量、字符串或结构体。
     /// 元素类型本身是列表或字典：`[[i64]]` 里的 `[i64]`、`{string: [string]}` 里的 `[string]`。
     fn inner_container(&mut self) -> Result<Option<Elem>, String> {
+        // 函数类型的元素：`[fn(i64) -> i64]`、`{string: fn()}`。
+        if self.peek() == Some(&Token::Word("fn".into())) {
+            let Type::Func(id) = self.ty()? else {
+                unreachable!("fn starts a function type")
+            };
+            return Ok(Some(Elem::Func(id)));
+        }
         if !matches!(self.peek(), Some(Token::Symbol('[' | '{' | '('))) {
             return Ok(None);
         }
