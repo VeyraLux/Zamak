@@ -2997,6 +2997,15 @@ impl<'a> Generator<'a> {
                 .1
         }
     }
+    /// 容器元素的指针：区间分析证明列表下标在范围内时直接取，否则经过带检查的 `at`
+    /// （负下标换算与越界报错都在里面）。
+    fn slot(&self, container: Type, pointer: &str, key: &str, index: &Expr) -> String {
+        if matches!(container, Type::List(_)) && self.proofs.list_index(index) {
+            format!("(&({pointer})->data[{key}])")
+        } else {
+            format!("at{}({pointer}, {key})", ctype(container))
+        }
+    }
     /// 容器元素（或元素里的字段）的 C 左值：先求下标，再取容器指针。
     fn element(&mut self, path: &str, index: &Expr, field: &str) -> String {
         let container = self.place_ty(path).container().expect("checked element");
@@ -3007,8 +3016,8 @@ impl<'a> Generator<'a> {
         let key = self.key(index, container);
         let pointer = self.pointer(path);
         format!(
-            "(*at{}({pointer}, {key})){}",
-            ctype(container),
+            "(*{}){}",
+            self.slot(container, &pointer, &key, index),
             self.members(elem, field)
         )
     }
@@ -3103,7 +3112,7 @@ impl<'a> Generator<'a> {
                 let key = self.key(index, container);
                 let pointer = self.pointer(local);
                 self.scalar(
-                    &format!("*at{}({pointer}, {key})", ctype(container)),
+                    &format!("*{}", self.slot(container, &pointer, &key, index)),
                     self.ty(expr),
                 )
             }
@@ -4046,18 +4055,19 @@ impl<'a> Generator<'a> {
                     let value = self.expr_as(expr, elem.ty());
                     let pointer = self.pointer(local);
                     let c = ctype(container);
+                    let slot = self.slot(container, &pointer, &key, index);
                     self.code.push_str(&match container {
                         Type::Map(_, elem) => format!(
                             "set{c}({pointer}, {key}, {});\n",
                             self.moved(&value, elem.ty())
                         ),
                         Type::List(elem) if owned(elem.ty()) => format!(
-                            "{{ {} *slot = at{c}({pointer}, {key}); {}(slot); *slot = {}(&{value}); }}\n",
+                            "{{ {} *slot = {slot}; {}(slot); *slot = {}(&{value}); }}\n",
                             ctype(elem.ty()),
                             drop_fn(elem.ty()),
                             take_fn(elem.ty())
                         ),
-                        Type::List(_) => format!("*at{c}({pointer}, {key}) = {value};\n"),
+                        Type::List(_) => format!("*{slot} = {value};\n"),
                         _ => unreachable!(),
                     });
                 }
@@ -4073,8 +4083,8 @@ impl<'a> Generator<'a> {
                     let value = self.expr_as(expr, ty);
                     let pointer = self.pointer(local);
                     let target = format!(
-                        "(*at{}({pointer}, {key})){}",
-                        ctype(container),
+                        "(*{}){}",
+                        self.slot(container, &pointer, &key, index),
                         self.members(elem, field)
                     );
                     self.code.push_str(&if owned(ty) {

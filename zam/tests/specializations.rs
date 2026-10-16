@@ -72,3 +72,68 @@ fn bounded_accumulator_and_recursive_generic_calls_keep_results() {
     expected.push_str("4\n");
     assert_eq!(String::from_utf8_lossy(&result.stdout), expected);
 }
+
+/// 运行源码，并用 ZAMAK_DUMP_C 取回入口模块生成的 C。
+fn run_and_dump(case: &Case, source: &str) -> (std::process::Output, String) {
+    let file = case.path("main.zm");
+    let dump = case.path("dump");
+    let _ = std::fs::remove_dir_all(&dump);
+    std::fs::write(&file, source).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_zam"))
+        .arg("run")
+        .arg(&file)
+        .env("ZAMAK_CACHE_DIR", case.path("cache"))
+        .env("ZAMAK_DUMP_C", &dump)
+        .output()
+        .unwrap();
+    // 命中缓存时不会重新生成 C；每次用新的缓存目录保证能取到。
+    let c = std::fs::read_to_string(dump.join("main.c")).unwrap_or_default();
+    (output, c)
+}
+
+#[test]
+fn list_indexes_bounded_by_a_stable_length_skip_checks() {
+    // 长度不变的列表：for i in range(len(xs)) 与 let n = len(xs) 后的 range(a, n) 都直接访问元素。
+    let case = Case::new("specializations", "list-index-proof");
+    let (output, c) = run_and_dump(
+        &case,
+        "fn total(xs: &[i64]) -> i64:\n    let mut s = 0\n    for i in range(len(xs)):\n        s += xs[i]\n    s\n\nfn pairs(xs: &mut [i64]):\n    let n = len(xs)\n    for i in range(n):\n        for j in range(i + 1, n):\n            xs[j] += xs[i]\n\nfn main():\n    let mut xs: [i64] = [1, 2, 3]\n    println(total(xs))\n    pairs(&mut xs)\n    println(xs)\n",
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "6\n[1, 3, 7]\n"
+    );
+    assert!(c.contains("(&(p0)->data["), "{c}");
+}
+
+#[test]
+fn list_indexes_keep_checks_when_the_length_can_change() {
+    // 循环里改长度、以 &mut 传出、整体重新赋值、下标不是循环变量：都保留检查（负下标照常换算）。
+    let case = Case::new("specializations", "list-index-unproven");
+    for source in [
+        "fn grow(xs: &mut [i64]):\n    for i in range(len(xs)):\n        if xs[i] == 1: xs.push(9)\n\nfn main():\n    let mut xs: [i64] = [1, 2]\n    grow(&mut xs)\n    println(xs)\n",
+        "fn other(xs: &mut [i64]): xs.clear()\n\nfn shrink(xs: &mut [i64]):\n    for i in range(len(xs)):\n        println(xs[i])\n        other(&mut xs)\n\nfn main():\n    let mut xs: [i64] = [1, 2]\n    shrink(&mut xs)\n",
+        "fn main():\n    let mut xs: [i64] = [1, 2, 3]\n    for i in range(len(xs)):\n        println(xs[i])\n        xs = [4]\n",
+        "fn main():\n    let xs: [i64] = [1, 2, 3]\n    for i in range(len(xs)):\n        println(xs[i - 1])\n",
+    ] {
+        let (output, c) = run_and_dump(&case, source);
+        // 直接访问只会写成 `(&(指针)->data[下标])`；这里一处都不该有。
+        assert!(!c.contains(")->data[v"), "{source}\n{c}");
+        assert!(!c.is_empty(), "{source}: {}", String::from_utf8_lossy(&output.stderr));
+    }
+    // 第二个程序在 clear 之后越界：照常报错。
+    let (output, _) = run_and_dump(&case, "fn other(xs: &mut [i64]): xs.clear()\n\nfn shrink(xs: &mut [i64]):\n    for i in range(len(xs)):\n        println(xs[i])\n        other(&mut xs)\n\nfn main():\n    let mut xs: [i64] = [1, 2]\n    shrink(&mut xs)\n");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("list index out of bounds"));
+    // 下标 i - 1 在第一轮是 -1：与 Python 一样取最后一个元素。
+    let (output, _) = run_and_dump(&case, "fn main():\n    let xs: [i64] = [1, 2, 3]\n    for i in range(len(xs)):\n        println(xs[i - 1])\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "3\n1\n2\n"
+    );
+}
