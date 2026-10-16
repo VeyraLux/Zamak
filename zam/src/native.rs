@@ -1,10 +1,10 @@
 use crate::compiler::{
     bitwise, block_roots, borrow_of, captured_view, compound, constructed, copied, each_bindings,
-    field_function, field_path, func_error, func_sig, func_type, func_type_full, generic_value,
-    instance_of, instance_with, lambda_body, lambda_prints, linked_tuple, method_args,
-    method_signature, nest, nested, numeric, overload, record_id, record_method, record_order,
-    sort_by_type, terminates, tuple_fields, Block, Elem, Expr, Instruction, Module, Pattern,
-    Receiver, Type, COPY,
+    elem_from, field_function, field_path, func_error, func_sig, func_type, func_type_full,
+    generic_value, instance_of, instance_with, lambda_body, lambda_prints, linked_tuple, loop_list,
+    method_args, method_signature, nest, nested, numeric, overload, record_id, record_method,
+    record_order, sort_by_type, terminates, tuple_fields, Block, Elem, Expr, Instruction, Module,
+    Pattern, Receiver, Type, COPY,
 };
 use crate::project::Result;
 use std::collections::BTreeMap;
@@ -3624,7 +3624,13 @@ impl<'a> Generator<'a> {
                     self.code.push_str("}\n");
                 }
                 Instruction::Let(name, _, annotation, expr) => {
-                    let ty = annotation.unwrap_or_else(|| self.ty(expr));
+                    let ty = match (annotation, loop_list(name, expr)) {
+                        (Some(ty), _) => *ty,
+                        (None, Some(first)) => {
+                            Type::List(elem_from(self.ty(first)).expect("checked loop list"))
+                        }
+                        (None, None) => self.ty(expr),
+                    };
                     let value = self.expr_as(expr, ty);
                     self.locals.insert(name.clone(), (value, ty));
                 }

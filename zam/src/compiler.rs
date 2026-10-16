@@ -282,6 +282,46 @@ pub fn expr_roots(expr: &Expr, out: &mut BTreeSet<String>) {
     }
 }
 
+/// `for x in [a, b]:` 生成的隐藏变量：值是非空的列表字面量时返回第一项（按它定元素类型）。
+pub fn loop_list<'e>(local: &str, expr: &'e Expr) -> Option<&'e Expr> {
+    match expr {
+        Expr::Array(items) if local.starts_with("$for") => items.first(),
+        _ => None,
+    }
+}
+
+/// 能接住临时值的只读借用类型：返回被借用的 owned 类型。
+pub fn temporary_borrow(expected: Type) -> Option<Type> {
+    match expected {
+        Type::Shared
+        | Type::ListRef(_, false)
+        | Type::MapRef(_, _, false)
+        | Type::RecordRef(_, false) => expected.borrowable().map(|(owned, _)| owned),
+        _ => None,
+    }
+}
+
+/// 求值得到新值的表达式（不是变量、字段、元素这些已有的位置）。
+pub fn produces_value(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Call(..)
+            | Expr::Try(..)
+            | Expr::Chain(..)
+            | Expr::Method(..)
+            | Expr::ElementMethod(..)
+            | Expr::Apply(..)
+            | Expr::Invoke(..)
+            | Expr::Binary(..)
+            | Expr::If(..)
+            | Expr::Match(..)
+            | Expr::Record(..)
+            | Expr::Variant(..)
+            | Expr::Tuple(..)
+            | Expr::MapLit(..)
+    )
+}
+
 /// 匿名函数体里的那个表达式（打印语句打印的值，或函数体本身）；函数内部用 `fn name(...):` 定义的
 /// 函数体是完整的代码块（尾部的值已经改写成 return），这时是 None。
 pub fn lambda_body(body: &Block) -> Option<&Expr> {
@@ -2745,10 +2785,21 @@ impl Parser {
         }
         if self.symbol('&') {
             let mutable = self.keyword("mut");
+            let start = self.position;
             let mut name = self.word()?;
             while self.symbol('.') {
                 name.push('.');
                 name.push_str(&self.word()?);
+            }
+            // `&env.arg(0)?`、`&make()`：借调用结果就是把临时值传过去，与不写 & 相同。
+            if self.peek() == Some(&Token::Symbol('(')) {
+                if mutable {
+                    return Err(
+                        "cannot mutably borrow a call result; store it with let mut first".into(),
+                    );
+                }
+                self.position = start;
+                return self.atom();
             }
             if self.symbol('[') {
                 let index = self.expr()?;
@@ -3296,15 +3347,29 @@ impl Parser {
                 }
                 let nested = self.suite(imports, result, "for")?;
                 Instruction::Each(local, second, path, mutable, nested)
-            } else if second.is_some() {
-                return Err(
-                    "two loop variables need a borrowed list or map: for i, x in &items or for k, v in &m"
-                        .into(),
-                );
             } else {
                 let start = self.expr()?;
+                // `for name in fs.list(dir)?:`：遍历一个值（调用结果、字面量）。先把它存进隐藏变量，
+                // 循环借用那个变量；值在循环前求一次。
+                if self.peek() == Some(&Token::Symbol(':')) {
+                    let hidden = format!("$for{}", self.temps);
+                    self.temps += 1;
+                    let nested = self.suite(imports, result, "for")?;
+                    // 循环体先解析完再登记，免得被循环体里的第一条语句拿走。
+                    self.pending
+                        .push(Instruction::Let(hidden.clone(), false, None, start));
+                    return Ok(Some(Instruction::Each(
+                        local, second, hidden, false, nested,
+                    )));
+                }
+                if second.is_some() {
+                    return Err(
+                        "two loop variables need a list or map: for i, x in items or for k, v in m"
+                            .into(),
+                    );
+                }
                 if !(self.symbol('.') && self.symbol('.')) {
-                    return Err("expected `..` in for range: for name in start..end, or iterate a list with for x in &items".into());
+                    return Err("expected `..` in for range: for name in start..end, or iterate a list with for x in items".into());
                 }
                 let end = self.expr()?;
                 let nested = self.suite(imports, result, "for")?;
@@ -5053,6 +5118,13 @@ impl<'a> Checker<'a> {
         expected: Type,
         loans: &mut BTreeMap<String, Type>,
     ) -> Result<(), String> {
+        // 求出来的值（调用结果、字符串拼接、if/match 的值）借给只读借用参数：先成为临时值，
+        // 语句结束时释放，例如 `string.parse_i64(string.trim(&line))`、`total(&xs.slice(0, 2))`。
+        if let Some(owned) = temporary_borrow(expected) {
+            if produces_value(expr) && self.value_type(expr).is_ok_and(|ty| ty == owned) {
+                return self.expr(expr, owned, loans);
+            }
+        }
         match expr {
             Expr::FnRef(name) => {
                 let generic = self
@@ -6072,7 +6144,9 @@ impl<'a> Checker<'a> {
                 Instruction::Each(local, second, path, mutable, nested) => {
                     // 列表遍历元素（两个名字时先是下标），字典遍历键（两个名字时还有值），都按插入顺序。
                     let container = self.container(path, *mutable, &loans).map_err(|error| {
-                        if error.ends_with("is not a list or map") {
+                        if path.starts_with("$for") {
+                            "type mismatch: for x in VALUE needs a list or map; to count, write a range such as for i in 0..n".to_owned()
+                        } else if error.ends_with("is not a list or map") {
                             format!("{error}; to count, write for i in 0..{path}")
                         } else {
                             error
@@ -6254,9 +6328,14 @@ impl<'a> Checker<'a> {
                             continue;
                         }
                     }
-                    let ty = match annotation {
-                        Some(ty) => *ty,
-                        None => self.ty(expr)?,
+                    let ty = match (annotation, loop_list(local, expr)) {
+                        (Some(ty), _) => *ty,
+                        // `for n in [3, 1, 2]:` 的隐藏变量是列表，元素类型看第一项。
+                        (None, Some(first)) => Type::List(
+                            elem_from(self.ty(first)?)
+                                .ok_or("unsupported list element type in for loop")?,
+                        ),
+                        (None, None) => self.ty(expr)?,
                     };
                     if ty.is_reference() || ty == Type::Unit {
                         return Err("borrow escape: locals require an owned value".into());

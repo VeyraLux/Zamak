@@ -669,3 +669,21 @@ fn fallible_function_values() {
         assert!(stderr.contains(message), "{body}: {stderr}");
     }
 }
+
+#[test]
+fn python_style_conveniences() {
+    let case = Case::new("expressions", "conveniences");
+    // 直接遍历调用结果与列表字面量；print 同 println（模块自己定义了 print 时用自己的）；
+    // 调用结果、拼接、if 的值可以直接借给只读借用参数，`&f(x)` 等于 `f(x)`。
+    let source = "use std/string\n\nstruct P:\n    name: string\n\nfn words() -> [string]: string.words(\"b a c\")\n\nfn total(xs: &[i64]) -> i64:\n    let mut sum = 0\n    for x in xs: sum += x\n    sum\n\nfn shout(s: &string) -> string: string.upper(s)\n\nfn label(p: &P) -> string: copy(&p.name)\n\nfn main() -> !string:\n    for w in words():\n        print(w)\n    for i, w in string.split(\"x,y\", \",\"):\n        print(\"{i} {w}\")\n    for n in [3, 1, 2]:\n        if n > 1:\n            for k in words():\n                print(\"{n}{k}\")\n    for name, count in {\"a\": 1, \"b\": 2}:\n        print(\"{name}={count}\")\n    print()\n    let line = \"  42 \"\n    print(string.parse_i64(string.trim(&line))?)\n    let xs: [i64] = [1, 2, 3, 4]\n    print(total(&xs.slice(0, 2)))\n    print(total(xs.slice(1, 4)))\n    print(shout(\"a\" + \"b\"))\n    print(shout(if true: \"yes\" else: \"no\"))\n    print(label(P(name: \"p\")))\n    print(string.byte_len(&string.repeat(\"ab\", 3)))\n";
+    assert_eq!(
+        stdout(&case.run(source)),
+        "b\na\nc\n0 x\n1 y\n3b\n3a\n3c\n2b\n2a\n2c\na=1\nb=2\n\n42\n3\n9\nAB\nYES\np\n6\n"
+    );
+    assert_eq!(
+        stdout(&case.run("fn print(x: i64): println(x * 10)\n\nfn main(): print(4)\n")),
+        "40\n"
+    );
+    let output = case.run("fn make() -> [i64]: [1]\n\nfn grow(xs: &mut [i64]): xs.push(1)\n\nfn main(): grow(&mut make())\n");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("cannot mutably borrow a call result"));
+}

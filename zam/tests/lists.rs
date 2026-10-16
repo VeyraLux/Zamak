@@ -169,7 +169,7 @@ fn checker_rejects_list_misuse() {
         ),
         (
             "let xs: [i64] = [1]\n    for x in xs.len(): pass",
-            "iterate a list with for x in &items",
+            "needs a list or map; to count, write a range",
         ),
         (
             "let xs: [i64] = [1]\n    xs.shuffle()",
@@ -329,7 +329,7 @@ fn indexed_pair_and_mutable_loops() {
         ),
         (
             "for i, x in 0..3: pass",
-            "two loop variables need a borrowed list or map",
+            "two loop variables need a list or map",
         ),
         (
             "let xs: [i64] = [1]\n    for x in &xs:\n        x = 2",
