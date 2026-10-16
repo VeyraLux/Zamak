@@ -188,6 +188,13 @@ impl Analysis {
                 }
                 Interval::TOP
             }
+            Expr::Invoke(callee, values) => {
+                self.expr(callee, env, collect);
+                for value in values {
+                    self.expr(value, env, collect);
+                }
+                Interval::TOP
+            }
             Expr::Variable(name) => env.get(name).map_or(Interval::TOP, |f| f.value),
             Expr::Unary('-', inner) => {
                 let range = self.expr(inner, env, collect);

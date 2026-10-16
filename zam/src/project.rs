@@ -907,6 +907,12 @@ impl Project {
                     self.resolve_expr(module, locals, arg)?;
                 }
             }
+            Expr::Invoke(callee, args) => {
+                self.resolve_expr(module, locals, callee)?;
+                for arg in args {
+                    self.resolve_expr(module, locals, arg)?;
+                }
+            }
             Expr::Record(name, fields) => {
                 let (target, short) = if let Some((alias, short)) = name.split_once('.') {
                     let imports: Vec<_> = self.modules[module]
@@ -1641,6 +1647,10 @@ fn declared(body: &Block, names: &mut BTreeSet<String>) {
                 declared(body, names);
             }
             Expr::Apply(_, values) => values.iter().for_each(|value| expr(value, names)),
+            Expr::Invoke(callee, values) => {
+                expr(callee, names);
+                values.iter().for_each(|value| expr(value, names));
+            }
             Expr::Catch(inner, binding, block) => {
                 names.insert(binding.clone());
                 declared(block, names);
