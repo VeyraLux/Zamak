@@ -80,7 +80,7 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 - 字符字面量 `'a'`、`'#'`、`'\n'`、`'\''`：值是 Unicode 码点（`i64`），与 `string.byte_at` 比较只用 ASCII 字符。
 - 字符串：UTF-8，转义 `\n \r \t \" \\`，插值 `"{name}"` / `"{p.name}"` / `"{a + b}"` / `"{xs[i]}"` / `"{f(x)}"`（变量、字段、元素只读不移动；花括号里不能有字符串字面量或花括号），字面大括号写 `{{` / `}}`。
 - 注释：`//` 与 `#`；**没有块注释**。
-- 模块：`use greeting`（同目录 `greeting.zm`，只能调用其 `pub fn`）、`use std/string`、`use std/io`、`use std/fmt`、`use std/fs`、`use std/env`、`use std/math`；调用 `greeting.hello()`、`io.println("x")`；`println(...)` 无需导入。
+- 模块：`use greeting`（同目录 `greeting.zm`，只能调用其 `pub fn`）、`use std/string`、`use std/io`、`use std/fmt`、`use std/fs`、`use std/env`、`use std/math`、`use std/time`、`use std/random`；调用 `greeting.hello()`、`io.println("x")`；`println(...)` 无需导入。
 - 所有权：字符串赋值/传参是**移动**，移动后再用报错；借用只能作为参数（`&s`、`&mut s`），调用返回即结束；共享借用可多个，可变借用必须独占且要求可变所有者；借用参数不能移动、返回或存进局部变量。整数/布尔是拷贝。
 - 错误值：签名 `fn load(p: &string) -> i64!string`（成功 T / 失败 E）或 `-> !string`（只失败）；`fail "msg"` 产生错误并立即返回；`let v = load(&p)?` 失败时向调用方传播（当前函数签名必须带相同的 `!E`）；`load(&p) catch e:` 加缩进块就地处理（**不传播**，错误值只在块内可见，**块必须在所有路径 `return`**）；`fn main() -> !string` 允许，未捕获错误写 stderr 并以退出码 1 结束。`E` 可以是 `string`、结构体或枚举：`fail ConfigError.Missing(k)`，`catch e:` 里 `match e`，`?` 只在同一种 `E` 之间传递（不同的用 catch 转换），`main -> !E` 未捕获时按 println 格式写 stderr；catch 块可以用 return、fail、break、continue 收尾。C 侧结果结构体按（T, E）命名：E 是字符串时仍叫 `F_<T>`，否则 `F_<T>_<E>`（`fallible_name(ty, error)`）。
 - 标准库（`&string` 参数传 `&name`、已是借用的变量，或直接写字符串字面量/插值 `"x"`、`"{n}"`；owned 变量必须加 `&`）：
@@ -91,10 +91,11 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
   - 全局 `abs(x)`/`min(a, b)`/`max(a, b)`：不用导入，i64 与 f64 都行（i64 `abs` 溢出终止）；`project.rs` 在本模块没有同名函数时改写成 `std/core:abs` 等，检查器与生成器经 `compiler::overload` 按第一个参数类型选 `std/core:abs_f64` 等版本，IR 里只有原名。
   - `std/math`（参数都是 `f64`）：`sqrt`、`pow(x, y)`、`exp`、`log`（自然对数）、`log10`、`sin`、`cos`、`tan`、`atan`、`atan2(y, x)`、`floor`、`ceil`、`round`（远离零）、`trunc`、`abs`、`min(a, b)`、`max(a, b)`、`is_nan(x) -> bool`；常量 `math.pi`、`math.e`、`math.inf`（`project.rs` 解析时替换成字面量）。
   - `std/fmt`：`fixed(x, digits) -> string`（digits 0–30，超出终止程序）；`println` 同全局。
+  - `std/time`：`time() -> f64`、`monotonic() -> f64`、`sleep(seconds: f64)`（负数当 0，封顶一天）、`iso_utc(t) -> string`、`iso_local(t) -> string`（NaN/越界终止程序）。`std/random`：`seed(n)`、`random() -> f64`、`uniform(a, b)`、`randint(a, b)`（含两端）、`randrange(a, b)`（不含 b）；xoshiro256**，状态 `zam_random_state[4]`/`zam_random_seeded` 定义在入口模块目标文件（普通 main 与测试 main 都定义），STD_PRELUDE 里 extern 声明；同一种子跨平台同一串数（测试钉住了值）。C 侧：RUNTIME 开头在非 Windows、非 macOS 上定义 `_POSIX_C_SOURCE 200809L`（glibc 在 -std=c11 下才给 clock_gettime/nanosleep）；Windows 声明 GetSystemTimePreciseAsFileTime/QueryPerformanceCounter/Sleep，不引入 windows.h；日期用 Hinnant 的 civil/days 算法，本地偏移由 localtime 反推。
   - `println` / `io.println` / `fmt.println` 打印字符串、整数、浮点数或布尔值。
   - 可失败函数用 `?` 时当前函数要带 `!string`，所以读写文件的 `main` 一般写成 `fn main() -> !string`；`fs.write(&p, &t)?` 可以单独成一条语句。
   - 标准库实现：`zam/src/native.rs` 的 `BUILTINS` 表（签名 + C 函数体，`p0`/`p1`… 是参数）和 `STD_PRELUDE`（共用 C 辅助）；`project.rs` 把 `std/*` 调用解析成 `std/<模块>:<函数>`，检查器按普通函数签名检查。新增函数只需在表里加一项，再升 `native-c-N`。列表的 C 侧是每种元素一组 `Li`/`Lf`/`Lb`/`Ls` 结构与 `push/pop/at/len/swap/insert/removeat/reverse/clear/extend/drop/take` 函数（`list_helpers`），可比较元素另有 `cmp/sort/index/has/slice`（`comparable_list_helpers`），字典是 `M<键><值>`（如 `Msi`）一组 `set/at/has/getor/del/keys/len` 与插入顺序表 + 开放寻址下标表（`MAP_TEMPLATE`）。用到哪些容器由生成器记录在 `Generator.containers`（每个 `scalar()` 都登记类型）加上签名和结构体字段，函数体先生成、容器辅助后拼在前面。容器方法签名只在 `compiler::method_signature` 一处定义，检查器与生成器共用。
-- **尚未实现，不要写**：可写捕获的闭包、多行匿名函数、三层及以上的连续下标（`a[i][j][k]`）、`xs[i].tags[j]`、`i64`/`f64` 隐式转换、目录遍历、追加写文件、网络、时间、调试器、REPL、文档生成、线程、unsafe、extern fn 的指针/结构体/回调参数、块注释、单独移出 owned 字段。
+- **尚未实现，不要写**：可写捕获的闭包、多行匿名函数、三层及以上的连续下标（`a[i][j][k]`）、`xs[i].tags[j]`、`i64`/`f64` 隐式转换、目录遍历、追加写文件、网络、调试器、REPL、文档生成、线程、unsafe、extern fn 的指针/结构体/回调参数、块注释、单独移出 owned 字段。
 
 ## 常见诊断（照文本改代码）
 

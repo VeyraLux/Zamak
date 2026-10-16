@@ -245,6 +245,8 @@ Import a module with `use std/<name>` and call `name.function(...)`. `println(x)
 - `std/fs`: `fs.read(&path) -> string!string`, `fs.write(&path, &text) -> !string`.
 - `std/math` (all `f64`): `sqrt`, `pow(x, y)`, `exp`, `log` (natural), `log10`, `sin`, `cos`, `tan`, `atan`, `atan2(y, x)`, `floor`, `ceil`, `round` (half away from zero), `trunc`, `abs`, `min(a, b)`, `max(a, b)`, `is_nan(x) -> bool`; constants `math.pi`, `math.e`, `math.inf`.
 - `std/fmt`: `fmt.fixed(x, digits) -> string` (0 to 30 digits).
+- `std/time`: `time.time() -> f64` (seconds since 1970), `time.monotonic() -> f64` (for measuring durations), `time.sleep(seconds: f64)`, `time.iso_utc(t) -> string` (`1970-01-01T00:00:00Z`), `time.iso_local(t) -> string`.
+- `std/random`: `random.randint(a, b) -> i64` (both ends included), `random.randrange(a, b) -> i64` (b excluded), `random.random() -> f64` in [0, 1), `random.uniform(a, b) -> f64`, `random.seed(n)`.
 - `std/string` (all positions are byte offsets):
   - `byte_len(&s) -> i64`, `char_len(&s) -> i64`, `byte_at(&s, i) -> i64`
   - `equal(&a, &b) -> bool`, `starts_with(&s, &p) -> bool`, `ends_with(&s, &p) -> bool`, `contains(&s, &p) -> bool`
