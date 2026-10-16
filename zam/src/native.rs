@@ -89,9 +89,10 @@ static int64_t zam_floordiv(int64_t a, int64_t b) {
     return q;
 }
 static int64_t zam_mod(int64_t a, int64_t b) {
-    if (!b) zam_zero_division();
+    int64_t r;
     if (b == -1) return 0;
-    int64_t r = a % b;
+    // zam_remainder 负责除以零与 32 位快路径；这里只按除数的符号修正。
+    r = zam_remainder(a, b);
     if (r != 0 && ((r < 0) != (b < 0))) r += b;
     return r;
 }
