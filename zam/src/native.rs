@@ -1,5 +1,5 @@
 use crate::compiler::{
-    bitwise, borrow_of, captured_view, compound, constructed, copied, each_bindings, expr_roots,
+    bitwise, block_roots, borrow_of, captured_view, compound, constructed, copied, each_bindings,
     field_function, field_path, func_sig, func_type, instance_of, instance_with, lambda_body,
     lambda_prints, linked_tuple, method_args, method_signature, nest, nested, numeric, overload,
     record_id, record_method, record_order, sort_by_type, terminates, tuple_fields, Block, Elem,
@@ -2090,7 +2090,7 @@ impl<'a> Generator<'a> {
     /// 匿名函数捕获的外层变量：函数体里用到、又是当前局部变量的名字。
     fn captures(&self, params: &[(String, Option<Type>)], body: &Block) -> Vec<String> {
         let mut roots = std::collections::BTreeSet::new();
-        expr_roots(lambda_body(body), &mut roots);
+        block_roots(body, &mut roots);
         roots
             .into_iter()
             .filter(|name| self.locals.contains_key(name) && !params.iter().any(|(p, _)| p == name))
@@ -2114,14 +2114,14 @@ impl<'a> Generator<'a> {
             None => {
                 let mut locals = BTreeMap::new();
                 for name in self.captures(params, body) {
-                    let ty = captured_view(self.locals[&name].1).ok()?;
+                    let ty = captured_view(self.locals[&name].1, true).ok()?;
                     locals.insert(name, (String::new(), ty));
                 }
                 for ((name, _), ty) in params.iter().zip(&types) {
                     locals.insert(name.clone(), (String::new(), *ty));
                 }
                 let sub = self.sub(locals, Type::Unit);
-                let ty = sub.ty(lambda_body(body));
+                let ty = sub.ty(lambda_body(body)?);
                 ty.borrowable().map_or(ty, |(owned, _)| owned)
             }
         };
@@ -2177,7 +2177,7 @@ impl<'a> Generator<'a> {
         let mut inits = Vec::new();
         for (index, capture) in captures.iter().enumerate() {
             let (local, ty) = self.locals[capture].clone();
-            let view = captured_view(ty).expect("checked capture");
+            let view = captured_view(ty, true).expect("checked capture");
             if by_value(ty) {
                 // 数字、布尔与函数：存地址，读的时候解引用，看到的是调用时的当前值。
                 fields.push(format!("{} *c{index};", ctype(ty)));
@@ -2205,17 +2205,20 @@ impl<'a> Generator<'a> {
             g.locals.insert(param.clone(), (local, *ty));
         }
         g.locals.extend(locals);
-        if result == Type::Unit {
-            g.block(body, Type::Unit);
-        } else {
-            let value = g.expr_as(lambda_body(body), result);
-            let value = g.moved(&value, result);
-            g.code
-                .push_str(&format!("{} result = {value};\n", ctype(result)));
-        }
-        g.cleanup();
-        if result != Type::Unit {
-            g.code.push_str("return result;\n");
+        match lambda_body(body) {
+            Some(value) if result != Type::Unit => {
+                let value = g.expr_as(value, result);
+                let value = g.moved(&value, result);
+                g.code
+                    .push_str(&format!("{} result = {value};\n", ctype(result)));
+                g.cleanup();
+                g.code.push_str("return result;\n");
+            }
+            // 没有返回值的函数体，或函数里定义的函数（完整代码块，return 语句自己返回）。
+            _ => {
+                g.block(body, result);
+                g.cleanup();
+            }
         }
         let environment = if captures.is_empty() {
             "(void)envp;\n".to_owned()
