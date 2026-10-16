@@ -94,6 +94,11 @@ pub struct Project {
     modules: BTreeMap<String, Input>,
     // 项目与各个依赖包的 `[native]`：（包的根目录, 设置）。
     native: Vec<(PathBuf, package::Native)>,
+    // 库：`zam.toml` 没写 entry，没有 main，只能检查和测试。`entry` 是它的第一个模块，测试的
+    // 入口生成在那里。
+    pub library: bool,
+    pub version: Option<crate::registry::Version>,
+    pub description: Option<String>,
 }
 
 fn is_source(path: &Path) -> bool {
@@ -243,31 +248,54 @@ impl Project {
                     },
                 )]),
                 native: Vec::new(),
+                library: false,
+                version: None,
+                description: None,
             });
         }
         let manifest = Self::manifest_path(input);
-        let config = package::manifest(&manifest, false)?;
+        let config = package::manifest(&manifest, true)?;
         let name = config.name.clone();
-        let entry_path = config.entry.clone().expect("project entry");
         let module_path = config.modules.clone();
-        let entry = entry_path
-            .strip_prefix(&module_path)
-            .map_err(|_| "entry must be inside modules")?;
-        if !is_source(entry) {
-            return Err("entry must be a .zm file".into());
-        }
-        let entry = entry
-            .with_extension("")
-            .to_str()
-            .ok_or("entry must be UTF-8")?
-            .replace('\\', "/");
+        let entry = match &config.entry {
+            Some(entry_path) => {
+                let entry = entry_path
+                    .strip_prefix(&module_path)
+                    .map_err(|_| "entry must be inside modules")?;
+                if !is_source(entry) {
+                    return Err("entry must be a .zm file".into());
+                }
+                Some(
+                    entry
+                        .with_extension("")
+                        .to_str()
+                        .ok_or("entry must be UTF-8")?
+                        .replace('\\', "/"),
+                )
+            }
+            None => None,
+        };
         let root = manifest.parent().unwrap_or(Path::new(".")).to_owned();
         let base = root.join(module_path);
         let mut modules = BTreeMap::new();
         scan(&base, &base, &mut modules, parse)?;
-        if !modules.contains_key(&entry) {
-            return Err(format!("missing entry module {entry}"));
-        }
+        let library = entry.is_none();
+        let entry = match entry {
+            Some(entry) if modules.contains_key(&entry) => entry,
+            Some(entry) => return Err(format!("missing entry module {entry}")),
+            // 库：按名字排第一的模块（与包同名的根模块优先）。
+            None => {
+                if modules.contains_key(&name) {
+                    name.clone()
+                } else {
+                    modules
+                        .keys()
+                        .next()
+                        .cloned()
+                        .ok_or_else(|| format!("{} has no .zm files", base.display()))?
+                }
+            }
+        };
         let mut native = vec![(root.clone(), config.native.clone())];
         if let Some(update) = dependencies {
             let packages = package::resolve(
@@ -295,6 +323,9 @@ impl Project {
             entry,
             modules,
             native,
+            library,
+            version: config.version,
+            description: config.description.clone(),
         })
     }
 
@@ -348,7 +379,7 @@ impl Project {
     }
 
     pub fn check(&self) -> Result<()> {
-        self.check_with(false)
+        self.check_with(self.library)
     }
 
     /// 测试函数：各模块里名字以 `test_` 开头的函数（`模块:test_x`），按名字排序。
@@ -1228,6 +1259,12 @@ impl Project {
     }
 
     fn build_with(&self, cache: &Path, tests: &[String]) -> Result<PathBuf> {
+        if self.library && tests.is_empty() {
+            return Err(format!(
+                "{} is a library: zam.toml has no entry, so there is no program to build or run; use zam check or zam test, or add entry = \"src/main.zm\" under [project]",
+                self.name
+            ));
+        }
         let build_started = Instant::now();
         let check_started = Instant::now();
         self.check_with(!tests.is_empty())?;

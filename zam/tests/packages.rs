@@ -258,7 +258,7 @@ fn git_and_path_dependencies_lock_update_and_work_offline() {
     );
     write(
         &app.join("zam.toml"),
-        "[project]\nname = \"app\"\nentry = \"src/main.zm\"\nmodules = \"src\"\n\n[dependencies]\nmathx = \"1.0\"\n",
+        "[project]\nname = \"app\"\nentry = \"src/main.zm\"\nmodules = \"src\"\n\n[dependencies]\nmathx = 1\n",
     );
     let output = zam(&["check", "."], &app, &cache);
     assert!(
@@ -266,4 +266,218 @@ fn git_and_path_dependencies_lock_update_and_work_offline() {
         "{}",
         stderr(&output)
     );
+}
+
+fn zam_index(args: &[&str], dir: &Path, cache: &Path, index: &Path) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_zam"))
+        .args(args)
+        .current_dir(dir)
+        .env("ZAMAK_CACHE_DIR", cache)
+        .env("ZAMAK_INDEX", index)
+        .output()
+        .unwrap()
+}
+
+/// 发布一个版本：改 zam.toml 里的版本号与根模块，提交、打标签、推到 origin，再 `zam publish`。
+fn release(
+    package: &Path,
+    cache: &Path,
+    index: &Path,
+    manifest: &str,
+    source: &str,
+    version: &str,
+) {
+    write(&package.join("zam.toml"), manifest);
+    let name = package.file_name().unwrap().to_str().unwrap();
+    write(&package.join(format!("src/{name}.zm")), source);
+    git(package, &["add", "-A"]);
+    git(package, &["commit", "-qm", version]);
+    git(package, &["tag", &format!("v{version}")]);
+    git(package, &["push", "-q", "origin", "HEAD", "--tags"]);
+    let output = zam_index(&["publish", "."], package, cache, index);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(stderr(&output).contains(&format!("PUBLISH {name} {version}")));
+}
+
+/// 带远程（本地裸仓库）的空 git 仓库。
+fn repository(root: &Path, name: &str) -> (PathBuf, PathBuf) {
+    let dir = root.join(name);
+    let remote = root.join(format!("{name}-remote.git"));
+    fs::create_dir_all(&remote).unwrap();
+    git(&remote, &["init", "-q", "--bare"]);
+    fs::create_dir_all(&dir).unwrap();
+    git(&dir, &["init", "-q"]);
+    git(&dir, &["remote", "add", "origin", &url(&remote)]);
+    (dir, remote)
+}
+
+#[test]
+fn registry_versions_resolve_lock_update_and_conflict() {
+    let root = std::env::temp_dir().join(format!("zam-registry-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let _workspace = Workspace(root.clone());
+    let cache = root.join("cache");
+    let index = root.join("index");
+    fs::create_dir_all(index.join("packages")).unwrap();
+
+    // mathx：库（没有 entry）。
+    let (mathx, remote) = repository(&root, "mathx");
+    let manifest = |version: &str| {
+        format!(
+            "[project]\nname = \"mathx\"\nmodules = \"src\"\nversion = \"{version}\"\ndescription = \"Small math helpers\"\n"
+        )
+    };
+    let source = |version: &str| format!("pub fn version() -> string: \"{version}\"\n");
+
+    // 发布前的检查：没有版本号、没提交、没打标签、标签没推送都报错。
+    write(
+        &mathx.join("zam.toml"),
+        "[project]\nname = \"mathx\"\nmodules = \"src\"\n",
+    );
+    write(&mathx.join("src/mathx.zm"), &source("1.0.0"));
+    git(&mathx, &["add", "-A"]);
+    git(&mathx, &["commit", "-qm", "init"]);
+    let publish = || zam_index(&["publish", "."], &mathx, &cache, &index);
+    assert!(
+        stderr(&publish()).contains("add version = \"0.1.0\""),
+        "{}",
+        stderr(&publish())
+    );
+    write(&mathx.join("zam.toml"), &manifest("1.0.0"));
+    assert!(stderr(&publish()).contains("commit your changes"));
+    git(&mathx, &["commit", "-qam", "version"]);
+    assert!(stderr(&publish()).contains("git tag v1.0.0"));
+    git(&mathx, &["tag", "v1.0.0"]);
+    assert!(stderr(&publish()).contains("git push origin v1.0.0"));
+    git(&mathx, &["push", "-q", "origin", "HEAD", "--tags"]);
+    let output = publish();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(stderr(&publish()).contains("already published"));
+    // 库可以检查，不能构建。
+    assert!(zam_index(&["check", "."], &mathx, &cache, &index)
+        .status
+        .success());
+    assert!(stderr(&zam_index(&["build", "."], &mathx, &cache, &index)).contains("is a library"));
+
+    release(
+        &mathx,
+        &cache,
+        &index,
+        &manifest("1.1.0"),
+        &source("1.1.0"),
+        "1.1.0",
+    );
+    release(
+        &mathx,
+        &cache,
+        &index,
+        &manifest("2.0.0"),
+        &source("2.0.0"),
+        "2.0.0",
+    );
+
+    // geo：依赖 mathx >=1.1, <2。
+    let (geo, geo_remote) = repository(&root, "geo");
+    release(
+        &geo,
+        &cache,
+        &index,
+        "[project]\nname = \"geo\"\nmodules = \"src\"\nversion = \"0.1.0\"\ndescription = \"Shapes\"\n\n[dependencies]\nmathx = \">=1.1, <2\"\n",
+        "use mathx\n\npub fn uses() -> string: \"geo on mathx \" + mathx.version()\n",
+        "0.1.0",
+    );
+
+    let output = zam_index(&["search", "math"], &root, &cache, &index);
+    assert_eq!(stdout(&output), "mathx 2.0.0  Small math helpers\n");
+
+    let app = root.join("app");
+    write(
+        &app.join("zam.toml"),
+        "[project]\nname = \"app\"\nentry = \"src/main.zm\"\nmodules = \"src\"\n",
+    );
+    write(
+        &app.join("src/main.zm"),
+        "use mathx\n\nfn main(): println(mathx.version())\n",
+    );
+    let run = || stdout(&zam_index(&["run", "."], &app, &cache, &index));
+
+    // 不写版本：取最新版本，写成 ^2.0.0。
+    let output = zam_index(&["add", "mathx"], &app, &cache, &index);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(fs::read_to_string(app.join("zam.toml"))
+        .unwrap()
+        .contains("mathx = \"^2.0.0\""));
+    assert_eq!(run(), "2.0.0\n");
+
+    // geo 要 mathx <2，与 ^2.0.0 冲突：报出双方的要求，zam.toml 恢复原样。
+    let before = fs::read_to_string(app.join("zam.toml")).unwrap();
+    let output = zam_index(&["add", "geo"], &app, &cache, &index);
+    assert!(!output.status.success());
+    let message = stderr(&output);
+    for part in [
+        "no version of mathx satisfies every requirement",
+        "the project requires mathx ^2.0.0",
+        "geo 0.1.0 requires mathx >=1.1, <2",
+        "available versions: 1.0.0, 1.1.0, 2.0.0",
+    ] {
+        assert!(message.contains(part), "{message}");
+    }
+    assert_eq!(fs::read_to_string(app.join("zam.toml")).unwrap(), before);
+
+    // 换成 ^1.0：取满足双方的最高版本 1.1.0，记进 zam.lock。
+    assert!(zam_index(&["remove", "mathx"], &app, &cache, &index)
+        .status
+        .success());
+    assert!(!app.join("zam.lock").exists());
+    assert!(zam_index(&["add", "mathx", "^1.0"], &app, &cache, &index)
+        .status
+        .success());
+    let output = zam_index(&["add", "geo"], &app, &cache, &index);
+    assert!(output.status.success(), "{}", stderr(&output));
+    write(
+        &app.join("src/main.zm"),
+        "use mathx\nuse geo\n\nfn main():\n    println(mathx.version())\n    println(geo.uses())\n",
+    );
+    assert_eq!(run(), "1.1.0\ngeo on mathx 1.1.0\n");
+    let lock = fs::read_to_string(app.join("zam.lock")).unwrap();
+    assert!(
+        lock.contains("name = \"mathx\"\nversion = \"1.1.0\""),
+        "{lock}"
+    );
+
+    // 新版本 1.2.0：锁文件不变时照用 1.1.0；zam update 之后用 1.2.0。
+    release(
+        &mathx,
+        &cache,
+        &index,
+        &manifest("1.2.0"),
+        &source("1.2.0"),
+        "1.2.0",
+    );
+    assert_eq!(run(), "1.1.0\ngeo on mathx 1.1.0\n");
+    assert!(zam_index(&["update", "."], &app, &cache, &index)
+        .status
+        .success());
+    assert_eq!(run(), "1.2.0\ngeo on mathx 1.2.0\n");
+
+    // 撤回 1.2.0：已锁定的照常能用，重新解析时不再选它。
+    let entry = index.join("packages/mathx.toml");
+    let text = fs::read_to_string(&entry).unwrap();
+    let position = text.find("version = \"1.2.0\"").unwrap();
+    fs::write(
+        &entry,
+        format!("{}yanked = true\n{}", &text[..position], &text[position..]),
+    )
+    .unwrap();
+    assert_eq!(run(), "1.2.0\ngeo on mathx 1.2.0\n");
+    assert!(zam_index(&["update", "."], &app, &cache, &index)
+        .status
+        .success());
+    assert_eq!(run(), "1.1.0\ngeo on mathx 1.1.0\n");
+
+    // 锁定后不需要索引和源码仓库（离线）。
+    fs::rename(&index, root.join("index-gone")).unwrap();
+    fs::rename(&remote, root.join("mathx-remote-gone")).unwrap();
+    fs::rename(&geo_remote, root.join("geo-remote-gone")).unwrap();
+    assert_eq!(run(), "1.1.0\ngeo on mathx 1.1.0\n");
 }
