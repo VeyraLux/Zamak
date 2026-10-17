@@ -20,6 +20,9 @@ GLYPHS = {
     'drop': ['0001000', '0001000', '0011100', '0011100', '0111110', '0111110', '1111111', '1111111', '1111111', '0111110', '0011100'],
 }
 TEXT = ['>', 'Z', 'A', 'M', 'A', 'K', 'drop']
+# Ƶ 的眼睛：顶上那一横（第 1、2 行）里的第 2、6 列，与吉祥物和方形图标的眼睛位置一致。两种主题都用黑色。
+EYES = {(1, 0), (1, 1), (5, 0), (5, 1)}
+EYE = '#0b1020'
 PIXEL, GAP = 7, 1.5          # 光点 7，间隙 1.5：每格 8.5（7×11 点阵）
 PITCH = PIXEL + GAP
 CHAR = 8 * PITCH             # 7 列光点 + 1 列字距：每个字符同宽
@@ -76,7 +79,7 @@ def svg(colors, dim_alpha, size, halo, halo_alpha, glow, core):
     浅色主题用更大的光点、更窄的间隙抵消。halo：光滴光晕的颜色。core：光滴从中心到边缘的颜色（中心最亮，
     像真的发光体）。"""
     inset = (PIXEL - size) / 2
-    letters, drop, shines = [], [], []
+    letters, drop, shines, lids = [], [], [], []
     for i, col, row, px, py in pixels():
         rect = f'<rect x="{px + inset:g}" y="{py + inset:g}" width="{size:g}" height="{size:g}" rx="{size * 0.26:.2f}"'
         shines.append(rect + '/>')
@@ -87,9 +90,15 @@ def svg(colors, dim_alpha, size, halo, halo_alpha, glow, core):
         # 按字符、按列依次落下，再加一点错位：像雨点一样不齐整，更活泼。
         jitter = ((i * 73 + col * 31 + row * 17) % 11) / 11 * 0.14
         delay = 0.10 + i * 0.24 + col * 0.05 + jitter
+        if TEXT[i] == 'Z' and (col, row) in EYES:
+            # 眼睛：黑色像素，跟着字母一起落下；眼皮是同色的一层，落定后眨一下眼。
+            letters.append(f'{rect.replace(chr(34) + "url(#ink)" + chr(34), chr(34) + EYE + chr(34))} class="px" style="animation-delay:{delay:.3f}s"/>')
+            lids.append(f'{rect} class="lid"/>')
+            continue
         letters.append(f'{rect} class="px" style="animation-delay:{delay:.3f}s"/>')
     drop_delay = 0.10 + 5 * 0.24 + 0.55
     landed = drop_delay + HOP_T
+    blink = landed + 0.35
     # 光滴的位置：第 7 格，光晕的中心落在水滴的腹部。
     x0 = PAD_X + 6 * CHAR
     cx = x0 + (7 * PITCH - GAP) / 2
@@ -123,16 +132,19 @@ def svg(colors, dim_alpha, size, halo, halo_alpha, glow, core):
     .halo {{ transform-box: fill-box; transform-origin: center; opacity: 0; animation: halo 2.4s {landed:.2f}s ease-in-out infinite; }}
     .spark {{ transform-box: fill-box; transform-origin: center; opacity: 0; animation: spark 2.8s ease-in-out infinite; }}
     .band {{ animation: sweep {SWEEP}s {landed - 0.6:.2f}s ease-in-out infinite both; }}
+    .lid {{ transform-box: fill-box; transform-origin: 50% 0; transform: scaleY(0); animation: blink .32s {blink:.2f}s ease-in-out both; }}
     {BOUNCE}
     {HOP}
     /* 光滴落定后呼吸：吸气时光滴微微胀大、光晕向外扩散，呼气时收回；亮度不降。 */
     @keyframes breath {{ 0%, 100% {{ transform: scale(1); }} 50% {{ transform: scale(1.06); }} }}
     @keyframes halo {{ 0%, 100% {{ opacity: .25; transform: scale(.8); }} 50% {{ opacity: .75; transform: scale(1.15); }} }}
+    /* 都落定后眨一下眼：眼皮从上往下合上再睁开。 */
+    @keyframes blink {{ 0%, 100% {{ transform: scaleY(0); }} 50% {{ transform: scaleY(1); }} }}
     @keyframes spark {{ 0%, 60%, 100% {{ opacity: 0; transform: scale(.4) rotate(0deg); }} 72% {{ opacity: 1; transform: scale(1.3) rotate(45deg); }} 84% {{ opacity: 0; transform: scale(.6) rotate(90deg); }} }}
     /* 都落定后一道光扫过（构建完成），之后每隔几秒再扫一次。 */
     @keyframes sweep {{ 0% {{ transform: translateX(-140px); }} 24%, 100% {{ transform: translateX({WIDTH + 60}px); }} }}
     @media (prefers-reduced-motion: reduce) {{
-      .px, .drop, .breath, .band, .spark {{ animation: none; }}
+      .px, .drop, .breath, .band, .spark, .lid {{ animation: none; }}
       .halo {{ animation: none; opacity: 1; }}
       .band {{ transform: translateX(-140px); }}
     }}
@@ -166,6 +178,7 @@ def svg(colors, dim_alpha, size, halo, halo_alpha, glow, core):
   <circle class="halo" cx="{cx:g}" cy="{cy:g}" r="56" fill="url(#halo-fill)"/>
   <g{group_filter}>
     {''.join(letters)}
+    {''.join(lids)}
     <g class="breath" filter="url(#dropglow)"><g class="drop">{''.join(drop)}{highlight}</g></g>
   </g>
   {sparkles}
@@ -200,6 +213,8 @@ print('ok', WIDTH, HEIGHT, (DOCS / 'logo-dark.svg').stat().st_size)
 ICON_Z = ['111111111', '111111111', '000000111', '000001110', '000011100', '011111110',
           '001110000', '011100000', '111000000', '111111111', '111111111']
 ICON_DROP = ['00100', '01110', '01110', '11111', '11111', '01110']
+# 眼睛占 Ƶ 顶上两行的第 3、7 列（从 0 数是 2、6），比格子略窄，四角稍圆。
+ICON_EYES = [(1.2 + c + 0.14, 3.8 + 0.16, 0.72, 1.68) for c in (2, 6)]
 
 
 def icon() -> str:
@@ -223,6 +238,7 @@ def icon() -> str:
   </defs>
   <rect width="16" height="16" rx="3.4" fill="url(#tile)"/>
   <g fill="#fff">{cells(ICON_Z, 1.2, 3.8, 1, 0.06, 0.2)}</g>
+  <g fill="#0b1020">{''.join(f'<rect x="{x:.2f}" y="{y:.2f}" width="{w}" height="{h}" rx="0.22"/>' for x, y, w, h in ICON_EYES)}</g>
   <g fill="#fff" filter="url(#soft)">{cells(ICON_DROP, 10.9, 1.5, 0.65, 0.04, 0.14)}</g>
 </svg>
 '''
@@ -267,6 +283,9 @@ def icon_png(size: int):
                     draw.rounded_rectangle([left, top, left + side, top + side], radius=radius * k, fill=(255, 255, 255, 255))
         return layer
     out.alpha_composite(squares(ICON_Z, 1.2, 3.8, 1, 0.06, 0.2))
+    eyes = ImageDraw.Draw(out)
+    for x, y, w, h in ICON_EYES:
+        eyes.rounded_rectangle([x * k, y * k, (x + w) * k, (y + h) * k], radius=0.22 * k, fill=(0x0b, 0x10, 0x20, 255))
     drop = squares(ICON_DROP, 10.9, 1.5, 0.65, 0.04, 0.14)
     out.alpha_composite(drop.filter(ImageFilter.GaussianBlur(0.35 * k)))   # 光滴的柔光
     out.alpha_composite(drop)
