@@ -34,6 +34,24 @@ error: out of range: 200
 - `fail value` returns the error to the caller.
 - `call() catch e:` handles an error where it happens. Inside the block, `e` is the error. When the call's value is used, as in `let age = ...`, the block must leave with `return`, `fail`, `break`, or `continue`, because there's no value to continue with.
 
+## Use a default value
+
+When a failure just means "use this value instead", put the value right after `catch e:`:
+
+```zamak
+fn main():
+    for input in ["8080", "eighty"]:
+        let port = int(input) catch e: 3000
+        println(port)
+```
+
+```text
+8080
+3000
+```
+
+The value must be a single expression on the same line, and its type must match the call's result. To run statements first, write an indented block that leaves with `return`, `fail`, `break`, or `continue`.
+
 ## Pass errors on with ?
 
 Usually, a function can't fix an error itself and should let its caller decide. `?` after a call does that: on success it gives the value, and on failure it returns the error from the current function:
@@ -154,7 +172,7 @@ Use errors for things that can go wrong at run time, such as bad input, and asse
 ## Summary
 
 - `-> T!E` returns a `T` or fails with an `E`; `fail value` returns the error.
-- `?` passes an error to the caller; `catch e:` handles it in place.
+- `?` passes an error to the caller; `catch e:` handles it in place, and `catch e: value` uses a default value.
 - `main` can be `-> !string`; an error then prints and exits with status 1.
 - The error type can be a string, a struct, or an enum.
 - `assert cond, "message"` stops the program when an assumption is broken.

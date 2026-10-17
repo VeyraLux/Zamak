@@ -156,7 +156,8 @@ else:
 - `fail "message"` returns an error. Interpolation works: `fail "bad line {n}"`.
 - `call()?` returns the error to the caller (the current function must also be declared `!string`).
 - `x == Option.None` works: a constructor on one side of `==` takes the type of the other side.
-- `call() catch e:` handles the error in place; `e` is the error value. When the call's value is used (`let v = f() catch e:`), the block must end every path with `return` or `fail` (or `break`/`continue` inside a loop). When the call has no value or stands alone as a statement, the program continues after the block.
+- `call() catch e: value` uses `value` when the call fails, as in `let port = int(text) catch e: 8080` or `let home = env.var("HOME") catch e: "unknown"`; the value must be a single expression on the same line.
+- `call() catch e:` followed by an indented block handles the error in place; `e` is the error value. When the call's value is used (`let v = f() catch e:`), the block must end every path with `return` or `fail` (or `break`/`continue` inside a loop). When the call has no value or stands alone as a statement, the program continues after the block.
 - The error type can also be a struct or an enum: `fn parse(t: &string) -> i64!ParseError`, `fail ParseError.Empty`, and `match e:` inside `catch`. `?` only passes an error to a function with the same error type; convert others in a `catch` block.
 
 ```

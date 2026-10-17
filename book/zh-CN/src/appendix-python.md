@@ -24,6 +24,7 @@ Zamak 尽可能沿用 Python 的名字和规则。这篇附录列出哪些与 Py
 | `None` | `Option.None`，类型是 `Option[T]` | 不存在的值不会被误用。 |
 | `raise ValueError("bad")` | `fail "bad"`，函数声明为 `-> T!string` | 失败是类型的一部分。 |
 | `try: ... except ValueError as e:` | `call() catch e:` | 在出错的地方就地处理。 |
+| `int(s) if s.isdigit() else 0` | `int(s) catch e: 0` | 调用失败时改用默认值。 |
 | 异常自动向上传播 | `call()?` | 把错误传下去这件事在代码里看得见。 |
 | `print(a, b)` | `println(f"{a} {b}")` | `println` 只接收一个值。 |
 | `[1, 2, 3]` | `let xs: [i64] = [1, 2, 3]` | 要修改的列表需要写类型标注。 |

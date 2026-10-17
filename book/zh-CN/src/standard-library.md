@@ -54,9 +54,7 @@ fn main() -> !string:
         usage()
         env.exit(2)
     let name = env.arg(0)?
-    let home = env.var("HOME") catch e:
-        println(f"hello, {name}")
-        return
+    let home = env.var("HOME") catch e: "unknown"
     println(f"hello, {name}; home is {home}")
 
 fn usage():

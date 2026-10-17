@@ -2241,6 +2241,8 @@ struct Parser {
     result: Type,
     // 块末尾的调用被暂当作隐式返回值的语句位置；函数体解析完后由 `untail` 按尾部位置修正。
     implicit: BTreeSet<SourcePosition>,
+    // 写了 `return` 关键字的语句位置。其他 Return 来自块尾的裸表达式：catch 块里它是回退值。
+    explicit: BTreeSet<SourcePosition>,
     // 整个文件几乎没有缩进：缺缩进块的报错里提示可能是复制时丢了缩进。
     flat: bool,
     // 要插在当前语句前面的语句：对调用结果做字面量 match 时，先把值存进隐藏变量。
@@ -2309,6 +2311,19 @@ pub fn numeric(ty: Type) -> Type {
 /// 只有函数尾部的调用才是隐式返回值：函数体的最后一条，以及尾部 if/else 分支的最后一条。
 /// 循环体与非尾部分支里的末尾调用只求值、不返回（否则 `while c { f() }` 会在第一轮就返回）。
 /// `catch` 代码块必须返回，保持原样。
+/// `call() catch e: value` 的回退值：catch 块只有一个表达式语句时就是它。检查器与生成器共用。
+pub fn catch_fallback(block: &Block) -> Option<&Expr> {
+    match block.as_slice() {
+        [(Instruction::Call(value), _)] => Some(value),
+        _ => None,
+    }
+}
+/// 回退值的类型能不能当作调用的成功值：同类型，整数当小数，借用的字符串会复制成 owned。
+pub fn fallback_fits(found: Type, success: Type) -> bool {
+    found == success
+        || (found == Type::Int && success == Type::Float)
+        || (success == Type::Owned && is_string(found))
+}
 fn untail(body: &mut Block, tail: bool, implicit: &BTreeSet<SourcePosition>) {
     let last = body.len().saturating_sub(1);
     for (index, (instruction, position)) in body.iter_mut().enumerate() {
@@ -3277,7 +3292,15 @@ impl Parser {
             // `call catch e: ...` 就地处理错误，不传播。
             let binding = self.word()?;
             let imports = self.imports.clone();
-            let block = self.suite(&imports, self.result, "catch")?;
+            let mut block = self.suite(&imports, self.result, "catch")?;
+            // 块尾的裸表达式不是函数的隐式返回：`f() catch e: 0` 里的 0 是出错时的值。
+            if let Some((Instruction::Return(Some(value)), position)) = block.last() {
+                if !self.explicit.contains(position) {
+                    let value = value.clone();
+                    let last = block.len() - 1;
+                    block[last].0 = Instruction::Call(value);
+                }
+            }
             return Ok(Expr::Catch(Box::new(call), binding, block));
         }
         // 调用结果上接着调用方法：`string.split(&s, ",").len()`。
@@ -3586,6 +3609,7 @@ impl Parser {
                         imports: self.imports.clone(),
                         result: self.result,
                         implicit: BTreeSet::new(),
+                        explicit: BTreeSet::new(),
                         flat: false,
                         pending: Vec::new(),
                         temps: 0,
@@ -3830,6 +3854,7 @@ impl Parser {
             } else {
                 Some(self.expr()?)
             };
+            self.explicit.insert(position);
             Instruction::Return(expr)
         } else if self.keyword("fail") {
             // `fail e` 在声明了错误类型的函数里返回错误值。
@@ -4294,6 +4319,7 @@ pub fn parse(source: &str) -> Result<Module, String> {
         imports: Vec::new(),
         result: Type::Unit,
         implicit: BTreeSet::new(),
+        explicit: BTreeSet::new(),
         flat,
         pending: Vec::new(),
         temps: 0,
@@ -6471,6 +6497,16 @@ impl<'a> Checker<'a> {
                         live: true,
                     },
                 );
+                // `f() catch e: default`：块只有一个表达式、类型合乎成功值时，它就是出错时的值。
+                if let Some(value) = catch_fallback(block) {
+                    if success != Type::Unit
+                        && self.ty(value).is_ok_and(|ty| fallback_fits(ty, success))
+                    {
+                        let checked = self.expr(value, success, loans);
+                        self.locals.remove(binding);
+                        return checked;
+                    }
+                }
                 let returned = self.block(block, self.result)?;
                 self.locals.remove(binding);
                 // 在循环里用 break / continue 收尾也算走完：控制流离开了这次调用所在的语句。

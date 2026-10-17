@@ -24,6 +24,7 @@ Zamak keeps Python's names and rules wherever it can. This appendix lists what s
 | `None` | `Option.None`, with type `Option[T]` | A missing value can't be used by accident. |
 | `raise ValueError("bad")` | `fail "bad"`, in a function declared `-> T!string` | Failures are part of the type. |
 | `try: ... except ValueError as e:` | `call() catch e:` | Handle the error right where it happens. |
+| `int(s) if s.isdigit() else 0` | `int(s) catch e: 0` | Use a default value when a call fails. |
 | Exceptions propagate on their own | `call()?` | Passing an error on is visible in the code. |
 | `print(a, b)` | `println(f"{a} {b}")` | `println` takes one value. |
 | `[1, 2, 3]` | `let xs: [i64] = [1, 2, 3]` | A list annotation is needed when you'll change the list. |
