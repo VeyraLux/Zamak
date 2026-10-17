@@ -3,7 +3,7 @@
 //! 围栏约定（写书时照这个标）：
 //! - ```zamak：完整程序，`zam run`；紧跟着（中间只隔空行）的 ```text 块是逐字的标准输出。
 //! - ```zamak,check：只 `zam check`（读标准输入、文件或参数的程序）。
-//! - ```zamak,fails：`zam check` 必须失败；紧跟的 ```text 块第一行是错误信息。
+//! - ```zamak,fails：`zam check` 必须失败；紧跟的 ```text 块是逐字的诊断信息。
 //! - ```zamak,panics：能编译，运行时带错误停下；紧跟的 ```text 块是先打印的输出加上
 //!   最后一行 `zam: ...` 错误信息。
 //! - ```zamak,ignore：片段，不测。
@@ -144,9 +144,9 @@ fn run_chapter(name: &str, blocks: &[Block], work: &Path, cache: &Path) -> Vec<S
             if output.status.success() {
                 failures.push(format!("{at}: expected a check error"));
             } else if let Some(expected) = &block.output {
-                let first = expected.lines().next().unwrap_or_default();
-                if !stderr.contains(first) {
-                    failures.push(format!("{at}: expected `{first}`, got:\n{stderr}"));
+                // 书里展示的诊断要与编译器的输出逐字一致（行号、列号、下划线都算）。
+                if !stderr.contains(expected.trim_end()) {
+                    failures.push(format!("{at}: expected\n{expected}got:\n{stderr}"));
                 }
             }
             continue;
