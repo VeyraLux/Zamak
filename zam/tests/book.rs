@@ -78,6 +78,15 @@ fn blocks(text: &str) -> Vec<Block> {
                     }
                 }
             }
+            // 其他语言的块（C 源码、zam.toml）带 project= 时也是项目里的文件。
+            Some(_) if info.contains("project=") => {
+                out.push(Block {
+                    attrs: parts.map(String::from).collect(),
+                    code: body,
+                    output: None,
+                    line: open + 1,
+                });
+            }
             _ => {}
         }
         last_close = None;
