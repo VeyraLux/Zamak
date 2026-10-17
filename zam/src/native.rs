@@ -3773,9 +3773,26 @@ impl<'a> Generator<'a> {
                     self.records.insert(id);
                 }
                 self.owners.push((local, error));
-                // 有成功值时代码块在所有路径上离开（检查器保证）；没有成功值时可能走到块尾，
-                // block 会释放块里的值，出块后接着执行后面的语句。
-                let returned = self.block(block, self.result);
+                // `f() catch e: default`：出错时把回退值写进结果，再释放错误值（规则与检查器相同）。
+                let fallback = crate::compiler::catch_fallback(block).filter(|value| {
+                    result != Type::Unit && crate::compiler::fallback_fits(self.ty(value), result)
+                });
+                let returned = if let Some(value) = fallback {
+                    // 回退值的临时变量声明在 `if` 块里，也要在块里释放（移走后只剩空壳）。
+                    let scope = self.owners.len();
+                    let value = self.expr_as(value, result);
+                    let value = self.moved(&value, result);
+                    self.code
+                        .push_str(&format!("{temp}.ok = 1;\n{temp}.value = {value};\n"));
+                    for (name, ty) in self.owners.split_off(scope) {
+                        self.code.push_str(&format!("{}(&{name});\n", drop_fn(ty)));
+                    }
+                    false
+                } else {
+                    // 有成功值时代码块在所有路径上离开（检查器保证）；没有成功值时可能走到块尾，
+                    // block 会释放块里的值，出块后接着执行后面的语句。
+                    self.block(block, self.result)
+                };
                 let (local, ty) = self.owners.pop().expect("catch binding");
                 // 块走到底（没有成功值的调用或单独成句）时，错误值在这里释放。
                 if !returned {
