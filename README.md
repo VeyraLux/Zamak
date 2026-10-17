@@ -292,11 +292,11 @@ For the list of error codes and the recommended loop for AI agents (check, make 
 
 ## Current limitations
 
-Zamak doesn't support threads or networking yet. C functions take and return only numbers, booleans, and strings; pass pointers and structs through a small C wrapper. There's no language server or read-eval-print loop (REPL) yet. When you use an unsupported construct, `zam check` reports a diagnostic instead of compiling incorrect code.
+Zamak doesn't support threads or networking yet. C functions take and return only numbers, booleans, and strings; pass pointers and structs through a small C wrapper. There's no read-eval-print loop (REPL) yet. When you use an unsupported construct, `zam check` reports a diagnostic instead of compiling incorrect code.
 
 ## Editor and agent support
 
-- **VS Code.** The extension in [editors/vscode](editors/vscode) adds syntax highlighting, bracket and quote matching, automatic indentation after a line that ends with `:`, and folding by indentation. It's declarative and has no runtime dependencies.
+- **VS Code.** The extension in [editors/vscode](editors/vscode) adds syntax highlighting and runs `zam lsp`, the Zamak language server, for diagnostics as you type, completion, hover, go to definition, and formatting. Other editors that support the Language Server Protocol can run `zam lsp` too.
 - **AI coding agents.** [.agents/skills/zamak/SKILL.md](.agents/skills/zamak/SKILL.md) describes the commands, syntax, and common diagnostics for agents that read `.agents/skills`.
 
 ## Contribute

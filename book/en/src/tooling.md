@@ -16,6 +16,7 @@ Most subcommands take a project folder or a single `.zm` file. Without one, they
 | `zam fmt` | Normalizes indentation and blank lines. |
 | `zam add`, `zam remove`, `zam update` | Manage dependencies. |
 | `zam search WORD`, `zam publish` | Find and publish packages. |
+| `zam lsp` | Runs the language server for editors. The VS Code extension starts it for you. |
 | `zam --version` | Prints the version. |
 
 `zam` writes its own progress lines to standard error. Standard output carries only your program's output, or the JSON report of `--json`.
