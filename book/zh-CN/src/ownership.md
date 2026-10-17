@@ -35,12 +35,12 @@ fn main():
 ```
 
 ```text
-error[ZM301]: use after move: name
+错误[ZM301]：使用已移走的值：name
  --> main.zm:5:5
   |
 5 |     println(name)
   |     ^^^^^^^^^^^^^
-  = help: borrow the value or move it only after the last use
+  = 提示：借用这个值，或在最后一次使用之后再移走
 ```
 
 移动的开销很小：复制的是一个指针，而不是文字本身。又因为只有一个变量拥有这段文字，Zamak 能准确知道什么时候释放它。
@@ -60,12 +60,12 @@ fn main():
 ```
 
 ```text
-error[ZM301]: use after move: numbers
+错误[ZM301]：使用已移走的值：numbers
  --> main.zm:7:5
   |
 7 |     println(numbers)
   |     ^^^^^^^^^^^^^^^^
-  = help: borrow the value or move it only after the last use
+  = 提示：借用这个值，或在最后一次使用之后再移走
 ```
 
 大多数函数只需要看看参数，所以它们接收借用：`items: &[i64]`。借用时，所有权仍归调用方。下一章[借用](borrowing.md)会详细介绍。只有函数要留下这个值时（例如存进它返回的结构体），才接过所有权。

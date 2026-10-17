@@ -33,17 +33,18 @@ fn main():
 ```
 
 ```text
-error[ZM301]: use after move: name
+错误[ZM301]：使用已移走的值：name
  --> main.zm:5:5
   |
 5 |     println(name)
   |     ^^^^^^^^^^^^^
-  = help: borrow the value or move it only after the last use
+  = 提示：借用这个值，或在最后一次使用之后再移走
 ```
 
 - 错误码（例如 `ZM301`）的含义永远不变，可以直接搜索。[附录 D](appendix-diagnostics.md) 列出了所有错误码。
 - 语法错误在第一处就停止检查。类型和所有权错误每个函数报告一次，所以一轮可以修好好几个函数。
-- 如果你按 Python 的写法写了某个东西，而 Zamak 的写法不同，help 行会给出 Zamak 的写法。
+- 如果你按 Python 的写法写了某个东西，而 Zamak 的写法不同，提示行会给出 Zamak 的写法。
+- 系统语言是中文时，`zam` 用中文显示诊断。想自己选语言，把 `ZAMAK_LANG` 设为 `zh` 或 `en`。
 
 ## JSON 格式的诊断
 
@@ -57,7 +58,7 @@ zam check --json main.zm
 {"command":"check","ok":false,"diagnostics":[{"file":"main.zm","line":5,"column":5,"function":"main:main","code":"ZM301","category":"ownership","message":"use after move: name","suggestion":"borrow the value or move it only after the last use"}]}
 ```
 
-`zam build --json` 以同样的方式报告构建错误。
+`zam build --json` 以同样的方式报告构建错误。不论系统语言是什么，JSON 始终是英文，工具可以放心依赖其中的文字。
 
 ## 格式化代码
 
@@ -82,6 +83,7 @@ zam check --json main.zm
 | `ZAMAK_JOBS` | 并行编译的模块数。默认是 CPU 核数，最多 4。 |
 | `ZAMAK_INDEX` | 使用的包索引，可以是 Git 地址或本地目录。 |
 | `ZAMAK_DUMP_C` | 一个目录，`zam` 会把每个模块生成的 C 代码写到这里。研究性能时很有用。 |
+| `ZAMAK_LANG` | 终端里诊断的语言：`zh` 是中文，`en` 是英文。默认跟随系统语言。 |
 
 ## 小结
 

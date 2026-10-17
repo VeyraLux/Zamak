@@ -68,12 +68,12 @@ fn main():
 ```
 
 ```text
-error[ZM422]: borrow escape: functions cannot return references
+错误[ZM422]：借用逃逸：函数不能返回借用
  --> main.zm:1:38
   |
 1 | fn first(items: &[string]) -> &string:
   |                                      ^
-  = help: keep references in call arguments; store or return an owned value
+  = 提示：借用只放在调用参数里；存放或返回有所有权的值
 ```
 
 改为返回一个拥有所有权的值，例如字符串的副本。因为借用永远不会比创建它的调用或代码块活得更久，Zamak 从来不需要生命周期标注，而那正是学习 Rust 时最难的部分。
@@ -114,12 +114,12 @@ fn main():
 ```
 
 ```text
-error[ZM421]: borrow conflict: numbers is borrowed by an enclosing for loop or a borrowed local such as let x = &numbers[i]
+错误[ZM421]：借用冲突：numbers 正被外层 for 循环或借来的局部变量（例如 let x = &numbers[i]）借用
  --> main.zm:5:13
   |
 5 |             numbers.push(4)
   |             ^^^^^^^^^^^^^^^
-  = help: avoid overlapping moves or exclusive borrows in the same call
+  = 提示：先结束循环或借用：把要做的修改记在另一个列表里，循环结束后再改
 ```
 
 在别的语言里，这样做要么崩溃，要么悄悄跳过元素。在 Zamak 里，它根本无法通过编译。把新元素先收集到另一个列表里，循环结束后再加进去：

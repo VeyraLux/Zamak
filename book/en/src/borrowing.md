@@ -119,7 +119,7 @@ error[ZM421]: borrow conflict: numbers is borrowed by an enclosing for loop or a
   |
 5 |             numbers.push(4)
   |             ^^^^^^^^^^^^^^^
-  = help: avoid overlapping moves or exclusive borrows in the same call
+  = help: finish the loop or the borrow first: collect the changes in another list, then apply them after the loop
 ```
 
 In other languages, this either crashes or silently skips elements. In Zamak, it doesn't compile. Collect the new elements in a separate list, and add them after the loop:

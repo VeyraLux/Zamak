@@ -37,12 +37,12 @@ fn main():
 ```
 
 ```text
-error[ZM110]: expected `==` to compare in the if condition; a single `=` assigns a value
+错误[ZM110]：if 的条件里比较要用 `==`；单个 `=` 是赋值
  --> main.zm:3:10
   |
 3 |     if n = 3:
   |          ^
-  = help: compare with `==`, for example `score == 60`; a single `=` only assigns
+  = 提示：比较用 `==`，例如 `score == 60`；单个 `=` 只用来赋值
 ```
 
 ## 选择一个值

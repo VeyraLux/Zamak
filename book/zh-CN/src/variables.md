@@ -26,12 +26,12 @@ fn main():
 ```
 
 ```text
-error[ZM302]: cannot assign immutable value count
+错误[ZM302]：count 不可变，不能赋值
  --> main.zm:3:5
   |
 3 |     count = 2
   |     ^^^^^^^^^
-  = help: declare the binding with `let mut` before assigning it
+  = 提示：赋值前先用 `let mut` 声明
 ```
 
 ## 让变量可变
@@ -65,12 +65,12 @@ fn main():
 ```
 
 ```text
-error[ZM204]: duplicate binding total
+错误[ZM204]：total 重复绑定
  --> main.zm:3:5
   |
 3 |     let total = 5
   |     ^^^^^^^^^^^^^
-  = help: remove or rename the duplicate declaration
+  = 提示：删掉或改名重复的声明
 ```
 
 要改变值，就用 `let mut` 声明再赋值。要存放另一个值，就起一个更具体的名字，例如 `raw_total` 和 `total`。
