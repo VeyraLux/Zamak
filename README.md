@@ -101,7 +101,7 @@ Zamak brings together what C, Rust, Go, and Python each do best. These charts ru
 | Standalone native executable | ✓ | ✓ | ✓ | ✓ | ✗ |
 | No lifetime annotations | ✓ | ✓ | ✗ | ✓ | ✓ |
 
-Zamak runs in the same range as C and Rust on most of these programs, while it checks overflow and bounds in every build. It's about 3 times slower than C on spectral-norm and 2 to 3 times slower on word frequency; both are planned improvements. For the method, the full results, and how to run the benchmark yourself, see [bench/compare](bench/compare/README.md).
+Zamak runs in the same range as C on every compute-bound program here, while it checks overflow and bounds by default. It's the fastest of the seven languages on binary-trees, and it counts words faster than Rust and Go. Its one opt-out is `@wrapping` on the spectral-norm hot function, which turns off overflow checks for that function only. For the method, the full results, and how to run the benchmark yourself, see [bench/compare](bench/compare/README.md).
 
 ## Use Zamak with your AI agent
 
