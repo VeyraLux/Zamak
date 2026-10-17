@@ -57,7 +57,7 @@
 - **不用和编译器较劲的内存安全**：所有权在编译时就排除了释放后使用和重复释放，不需要垃圾回收器。只读借用自动进行，借用最多持续一个代码块，永远不用写生命周期标注。代码真被拒绝时，错误信息会指出问题所在，并给出修改建议。
 - **整数运算比 C、Rust、Go 更安全**：整数溢出、除以零和下标越界在任何构建里（包括发布构建）都会让程序带着清楚的错误停下。编译器会去掉能证明多余的检查，所以安全的代码照样跑出 C 的速度；哈希这类确实需要回绕的函数，用 `@wrapping` 只在这一个函数里关闭检查。
 - **程序小，占用也小**：hello world 只有 56 KB，与 C 相当，约为 Go 的 1/40。在 binary-trees 上，Zamak 是七种语言里最快的，只用 20 MB 内存，而 Java 和 Node.js 都超过 360 MB。
-- **为 AI 编程助手而设计**：整门语言写得进一页参考文档，AI 写代码前读一遍就够了。每条诊断都有稳定的错误码和修改建议，也能以 JSON 输出；`zam new --template ai` 会为你的 AI 助手配好 Skill 文件。
+- **为 AI 编程助手而设计**：整门语言写得进一页参考文档，AI 写代码前读一遍就够了。每条诊断都有稳定的错误码和修改建议，也能以 JSON 输出；`zam new --template ai` 会为你的 AI 助手配好 Skill 文件，`zam mcp` 让 AI 助手通过 MCP 直接检查、运行、测试和查文档。
 - **反馈快**：在 5,000 行的项目上，`zam check` 不到 0.1 秒就能完成；改一行代码，重新构建不到 1 秒，因为 `zam` 按内容缓存每个模块。
 
 ### 与热门语言相比
@@ -166,16 +166,17 @@ Zamak 把 AI 编程助手当作一等读者。新建一个助手可以马上上�
 zam new hello --template ai
 ```
 
-项目里会多出两份说明：
+项目里会多出这些文件：
 
 - **`.claude/skills/zamak/SKILL.md`**：Claude Code 的 Skill，读写 Zamak 代码时自动加载。
 - **`AGENTS.md`**：内容相同，供 Codex、Cursor、GitHub Copilot 等读取 `AGENTS.md` 的助手使用。
+- **`.mcp.json`**：给支持模型上下文协议（MCP）的助手（如 Claude Code、Cursor）启动 `zam mcp`。
 
 两份说明都包含“检查 → 修复”的工作循环和一页纸语言参考，助手从第一行代码起就能写对。它们由编进 `zam` 的参考生成，新项目总与你安装的版本一致。
 
 工作中，助手从 `zam check --json` 读取诊断：每条都有稳定的错误码（如 `ZM301`）、位置，通常还有修改建议。
 
-让助手直接检查、构建、运行代码并查询标准库的 MCP 服务器（`zam mcp`）正在计划中。
+通过 `zam mcp`，助手可以直接调用 Zamak：`check`、`build`、`run`（可传参数和标准输入）、`test`、`format`，用 `explain` 查错误码，用 `docs` 查语言参考和标准库。详见[配合 AI 编程助手](https://zamak.veyralux.org/zh-CN/ai-agents.html)。
 
 ## 快速运行
 
@@ -273,7 +274,8 @@ src/stats.zm:8: assertion failed: got == 5: two plus two
 ## 编辑器与 AI 工具
 
 - **VS Code 扩展**：`editors/vscode/`。提供语法高亮，并运行 Zamak 的语言服务器 `zam lsp`：边写边报错（没保存的内容也检查）、补全、悬停查看签名、跳到定义，以及与 `zam fmt` 相同的格式化。其他支持语言服务器协议（LSP）的编辑器也能运行 `zam lsp`。同一份 `syntaxes/zamak.tmLanguage.json` 也能给 Sublime Text、TextMate 等编辑器使用。本地安装、打包 `.vsix` 与上架市场的步骤见 `editors/vscode/README.md`。
-- **AI 技能**：`.agents/skills/zamak/SKILL.md`，给遵循 `.agents/skills` 约定的 AI 编程代理（DSH、Claude Code 等）使用：命令与环境变量、语法速览、常见诊断、示例与测试的位置，以及修改编译器时的验收命令和 IR/缓存版本号规则。
+- **MCP 服务器**：`zam mcp`，给 AI 编程助手调用的工具：检查、构建、运行、测试、格式化、解释错误码、查文档。`zam new --template ai` 会在新项目里放好 Skill、`AGENTS.md` 和 `.mcp.json`。
+- **AI 技能**：`.agents/skills/zamak/SKILL.md`，给修改编译器本身的 AI 编程代理（DSH、Claude Code 等）使用：命令与环境变量、语法速览、常见诊断、示例与测试的位置，以及修改编译器时的验收命令和 IR/缓存版本号规则。
 - **CLI**：`zam` 本身，包括 `check`/`build`/`run`/`test`/`fmt`/`new`、包管理（`add`/`remove`/`update`/`search`/`publish`）、`lsp`、`--help`、`--version`；`check`/`build` 支持 `--json` 机器可读诊断；缓存目录可用 `ZAMAK_CACHE_DIR` 覆盖。
 
 ## 项目配置

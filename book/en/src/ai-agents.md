@@ -14,6 +14,7 @@ Besides the usual `zam.toml` and `src/main.zm`, this creates:
 | --- | --- |
 | `.claude/skills/zamak/SKILL.md` | Claude Code, which loads it as a skill whenever the task involves Zamak. |
 | `AGENTS.md` | Codex, Cursor, and other agents that read `AGENTS.md`. |
+| `.mcp.json` | Agents that support MCP, which start `zam mcp` from it. |
 | `README.md` | People, with the commands to build and run the project. |
 
 `SKILL.md` and `AGENTS.md` contain the complete language reference and the recommended working loop. The text is built into `zam`, so it always matches the version that created the project.
@@ -46,14 +47,40 @@ This loop suits agents because `zam check` takes a fraction of a second and need
 
 ## Add Zamak to an existing project
 
-To give an agent Zamak instructions in a project that already exists, create a throwaway project with `--template ai` and copy `AGENTS.md` or `.claude/skills/zamak/` into your project.
+To give an agent Zamak instructions in a project that already exists, create a throwaway project with `--template ai` and copy `AGENTS.md`, `.claude/skills/zamak/`, or `.mcp.json` into your project.
 
-## Coming next
+## Connect your agent with MCP
 
-A `zam mcp` command is planned. It will expose checking, building, running, and the language reference to agents through the Model Context Protocol (MCP), from the same source as the skill file.
+`zam mcp` runs a Model Context Protocol (MCP) server, so agents that support MCP can call Zamak directly instead of running commands in a shell. Projects made with `--template ai` include a `.mcp.json` that starts it:
+
+```json
+{
+  "mcpServers": {
+    "zamak": {
+      "command": "zam",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Claude Code and Cursor pick up `.mcp.json` when you open the project. For another agent, add a server with the command `zam` and the argument `mcp` in its MCP settings. The server offers these tools:
+
+| Tool | What it does |
+| --- | --- |
+| `check` | Checks the project and returns the same JSON as `zam check --json`. |
+| `build` | Builds the project and returns the diagnostics and the path of the executable. |
+| `run` | Builds and runs the program, with optional arguments and standard input, and returns its output and exit code. |
+| `test` | Runs the tests, optionally only those whose names contain a word. |
+| `format` | Formats the project's files, like `zam fmt`. |
+| `explain` | Explains a diagnostic code, such as `ZM301`, and how to fix it. |
+| `docs` | Returns the language reference, the functions of a standard library module, or the parts of the reference about a word. |
+
+The tools run `zam` itself, so their results are exactly what you'd see on the command line.
 
 ## Summary
 
 - `zam new NAME --template ai` sets up `SKILL.md` for Claude Code and `AGENTS.md` for other agents.
 - Agents work in a loop of `zam check --json`, a small fix, `zam fmt`, and a build.
+- `zam mcp` gives MCP agents the same tools directly, plus `explain` and `docs`.
 - Stable codes, categories, and suggestions make diagnostics easy for agents to act on.

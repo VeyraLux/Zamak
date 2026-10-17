@@ -14,6 +14,7 @@ zam new myapp --template ai
 | --- | --- |
 | `.claude/skills/zamak/SKILL.md` | Claude Code，任务涉及 Zamak 时把它作为 Skill 载入。 |
 | `AGENTS.md` | Codex、Cursor 等会读取 `AGENTS.md` 的 AI 助手。 |
+| `.mcp.json` | 支持 MCP 的 AI 助手，按它启动 `zam mcp`。 |
 | `README.md` | 人，里面有构建和运行项目的命令。 |
 
 `SKILL.md` 和 `AGENTS.md` 包含完整的语言参考和推荐的工作循环。这些文字内置在 `zam` 里，所以始终与创建项目的那个版本一致。
@@ -46,14 +47,40 @@ zam new myapp --template ai
 
 ## 在已有项目里加入 Zamak 说明
 
-要在已有项目里给 AI 助手提供 Zamak 的说明，可以用 `--template ai` 创建一个临时项目，再把 `AGENTS.md` 或 `.claude/skills/zamak/` 复制到你的项目里。
+要在已有项目里给 AI 助手提供 Zamak 的说明，可以用 `--template ai` 创建一个临时项目，再把 `AGENTS.md`、`.claude/skills/zamak/` 或 `.mcp.json` 复制到你的项目里。
 
-## 即将推出
+## 用 MCP 连接 AI 助手
 
-计划中的 `zam mcp` 命令会通过模型上下文协议（MCP）向 AI 助手提供检查、构建、运行和语言参考，内容与 Skill 文件同源。
+`zam mcp` 运行一个模型上下文协议（MCP）服务器，支持 MCP 的 AI 助手可以直接调用 Zamak，不必在终端里敲命令。用 `--template ai` 创建的项目自带启动它的 `.mcp.json`：
+
+```json
+{
+  "mcpServers": {
+    "zamak": {
+      "command": "zam",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Claude Code 和 Cursor 打开项目时会读取 `.mcp.json`。其他 AI 助手可以在它的 MCP 设置里添加一个服务器，命令填 `zam`，参数填 `mcp`。服务器提供这些工具：
+
+| 工具 | 作用 |
+| --- | --- |
+| `check` | 检查项目，返回与 `zam check --json` 相同的 JSON。 |
+| `build` | 构建项目，返回诊断信息和可执行文件的路径。 |
+| `run` | 构建并运行程序，可以传参数和标准输入，返回程序的输出和退出码。 |
+| `test` | 运行测试，可以只运行名字里包含某个词的测试。 |
+| `format` | 像 `zam fmt` 一样格式化项目文件。 |
+| `explain` | 解释一个错误码（例如 `ZM301`）以及怎么改。 |
+| `docs` | 返回语言参考、某个标准库模块的函数，或参考里与某个词有关的段落。 |
+
+这些工具调用的就是 `zam` 本身，所以结果和你在命令行里看到的完全一样。
 
 ## 小结
 
 - `zam new NAME --template ai` 为 Claude Code 配好 `SKILL.md`，为其他 AI 助手配好 `AGENTS.md`。
 - AI 助手按 `zam check --json`、最小修改、`zam fmt`、构建的循环工作。
+- `zam mcp` 把同样的工具直接交给支持 MCP 的 AI 助手，另外还有 `explain` 和 `docs`。
 - 稳定的错误码、分类和修改建议，让 AI 助手很容易照着诊断去修改。

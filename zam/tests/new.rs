@@ -71,6 +71,8 @@ fn new_scaffolds_a_runnable_project_and_refuses_existing() {
     assert!(agents.contains("## Language reference"));
     assert!(skill.ends_with(&agents));
     assert!(ai.join("README.md").exists());
+    let mcp = std::fs::read_to_string(ai.join(".mcp.json")).unwrap();
+    assert!(mcp.contains("\"args\": [\"mcp\"]"), "{mcp}");
     assert!(zam(&["check", "--json", ai.to_str().unwrap()])
         .status
         .success());
