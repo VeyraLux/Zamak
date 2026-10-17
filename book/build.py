@@ -3,7 +3,7 @@
 用法：python book/build.py            # 需要 mdbook（cargo install mdbook --locked）
       python book/build.py --serve    # 构建后在 http://localhost:3000 预览
 
-两版共用 book/theme/ 里的样式与脚本，logo 与图标取自 docs/，构建前复制进各版的 theme/。
+两版共用 book/theme/ 里的样式与脚本；图标取自 docs/，构建前复制进各版的 theme/，logo 复制进 src/assets/。
 """
 import argparse
 import functools
@@ -23,8 +23,11 @@ def prepare(language):
     theme.mkdir(exist_ok=True)
     for name in ['zamak.css', 'zamak.js']:
         shutil.copy(BOOK / 'theme' / name, theme / name)
+    # mdBook 只复制 src/ 里的文件，主题目录里多出来的文件不会进站点。
+    assets = BOOK / language / 'src' / 'assets'
+    assets.mkdir(exist_ok=True)
     for name in ['logo-dark.svg', 'logo-light.svg']:
-        shutil.copy(DOCS / name, theme / name)
+        shutil.copy(DOCS / name, assets / name)
     shutil.copy(DOCS / 'icon.svg', theme / 'favicon.svg')
     shutil.copy(DOCS / 'icon-32.png', theme / 'favicon.png')
 
@@ -33,8 +36,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--serve', action='store_true')
     args = parser.parse_args()
-    if SITE.exists():
-        shutil.rmtree(SITE)
+    # 只清空内容、保留目录本身：预览服务器占用着它时，Windows 不让删目录。
+    SITE.mkdir(exist_ok=True)
+    for entry in SITE.iterdir():
+        if entry.is_dir():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
     # 先建英文版：mdbook 会清空目标目录，中文版放在它里面，必须后建。
     for language, out in LANGUAGES.items():
         prepare(language)

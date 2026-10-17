@@ -2915,6 +2915,17 @@ impl Parser {
         }
         Ok(left)
     }
+    /// 单目运算的操作数后面紧跟 `**` 时，先算乘方（右边照常右结合）。
+    fn power_tail(&mut self, base: Expr) -> Result<Expr, String> {
+        if self.peek() == Some(&Token::Symbol('*'))
+            && self.tokens.get(self.position + 1) == Some(&Token::Symbol('*'))
+        {
+            self.position += 2;
+            let exponent = self.binary(10)?;
+            return Ok(Expr::Call("$pow".into(), vec![base, exponent]));
+        }
+        Ok(base)
+    }
     fn atom(&mut self) -> Result<Expr, String> {
         // `fn(x: i64) -> i64: x * 2`、`fn(a, b): a < b`：匿名函数，冒号后是一个表达式。
         if self.keyword("fn") {
@@ -3000,23 +3011,36 @@ impl Parser {
             self.expect(')')?;
             return Ok(expr);
         }
+        // 与 Python 相同，`**` 比单目 `-`、`~` 结合得紧：`-2 ** 2` 是 `-(2 ** 2)`。
         if self.symbol('-') {
+            let power_follows = |p: &Self| {
+                p.tokens.get(p.position + 1) == Some(&Token::Symbol('*'))
+                    && p.tokens.get(p.position + 2) == Some(&Token::Symbol('*'))
+            };
             if let Some(Token::Number(number)) = self.peek().cloned() {
-                self.take();
-                return Ok(Expr::Int(
-                    format!("-{number}")
-                        .parse()
-                        .map_err(|_| "i64 literal overflow")?,
-                ));
+                if !power_follows(self) {
+                    self.take();
+                    return Ok(Expr::Int(
+                        format!("-{number}")
+                            .parse()
+                            .map_err(|_| "i64 literal overflow")?,
+                    ));
+                }
             }
             if let Some(Token::Float(text)) = self.peek().cloned() {
-                self.take();
-                return Ok(Expr::Float(-text.parse::<f64>().expect("lexed float")));
+                if !power_follows(self) {
+                    self.take();
+                    return Ok(Expr::Float(-text.parse::<f64>().expect("lexed float")));
+                }
             }
-            return Ok(Expr::Unary('-', Box::new(self.atom()?)));
+            let operand = self.atom()?;
+            let operand = self.power_tail(operand)?;
+            return Ok(Expr::Unary('-', Box::new(operand)));
         }
         if self.symbol('~') {
-            return Ok(Expr::Unary('~', Box::new(self.atom()?)));
+            let operand = self.atom()?;
+            let operand = self.power_tail(operand)?;
+            return Ok(Expr::Unary('~', Box::new(operand)));
         }
         if self.peek() == Some(&Token::Symbol('!')) {
             return Err(
@@ -4884,7 +4908,17 @@ impl<'a> Checker<'a> {
     /// 被调函数的实际名字：`abs`/`min`/`max` 按第一个参数的类型选版本，泛型函数按实参类型
     /// 选（并生成）专门的副本。推断失败时返回原名，由调用处报错。
     fn callee(&self, name: &str, args: &[Expr]) -> String {
-        let name = overload(name, args.first().and_then(|arg| self.ty(arg).ok()));
+        // `2 ** 0.5`：乘方只要有一边是浮点数就按浮点算，与 Python 相同。
+        let float_power = name == "std/core:pow"
+            && args
+                .iter()
+                .any(|arg| self.ty(arg).ok() == Some(Type::Float));
+        let first = if float_power {
+            Some(Type::Float)
+        } else {
+            args.first().and_then(|arg| self.ty(arg).ok())
+        };
+        let name = overload(name, first);
         self.generic_instance(name, args)
             .unwrap_or_else(|_| name.to_owned())
     }

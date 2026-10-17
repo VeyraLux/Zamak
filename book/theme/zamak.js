@@ -38,16 +38,18 @@
         });
     }
 
-    // 侧栏顶部放 logo：深色主题用深色版。
-    const scrollbox = document.querySelector("#sidebar .sidebar-scrollbox");
-    if (scrollbox) {
+    // 侧栏顶部放 logo：深色主题用深色版。书的根目录从本脚本的地址推出（…/theme/zamak-<哈希>.js）。
+    const script = document.currentScript;
+    const root = script ? script.src.replace(/theme\/zamak[^/]*\.js.*$/, "") : "";
+    const sidebar = document.querySelector("#mdbook-sidebar, #sidebar");
+    if (sidebar && root) {
         const link = document.createElement("a");
         link.className = "zamak-logo";
-        link.href = (window.path_to_root || "") + "index.html";
+        link.href = root + "index.html";
         link.innerHTML =
-            '<img class="zamak-logo-light" src="' + (window.path_to_root || "") + 'theme/logo-light.svg" alt="Zamak">' +
-            '<img class="zamak-logo-dark" src="' + (window.path_to_root || "") + 'theme/logo-dark.svg" alt="Zamak">';
-        scrollbox.insertBefore(link, scrollbox.firstChild);
+            '<img class="zamak-logo-light" src="' + root + 'assets/logo-light.svg" alt="Zamak">' +
+            '<img class="zamak-logo-dark" src="' + root + 'assets/logo-dark.svg" alt="Zamak">';
+        sidebar.insertBefore(link, sidebar.firstChild);
     }
 
     // 中英切换：两版的章节文件名相同，换掉路径前缀就是同一页。

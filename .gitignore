@@ -8,6 +8,7 @@ dist/
 # The Zamak Book：构建出的站点与各版复制来的主题文件
 book/site/
 book/*/theme/
+book/*/src/assets/
 
 # 内部设计与开发文档：只在本地维护，不进公开仓库
 DESIGN.md
