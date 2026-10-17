@@ -1829,6 +1829,8 @@ struct Generator<'a> {
     proofs: ranges::Proofs,
     // 当前函数带 `@wrapping`：整数算术回绕，浮点除法按 IEEE 754。
     wrapping: bool,
+    // 可能被改写的名字（`let mut`、可变解构、非借用参数）：流式遍历只借用其余的名字。
+    mutable_names: std::collections::BTreeSet<String>,
     call_targets: BTreeMap<usize, String>,
     code: String,
     next: usize,
@@ -2026,11 +2028,8 @@ static void rehash$M($M *m) {
     m->nslots = n;
     for (i = 0; i < m->len; i++) place$M(m, i);
 }
-static void set$M($M *m, $KP, $VT v) {
-    uint64_t h = $HASH;
-    int64_t at = find$M(m, k, h);
+static int64_t insert$M($M *m, $KP, $VT v, uint64_t h) {
     E$M *e;
-    if (at >= 0) { e = &m->entries[at]; $DROPVAL e->value = v; return; }
     if ((m->len + 1) * 2 > m->nslots) rehash$M(m);
     if (m->len == m->cap) {
         size_t cap = m->cap ? m->cap * 2 : 8;
@@ -2044,6 +2043,21 @@ static void set$M($M *m, $KP, $VT v) {
     e->key = $STORE; e->value = v; e->hash = h; e->live = 1;
     place$M(m, m->len);
     m->len++; m->count++;
+    return (int64_t)m->len - 1;
+}
+static void set$M($M *m, $KP, $VT v) {
+    uint64_t h = $HASH;
+    int64_t at = find$M(m, k, h);
+    E$M *e;
+    if (at >= 0) { e = &m->entries[at]; $DROPVAL e->value = v; return; }
+    insert$M(m, k, v, h);
+}
+// `m[k] = m.get(k, d) + x`：只查一次，没有这个键时先放进 d，返回值的地址。
+static $VT *slot$M($M *m, $KP, $VT d) {
+    uint64_t h = $HASH;
+    int64_t at = find$M(m, k, h);
+    if (at < 0) at = insert$M(m, k, d, h);
+    return &m->entries[at].value;
 }
 static $VT *at$M($M *m, $KP) { int64_t at = find$M(m, k, $HASH); if (at < 0) map_missing(); return &m->entries[at].value; }
 static int has$M($M *m, $KP) { return find$M(m, k, $HASH) >= 0; }
@@ -2366,6 +2380,7 @@ impl<'a> Generator<'a> {
             loops: Vec::new(),
             proofs: ranges::Proofs::default(),
             wrapping: false,
+            mutable_names: Default::default(),
             call_targets: BTreeMap::new(),
             code: String::new(),
             next: 0,
@@ -2621,6 +2636,125 @@ impl<'a> Generator<'a> {
         Some((format!("{path}.{method}"), args.clone()))
     }
     /// 字符串上的方法改写成 std/string 的调用（检查器已确认存在）。
+    /// `for w in text.words():` / `text.lines()`：解析器把它拆成隐藏变量 `$forN` 的 let
+    /// 加上遍历。原文在循环期间不可能改变时（不可变绑定或只读借用，循环体里也没提到它），
+    /// 不必先建出整个列表：边扫描边把指向原文的视图交给循环变量，一个字符串都不复制。
+    fn streamed<'b>(
+        &self,
+        body: &'b Block,
+        at: usize,
+    ) -> Option<(&'b String, String, &'static str, &'b Block)> {
+        let (Instruction::Let(hidden, false, _, value), _) = &body[at] else {
+            return None;
+        };
+        let Some((Instruction::Each(name, None, path, false, nested), _)) = body.get(at + 1) else {
+            return None;
+        };
+        if path != hidden || !hidden.starts_with("$for") {
+            return None;
+        }
+        let call = self.string_call(value).unwrap_or_else(|| value.clone());
+        let Expr::Call(function, args) = &call else {
+            return None;
+        };
+        let kind = match function.as_str() {
+            "std/string:words" => "words",
+            "std/string:lines" => "lines",
+            _ => return None,
+        };
+        let [Expr::Borrow(source, false) | Expr::Variable(source)] = args.as_slice() else {
+            return None;
+        };
+        if source.contains('.') || self.mutable_names.contains(source) {
+            return None;
+        }
+        if !matches!(
+            self.locals.get(source),
+            Some((_, Type::Owned | Type::Shared))
+        ) {
+            return None;
+        }
+        // 循环体里只要出现这个名字（读也算）就不做：保守，免得漏掉移动或借用。
+        let text = format!("{nested:?}");
+        if text.contains(&format!("\"{source}\"")) || text.contains(&format!("\"{source}.")) {
+            return None;
+        }
+        Some((name, self.pointer(source), kind, nested))
+    }
+    fn stream(
+        &mut self,
+        name: &String,
+        source: &str,
+        kind: &str,
+        nested: &Block,
+        result_type: Type,
+    ) {
+        let src = format!("v{}", self.next);
+        let at = format!("v{}", self.next + 1);
+        let view = format!("v{}", self.next + 2);
+        self.next += 3;
+        self.code.push_str(&format!(
+            "{{\nS *{src} = {source};\nsize_t {at} = 0;\n// zam: streamed {kind}\nfor (;;) {{\n"
+        ));
+        if kind == "words" {
+            // 与 std/string:words 相同：按 ASCII 空白切分，跳过空段。
+            let space = |c: &str| {
+                format!("({c} == ' ' || {c} == '\\t' || {c} == '\\n' || {c} == '\\r' || {c} == '\\v' || {c} == '\\f')")
+            };
+            let c = format!("{src}->data[{at}]");
+            self.code.push_str(&format!(
+                "size_t start;\nwhile ({at} < {src}->len && {}) {at}++;\nif ({at} == {src}->len) break;\nstart = {at};\nwhile ({at} < {src}->len && !{}) {at}++;\nS {view} = {{0}};\n{view}.data = {src}->data + start;\n{view}.len = {at} - start;\n",
+                space(&c),
+                space(&c)
+            ));
+        } else {
+            // 与 std/string:lines 相同：按 \n 切分，去掉行尾的 \r，末尾换行之后不再多一行。
+            self.code.push_str(&format!(
+                "size_t start = {at}, end;\nif (start > {src}->len) break;\nwhile ({at} < {src}->len && {src}->data[{at}] != '\\n') {at}++;\nif ({at} == {src}->len && start == {src}->len) break;\nend = {at};\nif (end > start && {src}->data[end - 1] == '\\r') end--;\nS {view} = {{0}};\n{view}.data = {src}->data + start;\n{view}.len = end - start;\n{at}++;\n"
+            ));
+        }
+        let item = self.scalar(&format!("&{view}"), Type::Shared);
+        self.locals.insert(name.clone(), (item, Type::Shared));
+        self.loops.push(self.owners.len());
+        self.block(nested, result_type);
+        self.loops.pop();
+        self.locals.remove(name);
+        self.code.push_str("}\n}\n");
+    }
+    /// `counts[k] = counts.get(k, d) + x`（也可以是 `-`、`*`）：值是数字，键、默认值与 `x`
+    /// 都是变量或字面量（没有副作用，也碰不到这个字典）时，合成一次查找。
+    fn map_update<'b>(
+        &self,
+        local: &str,
+        index: &'b Expr,
+        expr: &'b Expr,
+    ) -> Option<(&'b str, &'b Expr, &'b Expr)> {
+        let Some(Type::Map(_, elem)) = self.place_ty(local).container() else {
+            return None;
+        };
+        let ty = elem.ty();
+        let Expr::Binary(op, left, right) = expr else {
+            return None;
+        };
+        let Expr::Method(path, method, args) = left.as_ref() else {
+            return None;
+        };
+        let [key, default] = args.as_slice() else {
+            return None;
+        };
+        let simple = |e: &Expr| matches!(e, Expr::Variable(_) | Expr::Int(_) | Expr::Float(_));
+        (matches!(op.as_str(), "+" | "-" | "*")
+            && matches!(ty, Type::Int | Type::Float)
+            && path == local
+            && method == "get"
+            && simple(index)
+            && simple(default)
+            && simple(right)
+            && format!("{key:?}") == format!("{index:?}")
+            && self.ty(default) == ty
+            && self.ty(right) == ty)
+            .then_some((op.as_str(), default, right.as_ref()))
+    }
     fn string_call(&self, expr: &Expr) -> Option<Expr> {
         if let Expr::Index(path, index) = expr {
             let root = path.split('.').next().unwrap_or(path);
@@ -2729,6 +2863,7 @@ impl<'a> Generator<'a> {
                     loops: Vec::new(),
                     proofs: ranges::Proofs::default(),
                     wrapping: false,
+                    mutable_names: Default::default(),
                     call_targets: BTreeMap::new(),
                     code: String::new(),
                     next: 0,
@@ -3946,7 +4081,16 @@ impl<'a> Generator<'a> {
         let outer = self.locals.clone();
         let scope_start = self.owners.len();
         let mut returned = false;
-        for (instruction, _) in body {
+        let mut skip = false;
+        for (at, (instruction, _)) in body.iter().enumerate() {
+            if std::mem::take(&mut skip) {
+                continue;
+            }
+            if let Some((name, source, kind, nested)) = self.streamed(body, at) {
+                self.stream(name, &source, kind, nested, result_type);
+                skip = true;
+                continue;
+            }
             match instruction {
                 Instruction::If(condition, yes, no) => {
                     let value = self.expr(condition);
@@ -4151,6 +4295,38 @@ impl<'a> Generator<'a> {
                         self.locals.remove(name);
                     }
                     self.code.push_str("}\n");
+                }
+                Instruction::AssignIndex(local, index, expr)
+                    if self.map_update(local, index, expr).is_some() =>
+                {
+                    let (op, default, right) =
+                        self.map_update(local, index, expr).expect("guarded");
+                    let container = self.place_ty(local).container().expect("guarded");
+                    let ty = self.ty(right);
+                    let key = self.key(index, container);
+                    let default = self.expr(default);
+                    let right = self.expr(right);
+                    let pointer = self.pointer(local);
+                    let slot = format!("v{}", self.next);
+                    self.next += 1;
+                    let current = format!("(*{slot})");
+                    let value = if ty == Type::Float {
+                        format!("({current} {op} {right})")
+                    } else if self.wrapping {
+                        format!("(int64_t)((uint64_t){current} {op} (uint64_t)({right}))")
+                    } else {
+                        let function = match op {
+                            "+" => "add",
+                            "-" => "sub",
+                            _ => "mul",
+                        };
+                        format!("{function}({current}, {right})")
+                    };
+                    self.code.push_str(&format!(
+                        "{} *{slot} = slot{}({pointer}, {key}, {default});\n*{slot} = {value};\n",
+                        ctype(ty),
+                        ctype(container)
+                    ));
                 }
                 Instruction::AssignIndex(local, index, expr)
                     if self.place_ty(local).container().is_some() =>
@@ -4471,6 +4647,40 @@ impl<'a> Generator<'a> {
 }
 
 // Visit every expression in AST source order; callers select the nodes they need.
+/// 函数里可能被改写的名字：`let mut`、可变解构，以及不是只读借用的参数。
+fn mutable_names(function: &crate::compiler::Function) -> std::collections::BTreeSet<String> {
+    fn walk(body: &Block, names: &mut std::collections::BTreeSet<String>) {
+        for (instruction, _) in body {
+            match instruction {
+                Instruction::Let(name, true, _, _) => {
+                    names.insert(name.clone());
+                }
+                Instruction::Unpack(items, true, _) => names.extend(items.iter().cloned()),
+                Instruction::If(_, yes, no) => {
+                    walk(yes, names);
+                    walk(no, names);
+                }
+                Instruction::While(_, nested)
+                | Instruction::For(_, _, _, nested)
+                | Instruction::Each(_, _, _, _, nested) => walk(nested, names),
+                Instruction::Match(_, arms) => {
+                    for (_, arm) in arms {
+                        walk(arm, names);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut names: std::collections::BTreeSet<String> = function
+        .params
+        .iter()
+        .filter(|(_, ty)| *ty != Type::Shared)
+        .map(|(name, _)| name.clone())
+        .collect();
+    walk(&function.body, &mut names);
+    names
+}
 fn visit_exprs<'a>(body: &'a Block, visit: &mut impl FnMut(&'a Expr)) {
     fn expr<'a>(value: &'a Expr, visit: &mut impl FnMut(&'a Expr)) {
         visit(value);
@@ -4950,6 +5160,7 @@ pub fn generate_with(module: &Module, entry: &str, unit: &str, tests: &[String])
             loops: Vec::new(),
             proofs: plan.proofs,
             wrapping: function.wrapping,
+            mutable_names: mutable_names(function),
             call_targets: plan.targets,
             code: String::new(),
             next: 0,
