@@ -5715,14 +5715,16 @@ fn load_environment(setup: &str) -> Result<BTreeMap<String, String>> {
     let path = std::env::temp_dir().join(format!("zam-msvc-{name}.txt"));
     if let Ok(text) = std::fs::read_to_string(&path) {
         if let Some((first, rest)) = text.split_once('\n') {
-            if first == stamp {
+            // 并发写入时可能读到不完整的文件：没有 INCLUDE 就当没有缓存，重新装载。
+            if first == stamp && rest.lines().any(|line| line.starts_with("INCLUDE=")) {
                 return Ok(parse_environment(rest));
             }
         }
     }
     // 命令写进 .bat 再执行：`cmd /c` 只认自己的引号规则，而 Rust 把参数里的引号转义成
     // `\"`（cmd 不认），带空格的 vcvars 路径就永远找不到。
-    let script = std::env::temp_dir().join(format!("zam-msvc-{name}.bat"));
+    // 脚本按进程区分：多个 zam 同时首次装载时，不能互相改写对方正在执行的脚本。
+    let script = std::env::temp_dir().join(format!("zam-msvc-{name}-{}.bat", std::process::id()));
     let setup = setup.replace('/', r"\");
     std::fs::write(
         &script,
@@ -5740,12 +5742,19 @@ fn load_environment(setup: &str) -> Result<BTreeMap<String, String>> {
             String::from_utf8_lossy(&output.stderr)
         ));
     }
+    let _ = std::fs::remove_file(&script);
     let text = String::from_utf8_lossy(&output.stdout).into_owned();
     if !text.lines().any(|line| line.starts_with("INCLUDE=")) {
         return Err("MSVC setup produced no INCLUDE".into());
     }
+    // 先写进本进程的临时文件再改名，别的进程只会读到完整的缓存。
     // 写不进去也无所谓，只是下次还要重新装载一遍。
-    let _ = std::fs::write(&path, format!("{stamp}\n{text}"));
+    let partial = path.with_extension(format!("{}.tmp", std::process::id()));
+    if std::fs::write(&partial, format!("{stamp}\n{text}")).is_ok()
+        && std::fs::rename(&partial, &path).is_err()
+    {
+        let _ = std::fs::remove_file(&partial);
+    }
     Ok(parse_environment(&text))
 }
 
