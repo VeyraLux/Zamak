@@ -45,15 +45,7 @@
 | As fast as C | 56 KB hello world | 20 MB where Java uses 365 MB | No lifetime annotations | Overflow checked in release builds |
 | :---: | :---: | :---: | :---: | :---: |
 
-Each popular language asks you to give something up:
-
-- **Python** is easy to read and write, but it's slow, it needs an interpreter on every machine, and it finds type errors only when the code runs.
-- **C** is fast and small, but one wrong index or integer overflow silently corrupts memory.
-- **Rust** is fast and memory safe, but lifetimes and the borrow checker take a long time to learn, and its release builds don't check integer overflow.
-- **Go** is simple and safe, but it ships a garbage collector, and a hello world is 2.3 MB.
-- **Java** and **Node.js** need a large runtime, and they use hundreds of megabytes on allocation-heavy work.
-
-Zamak is designed so that you don't have to choose. The numbers below come from benchmarks you can run yourself; see [How Zamak compares](#how-zamak-compares) and [Features](#features):
+Zamak brings these together in one language. The numbers come from benchmarks you can run yourself; see [How Zamak compares](#how-zamak-compares) and [Features](#features).
 
 - **Python's readability at C's speed.** Zamak reads like Python: `for i in range(n)`, `xs[-1]`, `f"..."`, and Python's division rules. It compiles to native code that matches or beats C on spectral-norm, fannkuch-redux, and primes, and runs compute-bound programs 46 to 217 times faster than Python.
 - **Memory safety you don't have to fight.** Ownership rules out use-after-free and double frees at compile time, with no garbage collector. Read-only borrows happen automatically, a borrow lasts at most one block, and you never write lifetime annotations. When the checker does reject code, the error names the problem and suggests the fix.
@@ -61,6 +53,16 @@ Zamak is designed so that you don't have to choose. The numbers below come from 
 - **Small programs with a small footprint.** A hello world is 56 KB, about the size of C's and 1/40 of Go's. On binary-trees, Zamak is the fastest of the seven languages tested and uses 20 MB, where Java and Node.js use more than 360 MB.
 - **Built for AI coding agents.** The whole language fits in a one-page reference that agents read before they write code. Every diagnostic has a stable code and a suggested fix, also as JSON, and `zam new --template ai` sets up a project with a skill file for your agent.
 - **Fast feedback.** `zam check` finishes in less than 0.1 seconds on a 5,000-line project, and a one-line edit rebuilds in under a second, because `zam` caches every module by content.
+
+### Compared with popular languages
+
+Each popular language asks you to give something up, and Zamak is designed so that you don't have to choose:
+
+- **Python** is easy to read and write, but it's slow, it needs an interpreter on every machine, and it finds type errors only when the code runs.
+- **C** is fast and small, but one wrong index or integer overflow silently corrupts memory.
+- **Rust** is fast and memory safe, but lifetimes and the borrow checker take a long time to learn, and its release builds don't check integer overflow.
+- **Go** is simple and safe, but it ships a garbage collector, and a hello world is 2.3 MB.
+- **Java** and **Node.js** need a large runtime, and they use hundreds of megabytes on allocation-heavy work.
 
 ### When to choose something else
 
