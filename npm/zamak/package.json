@@ -1,0 +1,23 @@
+{
+  "name": "zamak",
+  "version": "0.0.0",
+  "description": "Zamak, a programming language that reads like Python and runs like C. Installs the zam compiler.",
+  "keywords": ["zamak", "zam", "programming language", "compiler", "lsp", "mcp"],
+  "homepage": "https://zamak.veyralux.org",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/VeyraLux/Zamak.git"
+  },
+  "bugs": "https://github.com/VeyraLux/Zamak/issues",
+  "license": "MIT OR Apache-2.0",
+  "author": "VeyraLux (founded by rayL-K)",
+  "bin": {
+    "zam": "bin/zam.js",
+    "zamak": "bin/zam.js"
+  },
+  "files": ["bin"],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {}
+}

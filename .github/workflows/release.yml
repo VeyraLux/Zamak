@@ -132,3 +132,39 @@ jobs:
             --title "Zamak $GITHUB_REF_NAME" \
             $prerelease \
             --generate-notes
+
+  # npm: `npm install -g zamak`, `npx zamak`, `bunx zamak`, and `zam upgrade`. Each platform gets a
+  # package with its zam; the zamak package picks the right one. Skipped until the NPM_TOKEN secret exists.
+  npm:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "NPM_TOKEN isn't set; skipping npm."
+            exit 0
+          fi
+          version="${GITHUB_REF_NAME#v}"
+          # Pre-releases go to the "next" tag, so `npm install -g zamak` keeps installing the latest release.
+          tag=latest
+          case "$version" in *-*) tag=next ;; esac
+          node tools/package-npm.mjs "$version" assets npm-out
+          for package in zamak-win32-x64 zamak-linux-x64 zamak-darwin-arm64 zamak; do
+            (cd "npm-out/$package" && npm publish --access public --provenance --tag "$tag")
+          done

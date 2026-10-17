@@ -35,6 +35,7 @@ __pycache__/
 _session-restore/
 session-resume-*/
 
-# VS Code 扩展的依赖与打包产物
+# VS Code 扩展的依赖与打包产物；npm 包的输出
+npm-out/
 editors/vscode/node_modules/
 *.vsix
