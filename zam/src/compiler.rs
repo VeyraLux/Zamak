@@ -5325,6 +5325,17 @@ impl<'a> Checker<'a> {
                 }
                 ((**inner).clone(), method, args)
             }
+            // `parts[0].strip()`、`rows[i].name.upper()`：字符串元素或字段借给 std/string 函数。
+            Expr::ElementMethod(path, index, field, method, args) => {
+                if !self.element(path, field).is_ok_and(|(_, ty)| is_string(ty)) {
+                    return Ok(None);
+                }
+                (
+                    Expr::BorrowIndex(path.clone(), index.clone(), field.clone(), false),
+                    method,
+                    args,
+                )
+            }
             _ => return Ok(None),
         };
         string_method(self.functions, receiver, method, args)

@@ -2790,6 +2790,15 @@ impl<'a> Generator<'a> {
             Expr::Chain(inner, method, args) if is_string(self.ty(inner)) => {
                 ((**inner).clone(), method, args)
             }
+            Expr::ElementMethod(path, index, field, method, args)
+                if is_string(self.element_ty(path, field)) =>
+            {
+                (
+                    Expr::BorrowIndex(path.clone(), index.clone(), field.clone(), false),
+                    method,
+                    args,
+                )
+            }
             _ => return None,
         };
         string_method(&self.module.functions, receiver, method, args)
