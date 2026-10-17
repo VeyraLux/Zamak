@@ -136,14 +136,14 @@ def svg(colors, dim_alpha, size, halo, halo_alpha, glow, core):
     .halo {{ transform-box: fill-box; transform-origin: center; opacity: 0; animation: halo 2.4s {landed:.2f}s ease-in-out infinite; }}
     .spark {{ transform-box: fill-box; transform-origin: center; opacity: 0; animation: spark 2.8s ease-in-out infinite; }}
     .band {{ animation: sweep {SWEEP}s {landed - 0.6:.2f}s ease-in-out infinite both; }}
-    .lid {{ transform-box: fill-box; transform-origin: 50% 0; transform: scaleY(0); animation: blink .32s {blink:.2f}s ease-in-out both; }}
+    .lid {{ transform-box: fill-box; transform-origin: 50% 0; transform: scaleY(0); animation: blink 6.4s {blink:.2f}s ease-in-out infinite both; }}
     {BOUNCE}
     {HOP}
     /* 光滴落定后呼吸：吸气时光滴微微胀大、光晕向外扩散，呼气时收回；亮度不降。 */
     @keyframes breath {{ 0%, 100% {{ transform: scale(1); }} 50% {{ transform: scale(1.06); }} }}
     @keyframes halo {{ 0%, 100% {{ opacity: .25; transform: scale(.8); }} 50% {{ opacity: .75; transform: scale(1.15); }} }}
-    /* 都落定后眨一下眼：眼皮从上往下合上再睁开。 */
-    @keyframes blink {{ 0%, 100% {{ transform: scaleY(0); }} 50% {{ transform: scaleY(1); }} }}
+    /* 都落定后时不时眨眼：眼皮从上往下合上再睁开。每 6.4 秒一轮：先眨一下，过一会儿连眨两下，像活的。 */
+    @keyframes blink {{ 0%, 5%, 55%, 60%, 66%, 100% {{ transform: scaleY(0); }} 2.5%, 57.5%, 63% {{ transform: scaleY(1); }} }}
     @keyframes spark {{ 0%, 60%, 100% {{ opacity: 0; transform: scale(.4) rotate(0deg); }} 72% {{ opacity: 1; transform: scale(1.3) rotate(45deg); }} 84% {{ opacity: 0; transform: scale(.6) rotate(90deg); }} }}
     /* 都落定后一道光扫过（构建完成），之后每隔几秒再扫一次。 */
     @keyframes sweep {{ 0% {{ transform: translateX(-140px); }} 24%, 100% {{ transform: translateX({WIDTH + 60}px); }} }}
