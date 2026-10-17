@@ -8,16 +8,16 @@ Zamak compiles to C, so it can call C functions directly. Use this to reach a C 
 
 ```zamak
 extern fn hypot(x: f64, y: f64) -> f64
-extern fn cbrt(x: f64) -> f64
+extern fn fmax(a: f64, b: f64) -> f64
 
 fn main():
     println(hypot(3, 4))
-    println(cbrt(27))
+    println(fmax(2.5, 7))
 ```
 
 ```text
 5.0
-3.0
+7.0
 ```
 
 The declaration must match the C signature. Zamak maps types as follows:

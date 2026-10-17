@@ -8,16 +8,16 @@ Zamak 编译成 C，所以可以直接调用 C 函数。用它来使用 C 库，
 
 ```zamak
 extern fn hypot(x: f64, y: f64) -> f64
-extern fn cbrt(x: f64) -> f64
+extern fn fmax(a: f64, b: f64) -> f64
 
 fn main():
     println(hypot(3, 4))
-    println(cbrt(27))
+    println(fmax(2.5, 7))
 ```
 
 ```text
 5.0
-3.0
+7.0
 ```
 
 声明必须与 C 的签名一致。类型对应关系如下：
