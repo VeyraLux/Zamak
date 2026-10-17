@@ -1,0 +1,21 @@
+[book]
+title = "The Zamak Book"
+authors = ["VeyraLux"]
+language = "en"
+description = "Learn Zamak: a statically typed language that reads like Python and compiles to native code."
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/VeyraLux/Zamak"
+edit-url-template = "https://github.com/VeyraLux/Zamak/edit/main/book/en/{path}"
+site-url = "/"
+additional-css = ["theme/zamak.css"]
+additional-js = ["theme/zamak.js"]
+no-section-label = false
+
+[output.html.fold]
+enable = false
+
+[build]
+create-missing = false

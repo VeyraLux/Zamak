@@ -1,0 +1,65 @@
+/* Zamak Book：品牌色（logo 从暖到冷的渐变）与少量排版调整，其余沿用 mdBook 主题。 */
+:root {
+    --zamak-warm: #f97362;
+    --zamak-cool: #6366f1;
+    --zamak-cyan: #06b6d4;
+}
+
+.light, .rust {
+    --links: #4f46e5;
+    --sidebar-active: #c2410c;
+}
+
+.coal, .navy, .ayu {
+    --links: #818cf8;
+    --sidebar-active: #fdba74;
+}
+
+/* 侧栏顶部的 logo：浅色主题用浅色版，深色主题用深色版。 */
+.zamak-logo {
+    display: block;
+    padding: 18px 16px 8px;
+}
+
+.zamak-logo img {
+    width: 100%;
+    max-width: 190px;
+    height: auto;
+}
+
+.zamak-logo-dark { display: none; }
+.coal .zamak-logo-light, .navy .zamak-logo-light, .ayu .zamak-logo-light { display: none; }
+.coal .zamak-logo-dark, .navy .zamak-logo-dark, .ayu .zamak-logo-dark { display: inline; }
+
+/* 顶栏标题下面一道渐变细线。 */
+#menu-bar {
+    border-bottom: 2px solid transparent;
+    border-image: linear-gradient(90deg, #f59e0b, var(--zamak-warm) 40%, var(--zamak-cool) 75%, var(--zamak-cyan)) 1;
+}
+
+.zamak-language {
+    display: inline-flex;
+    align-items: center;
+    padding: 0 10px;
+    font-size: 1.4rem;
+    color: var(--icons);
+    text-decoration: none;
+}
+
+.zamak-language:hover {
+    color: var(--icons-hover);
+    text-decoration: none;
+}
+
+/* 程序输出：与代码区分开。 */
+pre > code.language-text {
+    border-left: 3px solid var(--zamak-cool);
+}
+
+.content main {
+    max-width: 780px;
+}
+
+.content p, .content li {
+    line-height: 1.7;
+}
