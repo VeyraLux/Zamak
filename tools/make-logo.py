@@ -24,6 +24,8 @@ TEXT = ['>', 'Z', 'A', 'M', 'A', 'K', 'drop']
 # 小一号的深色圆角长方形，比例与方形图标的眼睛相同（宽 0.72 格、高 1.68 格）。两种主题都用黑色。
 EYE_COLUMNS = (1, 5)
 EYE = '#0b1020'
+# Ƶ 的两只小脚：在字形下方，位置与吉祥物相同（按 7 列字形换算），跟着最下面一行像素一起落下。
+FEET = (0.9, 4.8)
 PIXEL, GAP = 7, 1.5          # 光点 7，间隙 1.5：每格 8.5（7×11 点阵）
 PITCH = PIXEL + GAP
 CHAR = 8 * PITCH             # 7 列光点 + 1 列字距：每个字符同宽
@@ -74,13 +76,14 @@ HOP = f'''@keyframes hop {{
     }}'''
 
 
-def svg(colors, dim_alpha, size, halo, halo_alpha, glow, core):
+def svg(colors, dim_alpha, size, halo, halo_alpha, glow, core, feet='#e2e8f0'):
     """colors：Z、A、M、A、K、光滴各自中心的颜色，从左到右由暖到冷连续渐变；提示符是第一个颜色的
     半透明版（“还没被点亮的那一段”）。size：光点边长——白底上暗色会显得收缩（光渗效应），
     浅色主题用更大的光点、更窄的间隙抵消。halo：光滴光晕的颜色。core：光滴从中心到边缘的颜色（中心最亮，
     像真的发光体）。"""
     inset = (PIXEL - size) / 2
     letters, drop, shines, eyes, lids = [], [], [], [], []
+    bottom = {}
     for i, col, row, px, py in pixels():
         rect = f'<rect x="{px + inset:g}" y="{py + inset:g}" width="{size:g}" height="{size:g}" rx="{size * 0.26:.2f}"'
         shines.append(rect + '/>')
@@ -91,6 +94,8 @@ def svg(colors, dim_alpha, size, halo, halo_alpha, glow, core):
         # 按字符、按列依次落下，再加一点错位：像雨点一样不齐整，更活泼。
         jitter = ((i * 73 + col * 31 + row * 17) % 11) / 11 * 0.14
         delay = 0.10 + i * 0.24 + col * 0.05 + jitter
+        if TEXT[i] == 'Z' and row == 10:
+            bottom[col] = delay
         if TEXT[i] == 'Z' and row == 0 and col in EYE_COLUMNS:
             # 眼睛跟着这一列最上面的像素一起落下；眼皮是同色同形的一层，落定后眨一下眼。
             w, h = 0.72 * PITCH, 1.68 * PITCH
@@ -100,6 +105,10 @@ def svg(colors, dim_alpha, size, halo, halo_alpha, glow, core):
             eyes.append(f'{eye} fill="{EYE}" class="px" style="animation-delay:{delay:.3f}s"/>')
             lids.append(f'{eye} fill="url(#ink)" class="lid"/>')
         letters.append(f'{rect} class="px" style="animation-delay:{delay:.3f}s"/>')
+    legs = ''.join(
+        f'<rect x="{PAD_X + CHAR + fx * PITCH + inset:.2f}" y="{PAD_Y + 11 * PITCH - GAP + 1.5:.2f}" width="{1.3 * PITCH:.2f}" '
+        f'height="{min(0.8 * PITCH, 9):.2f}" rx="{0.3 * PITCH:.2f}" fill="{feet}" class="px" style="animation-delay:{bottom[round(fx)]:.3f}s"/>'
+        for fx in FEET)
     drop_delay = 0.10 + 5 * 0.24 + 0.55
     landed = drop_delay + HOP_T
     blink = landed + 0.35
@@ -183,6 +192,7 @@ def svg(colors, dim_alpha, size, halo, halo_alpha, glow, core):
   <g{group_filter}>
     {''.join(letters)}
     {''.join(eyes)}
+    {legs}
     {''.join(lids)}
     <g class="breath" filter="url(#dropglow)"><g class="drop">{''.join(drop)}{highlight}</g></g>
   </g>
@@ -197,7 +207,7 @@ DOCS.mkdir(exist_ok=True)
     svg(['#fcd34d', '#fdba74', '#fb8a6b', '#818cf8', '#60a5fa', '#22d3ee'], 0.38, PIXEL, '#67e8f9', 0.45, 2.2, ['#cffafe', '#67e8f9', '#22d3ee']),
     encoding='utf-8', newline='\n')
 (DOCS / 'logo-light.svg').write_text(
-    svg(['#b45309', '#c2410c', '#dc2626', '#4338ca', '#1d4ed8', '#0891b2'], 0.55, 7.6, '#22d3ee', 0.5, 0, ['#a5f3fc', '#22d3ee', '#0891b2']),
+    svg(['#b45309', '#c2410c', '#dc2626', '#4338ca', '#1d4ed8', '#0891b2'], 0.55, 7.6, '#22d3ee', 0.5, 0, ['#a5f3fc', '#22d3ee', '#0891b2'], feet='#94a3b8'),
     encoding='utf-8', newline='\n')
 
 
@@ -219,7 +229,10 @@ ICON_Z = ['111111111', '111111111', '000000111', '000001110', '000011100', '0111
           '001110000', '011100000', '111000000', '111111111', '111111111']
 ICON_DROP = ['00100', '01110', '01110', '11111', '11111', '01110']
 # 眼睛占 Ƶ 顶上两行的第 3、7 列（从 0 数是 2、6），比格子略窄，四角稍圆。
-ICON_EYES = [(1.2 + c + 0.14, 3.8 + 0.16, 0.72, 1.68) for c in (2, 6)]
+ICON_TOP = 3.2   # Ƶ 的上沿；比原来高 0.6 格，给脚留出位置
+ICON_EYES = [(1.2 + c + 0.14, ICON_TOP + 0.16, 0.72, 1.68) for c in (2, 6)]
+# 两只小脚：与吉祥物相同，在第 1.2、6.2 格处，宽 1.6、高 0.7。
+ICON_FEET = [(1.2 + x, ICON_TOP + 11 + 0.14, 1.6, 0.7) for x in (1.2, 6.2)]
 
 
 def icon() -> str:
@@ -242,8 +255,9 @@ def icon() -> str:
     </filter>
   </defs>
   <rect width="16" height="16" rx="3.4" fill="url(#tile)"/>
-  <g fill="#fff">{cells(ICON_Z, 1.2, 3.8, 1, 0.06, 0.2)}</g>
+  <g fill="#fff">{cells(ICON_Z, 1.2, ICON_TOP, 1, 0.06, 0.2)}</g>
   <g fill="#0b1020">{''.join(f'<rect x="{x:.2f}" y="{y:.2f}" width="{w}" height="{h}" rx="0.22"/>' for x, y, w, h in ICON_EYES)}</g>
+  <g fill="#fff">{''.join(f'<rect x="{x:.2f}" y="{y:.2f}" width="{w}" height="{h}" rx="0.25"/>' for x, y, w, h in ICON_FEET)}</g>
   <g fill="#fff" filter="url(#soft)">{cells(ICON_DROP, 10.9, 1.5, 0.65, 0.04, 0.14)}</g>
 </svg>
 '''
@@ -287,10 +301,12 @@ def icon_png(size: int):
                     side = (unit - 2 * inset) * k
                     draw.rounded_rectangle([left, top, left + side, top + side], radius=radius * k, fill=(255, 255, 255, 255))
         return layer
-    out.alpha_composite(squares(ICON_Z, 1.2, 3.8, 1, 0.06, 0.2))
+    out.alpha_composite(squares(ICON_Z, 1.2, ICON_TOP, 1, 0.06, 0.2))
     eyes = ImageDraw.Draw(out)
     for x, y, w, h in ICON_EYES:
         eyes.rounded_rectangle([x * k, y * k, (x + w) * k, (y + h) * k], radius=0.22 * k, fill=(0x0b, 0x10, 0x20, 255))
+    for x, y, w, h in ICON_FEET:
+        eyes.rounded_rectangle([x * k, y * k, (x + w) * k, (y + h) * k], radius=0.25 * k, fill=(255, 255, 255, 255))
     drop = squares(ICON_DROP, 10.9, 1.5, 0.65, 0.04, 0.14)
     out.alpha_composite(drop.filter(ImageFilter.GaussianBlur(0.35 * k)))   # 光滴的柔光
     out.alpha_composite(drop)
