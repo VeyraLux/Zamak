@@ -1,0 +1,10 @@
+// The Zamak Book 部署到 zamak.veyralux.org：Cloudflare Worker 只托管静态文件。
+// 先运行 python book/build.py 生成 site/，再在 book/ 里运行 npx wrangler deploy。
+// 域名在 Cloudflare 后台作为 Workers Custom Domain 绑定在 zamak-site 上，部署不会改动域名。
+{
+  "name": "zamak-site",
+  "compatibility_date": "2026-10-16",
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": { "directory": "./site", "not_found_handling": "404-page" }
+}

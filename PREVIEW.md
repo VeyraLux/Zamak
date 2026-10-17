@@ -29,7 +29,7 @@ zam fmt hello
 
 预期输出包含 `hello from zamak`。`build` 的 stderr 会显示 `OUTPUT <path>`，该产物可独立运行。
 
-教程见 [TUTORIAL.md](TUTORIAL.md)，常见算法示例见 [examples/tutorial_cases/main.zm](examples/tutorial_cases/main.zm)。
+教程见 [Zamak 语言手册](https://zamak.veyralux.org/zh-CN/)，常见算法示例见 [examples/tutorial_cases/main.zm](examples/tutorial_cases/main.zm)。
 
 ## 已知限制
 

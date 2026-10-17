@@ -12,7 +12,7 @@
   &nbsp;·&nbsp;
   <a href="#为什么选择-zamak">为什么选择 Zamak</a>
   &nbsp;·&nbsp;
-  <a href="./TUTORIAL.md">教程</a>
+  <a href="https://zamak.veyralux.org/zh-CN/">语言手册</a>
   &nbsp;·&nbsp;
   <a href="./PREVIEW.md">预览版安装</a>
   &nbsp;·&nbsp;
@@ -175,7 +175,7 @@ zam new hello --template ai
 
 ## 快速运行
 
-第一次使用可以先读 [入门教程](TUTORIAL.md)。Windows 预览包和各平台的工具链要求见 [安装说明](PREVIEW.md)。
+第一次使用可以先读 [Zamak 语言手册](https://zamak.veyralux.org/zh-CN/)。Windows 预览包和各平台的工具链要求见 [安装说明](PREVIEW.md)。
 
 从源码安装需要 Rust stable 和一个 C 编译器。在仓库根目录执行：
 
@@ -201,7 +201,7 @@ zam test hello
 hello from zamak
 ```
 
-多模块、中文输出和所有权的示例见 [教程](TUTORIAL.md)。
+多模块、中文输出和所有权的示例见 [语言手册](https://zamak.veyralux.org/zh-CN/)。
 
 ### 命令行行为
 
