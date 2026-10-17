@@ -4022,7 +4022,16 @@ impl<'a> Generator<'a> {
             Expr::Lambda(params, _, _) => params.iter().all(|(_, ty)| ty.is_some()),
             _ => known(arg),
         };
-        let name = overload(name, args.first().filter(typed).map(|arg| self.ty(arg)));
+        let float_power = name == "std/core:pow"
+            && args
+                .iter()
+                .any(|arg| typed(&arg) && self.ty(arg) == Type::Float);
+        let first = if float_power {
+            Some(Type::Float)
+        } else {
+            args.first().filter(typed).map(|arg| self.ty(arg))
+        };
+        let name = overload(name, first);
         let actuals: Vec<Option<Type>> = args
             .iter()
             .map(|arg| typed(&arg).then(|| self.value_type(arg)))

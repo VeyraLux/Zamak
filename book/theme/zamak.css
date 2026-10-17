@@ -16,15 +16,27 @@
 }
 
 /* 侧栏顶部的 logo：浅色主题用浅色版，深色主题用深色版。 */
+/* mdBook 的目录滚动区是绝对定位的：logo 占住顶部 64px，滚动区从它下面开始。 */
 .zamak-logo {
-    display: block;
-    padding: 18px 16px 8px;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    padding: 0 18px;
+    box-sizing: border-box;
 }
 
 .zamak-logo img {
     width: 100%;
-    max-width: 190px;
+    max-width: 170px;
     height: auto;
+}
+
+.zamak-logo + .sidebar-scrollbox {
+    top: 64px;
 }
 
 .zamak-logo-dark { display: none; }

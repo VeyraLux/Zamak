@@ -802,3 +802,13 @@ fn python_string_methods() {
         "[\"a\", \"b\", \"c\"]\nx, y\np-q\nHI!\n5\no\nABC\norig\n[\"p\", \"q\"]\n[\"p\", \"q\"]\nx | y|\ntrue\ntrue\ntrue\ntrue\ntrue\n  ab|\n"
     );
 }
+
+#[test]
+fn power_binds_tighter_than_unary_minus_as_in_python() {
+    let case = Case::new("expressions", "python-power");
+    // 与 Python 相同：-2 ** 2 是 -(2 ** 2)；~ 同理；有一边是浮点数就按浮点算；负的整数字面量照常。
+    assert_eq!(
+        stdout(&case.run("fn main():\n    println(-2 ** 2)\n    println(~2 ** 2)\n    println(2 ** -1.0)\n    println((-2) ** 2)\n    println(-9223372036854775808)\n    println(-2.0 ** 2)\n    println(2 ** 3 ** 2)\n    println(1 - -2 ** 2)\n    let x = 3\n    println(-x ** 2)\n")),
+        "-4\n-5\n0.5\n4\n-9223372036854775808\n-4.0\n512\n5\n-9\n"
+    );
+}
