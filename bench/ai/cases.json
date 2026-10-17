@@ -8,10 +8,10 @@
   },
   {
     "id": "syntax-character",
-    "source": "fn main():\n    println(@)\n",
+    "source": "fn main():\n    println(`)\n",
     "expected_code": "ZM100",
     "patches": [
-      { "find": "println(@)", "replace": "println(1)" }
+      { "find": "println(`)", "replace": "println(1)" }
     ],
     "expected_output": "1\n"
   },
