@@ -42,7 +42,7 @@ New-Item -ItemType Junction -Path "$env:USERPROFILE\.vscode\extensions\zamak-0.1
 ln -s "$PWD" ~/.vscode/extensions/zamak-0.1.0
 ```
 
-To build a `.vsix` package, copy `LICENSE-MIT` from the repository root to `editors/vscode/LICENSE`, then run:
+To build a `.vsix` package, run:
 
 ```powershell
 npx @vscode/vsce package
@@ -57,7 +57,7 @@ The language server lives in the compiler (`zam/src/lsp.rs`), so new compiler re
 
 1. Create a publisher at <https://marketplace.visualstudio.com/manage> and replace the placeholder `"publisher": "zamak"` in `package.json` with its ID.
 2. Create a personal access token in Azure DevOps with the **Marketplace → Manage** scope.
-3. Add `LICENSE` (see above) and `CHANGELOG.md`.
+3. Update `CHANGELOG.md` and the `version` in `package.json`.
 4. Run `npx @vscode/vsce publish`.
 
 `icon.png` is `ico/Zamak_256x256.ico` scaled to 128×128.

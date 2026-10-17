@@ -1,0 +1,4 @@
+scripts/**
+node_modules/**/*.md
+node_modules/**/*.map
+*.vsix
