@@ -1,7 +1,8 @@
 """用法：python tools/make-logo.py，生成 docs/logo-dark.svg、docs/logo-light.svg 与预览页 zam/target/logo-preview.html。
 
-Zamak 动态 logo「光雨汇成代码」：7×11 像素点阵。光点像雨一样落下、弹跳着落进格子拼出
-`> ZAMAK`，其中的 Ƶ 就是吉祥物小 Ƶ（与宣传片结尾一致）；最后一颗光滴弹进来并呼吸发光；中途一道光扫过（构建完成）。
+Zamak 动态 logo：7×11 像素点阵拼出 `> ZAMAK`，其中的 Ƶ 就是吉祥物小 Ƶ。入场与宣传片的登场镜头相同：
+小 Ƶ 先落地，A、M、A、K 每半秒（120 BPM 的一拍）落下一个，提示符 > 从左边滑进来；接着小光滴从小 Ƶ 身上
+滴下去，大光滴落进最后一格并呼吸发光；之后一道光时不时扫过（构建完成），小 Ƶ 时不时眨眼。
 呼应 VeyraLux 微睿霖光：霖 = 连绵的雨（光滴），光 = 光点。"""
 import base64
 from pathlib import Path
@@ -50,8 +51,12 @@ def pixels():
     return out
 
 
-# 打开页面时只演一次：光点弹跳着落下就位，之后保持不动；扫光每隔几秒扫一次，光滴持续呼吸。
-FALL = 1.0                   # 一个光点从落下到停稳的秒数
+# 打开页面时只演一次：字母踩着拍子落下就位，之后保持不动；扫光每隔几秒扫一次，光滴持续呼吸。
+BEAT = 0.5                   # 宣传片的节拍（120 BPM）
+FALL = 1.0                   # 一个字母从落下到停稳的秒数（0.3 秒时落地）
+# 每个字符开始落下的时刻（秒），落地正好在拍点上：小 Ƶ、A、M、A、K 依次各隔一拍，> 再隔一拍滑进来。
+START = {1: 0.0, 2: BEAT, 3: 2 * BEAT, 4: 3 * BEAT, 5: 4 * BEAT}
+PROMPT_AT = 5 * BEAT
 HOP_T = 1.3                  # 光滴的弹跳更高、更久
 DRIP_T = 0.75                # 小光滴从小 Ƶ 右上角滴到右下角的秒数
 DRIP_FALL = 9.6 * 8.5        # 小光滴落下的距离：从顶上一横到底下一横
@@ -64,7 +69,7 @@ def pct(seconds: float, total: float) -> str:
 
 # 弹跳：加速落下 → 落地压扁 → 弹起拉长 → 再落 → 小弹一下 → 停稳。
 BOUNCE = f'''@keyframes bounce {{
-      0% {{ transform: translateY(-58px) scale(1, 1); opacity: 0; animation-timing-function: cubic-bezier(.55, 0, 1, .45); }}
+      0% {{ transform: translateY(-120px) scale(1, 1); opacity: 0; animation-timing-function: cubic-bezier(.55, 0, 1, .45); }}
       {pct(0.30, FALL)} {{ transform: translateY(0) scale(1.28, .7); opacity: 1; animation-timing-function: cubic-bezier(0, .55, .45, 1); }}
       {pct(0.46, FALL)} {{ transform: translateY(-16px) scale(.9, 1.12); animation-timing-function: cubic-bezier(.55, 0, 1, .45); }}
       {pct(0.60, FALL)} {{ transform: translateY(0) scale(1.14, .84); animation-timing-function: cubic-bezier(0, .55, .45, 1); }}
@@ -86,8 +91,8 @@ HOP = f'''@keyframes hop {{
 def svg(colors, prompt_alpha, halo, halo_alpha, glow, core, feet):
     """colors：提示符与 A、M、A、K 的颜色（字符序号 → 颜色），与宣传片结尾的 logo 相同；
     小 Ƶ 用吉祥物的对角渐变。halo：光滴光晕的颜色。core：光滴从中心到边缘的颜色（中心最亮）。"""
-    letters, drop, shines, eyes, lids = [], [], [], [], []
-    delays = {}
+    groups = {i: [] for i in range(len(TEXT) - 1)}
+    drop, shines, eyes, lids = [], [], [], []
     for i, col, row, px, py in pixels():
         name = TEXT[i]
         if name == 'Z':
@@ -99,25 +104,26 @@ def svg(colors, prompt_alpha, halo, halo_alpha, glow, core, feet):
             drop.append(rect + ' fill="url(#core)"/>')
             continue
         shines.append(rect + '/>')
-        # 按字符、按列依次落下，再加一点错位：像雨点一样不齐整，更活泼。
-        jitter = ((i * 73 + col * 31 + row * 17) % 11) / 11 * 0.14
-        delay = 0.10 + i * 0.24 + col * 0.05 + jitter
-        delays[(i, col, row)] = delay
         opacity = f' fill-opacity="{prompt_alpha}"' if i == 0 else ''
-        letters.append(f'{rect} fill="{fill}"{opacity} class="px" style="animation-delay:{delay:.3f}s"/>')
+        groups[i].append(f'{rect} fill="{fill}"{opacity}/>')
     # 眼睛：小 Ƶ 顶上那一横的第 3、7 列（从 0 数是 2、6），连起来的两格高、小一号的深色圆角长方形，
-    # 与吉祥物相同；跟着这一列最上面的像素一起落下。眼皮是同色同形的一层，落定后时不时眨眼。
+    # 与吉祥物相同；跟着小 Ƶ 一起落下。眼皮是同色同形的一层，落定后时不时眨眼。
     for c in (2, 6):
         eye = (f'<rect x="{ZX + (c + 0.14) * PITCH:.2f}" y="{PAD_Y + 0.16 * PITCH:.2f}" width="{0.72 * PITCH:.2f}" '
                f'height="{1.68 * PITCH:.2f}" rx="{0.22 * PITCH:.2f}"')
-        eyes.append(f'{eye} fill="{EYE}" class="px" style="animation-delay:{delays[(1, c, 0)]:.3f}s"/>')
+        eyes.append(f'{eye} fill="{EYE}"/>')
         lids.append(f'{eye} fill="url(#zink)" class="lid"/>')
-    # 两只小脚：与吉祥物相同的位置和大小，跟着最下面一行像素一起落下。
+    # 两只小脚：与吉祥物相同的位置和大小。
     legs = ''.join(
         f'<rect x="{ZX + fx * PITCH:.2f}" y="{PAD_Y + 11.05 * PITCH:.2f}" width="{1.6 * PITCH:.2f}" height="{0.9 * PITCH:.2f}" '
-        f'rx="{0.3 * PITCH:.2f}" fill="{feet}" class="px" style="animation-delay:{delays[(1, col, 10)]:.3f}s"/>'
-        for fx, col in ((1.2, 1), (6.2, 6)))
-    drip_delay = 1.90                       # 小 Ƶ 早已落定（约 1.6 秒）
+        f'rx="{0.3 * PITCH:.2f}" fill="{feet}"/>'
+        for fx in (1.2, 6.2))
+    groups[1] += eyes + [legs] + lids
+    # 每个字符一个组，整个字母一起落下；提示符 > 从左边滑进来。
+    letters = ''.join(
+        f'<g class="{"slide" if i == 0 else "px"}" style="animation-delay:{PROMPT_AT if i == 0 else START[i]:.2f}s">{"".join(g)}</g>'
+        for i, g in groups.items())
+    drip_delay = PROMPT_AT + 0.6            # > 滑到位后，小光滴从小 Ƶ 身上滴下来
     drop_delay = drip_delay + DRIP_T - 0.05  # 小光滴一消失，大光滴就从最右边落下
     # 小光滴：与大光滴同形的 5×6 小点阵，从小 Ƶ 右上角（身体右边外侧）落到右下角。
     drip_x = ZX + 9.15 * PITCH
@@ -153,6 +159,8 @@ def svg(colors, prompt_alpha, halo, halo_alpha, glow, core, feet):
   <style>
     .px, .drop {{ transform-box: fill-box; transform-origin: 50% 100%; }}
     .px {{ animation: bounce {FALL}s both; }}
+    .slide {{ animation: slide .45s cubic-bezier(.34, 1.56, .64, 1) both; }}
+    @keyframes slide {{ 0% {{ transform: translateX(-70px); opacity: 0; }} 100% {{ transform: translateX(0); opacity: 1; }} }}
     .drop {{ animation: hop {HOP_T}s {drop_delay:.2f}s both; }}
     .drip {{ transform-box: fill-box; transform-origin: 50% 0; animation: drip {DRIP_T}s {drip_delay:.2f}s both; }}
     .breath {{ transform-box: fill-box; transform-origin: 50% 60%; animation: breath 2.4s {landed:.2f}s ease-in-out infinite; }}
@@ -178,7 +186,7 @@ def svg(colors, prompt_alpha, halo, halo_alpha, glow, core, feet):
     /* 都落定后一道光扫过（构建完成），之后每隔几秒再扫一次。 */
     @keyframes sweep {{ 0% {{ transform: translateX(-140px); }} 24%, 100% {{ transform: translateX({WIDTH + 60}px); }} }}
     @media (prefers-reduced-motion: reduce) {{
-      .px, .drop, .breath, .band, .spark, .lid {{ animation: none; }}
+      .px, .slide, .drop, .breath, .band, .spark, .lid {{ animation: none; }}
       .drip {{ animation: none; opacity: 0; }}
       .halo {{ animation: none; opacity: 1; }}
       .band {{ transform: translateX(-140px); }}
@@ -212,10 +220,7 @@ def svg(colors, prompt_alpha, halo, halo_alpha, glow, core, feet):
   </defs>
   <circle class="halo" cx="{cx:g}" cy="{cy:g}" r="56" fill="url(#halo-fill)"/>
   <g{group_filter}>
-    {''.join(letters)}
-    {''.join(eyes)}
-    {legs}
-    {''.join(lids)}
+    {letters}
     <g class="drip" fill="{core[0] if glow else core[1]}" filter="url(#dropglow)">{drip}</g>
     <g class="breath" filter="url(#dropglow)"><g class="drop">{''.join(drop)}{highlight}</g></g>
   </g>

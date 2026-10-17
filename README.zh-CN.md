@@ -44,6 +44,10 @@
 
 **像 Python 一样好读，像 C 一样快，不靠垃圾回收也安全。**
 
+<p align="center">
+  <img src="docs/demo.svg" alt="小 Ƶ 把一段 Python 函数改成 Zamak，然后运行，打印出 13.5" width="720"/>
+</p>
+
 | 与 C 一样快 | hello world 只有 56 KB | Java 用 365 MB 的程序它只用 20 MB | 不写生命周期标注 | 发布版也检查整数溢出 |
 | :---: | :---: | :---: | :---: | :---: |
 

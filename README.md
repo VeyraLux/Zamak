@@ -42,6 +42,10 @@
 
 **Reads like Python. Runs like C. Safe without a garbage collector.**
 
+<p align="center">
+  <img src="docs/demo.svg" alt="The Zamak mascot turns a Python function into Zamak, then runs it and prints 13.5" width="720"/>
+</p>
+
 | As fast as C | 56 KB hello world | 20 MB where Java uses 365 MB | No lifetime annotations | Overflow checked in release builds |
 | :---: | :---: | :---: | :---: | :---: |
 
