@@ -20,8 +20,9 @@ GLYPHS = {
     'drop': ['0001000', '0001000', '0011100', '0011100', '0111110', '0111110', '1111111', '1111111', '1111111', '0111110', '0011100'],
 }
 TEXT = ['>', 'Z', 'A', 'M', 'A', 'K', 'drop']
-# Ƶ 的眼睛：顶上那一横（第 1、2 行）里的第 2、6 列，与吉祥物和方形图标的眼睛位置一致。两种主题都用黑色。
-EYES = {(1, 0), (1, 1), (5, 0), (5, 1)}
+# Ƶ 的眼睛：顶上那一横（第 1、2 行）的第 2、6 列。两个像素点保留字母颜色，上面叠一个连起来、
+# 小一号的深色圆角长方形，比例与方形图标的眼睛相同（宽 0.72 格、高 1.68 格）。两种主题都用黑色。
+EYE_COLUMNS = (1, 5)
 EYE = '#0b1020'
 PIXEL, GAP = 7, 1.5          # 光点 7，间隙 1.5：每格 8.5（7×11 点阵）
 PITCH = PIXEL + GAP
@@ -79,7 +80,7 @@ def svg(colors, dim_alpha, size, halo, halo_alpha, glow, core):
     浅色主题用更大的光点、更窄的间隙抵消。halo：光滴光晕的颜色。core：光滴从中心到边缘的颜色（中心最亮，
     像真的发光体）。"""
     inset = (PIXEL - size) / 2
-    letters, drop, shines, lids = [], [], [], []
+    letters, drop, shines, eyes, lids = [], [], [], [], []
     for i, col, row, px, py in pixels():
         rect = f'<rect x="{px + inset:g}" y="{py + inset:g}" width="{size:g}" height="{size:g}" rx="{size * 0.26:.2f}"'
         shines.append(rect + '/>')
@@ -90,11 +91,14 @@ def svg(colors, dim_alpha, size, halo, halo_alpha, glow, core):
         # 按字符、按列依次落下，再加一点错位：像雨点一样不齐整，更活泼。
         jitter = ((i * 73 + col * 31 + row * 17) % 11) / 11 * 0.14
         delay = 0.10 + i * 0.24 + col * 0.05 + jitter
-        if TEXT[i] == 'Z' and (col, row) in EYES:
-            # 眼睛：黑色像素，跟着字母一起落下；眼皮是同色的一层，落定后眨一下眼。
-            letters.append(f'{rect.replace(chr(34) + "url(#ink)" + chr(34), chr(34) + EYE + chr(34))} class="px" style="animation-delay:{delay:.3f}s"/>')
-            lids.append(f'{rect} class="lid"/>')
-            continue
+        if TEXT[i] == 'Z' and row == 0 and col in EYE_COLUMNS:
+            # 眼睛跟着这一列最上面的像素一起落下；眼皮是同色同形的一层，落定后眨一下眼。
+            w, h = 0.72 * PITCH, 1.68 * PITCH
+            ex = px + inset + size / 2 - w / 2
+            ey = py + inset + (PITCH + size) / 2 - h / 2
+            eye = f'<rect x="{ex:.2f}" y="{ey:.2f}" width="{w:.2f}" height="{h:.2f}" rx="{0.22 * PITCH:.2f}"'
+            eyes.append(f'{eye} fill="{EYE}" class="px" style="animation-delay:{delay:.3f}s"/>')
+            lids.append(f'{eye} fill="url(#ink)" class="lid"/>')
         letters.append(f'{rect} class="px" style="animation-delay:{delay:.3f}s"/>')
     drop_delay = 0.10 + 5 * 0.24 + 0.55
     landed = drop_delay + HOP_T
@@ -178,6 +182,7 @@ def svg(colors, dim_alpha, size, halo, halo_alpha, glow, core):
   <circle class="halo" cx="{cx:g}" cy="{cy:g}" r="56" fill="url(#halo-fill)"/>
   <g{group_filter}>
     {''.join(letters)}
+    {''.join(eyes)}
     {''.join(lids)}
     <g class="breath" filter="url(#dropglow)"><g class="drop">{''.join(drop)}{highlight}</g></g>
   </g>
