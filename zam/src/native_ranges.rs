@@ -1172,6 +1172,7 @@ mod tests {
             builtin: false,
             generics: Vec::new(),
             external: false,
+            wrapping: false,
         }
     }
     fn binary(op: &str, a: Expr, b: Expr) -> Expr {

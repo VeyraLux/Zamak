@@ -101,6 +101,11 @@ static int64_t zam_floordiv_k(int64_t a, int64_t k) { int64_t q = a / k; return 
 static int64_t zam_mod_k(int64_t a, int64_t k) { int64_t r = a % k; return r < 0 ? r + k : r; }
 static double zam_fdiv(double a, double b) { if (b == 0.0) zam_zero_division(); return a / b; }
 static double zam_ffloordiv(double a, double b) { if (b == 0.0) zam_zero_division(); return floor(a / b); }
+static double zam_fmod_ieee(double a, double b) {
+    double r = fmod(a, b);
+    if (r != 0.0 && ((r < 0.0) != (b < 0.0))) r += b;
+    return r;
+}
 static double zam_fmod(double a, double b) {
     if (b == 0.0) zam_zero_division();
     double r = fmod(a, b);
@@ -1809,6 +1814,7 @@ pub fn builtin_functions() -> impl Iterator<Item = (String, crate::compiler::Fun
                 builtin: true,
                 generics: Vec::new(),
                 external: false,
+                wrapping: false,
             },
         )
     })
@@ -1821,6 +1827,8 @@ struct Generator<'a> {
     owners: Vec<(String, Type)>,
     loops: Vec<usize>,
     proofs: ranges::Proofs,
+    // 当前函数带 `@wrapping`：整数算术回绕，浮点除法按 IEEE 754。
+    wrapping: bool,
     call_targets: BTreeMap<usize, String>,
     code: String,
     next: usize,
@@ -2297,6 +2305,7 @@ impl<'a> Generator<'a> {
             owners: Vec::new(),
             loops: Vec::new(),
             proofs: ranges::Proofs::default(),
+            wrapping: false,
             call_targets: BTreeMap::new(),
             code: String::new(),
             next: 0,
@@ -2659,6 +2668,7 @@ impl<'a> Generator<'a> {
                     owners: Vec::new(),
                     loops: Vec::new(),
                     proofs: ranges::Proofs::default(),
+                    wrapping: false,
                     call_targets: BTreeMap::new(),
                     code: String::new(),
                     next: 0,
@@ -3305,6 +3315,8 @@ impl<'a> Generator<'a> {
                 self.scalar(
                     &if *op == '-' && (ty == Type::Float || self.proofs.arithmetic(expr)) {
                         format!("(-{value})")
+                    } else if *op == '-' && self.wrapping {
+                        format!("(int64_t)(0 - (uint64_t){value})")
                     } else if *op == '-' {
                         format!("sub(0, {value})")
                     } else if *op == '~' {
@@ -3357,6 +3369,10 @@ impl<'a> Generator<'a> {
                 let b = self.expr(right);
                 self.scalar(
                     &match op.as_str() {
+                        // `@wrapping`：除以零照 IEEE 754 得到 inf 或 NaN，不报错。
+                        "/" if self.wrapping => format!("({a} / {b})"),
+                        "//" if self.wrapping => format!("floor({a} / {b})"),
+                        "%" if self.wrapping => format!("zam_fmod_ieee({a}, {b})"),
                         "/" => format!("zam_fdiv({a}, {b})"),
                         "//" => format!("zam_ffloordiv({a}, {b})"),
                         "%" => format!("zam_fmod({a}, {b})"),
@@ -3417,6 +3433,13 @@ impl<'a> Generator<'a> {
                         } else {
                             format!("(int64_t)((uint64_t)({left}) & {}u)", divisor - 1)
                         },
+                        ty,
+                    );
+                }
+                if self.wrapping && matches!(op.as_str(), "+" | "-" | "*") {
+                    // 按二进制补码回绕：无符号运算在 C 里有定义，再转回有符号。
+                    return self.scalar(
+                        &format!("(int64_t)((uint64_t)({left}) {op} (uint64_t)({right}))"),
                         ty,
                     );
                 }
@@ -4858,6 +4881,7 @@ pub fn generate_with(module: &Module, entry: &str, unit: &str, tests: &[String])
             owners: Vec::new(),
             loops: Vec::new(),
             proofs: plan.proofs,
+            wrapping: function.wrapping,
             call_targets: plan.targets,
             code: String::new(),
             next: 0,
