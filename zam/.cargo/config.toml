@@ -1,0 +1,4 @@
+# 测试比对的是英文报错原文；在中文系统上跑 cargo test 时也固定用英文（见 src/zh.rs）。
+# 想在 cargo run 里看中文报错，临时设 ZAMAK_LANG=zh 即可（命令行里设置的环境变量优先）。
+[env]
+ZAMAK_LANG = "en"

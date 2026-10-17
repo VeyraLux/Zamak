@@ -119,11 +119,18 @@ fn chapters(language: &str) -> BTreeMap<String, Vec<Block>> {
     found
 }
 
-fn zam(args: &[&str], dir: &Path, cache: &Path) -> std::process::Output {
+/// 中文书里的诊断是中文：按章节所在的书设置 ZAMAK_LANG。
+fn zam(args: &[&str], dir: &Path, cache: &Path, chapter: &str) -> std::process::Output {
+    let lang = if chapter.starts_with("zh-CN/") {
+        "zh"
+    } else {
+        "en"
+    };
     Command::new(env!("CARGO_BIN_EXE_zam"))
         .args(args)
         .current_dir(dir)
         .env("ZAMAK_CACHE_DIR", cache)
+        .env("ZAMAK_LANG", lang)
         .output()
         .unwrap()
 }
@@ -149,7 +156,7 @@ fn run_chapter(name: &str, blocks: &[Block], work: &Path, cache: &Path) -> Vec<S
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("main.zm"), &block.code).unwrap();
         if block.has("fails") {
-            let output = zam(&["check", "main.zm"], &dir, cache);
+            let output = zam(&["check", "main.zm"], &dir, cache, name);
             let stderr = text(&output.stderr);
             if output.status.success() {
                 failures.push(format!("{at}: expected a check error"));
@@ -163,7 +170,7 @@ fn run_chapter(name: &str, blocks: &[Block], work: &Path, cache: &Path) -> Vec<S
         }
         if block.has("test") {
             // `zam test` 的报告逐字核对；有失败的测试时退出码不为 0，这里不看退出码。
-            let output = zam(&["test", "main.zm"], &dir, cache);
+            let output = zam(&["test", "main.zm"], &dir, cache, name);
             let actual = text(&output.stdout);
             if block
                 .output
@@ -178,7 +185,7 @@ fn run_chapter(name: &str, blocks: &[Block], work: &Path, cache: &Path) -> Vec<S
             continue;
         }
         if block.has("panics") {
-            let output = zam(&["run", "main.zm"], &dir, cache);
+            let output = zam(&["run", "main.zm"], &dir, cache, name);
             let stderr = text(&output.stderr);
             let expected = block.output.as_deref().unwrap_or_default();
             // 运行时错误前打印的内容照常核对：错误信息前面的行是标准输出。
@@ -196,7 +203,7 @@ fn run_chapter(name: &str, blocks: &[Block], work: &Path, cache: &Path) -> Vec<S
             continue;
         }
         let command = if block.has("check") { "check" } else { "run" };
-        let output = zam(&[command, "main.zm"], &dir, cache);
+        let output = zam(&[command, "main.zm"], &dir, cache, name);
         if !output.status.success() {
             failures.push(format!(
                 "{at}: zam {command} failed:\n{}",
@@ -229,7 +236,7 @@ fn run_chapter(name: &str, blocks: &[Block], work: &Path, cache: &Path) -> Vec<S
             fs::create_dir_all(file.parent().unwrap()).unwrap();
             fs::write(file, &block.code).unwrap();
         }
-        let output = zam(&["run", "."], &dir, cache);
+        let output = zam(&["run", "."], &dir, cache, name);
         if !output.status.success() {
             failures.push(format!("{at}: zam run failed:\n{}", text(&output.stderr)));
         } else if let Some(expected) = files.iter().rev().find_map(|b| b.output.as_ref()) {

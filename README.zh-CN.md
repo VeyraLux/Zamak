@@ -221,15 +221,17 @@ hello from zamak
 不带 `--json` 时，有位置的诊断写成错误码、位置、源码行、下划线和修改建议，中文与制表符按显示宽度对齐：
 
 ```text
-error[ZM301]: use after move: name
+错误[ZM301]：使用已移走的值：name
  --> src/main.zm:8:5
   |
 8 |     println(name)
   |     ^^^^^^^^^^^^^
-  = help: borrow the value or move it only after the last use
+  = 提示：借用这个值，或在最后一次使用之后再移走
 ```
 
-`zam check --json` 与 `zam build --json` 把结果写成一行 JSON，给编辑器、CI 和 AI 工具读取：`{"command":"check","ok":false,"diagnostics":[{"file":"…","line":3,"column":9,"function":"main:main","code":"ZM100","category":"syntax","message":"…","suggestion":"…"}]}`。
+系统语言是中文时，`zam` 用中文显示诊断；把 `ZAMAK_LANG` 设为 `en` 或 `zh` 可以自己选语言。
+
+`zam check --json` 与 `zam build --json` 把结果写成一行 JSON（始终是英文），给编辑器、CI 和 AI 工具读取：`{"command":"check","ok":false,"diagnostics":[{"file":"…","line":3,"column":9,"function":"main:main","code":"ZM100","category":"syntax","message":"…","suggestion":"…"}]}`。
 
 - `code` 和 `category` 是稳定的机器字段，`message` 是给人看的文本；有明确修复方法时，`suggestion` 给出下一步。
 - 无法定位时，`function` 和位置字段为 `null`。

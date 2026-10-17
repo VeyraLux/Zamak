@@ -280,7 +280,9 @@ error[ZM301]: use after move: name
   = help: borrow the value or move it only after the last use
 ```
 
-`zam check --json moved.zm` reports the same error as one line of JSON:
+On a system set to Chinese, `zam` shows the same diagnostic in Chinese. Set `ZAMAK_LANG` to `en` or `zh` to choose the language yourself.
+
+`zam check --json moved.zm` reports the same error as one line of JSON, always in English:
 
 ```json
 {"command":"check","ok":false,"diagnostics":[{"file":"moved.zm","line":8,"column":5,"function":"main:main","code":"ZM301","category":"ownership","message":"use after move: name","suggestion":"borrow the value or move it only after the last use"}]}

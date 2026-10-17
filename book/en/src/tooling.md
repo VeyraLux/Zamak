@@ -44,6 +44,7 @@ error[ZM301]: use after move: name
 - The code, such as `ZM301`, never changes meaning, so you can search for it. [Appendix D](appendix-diagnostics.md) lists the codes.
 - Syntax errors stop the check at the first one. Type and ownership errors are reported once per function, so you can fix several functions in one pass.
 - If you write something the Python way and Zamak spells it differently, the help line shows the Zamak spelling.
+- On a system set to Chinese, `zam` shows diagnostics in Chinese. To choose the language yourself, set `ZAMAK_LANG` to `zh` or `en`.
 
 ## Diagnostics as JSON
 
@@ -57,7 +58,7 @@ zam check --json main.zm
 {"command":"check","ok":false,"diagnostics":[{"file":"main.zm","line":5,"column":5,"function":"main:main","code":"ZM301","category":"ownership","message":"use after move: name","suggestion":"borrow the value or move it only after the last use"}]}
 ```
 
-`zam build --json` reports build errors the same way.
+`zam build --json` reports build errors the same way. The JSON is always in English, whatever the system language, so tools can rely on the text.
 
 ## Format code
 
@@ -82,6 +83,7 @@ You can delete `~/.zam/cache` at any time; `zam` rebuilds what it needs.
 | `ZAMAK_JOBS` | How many modules to compile in parallel. The default is the number of CPU cores, at most 4. |
 | `ZAMAK_INDEX` | The package index to use, as a Git URL or a local folder. |
 | `ZAMAK_DUMP_C` | A folder where `zam` writes the generated C code of each module. Useful for studying performance. |
+| `ZAMAK_LANG` | The language of diagnostics in the terminal: `zh` for Chinese or `en` for English. By default, `zam` follows the system language. |
 
 ## Summary
 

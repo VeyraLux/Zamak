@@ -7103,7 +7103,8 @@ impl<'a> Checker<'a> {
                     ) {
                         self.ty(expr)?
                     } else {
-                        return Err("expected function call".into());
+                        // 单独一行的值什么也不做；最常见的是多行 catch 块最后写了回退值。
+                        return Err("expected function call: this line is only a value, so it does nothing; a catch block gives a fallback value only when the value is the whole block, such as f() catch e: 0".into());
                     };
                     self.discarded = matches!(expr, Expr::Catch(..));
                     let checked = self.expr(expr, ty, &mut loans);

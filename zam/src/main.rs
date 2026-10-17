@@ -3,6 +3,7 @@ mod native;
 mod package;
 mod project;
 mod registry;
+mod zh;
 
 use std::path::Path;
 
@@ -561,6 +562,12 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
             "ownership",
             Some("pass `&value` for a shared borrow or `&mut value` for an exclusive borrow"),
         )
+    } else if message.contains("borrowed by an enclosing for loop") {
+        (
+            "ZM421",
+            "ownership",
+            Some("finish the loop or the borrow first: collect the changes in another list, then apply them after the loop"),
+        )
     } else if message.contains("borrow") || message.contains("borrowed") {
         (
             "ZM421",
@@ -780,6 +787,12 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
         )
     } else if message.contains("was never closed") {
         ("ZM110", "syntax", Some("add the matching closing bracket"))
+    } else if message.contains("this line is only a value") {
+        (
+            "ZM110",
+            "syntax",
+            Some("use the value in a let or a call, or make the value the only line of the catch block"),
+        )
     } else if message.contains("a single `=` assigns") {
         (
             "ZM110",
@@ -896,11 +909,11 @@ fn main() {
             }
             match render(diagnostic) {
                 Some(text) => eprintln!("{text}"),
-                None => eprintln!("zam: {raw}"),
+                None => eprintln!("zam: {}", zh::text(raw)),
             }
         }
         if count > 1 {
-            eprintln!("\nzam: {count} errors");
+            eprintln!("\n{}", zh::error_count(count));
         }
         std::process::exit(1);
     }
@@ -980,9 +993,14 @@ fn render(diagnostic: &Diagnostic) -> Option<String> {
     let (line, column) = (diagnostic.line?, diagnostic.column?);
     // 左侧栏按行号宽度对齐，`-->`、`|`、`=` 落在同一列。
     let gutter = " ".repeat(line.to_string().len());
+    // 终端显示按语言翻译（见 zh.rs）；--json 的输出不经过这里，始终是英文。
+    let colon = if zh::enabled() { "：" } else { ": " };
     let mut out = format!(
-        "error[{}]: {}\n{gutter}--> {}:{line}:{column}",
-        diagnostic.code, diagnostic.message, diagnostic.file
+        "{}[{}]{colon}{}\n{gutter}--> {}:{line}:{column}",
+        zh::word("error"),
+        diagnostic.code,
+        zh::text(&diagnostic.message),
+        diagnostic.file
     );
     let source = std::fs::read_to_string(&diagnostic.file).ok();
     if let Some(text) = source
@@ -995,7 +1013,11 @@ fn render(diagnostic: &Diagnostic) -> Option<String> {
         ));
     }
     if let Some(suggestion) = diagnostic.suggestion {
-        out.push_str(&format!("\n{gutter} = help: {suggestion}"));
+        out.push_str(&format!(
+            "\n{gutter} = {}{colon}{}",
+            zh::word("help"),
+            zh::text(suggestion)
+        ));
     }
     Some(out)
 }

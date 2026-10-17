@@ -76,12 +76,12 @@ fn main():
 ```
 
 ```text
-error[ZM511]: match on Light does not cover Yellow; add an arm for each or a _ arm
+错误[ZM511]：对 Light 的 match 没有覆盖 Yellow；给每一个都加上分支，或者加一个 _ 分支
  --> main.zm:7:5
   |
 7 |     match light:
   |     ^^^^^^^^^^^^
-  = help: add an arm for each missing variant or a final `_:` arm, and remove arms after `_`
+  = 提示：给每个缺少的变体加一个分支，或在最后加 `_:` 分支，并删掉 `_` 之后的分支
 ```
 
 这正是用枚举而不用字符串或数字的主要原因：以后新增一个变体时，编译器会指出每一个需要补分支的 `match`。最后写一个 `_` 分支可以处理剩下的所有变体，但这样就失去了这份帮助，所以只在剩下的情况确实都一样时才用。
