@@ -1,6 +1,6 @@
 [book]
 title = "Zamak 语言手册"
-authors = ["VeyraLux"]
+authors = ["rayL-K"]
 language = "zh-CN"
 description = "学习 Zamak：读起来像 Python、编译成本机代码的静态类型语言。"
 

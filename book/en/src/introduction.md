@@ -54,6 +54,10 @@ The chapters build on each other, so read them in order the first time:
 
 Every code example in this book is a complete program. The book's test suite compiles and runs each one, and checks that its output matches the text under it, so the examples always work with the current version of Zamak. Examples that are meant to fail show the error that `zam` reports.
 
+## About Zamak
+
+Zamak is created by rayL-K and developed under VeyraLux. It's open source under the MIT or Apache 2.0 license.
+
 ## Get help
 
 - Report problems and ask questions on [GitHub](https://github.com/VeyraLux/Zamak/issues).

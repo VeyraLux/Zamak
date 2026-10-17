@@ -34,7 +34,7 @@
 <p align="center"><strong>Open source · Native code · Ownership without garbage collection</strong></p>
 <h3 align="center">Written with clarity. Compiled with precision.</h3>
 <p align="center">Zamak is a statically typed language for people and AI agents alike. Its syntax stays light and familiar. Its compiler produces standalone native executables. Ownership manages memory without a garbage collector, and every error comes with a stable code and a fix you can act on.</p>
-<p align="center">Made by <strong>VeyraLux</strong>.</p>
+<p align="center">Created by <strong>rayL-K</strong> · <strong>VeyraLux</strong></p>
 
 <br/>
 
