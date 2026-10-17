@@ -6,6 +6,7 @@
 //! - ```zamak,fails：`zam check` 必须失败；紧跟的 ```text 块是逐字的诊断信息。
 //! - ```zamak,panics：能编译，运行时带错误停下；紧跟的 ```text 块是先打印的输出加上
 //!   最后一行 `zam: ...` 错误信息。
+//! - ```zamak,test：`zam test`，紧跟的 ```text 块是逐字的测试报告。
 //! - ```zamak,ignore：片段，不测。
 //! - ```zamak,project=名字,file=路径：同名的块合成一个项目（入口 src/main.zm），运行后核对
 //!   该项目最后一块后面的 ```text 输出。
@@ -148,6 +149,22 @@ fn run_chapter(name: &str, blocks: &[Block], work: &Path, cache: &Path) -> Vec<S
                 if !stderr.contains(expected.trim_end()) {
                     failures.push(format!("{at}: expected\n{expected}got:\n{stderr}"));
                 }
+            }
+            continue;
+        }
+        if block.has("test") {
+            // `zam test` 的报告逐字核对；有失败的测试时退出码不为 0，这里不看退出码。
+            let output = zam(&["test", "main.zm"], &dir, cache);
+            let actual = text(&output.stdout);
+            if block
+                .output
+                .as_ref()
+                .is_some_and(|expected| &actual != expected)
+            {
+                failures.push(format!(
+                    "{at}: zam test output differs\n{actual}{}",
+                    text(&output.stderr)
+                ));
             }
             continue;
         }
