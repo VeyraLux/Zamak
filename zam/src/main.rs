@@ -577,7 +577,7 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
         (
             "ZM511",
             "control_flow",
-            Some("add an arm for each missing variant or a final `_ =>` arm, and remove arms after `_`"),
+            Some("add an arm for each missing variant or a final `_:` arm, and remove arms after `_`"),
         )
     } else if message.contains("fallible call") || message.contains("propagate the error") {
         (

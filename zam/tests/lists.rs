@@ -279,7 +279,7 @@ fn list_and_map_methods() {
     for (body, message) in [
         (
             "let mut ps: [P] = []\n    ps.sort()",
-            "struct elements cannot be compared or copied yet",
+            "struct elements have no natural order",
         ),
         (
             "let m: {string: P} = {}\n    let v = m.values()",
@@ -369,5 +369,38 @@ fn reused_list_buffers_keep_contents_separate() {
     assert_eq!(
         stdout(&output),
         format!("[\"a\", \"b\", \"w0\"]\n[199, 200, 201, 398]\n{total}\n")
+    );
+}
+
+#[test]
+fn membership_in_a_literal_list_compares_each_item() {
+    // `x in [1, 2, 3]` 不必先标注成列表：字面量就地展开成逐个比较。
+    let case = Case::new("lists", "literal-membership");
+    let output = case.run(
+        "struct P:\n    name: string\n\nfn main():\n    let n = 3\n    let word = \"pear\"\n    let p = P(name: \"kiwi\")\n    println(n in [1, 2, 3])\n    println(n not in [1, 2])\n    println(word in [\"apple\", \"pear\"])\n    println(p.name in [\"apple\", \"pear\"])\n    println(2.5 in [1.5, 2.5])\n",
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(stdout(&output), "true\ntrue\ntrue\nfalse\ntrue\n");
+}
+
+#[test]
+fn struct_and_nested_lists_slice_with_deep_copies() {
+    // 结构体与嵌套列表也能切片：元素逐个深复制，原列表不受影响。
+    let case = Case::new("lists", "struct-slice");
+    let output = case.run(
+        "struct P:\n    name: string\n    tags: [string]\n\nfn main():\n    let xs: [P] = [P(name: \"a\", tags: [\"x\"]), P(name: \"b\", tags: []), P(name: \"c\", tags: [\"y\", \"z\"])]\n    let mut ys = xs[1:]\n    ys[0].tags.push(\"new\")\n    println(ys)\n    println(xs[:1])\n    println(xs[-1:])\n    println(xs.slice(5, 9))\n    let grid: [[i64]] = [[1], [2, 3]]\n    println(grid[1:])\n",
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        stdout(&output),
+        "[P(name: \"b\", tags: [\"new\"]), P(name: \"c\", tags: [\"y\", \"z\"])]\n[P(name: \"a\", tags: [\"x\"])]\n[P(name: \"c\", tags: [\"y\", \"z\"])]\n[]\n[[2, 3]]\n"
     );
 }
