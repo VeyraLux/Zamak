@@ -70,7 +70,7 @@ Each popular language asks you to give something up, and Zamak is designed so th
 
 ### When to choose something else
 
-Zamak is a prototype. It doesn't support threads or networking yet, and its package ecosystem is just starting. For production services, large existing codebases, or work that depends on mature libraries, use an established language today, and try Zamak for command-line tools, data processing, learning, and code that AI agents write.
+Zamak is young. It doesn't support threads or networking yet, and its package ecosystem is just starting. For production services, large existing codebases, or work that depends on mature libraries, use an established language today, and try Zamak for command-line tools, data processing, learning, and code that AI agents write.
 
 ## Example
 
@@ -99,7 +99,7 @@ not: 1
 ```
 
 > [!NOTE]
-> Zamak is a prototype (version 0.1.0). Use it to learn, experiment, and write small command-line tools. Syntax and cache formats might change, so don't use it in production yet.
+> Zamak 0.1.0 is an early release. Use it to learn, experiment, and write command-line tools. Syntax and cache formats might still change before 1.0, so wait before you use it in production.
 
 ## Features
 
