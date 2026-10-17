@@ -1,3 +1,5 @@
+mod common;
+
 use std::{fs, process::Command};
 
 #[test]
@@ -97,4 +99,22 @@ fn borrowed_byte_length() {
     );
 
     fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn string_methods_work_on_elements_and_their_fields() {
+    // `parts[0].strip()`、`users[0].name.upper()`、`m["k"].strip()`：元素借给 std/string 函数。
+    let case = common::Case::new("strings", "element-methods");
+    let output = case.run(
+        "struct U:\n    name: string\n\nfn main() -> !string:\n    let parts = \"3, 4\".split(\",\")\n    println(int(parts[1].strip())? + 1)\n    let us: [U] = [U(name: \"ada\")]\n    println(us[0].name.upper())\n    let m = {\"k\": \" v \"}\n    println(m[\"k\"].strip())\n    println(len(parts[0]))\n",
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "5\nADA\nv\n1\n"
+    );
 }
