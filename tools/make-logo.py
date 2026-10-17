@@ -53,6 +53,8 @@ def pixels():
 # 打开页面时只演一次：光点弹跳着落下就位，之后保持不动；扫光每隔几秒扫一次，光滴持续呼吸。
 FALL = 1.0                   # 一个光点从落下到停稳的秒数
 HOP_T = 1.3                  # 光滴的弹跳更高、更久
+DRIP_T = 0.75                # 小光滴从小 Ƶ 右上角滴到右下角的秒数
+DRIP_FALL = 9.6 * 8.5        # 小光滴落下的距离：从顶上一横到底下一横
 SWEEP = 5.0                  # 扫光的间隔
 
 
@@ -115,7 +117,16 @@ def svg(colors, prompt_alpha, halo, halo_alpha, glow, core, feet):
         f'<rect x="{ZX + fx * PITCH:.2f}" y="{PAD_Y + 11.05 * PITCH:.2f}" width="{1.6 * PITCH:.2f}" height="{0.9 * PITCH:.2f}" '
         f'rx="{0.3 * PITCH:.2f}" fill="{feet}" class="px" style="animation-delay:{delays[(1, col, 10)]:.3f}s"/>'
         for fx, col in ((1.2, 1), (6.2, 6)))
-    drop_delay = 0.10 + 5 * 0.24 + 0.55
+    drip_delay = 1.90                       # 小 Ƶ 早已落定（约 1.6 秒）
+    drop_delay = drip_delay + DRIP_T - 0.05  # 小光滴一消失，大光滴就从最右边落下
+    # 小光滴：与大光滴同形的 5×6 小点阵，从小 Ƶ 右上角（身体右边外侧）落到右下角。
+    drip_x = ZX + 9.15 * PITCH
+    drip_unit = 0.46 * PITCH
+    drip = ''.join(
+        f'<rect x="{drip_x + c * drip_unit:.2f}" y="{PAD_Y - 0.6 * PITCH + r * drip_unit:.2f}" width="{drip_unit * 0.9:.2f}" '
+        f'height="{drip_unit * 0.9:.2f}" rx="{drip_unit * 0.25:.2f}"/>'
+        for r, row in enumerate(['00100', '01110', '01110', '11111', '11111', '01110'])
+        for c, bit in enumerate(row) if bit == '1')
     landed = drop_delay + HOP_T
     blink = landed + 0.35
     # 光滴的位置：最后一格，光晕的中心落在水滴的腹部。
@@ -143,6 +154,7 @@ def svg(colors, prompt_alpha, halo, halo_alpha, glow, core, feet):
     .px, .drop {{ transform-box: fill-box; transform-origin: 50% 100%; }}
     .px {{ animation: bounce {FALL}s both; }}
     .drop {{ animation: hop {HOP_T}s {drop_delay:.2f}s both; }}
+    .drip {{ transform-box: fill-box; transform-origin: 50% 0; animation: drip {DRIP_T}s {drip_delay:.2f}s both; }}
     .breath {{ transform-box: fill-box; transform-origin: 50% 60%; animation: breath 2.4s {landed:.2f}s ease-in-out infinite; }}
     .halo {{ transform-box: fill-box; transform-origin: center; opacity: 0; animation: halo 2.4s {landed:.2f}s ease-in-out infinite; }}
     .spark {{ transform-box: fill-box; transform-origin: center; opacity: 0; animation: spark 2.8s ease-in-out infinite; }}
@@ -151,6 +163,13 @@ def svg(colors, prompt_alpha, halo, halo_alpha, glow, core, feet):
     {BOUNCE}
     {HOP}
     /* 光滴落定后呼吸：吸气时光滴微微胀大、光晕向外扩散，呼气时收回；亮度不降。 */
+    /* 小光滴：冒出来（变大）→ 加速落下 → 到小 Ƶ 右下角缩小消失。 */
+    @keyframes drip {{
+      0% {{ transform: translateY(0) scale(.2); opacity: 0; }}
+      18% {{ transform: translateY(0) scale(1); opacity: 1; animation-timing-function: cubic-bezier(.55, 0, 1, .45); }}
+      82% {{ transform: translateY({DRIP_FALL:.1f}px) scale(.95, 1.1); opacity: 1; }}
+      100% {{ transform: translateY({DRIP_FALL + 4:.1f}px) scale(.1); opacity: 0; }}
+    }}
     @keyframes breath {{ 0%, 100% {{ transform: scale(1); }} 50% {{ transform: scale(1.06); }} }}
     @keyframes halo {{ 0%, 100% {{ opacity: .25; transform: scale(.8); }} 50% {{ opacity: .75; transform: scale(1.15); }} }}
     /* 都落定后时不时眨眼：眼皮从上往下合上再睁开。每 6.4 秒一轮：先眨一下，过一会儿连眨两下，像活的。 */
@@ -160,6 +179,7 @@ def svg(colors, prompt_alpha, halo, halo_alpha, glow, core, feet):
     @keyframes sweep {{ 0% {{ transform: translateX(-140px); }} 24%, 100% {{ transform: translateX({WIDTH + 60}px); }} }}
     @media (prefers-reduced-motion: reduce) {{
       .px, .drop, .breath, .band, .spark, .lid {{ animation: none; }}
+      .drip {{ animation: none; opacity: 0; }}
       .halo {{ animation: none; opacity: 1; }}
       .band {{ transform: translateX(-140px); }}
     }}
@@ -196,6 +216,7 @@ def svg(colors, prompt_alpha, halo, halo_alpha, glow, core, feet):
     {''.join(eyes)}
     {legs}
     {''.join(lids)}
+    <g class="drip" fill="{core[0] if glow else core[1]}" filter="url(#dropglow)">{drip}</g>
     <g class="breath" filter="url(#dropglow)"><g class="drop">{''.join(drop)}{highlight}</g></g>
   </g>
   {sparkles}
