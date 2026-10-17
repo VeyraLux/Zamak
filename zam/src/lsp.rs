@@ -595,7 +595,7 @@ fn imports(text: &str) -> BTreeMap<String, String> {
 }
 
 /// 标准库模块的函数：(名字, 签名)。
-fn std_functions(module: &str) -> Vec<(String, String)> {
+pub(crate) fn std_functions(module: &str) -> Vec<(String, String)> {
     let prefix = format!("std/{module}:");
     native::builtin_functions()
         .filter_map(|(name, function)| {

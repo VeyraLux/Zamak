@@ -1,5 +1,6 @@
 mod compiler;
 mod lsp;
+mod mcp;
 mod native;
 mod package;
 mod project;
@@ -51,7 +52,7 @@ fn execute() -> project::Result<()> {
                 || (args.len() == 4 && args[2] == "--template" && args[3] == "ai")
                 || (args.len() == 3 && args[2] == "--ai")
         }
-        Some("demo" | "lsp" | "--version" | "-V" | "--help" | "-h") => args.len() == 1,
+        Some("demo" | "lsp" | "mcp" | "--version" | "-V" | "--help" | "-h") => args.len() == 1,
         None => args.is_empty(),
         _ => false,
     };
@@ -155,8 +156,9 @@ fn execute() -> project::Result<()> {
         }
         Some("demo") if args.len() == 1 => demo()?,
         Some("lsp") => lsp::run()?,
+        Some("mcp") => mcp::run()?,
         Some("--version") | Some("-V") => println!("{}", env!("CARGO_PKG_VERSION")),
-        None | Some("--help") | Some("-h") => println!("zam {}\n  zam check [project|file]\n  zam build [project|file]\n  zam fmt [project|file]\n  zam run [project|file|artifact] [-- args...]\n  zam test [project|file] [filter]\n  zam add <name> [version|git-url|directory] [rev]\n  zam remove <name>\n  zam update [project]\n  zam search [word]\n  zam publish [project]\n  zam new <directory> [--template ai]\n  zam check --json [project|file]\n  zam build --json [project|file]\n  zam lsp\n  zam demo\n  zam --version", env!("CARGO_PKG_VERSION")),
+        None | Some("--help") | Some("-h") => println!("zam {}\n  zam check [project|file]\n  zam build [project|file]\n  zam fmt [project|file]\n  zam run [project|file|artifact] [-- args...]\n  zam test [project|file] [filter]\n  zam add <name> [version|git-url|directory] [rev]\n  zam remove <name>\n  zam update [project]\n  zam search [word]\n  zam publish [project]\n  zam new <directory> [--template ai]\n  zam check --json [project|file]\n  zam build --json [project|file]\n  zam lsp\n  zam mcp\n  zam demo\n  zam --version", env!("CARGO_PKG_VERSION")),
         _ => return Err("usage: zam <check|build|run|test|fmt|new|add|remove|update|search|publish> [project|file]".into()),
     }
     Ok(())
@@ -389,9 +391,11 @@ fn new_project(directory: &Path, ai_template: bool) -> project::Result<()> {
             format!("---\nname: zamak\ndescription: {SKILL_DESCRIPTION}\n---\n\n{guide}"),
         ));
         files.push((directory.join("AGENTS.md"), guide));
+        // MCP：Claude Code、Cursor 等读 `.mcp.json`，启动 `zam mcp`，助手就能直接调用检查、运行、查文档。
+        files.push((directory.join(".mcp.json"), mcp::project_config()));
         files.push((
             directory.join("README.md"),
-            format!("# {name}\n\nA Zamak project. Your AI coding agent reads `AGENTS.md` (or the Claude Code skill in `.claude/skills/zamak`) for the language reference and the check-fix loop.\n\n```sh\nzam check --json .\nzam fmt .\nzam build .\nzam run .\nzam test .\n```\n"),
+            format!("# {name}\n\nA Zamak project. Your AI coding agent reads `AGENTS.md` (or the Claude Code skill in `.claude/skills/zamak`) for the language reference and the check-fix loop, and `.mcp.json` starts `zam mcp` so it can call the Zamak tools directly.\n\n```sh\nzam check --json .\nzam fmt .\nzam build .\nzam run .\nzam test .\n```\n"),
         ));
     }
     for (path, text) in files {

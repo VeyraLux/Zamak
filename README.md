@@ -55,7 +55,7 @@ Zamak brings these together in one language. The numbers come from benchmarks yo
 - **Memory safety you don't have to fight.** Ownership rules out use-after-free and double frees at compile time, with no garbage collector. Read-only borrows happen automatically, a borrow lasts at most one block, and you never write lifetime annotations. When the checker does reject code, the error names the problem and suggests the fix.
 - **Safer integer math than C, Rust, or Go.** Integer overflow, division by zero, and out-of-bounds indexes stop the program with a clear error in every build, including release builds. The compiler removes the checks it can prove unnecessary, so safe code still runs at C speed, and `@wrapping` turns checks off in one function when you want wrapping, such as in a hash.
 - **Small programs with a small footprint.** A hello world is 56 KB, about the size of C's and 1/40 of Go's. On binary-trees, Zamak is the fastest of the seven languages tested and uses 20 MB, where Java and Node.js use more than 360 MB.
-- **Built for AI coding agents.** The whole language fits in a one-page reference that agents read before they write code. Every diagnostic has a stable code and a suggested fix, also as JSON, and `zam new --template ai` sets up a project with a skill file for your agent.
+- **Built for AI coding agents.** The whole language fits in a one-page reference that agents read before they write code. Every diagnostic has a stable code and a suggested fix, also as JSON. `zam new --template ai` sets up a project with a skill file for your agent, and `zam mcp` lets agents check, run, test, and look up docs through MCP.
 - **Fast feedback.** `zam check` finishes in less than 0.1 seconds on a 5,000-line project, and a one-line edit rebuilds in under a second, because `zam` caches every module by content.
 
 ### Compared with popular languages
@@ -151,12 +151,13 @@ The project includes:
 
 - **`.claude/skills/zamak/SKILL.md`**, a skill that Claude Code loads whenever it reads or writes Zamak.
 - **`AGENTS.md`**, the same guide for Codex, Cursor, GitHub Copilot, and other agents that read `AGENTS.md`.
+- **`.mcp.json`**, which starts `zam mcp` for agents that support the Model Context Protocol (MCP), such as Claude Code and Cursor.
 
 Both files contain the check-fix loop and the one-page language reference, so your agent writes Zamak correctly from its first line. They come from the reference built into `zam`, so a new project always matches the version you have installed.
 
 While it works, your agent reads diagnostics from `zam check --json`. Every diagnostic has a stable code, such as `ZM301`, a position, and usually a suggested fix.
 
-An MCP server (`zam mcp`) that lets agents check, build, and run code and look up the standard library is planned.
+Through `zam mcp`, an agent can call Zamak directly: `check`, `build`, `run` (with arguments and standard input), `test`, `format`, `explain` for a diagnostic code, and `docs` for the language reference and the standard library. See [Work with AI coding agents](https://zamak.veyralux.org/ai-agents.html).
 
 ## Quickstart
 
@@ -297,7 +298,7 @@ Zamak doesn't support threads or networking yet. C functions take and return onl
 ## Editor and agent support
 
 - **VS Code.** The extension in [editors/vscode](editors/vscode) adds syntax highlighting and runs `zam lsp`, the Zamak language server, for diagnostics as you type, completion, hover, go to definition, and formatting. Other editors that support the Language Server Protocol can run `zam lsp` too.
-- **AI coding agents.** [.agents/skills/zamak/SKILL.md](.agents/skills/zamak/SKILL.md) describes the commands, syntax, and common diagnostics for agents that read `.agents/skills`.
+- **AI coding agents.** `zam mcp` is an MCP server with tools to check, build, run, test, and format code, explain diagnostics, and look up docs. `zam new --template ai` adds a skill file, `AGENTS.md`, and `.mcp.json` to a new project, and [.agents/skills/zamak/SKILL.md](.agents/skills/zamak/SKILL.md) guides agents that work on the compiler itself.
 
 ## Code signing
 

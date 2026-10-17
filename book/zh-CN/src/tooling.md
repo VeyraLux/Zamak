@@ -17,6 +17,7 @@
 | `zam add`、`zam remove`、`zam update` | 管理依赖。 |
 | `zam search WORD`、`zam publish` | 查找和发布包。 |
 | `zam lsp` | 运行给编辑器用的语言服务器。VS Code 扩展会自动启动它。 |
+| `zam mcp` | 运行给 AI 编程助手用的 MCP 服务器，见[配合 AI 编程助手](ai-agents.md)。 |
 | `zam --version` | 打印版本号。 |
 
 `zam` 把自己的进度信息写到标准错误。标准输出里只有你的程序的输出，或者 `--json` 生成的 JSON 报告。
