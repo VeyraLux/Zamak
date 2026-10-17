@@ -54,6 +54,10 @@ total: 26.0
 
 书里的每个代码示例都是完整的程序。本书的测试会逐个编译运行这些示例，并核对输出与示例下方的文字一致，所以示例始终适用于当前版本的 Zamak。本来就该出错的示例会给出 `zam` 报告的错误。
 
+## 关于 Zamak
+
+Zamak 由 rayL-K 创作，在 VeyraLux 旗下开发，以 MIT 或 Apache 2.0 许可证开源。
+
 ## 获取帮助
 
 - 在 [GitHub](https://github.com/VeyraLux/Zamak/issues) 上报告问题或提问。

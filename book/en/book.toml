@@ -1,6 +1,6 @@
 [book]
 title = "The Zamak Book"
-authors = ["VeyraLux"]
+authors = ["rayL-K"]
 language = "en"
 description = "Learn Zamak: a statically typed language that reads like Python and compiles to native code."
 
