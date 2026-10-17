@@ -254,91 +254,141 @@ def uri(path: Path) -> str:
 print('ok', WIDTH, HEIGHT, (DOCS / 'logo-dark.svg').stat().st_size)
 
 
-# ---- 方形图标：渐变底 + 白色像素 Ƶ + 一小滴光（16×16 网格，缩到 16px 时一格正好一个屏幕像素）。----
+# ---- 方形图标：与宣传片里的小 Ƶ 相同——紫色夜空底、渐变身体、深色眼睛、白色小脚、发光的光滴。----
+# 16×16 网格。身体每格按宣传片吉祥物的对角渐变取色（x 0→9 格、y 0→11 格），光滴中心亮、边缘青，
+# 左上两颗白色高光像素，与标题 logo 的光滴一致。
 ICON_Z = MASCOT
 ICON_DROP = ['00100', '01110', '01110', '11111', '11111', '01110']
-# 眼睛占 Ƶ 顶上两行的第 3、7 列（从 0 数是 2、6），比格子略窄，四角稍圆。
-ICON_TOP = 3.2   # Ƶ 的上沿；比原来高 0.6 格，给脚留出位置
-ICON_EYES = [(1.2 + c + 0.14, ICON_TOP + 0.16, 0.72, 1.68) for c in (2, 6)]
-# 两只小脚：与吉祥物相同，在第 1.2、6.2 格处，宽 1.6、高 0.7。
-ICON_FEET = [(1.2 + x, ICON_TOP + 11 + 0.14, 1.6, 0.7) for x in (1.2, 6.2)]
+ICON_LEFT, ICON_TOP = 1.6, 3.0
+ICON_DROP_AT, ICON_DROP_UNIT = (11.0, 1.2), 0.62
+ICON_HIGHLIGHT = [(2, 1, 0.96), (3, 1, 0.67)]        # (行, 列, 不透明度)
+ICON_STARS = [(2.0, 1.6, 0.13, '#67e8f9'), (6.4, 1.2, 0.1, '#fde68a'), (14.2, 8.5, 0.12, '#f97362'),
+              (13.4, 14.2, 0.1, '#67e8f9'), (1.0, 13.0, 0.1, '#fde68a')]
+SKY = ('#5b46a8', '#26235c')                          # 夜空：中心偏上的紫色 → 四周
+BODY_STOPS = [(0, '#f59e0b'), (0.4, '#f97362'), (0.75, '#6366f1'), (1, '#06b6d4')]
+DROP_CORE = ['#cffafe', '#67e8f9', '#22d3ee']
+
+
+def rgb(hex_color):
+    return tuple(int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
+
+
+def mix(stops, t):
+    t = min(1, max(0, t))
+    for (a, ca), (b, cb) in zip(stops, stops[1:]):
+        if t <= b:
+            f = (t - a) / (b - a)
+            return tuple(round(x + (y - x) * f) for x, y in zip(rgb(ca), rgb(cb)))
+    return rgb(stops[-1][1])
+
+
+def body_color(r, c):
+    return mix(BODY_STOPS, ((c + 0.5) * 9 + (r + 0.5) * 11) / (9 * 9 + 11 * 11))
+
+
+def drop_color(r, c):
+    import math
+    dist = min(1, math.hypot(c - 2.2, r - 3.6) / 2.6)
+    return mix([(0, DROP_CORE[0]), (0.45, DROP_CORE[1]), (1, DROP_CORE[2])], dist)
+
+
+def hexed(color):
+    return '#%02x%02x%02x' % color
 
 
 def icon() -> str:
-    def cells(bitmap, x0, y0, unit, inset, radius):
-        return ''.join(
-            f'<rect x="{x0 + c * unit + inset:.3f}" y="{y0 + r * unit + inset:.3f}" width="{unit - 2 * inset:.3f}" '
-            f'height="{unit - 2 * inset:.3f}" rx="{radius}"/>'
-            for r, row in enumerate(bitmap) for c, bit in enumerate(row) if bit == '1')
-    # 底色与标题 logo 同一条暖→冷渐变；光滴缩成 0.65 格的细像素，带一层很轻的白色柔光。
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="256" height="256" role="img" aria-label="Zamak">
+    body = ''.join(
+        f'<rect x="{ICON_LEFT + c + 0.05:.2f}" y="{ICON_TOP + r + 0.05:.2f}" width="0.9" height="0.9" rx="0.18" fill="{hexed(body_color(r, c))}"/>'
+        for r, row in enumerate(ICON_Z) for c, bit in enumerate(row) if bit == '1')
+    eyes = ''.join(f'<rect x="{ICON_LEFT + c + 0.14:.2f}" y="{ICON_TOP + 0.16:.2f}" width="0.72" height="1.68" rx="0.22"/>' for c in (2, 6))
+    feet = ''.join(f'<rect x="{ICON_LEFT + x:.2f}" y="{ICON_TOP + 11.05:.2f}" width="1.6" height="0.9" rx="0.3"/>' for x in (1.2, 6.2))
+    dx, dy = ICON_DROP_AT
+    u = ICON_DROP_UNIT
+    drop = ''.join(
+        f'<rect x="{dx + c * u + 0.03:.3f}" y="{dy + r * u + 0.03:.3f}" width="{u - 0.06:.2f}" height="{u - 0.06:.2f}" rx="0.12" fill="{hexed(drop_color(r, c))}"/>'
+        for r, row in enumerate(ICON_DROP) for c, bit in enumerate(row) if bit == '1')
+    shine = ''.join(
+        f'<rect x="{dx + c * u + 0.03:.3f}" y="{dy + r * u + 0.03:.3f}" width="{u - 0.06:.2f}" height="{u - 0.06:.2f}" rx="0.12" fill-opacity="{o}"/>'
+        for r, c, o in ICON_HIGHLIGHT)
+    stars = ''.join(f'<circle cx="{x}" cy="{y}" r="{r}" fill="{c}" fill-opacity="0.8"/>' for x, y, r, c in ICON_STARS)
+    hx, hy = dx + 2.5 * u, dy + 3.4 * u
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="256" height="256" role="img" aria-label="Zamak">
   <title>Zamak</title>
   <defs>
-    <linearGradient id="tile" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="16" y2="16">
-      <stop offset="0" stop-color="#f59e0b"/><stop offset="0.4" stop-color="#f97362"/>
-      <stop offset="0.75" stop-color="#6366f1"/><stop offset="1" stop-color="#06b6d4"/>
-    </linearGradient>
+    <radialGradient id="sky" gradientUnits="userSpaceOnUse" cx="7.2" cy="6.7" r="12">
+      <stop offset="0" stop-color="{SKY[0]}"/><stop offset="1" stop-color="{SKY[1]}"/>
+    </radialGradient>
+    <radialGradient id="halo"><stop offset="0" stop-color="#67e8f9" stop-opacity="0.45"/><stop offset="1" stop-color="#67e8f9" stop-opacity="0"/></radialGradient>
     <filter id="soft" x="-60%" y="-60%" width="220%" height="220%">
       <feGaussianBlur stdDeviation="0.35" result="b"/>
       <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
   </defs>
-  <rect width="16" height="16" rx="3.4" fill="url(#tile)"/>
-  <g fill="#fff">{cells(ICON_Z, 1.2, ICON_TOP, 1, 0.06, 0.2)}</g>
-  <g fill="#0b1020">{''.join(f'<rect x="{x:.2f}" y="{y:.2f}" width="{w}" height="{h}" rx="0.22"/>' for x, y, w, h in ICON_EYES)}</g>
-  <g fill="#fff">{''.join(f'<rect x="{x:.2f}" y="{y:.2f}" width="{w}" height="{h}" rx="0.25"/>' for x, y, w, h in ICON_FEET)}</g>
-  <g fill="#fff" filter="url(#soft)">{cells(ICON_DROP, 10.9, 1.5, 0.65, 0.04, 0.14)}</g>
+  <rect width="16" height="16" rx="3.4" fill="url(#sky)"/>
+  {stars}
+  {body}
+  <g fill="#0b1020">{eyes}</g>
+  <g fill="#f1f5f9">{feet}</g>
+  <circle cx="{hx:.2f}" cy="{hy:.2f}" r="3.2" fill="url(#halo)"/>
+  <g filter="url(#soft)">{drop}</g>
+  <g fill="#fff">{shine}</g>
 </svg>
-'''
+"""
 
 
 (DOCS / 'icon.svg').write_text(icon(), encoding='utf-8', newline='\n')
 print('icon ok')
 
 
-# ---- 图标的 PNG：按 8 倍超采样画，再缩到目标尺寸（需要 Pillow；没有时跳过）。----
+# ---- 图标的 PNG 与 ICO：按 8 倍超采样画，再缩到目标尺寸（需要 Pillow；没有时跳过）。----
 def icon_png(size: int):
+    import math
     from PIL import Image, ImageDraw, ImageFilter
-    k = size * 8 / 16                     # 每个网格单位的像素数（超采样后）
     big = size * 8
-    stops = [(0, (0xf5, 0x9e, 0x0b)), (0.4, (0xf9, 0x73, 0x62)), (0.75, (0x63, 0x66, 0xf1)), (1, (0x06, 0xb6, 0xd4))]
-
-    def color(t):
-        for (a, ca), (b, cb) in zip(stops, stops[1:]):
-            if t <= b:
-                f = (t - a) / (b - a)
-                return tuple(round(x + (y - x) * f) for x, y in zip(ca, cb))
-        return stops[-1][1]
-    # 底色：沿对角线的暖→冷渐变，用圆角方块做遮罩。
-    tile = Image.new('RGB', (big, big))
-    px = tile.load()
+    k = big / 16
+    sky = Image.new('RGB', (big, big))
+    px = sky.load()
+    cx, cy, a, b = 7.2 * k, 6.7 * k, rgb(SKY[0]), rgb(SKY[1])
     for y in range(big):
         for x in range(big):
-            px[x, y] = color((x + y) / (2 * big))
+            d = min(1, math.hypot(x - cx, y - cy) / (12 * k))
+            px[x, y] = tuple(round(a[i] + (b[i] - a[i]) * d) for i in range(3))
     mask = Image.new('L', (big, big), 0)
     ImageDraw.Draw(mask).rounded_rectangle([0, 0, big - 1, big - 1], radius=round(3.4 * k), fill=255)
     out = Image.new('RGBA', (big, big), (0, 0, 0, 0))
-    out.paste(tile, (0, 0), mask)
-
-    def squares(bitmap, x0, y0, unit, inset, radius):
-        layer = Image.new('RGBA', (big, big), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(layer)
-        for r, row in enumerate(bitmap):
-            for c, bit in enumerate(row):
-                if bit == '1':
-                    left, top = (x0 + c * unit + inset) * k, (y0 + r * unit + inset) * k
-                    side = (unit - 2 * inset) * k
-                    draw.rounded_rectangle([left, top, left + side, top + side], radius=radius * k, fill=(255, 255, 255, 255))
-        return layer
-    out.alpha_composite(squares(ICON_Z, 1.2, ICON_TOP, 1, 0.06, 0.2))
-    eyes = ImageDraw.Draw(out)
-    for x, y, w, h in ICON_EYES:
-        eyes.rounded_rectangle([x * k, y * k, (x + w) * k, (y + h) * k], radius=0.22 * k, fill=(0x0b, 0x10, 0x20, 255))
-    for x, y, w, h in ICON_FEET:
-        eyes.rounded_rectangle([x * k, y * k, (x + w) * k, (y + h) * k], radius=0.25 * k, fill=(255, 255, 255, 255))
-    drop = squares(ICON_DROP, 10.9, 1.5, 0.65, 0.04, 0.14)
-    out.alpha_composite(drop.filter(ImageFilter.GaussianBlur(0.35 * k)))   # 光滴的柔光
+    out.paste(sky, (0, 0), mask)
+    draw = ImageDraw.Draw(out)
+    for x, y, r, c in ICON_STARS:
+        draw.ellipse([(x - r) * k, (y - r) * k, (x + r) * k, (y + r) * k], fill=rgb(c) + (204,))
+    for r, row in enumerate(ICON_Z):
+        for c, bit in enumerate(row):
+            if bit == '1':
+                x0, y0 = (ICON_LEFT + c + 0.05) * k, (ICON_TOP + r + 0.05) * k
+                draw.rounded_rectangle([x0, y0, x0 + 0.9 * k, y0 + 0.9 * k], radius=0.18 * k, fill=body_color(r, c) + (255,))
+    for c in (2, 6):
+        x, y = ICON_LEFT + c + 0.14, ICON_TOP + 0.16
+        draw.rounded_rectangle([x * k, y * k, (x + 0.72) * k, (y + 1.68) * k], radius=0.22 * k, fill=(0x0b, 0x10, 0x20, 255))
+    for fx in (1.2, 6.2):
+        x, y = ICON_LEFT + fx, ICON_TOP + 11.05
+        draw.rounded_rectangle([x * k, y * k, (x + 1.6) * k, (y + 0.9) * k], radius=0.3 * k, fill=(0xf1, 0xf5, 0xf9, 255))
+    dx, dy = ICON_DROP_AT
+    u = ICON_DROP_UNIT
+    halo = Image.new('RGBA', (big, big), (0, 0, 0, 0))
+    hx, hy = (dx + 2.5 * u) * k, (dy + 3.4 * u) * k
+    ImageDraw.Draw(halo).ellipse([hx - 2.4 * k, hy - 2.4 * k, hx + 2.4 * k, hy + 2.4 * k], fill=(0x67, 0xe8, 0xf9, 110))
+    out.alpha_composite(halo.filter(ImageFilter.GaussianBlur(1.0 * k)))
+    drop = Image.new('RGBA', (big, big), (0, 0, 0, 0))
+    dd = ImageDraw.Draw(drop)
+    cell = lambda r, c: [(dx + c * u + 0.03) * k, (dy + r * u + 0.03) * k, (dx + c * u + u - 0.03) * k, (dy + r * u + u - 0.03) * k]
+    for r, row in enumerate(ICON_DROP):
+        for c, bit in enumerate(row):
+            if bit == '1':
+                dd.rounded_rectangle(cell(r, c), radius=0.12 * k, fill=drop_color(r, c) + (255,))
+    out.alpha_composite(drop.filter(ImageFilter.GaussianBlur(0.35 * k)))
     out.alpha_composite(drop)
+    shine = ImageDraw.Draw(out)
+    for r, c, o in ICON_HIGHLIGHT:
+        shine.rounded_rectangle(cell(r, c), radius=0.12 * k, fill=(255, 255, 255, round(255 * o)))
     return out.resize((size, size), Image.LANCZOS)
 
 
@@ -346,6 +396,12 @@ try:
     icon_png(128).save(ROOT / 'editors/vscode/icon.png')
     icon_png(32).save(DOCS / 'icon-32.png')
     icon_png(512).save(DOCS / 'icon-512.png')
+    # Windows 图标（zam.exe 与安装包用）：各尺寸单独绘制，小尺寸也清楚。
+    sizes = [16, 24, 32, 48, 64, 128, 256]
+    images = {n: icon_png(n) for n in sizes}
+    images[256].save(ROOT / 'ico/Zamak_256x256.png')
+    images[256].save(ROOT / 'ico/Zamak_256x256.ico', sizes=[(n, n) for n in sizes],
+                     append_images=[images[n] for n in sizes[:-1]])
     print('png ok')
 except ImportError:
     print('Pillow 未安装：跳过 PNG 导出（pip install pillow）')
