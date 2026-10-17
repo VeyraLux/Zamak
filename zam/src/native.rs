@@ -2132,6 +2132,59 @@ fn drop_elem(elem: Elem, slot: &str) -> String {
 const LIST_PRELUDE: &str = r#"static void list_bounds(void) { fputs("zam: list index out of bounds\n", stderr); exit(1); }
 static void list_empty(void) { fputs("zam: pop from empty list\n", stderr); exit(1); }
 static void list_alloc_failed(void) { fputs("zam: allocation failed\n", stderr); exit(1); }
+// 小列表缓冲区的空闲链表：按 16 字节分级，释放时留给下一次同级分配，最多缓存 32 MB。
+// 每块都是 malloc 来的真实内存块，别处直接 free 它也没问题，只是不回到这里。
+// 放进第 k 级的块至少有 16k 字节（按声明大小向下取级），取出时按请求向上取级。
+// AddressSanitizer 构建不缓存，释放后再用之类的错误照常能查出来。
+#if defined(__SANITIZE_ADDRESS__)
+#define ZAM_POOL_CLASSES 0
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define ZAM_POOL_CLASSES 0
+#endif
+#endif
+#ifndef ZAM_POOL_CLASSES
+#define ZAM_POOL_CLASSES 16
+#endif
+static void *zam_pool[ZAM_POOL_CLASSES + 1];
+static size_t zam_pool_bytes;
+static void *zam_list_alloc(size_t size) {
+    size_t k = (size + 15) / 16;
+    void *p;
+    if (k <= ZAM_POOL_CLASSES && zam_pool[k]) {
+        p = zam_pool[k];
+        zam_pool[k] = *(void **)p;
+        zam_pool_bytes -= k * 16;
+        return p;
+    }
+    p = malloc(k <= ZAM_POOL_CLASSES ? k * 16 : size);
+    if (!p) list_alloc_failed();
+    return p;
+}
+static void zam_list_free(void *p, size_t size) {
+    size_t k = size / 16;
+    if (!p) return;
+    if (k >= 1 && k <= ZAM_POOL_CLASSES && zam_pool_bytes + k * 16 <= ((size_t)32 << 20)) {
+        *(void **)p = zam_pool[k];
+        zam_pool[k] = p;
+        zam_pool_bytes += k * 16;
+        return;
+    }
+    free(p);
+}
+static void *zam_list_grow(void *old, size_t old_size, size_t size) {
+    void *p;
+    if (!old) return zam_list_alloc(size);
+    if (size > ZAM_POOL_CLASSES * 16) {
+        p = realloc(old, size);
+        if (!p) list_alloc_failed();
+        return p;
+    }
+    p = zam_list_alloc(size);
+    memcpy(p, old, old_size);
+    zam_list_free(old, old_size);
+    return p;
+}
 "#;
 /// 列表本体只含元素指针，元素类型声明过即可定义。
 fn list_definition(elem: Elem) -> String {
@@ -2160,7 +2213,7 @@ fn list_helpers(elem: Elem) -> String {
         _ => String::new(),
     };
     format!(
-        "static void drop{l}({l} *l) {{ {drop_items}free(l->data); l->data = NULL; l->len = 0; l->cap = 0; }}
+        "static void drop{l}({l} *l) {{ {drop_items}zam_list_free(l->data, l->cap * sizeof({t})); l->data = NULL; l->len = 0; l->cap = 0; }}
 static {l} take{l}({l} *l) {{ {l} v = *l; l->data = NULL; l->len = 0; l->cap = 0; return v; }}
 static int64_t len{l}({l} *l) {{ return (int64_t)l->len; }}
 static void push{l}({l} *l, {t} v) {{
@@ -2168,11 +2221,18 @@ static void push{l}({l} *l, {t} v) {{
         size_t cap = l->cap ? l->cap * 2 : 4;
         {t} *p;
         if (cap > SIZE_MAX / sizeof({t})) list_alloc_failed();
-        p = ({t}*)realloc(l->data, cap * sizeof({t}));
-        if (!p) list_alloc_failed();
+        p = ({t}*)zam_list_grow(l->data, l->cap * sizeof({t}), cap * sizeof({t}));
         l->data = p; l->cap = cap;
     }}
     l->data[l->len++] = v;
+}}
+// 列表字面量：元素个数已知，一次分配到位。
+static void reserve{l}({l} *l, size_t cap) {{
+    {t} *p;
+    if (cap <= l->cap) return;
+    if (cap > SIZE_MAX / sizeof({t})) list_alloc_failed();
+    p = ({t}*)zam_list_grow(l->data, l->cap * sizeof({t}), cap * sizeof({t}));
+    l->data = p; l->cap = cap;
 }}
 static {t} *at{l}({l} *l, int64_t i) {{ if (i < 0) i += (int64_t)l->len; if (i < 0 || (uint64_t)i >= l->len) list_bounds(); return &l->data[i]; }}
 static {t} pop{l}({l} *l) {{ if (!l->len) list_empty(); return l->data[--l->len]; }}
@@ -2877,6 +2937,14 @@ impl<'a> Generator<'a> {
             (Expr::Array(values), Type::List(elem)) => {
                 let local = self.scalar("{0}", ty);
                 self.owners.push((local.clone(), ty));
+                if !values.is_empty() {
+                    self.code.push_str(&format!(
+                        "reserve{}(&{local}, {});
+",
+                        list_suffix(elem),
+                        values.len()
+                    ));
+                }
                 for value in values {
                     // 元素也按目标类型生成：内层的 `[1, 2]` 是列表而不是定长数组。
                     let value = self.expr_as(value, elem.ty());

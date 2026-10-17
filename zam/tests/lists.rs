@@ -349,3 +349,25 @@ fn indexed_pair_and_mutable_loops() {
         rejected(&case.run(&source), message, &source);
     }
 }
+
+#[test]
+fn reused_list_buffers_keep_contents_separate() {
+    // 小列表的缓冲区释放后会被下一次同级分配复用：内容不能串，长短混用、增长与嵌套都要对。
+    let case = Case::new("lists", "buffer-reuse");
+    let output = case.run(
+        "struct Node:\n    children: [Node]\n\nfn make(depth: i64) -> Node:\n    if depth == 0: return Node(children: [])\n    Node(children: [make(depth - 1), make(depth - 1)])\n\nfn count(node: &Node) -> i64:\n    let mut total = 1\n    for child in node.children:\n        total += count(child)\n    total\n\nfn main():\n    let mut total = 0\n    for round in range(200):\n        let mut words: [string] = [\"a\", \"b\"]\n        for i in range(round % 9):\n            words.push(f\"w{i}\")\n        let mut xs: [i64] = [round, round + 1, round + 2]\n        xs.push(round * 2)\n        total += count(make(round % 6)) + len(words) + xs[3] - xs[0]\n        if round == 199:\n            println(words)\n            println(xs)\n    println(total)\n",
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut total = 0_i64;
+    for round in 0..200_i64 {
+        total += (1 << (round % 6 + 1)) - 1 + 2 + round % 9 + round;
+    }
+    assert_eq!(
+        stdout(&output),
+        format!("[\"a\", \"b\", \"w0\"]\n[199, 200, 201, 398]\n{total}\n")
+    );
+}
