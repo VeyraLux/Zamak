@@ -122,6 +122,7 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 - 人类可读诊断（stderr）：`error[ZM301]: <信息>`，下一行 `--> <文件>:<行>:<列>`，然后是源码行和 `^` 下划线（词法/语法错误只划记号，语义错误从语句起点划到行尾；中文按 2 格对齐），最后 `= help: <建议>`；多条之间空一行，结尾 `zam: N errors`。没有位置的错误仍是一行 `zam: <信息>`。列从 1 开始、按 Unicode 字符计数。**程序化处理一律用 `--json`**，别解析这段文本。
 - 实现：编译器内部错误仍是字符串 `line L, column C: 模块:函数: 信息`，多条用 `compiler::DIAGNOSTIC_SEPARATOR`（`\u{1e}`）拼接；`main.rs` 的 `diagnostics()` 拆开排序，`diagnostic()` 反解字段，`render()`/`underline()` 渲染。
 - 中文报错（`zam/src/zh.rs`）：编译器内部与 `--json` 始终是英文；终端显示时 `render()` 经 `zh::text()` 按句式表翻译（`%` 是原样保留的名字或类型，`{0}`… 依次对应，最具体的句式优先，整句对不上就按 `; ` 拆开，仍对不上的部分保留英文）。语言由 `ZAMAK_LANG`（`zh`/`en`）决定，不设时跟随系统语言；`zam/.cargo/config.toml` 让 `cargo test` 固定用英文，中文 Book 的 `zamak,fails` 示例在测试里用 `ZAMAK_LANG=zh` 逐字核对。**新增或改写报错句子时，在 `zh.rs` 的 `TABLE` 里同步加上中文**（`placeholders_line_up` 测试会检查占位个数）。
+- 语言服务器（`zam/src/lsp.rs`，`zam lsp`）：stdin/stdout 上的 LSP，`serde_json` 解析。读线程把消息送进通道，主线程一次处理完已到达的消息再检查，连续打字只检查一次。打开或修改的文档经 `project::set_overlay` 覆盖磁盘内容，检查按 `zam.toml` 所在项目分组，诊断复用 `main.rs` 的 `diagnostics()`（文字经 `zh::text`）；列号换算成 UTF-16。补全、悬停、跳转按文字扫描声明（`declarations`/`locals`/`imports`），代码写到一半也能用，不依赖类型检查。`tests/lsp.rs` 用真实进程走一遍协议。VS Code 扩展（`editors/vscode/extension.js`，依赖 `vscode-languageclient`）只负责启动 `zam lsp`，`zamak.path` 可改命令；报错语言跟随 VS Code 的显示语言。
 
 ## 修改 Zamak 编译器本身
 

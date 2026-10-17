@@ -1,4 +1,5 @@
 mod compiler;
+mod lsp;
 mod native;
 mod package;
 mod project;
@@ -50,7 +51,7 @@ fn execute() -> project::Result<()> {
                 || (args.len() == 4 && args[2] == "--template" && args[3] == "ai")
                 || (args.len() == 3 && args[2] == "--ai")
         }
-        Some("demo" | "--version" | "-V" | "--help" | "-h") => args.len() == 1,
+        Some("demo" | "lsp" | "--version" | "-V" | "--help" | "-h") => args.len() == 1,
         None => args.is_empty(),
         _ => false,
     };
@@ -153,8 +154,9 @@ fn execute() -> project::Result<()> {
             project::run_artifact(&artifact, &program_args.unwrap_or_default())?;
         }
         Some("demo") if args.len() == 1 => demo()?,
+        Some("lsp") => lsp::run()?,
         Some("--version") | Some("-V") => println!("{}", env!("CARGO_PKG_VERSION")),
-        None | Some("--help") | Some("-h") => println!("zam {}\n  zam check [project|file]\n  zam build [project|file]\n  zam fmt [project|file]\n  zam run [project|file|artifact] [-- args...]\n  zam test [project|file] [filter]\n  zam add <name> [version|git-url|directory] [rev]\n  zam remove <name>\n  zam update [project]\n  zam search [word]\n  zam publish [project]\n  zam new <directory> [--template ai]\n  zam check --json [project|file]\n  zam build --json [project|file]\n  zam demo\n  zam --version", env!("CARGO_PKG_VERSION")),
+        None | Some("--help") | Some("-h") => println!("zam {}\n  zam check [project|file]\n  zam build [project|file]\n  zam fmt [project|file]\n  zam run [project|file|artifact] [-- args...]\n  zam test [project|file] [filter]\n  zam add <name> [version|git-url|directory] [rev]\n  zam remove <name>\n  zam update [project]\n  zam search [word]\n  zam publish [project]\n  zam new <directory> [--template ai]\n  zam check --json [project|file]\n  zam build --json [project|file]\n  zam lsp\n  zam demo\n  zam --version", env!("CARGO_PKG_VERSION")),
         _ => return Err("usage: zam <check|build|run|test|fmt|new|add|remove|update|search|publish> [project|file]".into()),
     }
     Ok(())

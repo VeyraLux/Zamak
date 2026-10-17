@@ -101,6 +101,41 @@ pub struct Project {
     pub description: Option<String>,
 }
 
+/// 编辑器里还没保存的内容（`zam lsp`）：规范化路径 → 文本。加载项目时优先读这里，
+/// 所以边打字边检查不用先存盘。命令行用不到它，始终为空。
+static OVERLAY: std::sync::RwLock<BTreeMap<PathBuf, String>> =
+    std::sync::RwLock::new(BTreeMap::new());
+
+fn overlay_key(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// 设置或清除（`None`）某个文件的未保存内容。
+pub fn set_overlay(path: &Path, text: Option<String>) {
+    let mut overlay = OVERLAY.write().unwrap();
+    match text {
+        Some(text) => overlay.insert(overlay_key(path), text),
+        None => overlay.remove(&overlay_key(path)),
+    };
+}
+
+/// 某个文件的未保存内容（没有就是 None）。
+pub fn read_overlay(path: &Path) -> Option<String> {
+    OVERLAY.read().unwrap().get(&overlay_key(path)).cloned()
+}
+
+fn read_source(path: &Path) -> std::io::Result<String> {
+    {
+        let overlay = OVERLAY.read().unwrap();
+        if !overlay.is_empty() {
+            if let Some(text) = overlay.get(&overlay_key(path)) {
+                return Ok(text.clone());
+            }
+        }
+    }
+    fs::read_to_string(path)
+}
+
 fn is_source(path: &Path) -> bool {
     path.extension().is_some_and(|ext| ext == "zm")
 }
@@ -136,8 +171,7 @@ fn scan(
             if !id.split('/').all(identifier) {
                 return Err(format!("invalid module path {id}"));
             }
-            let source =
-                fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let source = read_source(&path).map_err(|e| format!("{}: {e}", path.display()))?;
             let module = parse(&source).map_err(|e| format!("{}: {e}", path.display()))?;
             if modules
                 .insert(
@@ -232,7 +266,7 @@ impl Project {
     /// `dependencies` 为 None 时不解析依赖（格式化），Some(update) 时解析，update 表示忽略锁文件。
     fn load_with(input: &Path, parse: Parse, dependencies: Option<bool>) -> Result<Self> {
         if is_source(input) {
-            let source = fs::read_to_string(input).map_err(|e| e.to_string())?;
+            let source = read_source(input).map_err(|e| e.to_string())?;
             let module = parse(&source).map_err(|e| format!("{}: {e}", input.display()))?;
             return Ok(Self {
                 name: "main".into(),

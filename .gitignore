@@ -34,3 +34,7 @@ __pycache__/
 # 会话恢复材料（本地上下文，不属于仓库内容）
 _session-restore/
 session-resume-*/
+
+# VS Code 扩展的依赖与打包产物
+editors/vscode/node_modules/
+*.vsix

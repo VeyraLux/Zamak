@@ -44,17 +44,21 @@ If your shell can't find `zam`, open a new terminal so that it picks up the upda
 
 ## Editor support
 
-The VS Code extension in [editors/vscode](https://github.com/VeyraLux/Zamak/tree/main/editors/vscode) adds syntax highlighting, bracket matching, automatic indentation after a line that ends with `:`, and folding. To install it, link the folder into your VS Code extensions folder and restart VS Code:
+The VS Code extension in [editors/vscode](https://github.com/VeyraLux/Zamak/tree/main/editors/vscode) adds syntax highlighting and starts `zam lsp`, the Zamak language server, for diagnostics as you type, completion, hover, go to definition, and formatting. To install it, run `npm install` in that folder, link the folder into your VS Code extensions folder, and restart VS Code:
 
 ```sh
 # Linux and macOS
+cd /path/to/Zamak/editors/vscode && npm install
 ln -s /path/to/Zamak/editors/vscode ~/.vscode/extensions/zamak-0.1.0
 ```
 
 ```powershell
 # Windows
+cd C:\path\to\Zamak\editors\vscode; npm install
 New-Item -ItemType Junction -Path "$env:USERPROFILE\.vscode\extensions\zamak-0.1.0" -Target "C:\path\to\Zamak\editors\vscode"
 ```
+
+The extension runs the `zam` on your `PATH`. To use another one, set **zamak.path** in the VS Code settings. Other editors that speak the Language Server Protocol can run `zam lsp` the same way.
 
 ## Update and uninstall
 

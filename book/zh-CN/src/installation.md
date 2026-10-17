@@ -44,17 +44,21 @@ zam --version
 
 ## 编辑器支持
 
-[editors/vscode](https://github.com/VeyraLux/Zamak/tree/main/editors/vscode) 里的 VS Code 扩展提供语法高亮、括号匹配、以 `:` 结尾的行之后自动缩进，以及代码折叠。安装方法是把这个目录链接到 VS Code 的扩展目录，然后重启 VS Code：
+[editors/vscode](https://github.com/VeyraLux/Zamak/tree/main/editors/vscode) 里的 VS Code 扩展提供语法高亮，并启动 Zamak 的语言服务器 `zam lsp`，带来边写边报错、补全、悬停、跳到定义和格式化。安装方法是在这个目录里运行 `npm install`，把目录链接到 VS Code 的扩展目录，然后重启 VS Code：
 
 ```sh
 # Linux 和 macOS
+cd /path/to/Zamak/editors/vscode && npm install
 ln -s /path/to/Zamak/editors/vscode ~/.vscode/extensions/zamak-0.1.0
 ```
 
 ```powershell
 # Windows
+cd C:\path\to\Zamak\editors\vscode; npm install
 New-Item -ItemType Junction -Path "$env:USERPROFILE\.vscode\extensions\zamak-0.1.0" -Target "C:\path\to\Zamak\editors\vscode"
 ```
+
+扩展运行 `PATH` 里的 `zam`。想用别的 `zam`，在 VS Code 设置里修改 **zamak.path**。其他支持语言服务器协议（LSP）的编辑器也可以用同样的方式运行 `zam lsp`。
 
 ## 更新与卸载
 

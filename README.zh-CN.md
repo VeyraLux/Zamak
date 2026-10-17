@@ -127,7 +127,7 @@ Zamak 是为频繁构建和多 worktree 协作设计的语言原型，改完代�
 | 错误处理 | `T!string`、`fail`、`?` 传播、`catch` 处理 |
 | 编辑器 | VS Code 语法高亮、括号与引号配对 |
 
-尚未支持网络 I/O 和线程，也还没有语言服务器、REPL 和文档生成工具。安装方式见 [预览版说明](PREVIEW.md)。
+尚未支持网络 I/O 和线程，也还没有 REPL 和文档生成工具。安装方式见 [预览版说明](PREVIEW.md)。
 
 ## 与其他语言对比
 
@@ -272,9 +272,9 @@ src/stats.zm:8: assertion failed: got == 5: two plus two
 
 ## 编辑器与 AI 工具
 
-- **VS Code 语法扩展**：`editors/vscode/`。纯声明式：一份 TextMate 语法加语言配置，没有 `main`、没有运行时依赖、不联网。为 `.zm` 文件提供关键字、类型、字符串插值、字符字面量和注释高亮，以及括号、引号配对；冒号结尾的行回车后自动缩进，代码块按缩进折叠。同一份 `syntaxes/zamak.tmLanguage.json` 也能给 Sublime Text、TextMate 等支持 TextMate 语法的编辑器使用。本地安装、打包 `.vsix` 与上架市场的步骤见 `editors/vscode/README.md`。
+- **VS Code 扩展**：`editors/vscode/`。提供语法高亮，并运行 Zamak 的语言服务器 `zam lsp`：边写边报错（没保存的内容也检查）、补全、悬停查看签名、跳到定义，以及与 `zam fmt` 相同的格式化。其他支持语言服务器协议（LSP）的编辑器也能运行 `zam lsp`。同一份 `syntaxes/zamak.tmLanguage.json` 也能给 Sublime Text、TextMate 等编辑器使用。本地安装、打包 `.vsix` 与上架市场的步骤见 `editors/vscode/README.md`。
 - **AI 技能**：`.agents/skills/zamak/SKILL.md`，给遵循 `.agents/skills` 约定的 AI 编程代理（DSH、Claude Code 等）使用：命令与环境变量、语法速览、常见诊断、示例与测试的位置，以及修改编译器时的验收命令和 IR/缓存版本号规则。
-- **CLI**：`zam` 本身，包括 `check`/`build`/`run`/`fmt`/`new`/`demo`、`--help`、`--version`；`check`/`build` 支持 `--json` 机器可读诊断；缓存目录可用 `ZAMAK_CACHE_DIR` 覆盖。还没有包管理器。
+- **CLI**：`zam` 本身，包括 `check`/`build`/`run`/`test`/`fmt`/`new`、包管理（`add`/`remove`/`update`/`search`/`publish`）、`lsp`、`--help`、`--version`；`check`/`build` 支持 `--json` 机器可读诊断；缓存目录可用 `ZAMAK_CACHE_DIR` 覆盖。
 
 ## 项目配置
 

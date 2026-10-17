@@ -1,0 +1,228 @@
+//! `zam lsp`：按 LSP 协议与一个真正的 `zam lsp` 进程对话，覆盖实时报错（含未保存内容）、
+//! 补全、悬停、跳转与格式化。
+
+use serde_json::{json, Value};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::path::Path;
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+
+struct Client {
+    child: Child,
+    input: ChildStdin,
+    output: BufReader<ChildStdout>,
+    next: u64,
+}
+
+impl Client {
+    fn start(dir: &Path) -> Self {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_zam"))
+            .arg("lsp")
+            .current_dir(dir)
+            .env("ZAMAK_CACHE_DIR", dir.join("cache"))
+            .env("ZAMAK_LANG", "en")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let input = child.stdin.take().unwrap();
+        let output = BufReader::new(child.stdout.take().unwrap());
+        Self {
+            child,
+            input,
+            output,
+            next: 0,
+        }
+    }
+
+    fn send(&mut self, message: Value) {
+        let body = message.to_string();
+        write!(self.input, "Content-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        self.input.flush().unwrap();
+    }
+
+    fn notify(&mut self, method: &str, params: Value) {
+        self.send(json!({ "jsonrpc": "2.0", "method": method, "params": params }));
+    }
+
+    fn receive(&mut self) -> Value {
+        let mut length = 0;
+        loop {
+            let mut line = String::new();
+            assert!(
+                self.output.read_line(&mut line).unwrap() > 0,
+                "server closed stdout"
+            );
+            let line = line.trim_end();
+            if line.is_empty() {
+                break;
+            }
+            if let Some(value) = line.strip_prefix("Content-Length: ") {
+                length = value.parse().unwrap();
+            }
+        }
+        let mut body = vec![0; length];
+        self.output.read_exact(&mut body).unwrap();
+        serde_json::from_slice(&body).unwrap()
+    }
+
+    fn request(&mut self, method: &str, params: Value) -> Value {
+        self.next += 1;
+        let id = self.next;
+        self.send(json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }));
+        loop {
+            let message = self.receive();
+            if message["id"] == id {
+                return message["result"].clone();
+            }
+        }
+    }
+
+    /// 下一条发给 `uri` 的诊断。
+    fn diagnostics(&mut self, uri: &str) -> Vec<Value> {
+        loop {
+            let message = self.receive();
+            if message["method"] == "textDocument/publishDiagnostics"
+                && message["params"]["uri"] == uri
+            {
+                return message["params"]["diagnostics"].as_array().unwrap().clone();
+            }
+        }
+    }
+}
+
+fn uri(path: &Path) -> String {
+    let text = path.to_string_lossy().replace('\\', "/");
+    if text.starts_with('/') {
+        format!("file://{text}")
+    } else {
+        format!("file:///{text}")
+    }
+}
+
+fn labels(result: &Value) -> Vec<String> {
+    result
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["label"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[test]
+fn language_server_checks_completes_and_navigates() {
+    let root = std::env::temp_dir().join(format!("zam-lsp-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(
+        root.join("zam.toml"),
+        "[project]\nname = \"shapes\"\nentry = \"src/main.zm\"\nmodules = \"src\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/geo.zm"),
+        "pub struct Point:\n    x: f64\n    y: f64\n\npub fn area(w: f64, h: f64) -> f64:\n    w * h\n",
+    )
+    .unwrap();
+    let main = root.join("src/main.zm");
+    let saved = "use geo\n\nfn main():\n    println(geo.area(2.0, 3.0))\n";
+    std::fs::write(&main, saved).unwrap();
+    let main_uri = uri(&main);
+
+    let mut client = Client::start(&root);
+    let init = client.request(
+        "initialize",
+        json!({ "processId": null, "rootUri": uri(&root), "capabilities": {} }),
+    );
+    assert_eq!(init["capabilities"]["hoverProvider"], true);
+    assert_eq!(
+        init["capabilities"]["completionProvider"]["triggerCharacters"],
+        json!(["."])
+    );
+    client.notify("initialized", json!({}));
+
+    // 未保存的内容也检查：磁盘上的文件没有错，编辑器里的有。
+    let broken = "use geo\n\nfn main():\n    let x = foo(1)\n    println(geo.area(2.0, 3.0))\n";
+    client.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": main_uri, "languageId": "zamak", "version": 1, "text": broken } }),
+    );
+    let found = client.diagnostics(&main_uri);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0]["code"], "ZM201");
+    assert_eq!(
+        found[0]["range"]["start"],
+        json!({ "line": 3, "character": 4 })
+    );
+    assert!(
+        found[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("unknown function foo"),
+        "{found:?}"
+    );
+
+    // 改好之后诊断清空。
+    let fixed = "use geo\nuse std/string\n\nfn main():\n    let s = \"hi\"\n    let p = geo.Point(x: 1.0, y: 2.0)\n    println(geo.area(2.0, 3.0))\n    s.\n";
+    client.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": main_uri, "version": 2 }, "contentChanges": [{ "text": saved }] }),
+    );
+    assert_eq!(client.diagnostics(&main_uri), Vec::<Value>::new());
+    client.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": main_uri, "version": 3 }, "contentChanges": [{ "text": fixed }] }),
+    );
+    client.diagnostics(&main_uri);
+
+    // 补全：`geo.` 后面是模块的 pub 声明，字符串值后面是字符串方法，空白处有关键字与局部变量。
+    let at = |line: u64, character: u64| json!({ "textDocument": { "uri": main_uri }, "position": { "line": line, "character": character } });
+    let module = labels(&client.request("textDocument/completion", at(6, 16)));
+    assert!(
+        module.contains(&"area".to_owned()) && module.contains(&"Point".to_owned()),
+        "{module:?}"
+    );
+    let methods = labels(&client.request("textDocument/completion", at(7, 6)));
+    assert!(
+        methods.contains(&"upper".to_owned()) && methods.contains(&"split".to_owned()),
+        "{methods:?}"
+    );
+    let plain = labels(&client.request("textDocument/completion", at(7, 4)));
+    for expected in ["fn", "while", "println", "main", "geo", "s", "p"] {
+        assert!(
+            plain.contains(&expected.to_owned()),
+            "{expected} missing from {plain:?}"
+        );
+    }
+
+    // 悬停与跳转：`geo.area` 指向 geo.zm 里的声明。
+    let hover = client.request("textDocument/hover", at(6, 17));
+    assert!(
+        hover["contents"]["value"]
+            .as_str()
+            .unwrap()
+            .contains("pub fn area(w: f64, h: f64) -> f64"),
+        "{hover}"
+    );
+    let target = client.request("textDocument/definition", at(6, 17));
+    assert!(
+        target["uri"].as_str().unwrap().ends_with("src/geo.zm"),
+        "{target}"
+    );
+    assert_eq!(target["range"]["start"]["line"], 4);
+    let local = client.request("textDocument/definition", at(7, 4));
+    assert_eq!(local["range"]["start"]["line"], 4);
+
+    // 格式化：与 zam fmt 相同。
+    let messy = "fn main():\n  println(\"hi\")   \n";
+    client.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": main_uri, "version": 4 }, "contentChanges": [{ "text": messy }] }),
+    );
+    let edits = client.request("textDocument/formatting", json!({ "textDocument": { "uri": main_uri }, "options": { "tabSize": 4, "insertSpaces": true } }));
+    assert_eq!(edits[0]["newText"], "fn main():\n    println(\"hi\")\n");
+
+    client.request("shutdown", Value::Null);
+    client.notify("exit", Value::Null);
+    assert!(client.child.wait().unwrap().success());
+    let _ = std::fs::remove_dir_all(&root);
+}
