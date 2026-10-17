@@ -28,7 +28,7 @@ fn constant_divisors_preserve_signed_arithmetic() {
     let root = std::env::temp_dir().join(format!("zam-constant-divisors-{}", std::process::id()));
     fs::create_dir_all(&root).unwrap();
     let file = root.join("main.zm");
-    let divisors = [1_i64, 2, 3, -2, -3, i64::MIN, i64::MAX];
+    let divisors = [1_i64, 2, 3, 4, 8, 1024, 1 << 62, -2, -3, i64::MIN, i64::MAX];
     let numerators = [
         i64::MIN,
         i64::MIN + 1,

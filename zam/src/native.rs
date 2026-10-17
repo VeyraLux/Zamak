@@ -3373,6 +3373,7 @@ impl<'a> Generator<'a> {
                 // Unsigned power-of-two reduction exposes a precise result range;
                 // other constants retain signed reduction to avoid slower magic division.
                 let unsigned_constant_divisor = matches!(right.as_ref(), Expr::Int(value) if *value > 0 && (*value as u64).is_power_of_two());
+                let right_expr = right.as_ref();
                 let left = self.expr(left);
                 if matches!(op.as_str(), "&&" | "||") {
                     let value = self.scalar(&left, Type::Bool);
@@ -3400,6 +3401,22 @@ impl<'a> Generator<'a> {
                     let c = if op == "//" { "/" } else { "%" };
                     return self.scalar(
                         &format!("(int64_t)((uint64_t){left} {c} (uint64_t){right})"),
+                        ty,
+                    );
+                }
+                if let (true, Expr::Int(divisor)) = (
+                    matches!(op.as_str(), "//" | "%") && unsigned_constant_divisor,
+                    right_expr,
+                ) {
+                    // 除数是 2 的正整数次幂：Python 的整除向下取整，等于算术右移；
+                    // 余数与除数同号（非负），等于二进制补码的低位。都不会溢出，也不会除零。
+                    // 支持的 C 编译器（GCC、Clang、MSVC）对有符号数右移都是算术移位。
+                    return self.scalar(
+                        &if op == "//" {
+                            format!("(({left}) >> {})", divisor.trailing_zeros())
+                        } else {
+                            format!("(int64_t)((uint64_t)({left}) & {}u)", divisor - 1)
+                        },
                         ty,
                     );
                 }
