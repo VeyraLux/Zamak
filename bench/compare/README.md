@@ -43,5 +43,5 @@ What this shows:
 - On word frequency, Zamak is close to C and faster than Rust and Go. `for word in text.words()` walks the input without copying the words, and `counts[word] = counts.get(word, 0) + 1` looks the word up once.
 - Rust is the fastest on n-body; Zamak is about 6 percent behind C and ahead of Go.
 - A Zamak hello world is about as small as C: under half the size of Rust and about 1/40 of Go. On compute-bound programs, it starts and uses memory like C.
-- Zamak runs the compute-bound programs 44 to 94 times faster than Python, and binary-trees and word frequency about 2 to 3 times faster.
+- Zamak runs the compute-bound programs 46 to 217 times faster than Python, binary-trees about 9 times faster, and word frequency about 6 times faster.
 - Single-file builds are slower than `rustc` and GCC (about 0.5 s for `hello`), because each build also starts a C compiler. Zamak's caching targets multi-module projects and repeated edits, which this benchmark doesn't exercise.
