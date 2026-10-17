@@ -956,6 +956,8 @@ pub struct Function {
     pub generics: Vec<String>,
     // `extern fn sqrt(x: f64) -> f64`：没有函数体，调用同名的 C 函数。
     pub external: bool,
+    // `@wrapping`：整数 + - * 与取负按二进制补码回绕，浮点 / // % 按 IEEE 754（不检查除以零）。
+    pub wrapping: bool,
 }
 
 /// `extern fn` 能用的参数与返回类型：数值、布尔、只读字符串参数（C 侧是 `const char *`）、
@@ -1885,7 +1887,7 @@ fn lex(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>, bool), String> 
                     }
                 }
                 '(' | ')' | '{' | '}' | '[' | ']' | '/' | '.' | ':' | ',' | '=' | '&' | '-'
-                | '>' | '<' | '+' | '*' | '%' | '!' | '|' | ';' | '?' | '^' | '~' => {
+                | '>' | '<' | '+' | '*' | '%' | '!' | '|' | ';' | '?' | '^' | '~' | '@' => {
                     match c {
                         '(' | '[' | '{' => open.push((c, (line, column))),
                         ')' | ']' | '}' => {
@@ -2006,6 +2008,7 @@ pub fn format(source: &str) -> Result<String, String> {
                             next.clone()
                         }
                         (Token::Word(word), _) => word.clone(),
+                        (Token::Symbol('@'), _) => "@".into(),
                         _ => String::new(),
                     },
                     opens: tokens.get(i + 1) == Some(&Token::Indent),
@@ -2141,6 +2144,10 @@ pub fn format(source: &str) -> Result<String, String> {
     for pair in top.windows(2) {
         let (a, b) = (&logical[pair[0]], &logical[pair[1]]);
         if a.head == b.head && matches!(a.head.as_str(), "use" | "const" | "extern") {
+            continue;
+        }
+        // 装饰器紧贴着它下面的 fn。
+        if a.head == "@" {
             continue;
         }
         before_line.insert(b.first);
@@ -3298,6 +3305,7 @@ impl Parser {
                 builtin: false,
                 generics,
                 external: false,
+                wrapping: false,
             },
         ))
     }
@@ -3343,6 +3351,7 @@ impl Parser {
                 builtin: false,
                 generics: Vec::new(),
                 external: true,
+                wrapping: false,
             },
         ))
     }
@@ -4272,8 +4281,23 @@ pub fn parse(source: &str) -> Result<Module, String> {
                 p.separator()?;
                 continue;
             }
+            // `@wrapping` 写在 fn 的上一行：这个函数里的算术局部关闭溢出检查。
+            let mut wrapping = false;
+            while p.symbol('@') {
+                let name = p.word()?;
+                if name != "wrapping" {
+                    return Err(format!(
+                        "unknown decorator @{name}; the only decorator is @wrapping"
+                    ));
+                }
+                wrapping = true;
+                p.separator()?;
+            }
             let public = p.keyword("pub");
             let start = p.at();
+            if wrapping && !matches!(p.peek(), Some(Token::Word(word)) if word == "fn") {
+                return Err("@wrapping applies only to a fn declaration".into());
+            }
             // `const LIMIT = 100`、`const NAME: string = "x"`：解析时就算出值。
             if p.keyword("const") {
                 let name = p.word()?;
@@ -4484,7 +4508,9 @@ pub fn parse(source: &str) -> Result<Module, String> {
                 p.external(public, start)?
             } else if p.keyword("fn") {
                 let imports = module.imports.clone();
-                p.function(public, start, &imports, None)?
+                let (name, mut function) = p.function(public, start, &imports, None)?;
+                function.wrapping = wrapping;
+                (name, function)
             } else {
                 return Err(
                     "expected use, const, struct, enum, fn or extern fn declaration".into(),
@@ -4528,7 +4554,7 @@ pub fn encode(module: &Module) -> Vec<u8> {
         .map(|(name, constant)| (name, constant.public, &constant.value))
         .collect();
     format!(
-        "ZAM-IR-33\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
+        "ZAM-IR-34\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
         module.type_names, module.imports, module.functions
     )
     .into_bytes()
@@ -5624,6 +5650,7 @@ impl<'a> Checker<'a> {
                     builtin: false,
                     generics: Vec::new(),
                     external: false,
+                    wrapping: false,
                 };
                 self.call("this function value", &callee, args, expected, &mut frame)
             }
@@ -6450,6 +6477,7 @@ impl<'a> Checker<'a> {
             builtin: false,
             generics: Vec::new(),
             external: false,
+            wrapping: false,
         };
         self.call(&label, &callee, args, expected, loans)?;
         Ok(Some((label, error, result)))
@@ -6481,6 +6509,7 @@ impl<'a> Checker<'a> {
             builtin: false,
             generics: Vec::new(),
             external: false,
+            wrapping: false,
         };
         self.call(path, &callee, args, expected, loans)
     }
@@ -7193,6 +7222,14 @@ mod tests {
         );
         let once = format(source).unwrap();
         assert_eq!(format(&once).unwrap(), once);
+    }
+
+    #[test]
+    fn format_keeps_decorators_next_to_their_function() {
+        assert_eq!(
+            format("fn f() -> i64: 1\n@wrapping\nfn g(n: i64) -> i64: n * 3\n").unwrap(),
+            "fn f() -> i64: 1\n\n@wrapping\nfn g(n: i64) -> i64: n * 3\n"
+        );
     }
 
     /// AST 的调试输出去掉源码位置 `(行, 列)`，只比较结构。

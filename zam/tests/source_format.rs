@@ -40,7 +40,7 @@ fn fmt_reindents_a_project_and_refuses_broken_source() {
     assert_eq!(fs::read_to_string(&entry).unwrap(), formatted);
 
     // 语法坏掉的文件原样保留，命令失败。
-    let broken = "fn main():\n    println(@)\n";
+    let broken = "fn main():\n    println(`)\n";
     fs::write(&entry, broken).unwrap();
     let failed = format(&root);
     assert!(!failed.status.success());

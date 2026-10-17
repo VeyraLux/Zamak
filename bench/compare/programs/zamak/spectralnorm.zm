@@ -3,6 +3,8 @@ use std/env
 use std/fmt
 use std/math
 
+# 下标不超过 n，整数运算不会溢出：@wrapping 去掉这个热点函数里的溢出检查。
+@wrapping
 fn a(i: i64, j: i64) -> f64: 1.0 / ((i + j) * (i + j + 1) // 2 + i + 1)
 
 fn times(u: &[f64], out: &mut [f64]):

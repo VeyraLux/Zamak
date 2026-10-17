@@ -5,7 +5,7 @@ fn syntax_diagnostics_include_source_and_line() {
     let path = std::env::temp_dir().join(format!("zam-diagnostics-{}.zm", std::process::id()));
     for (source, line, column, message) in [
         (
-            "# comment\nfn main():\n    println(@)\n",
+            "# comment\nfn main():\n    println(`)\n",
             3,
             13,
             "unexpected character",
@@ -35,13 +35,13 @@ fn syntax_diagnostics_include_source_and_line() {
             "expected an indented block after the fn line",
         ),
         (
-            "fn main(): println(\"你好\") @",
+            "fn main(): println(\"你好\") `",
             1,
             26,
             "unexpected character",
         ),
         (
-            "fn main():\r\n\tprintln(@)\r\n",
+            "fn main():\r\n\tprintln(`)\r\n",
             2,
             1,
             "indentation contains a tab; run `zam fmt`",
@@ -211,7 +211,7 @@ fn every_failing_function_reports_its_first_error() {
 fn json_diagnostics_are_one_line_and_structured() {
     let path = std::env::temp_dir().join(format!("zam-json-{}.zm", std::process::id()));
     let escaped = path.display().to_string().replace('\\', "\\\\");
-    fs::write(&path, "fn main():\n    println(@)\n").unwrap();
+    fs::write(&path, "fn main():\n    println(`)\n").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_zam"))
         .args(["check", "--json"])
         .arg(&path)
@@ -229,7 +229,7 @@ fn json_diagnostics_are_one_line_and_structured() {
         "\"function\":null",
         "\"code\":\"ZM100\"",
         "\"category\":\"syntax\"",
-        "\"message\":\"unexpected character '@'\"",
+        "\"message\":\"unexpected character '`'\"",
         "\"suggestion\":\"remove or replace the unsupported character\"",
     ] {
         assert!(stdout.contains(field), "{field} missing from {stdout}");
@@ -375,7 +375,7 @@ const REAL_SOURCE_CODES: &[(&str, &str, &str)] = &[
         "ZM204",
         "name",
     ),
-    ("fn main():\n    println(@)\n", "ZM100", "syntax"),
+    ("fn main():\n    println(`)\n", "ZM100", "syntax"),
     (
         "fn main():\n    let point = shapes.Point(x: 1)\n",
         "ZM203",
