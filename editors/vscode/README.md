@@ -60,4 +60,4 @@ The language server lives in the compiler (`zam/src/lsp.rs`), so new compiler re
 3. Update `CHANGELOG.md` and the `version` in `package.json`.
 4. Run `npx @vscode/vsce publish`.
 
-`icon.png` is `ico/Zamak_256x256.ico` scaled to 128×128.
+`icon.png` is `docs/icon-512.png` (from `tools/make-logo.py`) scaled to 128×128.

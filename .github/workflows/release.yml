@@ -33,7 +33,8 @@ jobs:
         shell: bash
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' zam/Cargo.toml | head -1)
-          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME does not match Cargo version $version"; exit 1; }
+          # A pre-release tag such as v0.1.0-rc.1 builds the version it previews.
+          test "v$version" = "${GITHUB_REF_NAME%%-*}" || { echo "tag $GITHUB_REF_NAME does not match Cargo version $version"; exit 1; }
       - name: Build
         run: cargo build --release --locked --manifest-path zam/Cargo.toml
       - name: Package
@@ -124,7 +125,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Tags with a suffix (v0.1.0-rc.1) are pre-releases; plain tags (v0.1.0) are releases.
+          prerelease=""
+          case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
           gh release create "$GITHUB_REF_NAME" assets/* \
             --title "Zamak $GITHUB_REF_NAME" \
-            --prerelease \
+            $prerelease \
             --generate-notes
