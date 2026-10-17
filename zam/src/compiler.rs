@@ -7358,7 +7358,6 @@ mod tests {
         walk(&root.join("examples"), &mut sources);
         walk(&root.join("bench/ai/live/solutions"), &mut sources);
         for (doc, bare) in [
-            ("TUTORIAL.md", false),
             ("README.md", false),
             ("README.zh-CN.md", false),
             (".agents/skills/zamak/SKILL.md", false),

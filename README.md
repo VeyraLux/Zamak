@@ -12,7 +12,7 @@
   &nbsp;·&nbsp;
   <a href="#why-zamak">Why Zamak</a>
   &nbsp;·&nbsp;
-  <a href="./TUTORIAL.md">Tutorial (中文)</a>
+  <a href="https://zamak.veyralux.org/">The Zamak Book</a>
   &nbsp;·&nbsp;
   <a href="#language-tour">Language tour</a>
   &nbsp;·&nbsp;
@@ -257,7 +257,7 @@ fn main() -> !string:
 - **Printing.** `print(x)` and `println(x)` both print a value and a newline, like Python's `print`. `io.print` prints without a newline.
 - **Standard library.** `std/io` reads standard input and prints to standard output or standard error, `std/fs` reads, writes, and appends files, lists and creates directories, and renames and removes entries, `std/path` joins and splits paths, and `std/env` reads arguments and environment variables and sets the exit status. Python's `len`, `str`, `int`, `float`, `abs`, `min`, `max`, `sum`, and `sorted` need no import. `std/string` measures, compares, parses, trims, searches, replaces, converts case, slices, splits, joins, pads, and repeats strings, and converts them to and from characters, code points, and UTF-8 bytes. `std/math` provides square roots, powers, logarithms, trigonometry, rounding, and the constants `math.pi`, `math.e`, and `math.inf`. `std/time` reads the clock, measures durations, sleeps, and formats dates, and `std/random` draws integers and floats, with `random.seed(n)` for repeatable runs.
 
-The [tutorial](TUTORIAL.md) (in Chinese) covers every feature with runnable examples. For a larger program, see [examples/md2html](examples/md2html), a Markdown-to-HTML converter with four modules and about 270 lines. It handles headings, lists, quotes, fenced code, inline formatting, links, and HTML escaping. To run it:
+[The Zamak Book](https://zamak.veyralux.org/) covers every feature with runnable examples, in English and Chinese. For a larger program, see [examples/md2html](examples/md2html), a Markdown-to-HTML converter with four modules and about 270 lines. It handles headings, lists, quotes, fenced code, inline formatting, links, and HTML escaping. To run it:
 
 ```sh
 zam run examples/md2html -- examples/md2html/sample.md

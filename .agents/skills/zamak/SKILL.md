@@ -140,4 +140,4 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 
 ## 参考资料
 
-`README.md` / `README.zh-CN.md`（能力与缺口）、`TUTORIAL.md`（零基础教程，入库）、`SYNTAX.md`（语法细节）、`examples/`（可运行示例）、`ROADMAP.md`（当前进度的权威记录）、`zam/src/compiler.rs`（前端）、`zam/src/native.rs`（C 后端）、`zam/src/project.rs`（构建与缓存）。
+`README.md` / `README.zh-CN.md`（能力与缺口）、`book/`（The Zamak Book，中英双语，`zam/tests/book.rs` 运行每段示例并逐字核对输出；`python book/build.py` 构建，`book/wrangler.jsonc` 部署到 zamak.veyralux.org）、`SYNTAX.md`（语法细节）、`examples/`（可运行示例）、`ROADMAP.md`（当前进度的权威记录）、`zam/src/compiler.rs`（前端）、`zam/src/native.rs`（C 后端）、`zam/src/project.rs`（构建与缓存）。
