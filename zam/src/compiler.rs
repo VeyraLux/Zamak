@@ -185,6 +185,31 @@ pub fn membership(expr: &Expr, item_text: bool) -> Option<Expr> {
         }
         item => item.clone(),
     };
+    // `x in [1, 2, 3]`：字面量列表不必建出来，写成 `x == 1 or x == 2 or x == 3`。
+    // x 要求没有副作用（变量、字段、字面量），重复求值才与求一次相同。
+    if let Expr::Array(values) = &**container {
+        let pure = matches!(
+            &**item,
+            Expr::Variable(_)
+                | Expr::Field(..)
+                | Expr::Int(_)
+                | Expr::Float(_)
+                | Expr::Bool(_)
+                | Expr::Text(_)
+        );
+        if pure {
+            let test = values
+                .iter()
+                .map(|value| Expr::Binary("==".into(), item.clone(), Box::new(value.clone())))
+                .reduce(|a, b| Expr::Binary("||".into(), Box::new(a), Box::new(b)))
+                .unwrap_or(Expr::Bool(false));
+            return Some(if negate {
+                Expr::Unary('!', Box::new(test))
+            } else {
+                test
+            });
+        }
+    }
     let call = match &**container {
         Expr::Variable(name) => Expr::Method(name.clone(), "contains".into(), vec![argument]),
         Expr::Field(local, field) => Expr::Method(
@@ -624,7 +649,7 @@ pub fn method_signature(receiver: Type, method: &str) -> Option<(bool, Vec<Type>
         (Type::List(elem), "index_of") if elem.comparable() => {
             (false, vec![elem.key_arg()], Type::Int)
         }
-        (Type::List(elem), "slice") if elem.comparable() => {
+        (Type::List(elem), "slice") if !matches!(elem, Elem::Func(_)) => {
             (false, vec![Type::Int, Type::Int], Type::List(elem))
         }
         (Type::List(elem @ (Elem::Int | Elem::Float)), "sum") => (false, Vec::new(), elem.ty()),
@@ -663,10 +688,10 @@ fn supported_methods(container: Type, method: &str) -> &'static str {
         Type::List(Elem::Record(_))
             if matches!(
                 method,
-                "sort" | "sorted" | "contains" | "index_of" | "slice" | "min" | "max"
+                "sort" | "sorted" | "contains" | "index_of" | "min" | "max"
             ) =>
         {
-            "struct elements cannot be compared or copied yet"
+            "struct elements have no natural order; use sort_by, or a loop with == to find one"
         }
         Type::List(_) if method == "sum" => "sum needs i64 or f64 elements",
         Type::List(_)

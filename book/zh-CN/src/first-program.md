@@ -79,9 +79,7 @@ fn top(counts: &{string: i64}, n: i64) -> [WordCount]:
     for word, count in counts:
         all.push(WordCount(word: word, count: count))
     all.sort_by(fn(a, b): a.count > b.count)
-    while len(all) > n:
-        all.pop()
-    all
+    all[:n]
 
 fn main():
     let counts = count_words(TEXT)
@@ -103,7 +101,7 @@ quick: 1
 - `struct WordCount:` 声明一个有两个字段的类型，`WordCount(word: word, count: count)` 创建这个类型的值。
 - `for word, count in counts:` 同时遍历字典的键和值。
 - `all.sort_by(fn(a, b): a.count > b.count)` 给列表排序。这个匿名函数在 `a` 应该排在 `b` 前面时返回 `true`，所以次数大的排在前面。排序是稳定的：次数相同的单词保持原来的顺序。
-- `all.pop()` 移除最后一个元素，所以这个循环把列表缩短到 `n` 项。
+- `all[:n]` 复制前 `n` 项，与 Python 的切片相同。
 
 ## 动手试试
 

@@ -79,9 +79,7 @@ fn top(counts: &{string: i64}, n: i64) -> [WordCount]:
     for word, count in counts:
         all.push(WordCount(word: word, count: count))
     all.sort_by(fn(a, b): a.count > b.count)
-    while len(all) > n:
-        all.pop()
-    all
+    all[:n]
 
 fn main():
     let counts = count_words(TEXT)
@@ -103,7 +101,7 @@ The new pieces:
 - `struct WordCount:` declares a type with two fields, and `WordCount(word: word, count: count)` creates a value of that type.
 - `for word, count in counts:` loops over the map's keys and values together.
 - `all.sort_by(fn(a, b): a.count > b.count)` sorts the list. The anonymous function returns `true` when `a` goes before `b`, so larger counts come first. The sort is stable: words with the same count keep their original order.
-- `all.pop()` removes the last element, so the loop shortens the list to `n` entries.
+- `all[:n]` copies the first `n` entries, as a slice does in Python.
 
 ## Try it yourself
 

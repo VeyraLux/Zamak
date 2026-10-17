@@ -3910,6 +3910,12 @@ impl<'a> Generator<'a> {
     ) -> String {
         let container = receiver.container().expect("checked method");
         let list = matches!(container, Type::List(_));
+        // 结构体或嵌套容器列表的切片要深复制元素，复制函数在复合值帮助函数里。
+        if let (Type::List(elem), "slice") = (container, method) {
+            if !elem.comparable() {
+                self.values = true;
+            }
+        }
         let name = match method {
             "contains" => "has",
             "get" => "getor",
@@ -5374,6 +5380,16 @@ pub fn generate_with(module: &Module, entry: &str, unit: &str, tests: &[String])
     }
     if values {
         source.push_str(&native_values::functions(module, &records, &lists, &maps));
+        // 结构体与嵌套容器列表的切片：逐个深复制，复制函数刚在上面生成。
+        for elem in &lists {
+            if matches!(elem, Elem::Record(_) | Elem::Nested(_)) {
+                let l = list_suffix(*elem);
+                let copy = native_values::copy(elem.ty(), "&l->data[i]");
+                source.push_str(&format!(
+                    "static {l} slice{l}({l} *l, int64_t from, int64_t to) {{ {l} out = {{0}}; int64_t i; zam_clamp(&from, &to, l->len); for (i = from; i < to; i++) push{l}(&out, {copy}); return out; }}\n"
+                ));
+            }
+        }
     }
     // 失败函数的结果结构体与构造器；调用点只读 ok 相符的那一半。
     for (ty, error) in &fallible {
