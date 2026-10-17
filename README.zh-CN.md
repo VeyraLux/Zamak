@@ -120,7 +120,7 @@ Zamak 想把 C、Rust、Go 与 Python 各自最擅长的部分融合在一起。
 | 独立的原生可执行文件 | ✓ | ✓ | ✓ | ✓ | ✗ |
 | 不写生命周期标注 | ✓ | ✓ | ✗ | ✓ | ✓ |
 
-在这些程序上，Zamak 大多与 C、Rust 处在同一档，同时在每次构建里都检查溢出与越界。spectral-norm 约比 C 慢 3 倍，词频统计慢 2 到 3 倍，两者都在改进计划中。测试方法、完整结果与复现步骤见 [bench/compare](bench/compare/README.md)。
+在这些计算密集的程序上，Zamak 都与 C 处在同一档，同时默认检查溢出与越界。binary-trees 在七种语言里最快，词频统计比 Rust、Go 快。唯一的例外是 spectral-norm 的热点函数用了 `@wrapping`，只在这一个函数里关闭溢出检查。测试方法、完整结果与复现步骤见 [bench/compare](bench/compare/README.md)。
 
 ## 配合 AI 编程助手使用
 
