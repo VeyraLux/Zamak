@@ -3,7 +3,7 @@
   "displayName": "Zamak",
   "description": "Zamak language support: syntax highlighting, diagnostics as you type, completion, hover, go to definition, and formatting.",
   "version": "0.1.0",
-  "publisher": "zamak",
+  "publisher": "veyralux",
   "author": "rayL-K",
   "license": "MIT OR Apache-2.0",
   "engines": {
