@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- One-click install: when `zam` isn't on `PATH`, the extension offers **Install with npm** (runs `npm install -g zamak` in a terminal) and **Zamak: Check for the zam Compiler Again** to pick it up afterwards.
+- One-click install: when `zam` isn't on `PATH`, the extension offers **Install with npm** (runs `npm install -g @veyralux/zamak` in a terminal) and **Zamak: Check for the zam Compiler Again** to pick it up afterwards.
 - The status bar shows the `zam` version in use, and turns into a warning with an install entry point when `zam` is missing.
 - Parameter hints while typing a call, and **Rename** / **Find All References** for names in the current file.
 - Completion after `x.` uses the type the checker inferred instead of guessing from the name.

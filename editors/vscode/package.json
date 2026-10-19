@@ -66,7 +66,7 @@
       {
         "command": "zamak.install",
         "title": "Zamak: Install the zam Compiler (npm)",
-        "markdownDescription": "Runs `npm install -g zamak` in a terminal."
+        "markdownDescription": "Runs `npm install -g @veyralux/zamak` in a terminal."
       },
       {
         "command": "zamak.recheck",

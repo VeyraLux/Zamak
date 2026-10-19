@@ -7,7 +7,7 @@
 最省事的方式是 npm（Windows x64、Linux x64、macOS Apple 芯片）：
 
 ```sh
-npm install -g zamak    # 或 bun add -g zamak；不安装直接试用：npx zamak --version
+npm install -g @veyralux/zamak    # 或 bun add -g @veyralux/zamak；不安装直接试用：npx @veyralux/zamak --version
 zam upgrade             # 以后更新
 ```
 

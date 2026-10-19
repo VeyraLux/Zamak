@@ -7,11 +7,11 @@ Zamak is a single command-line program, `zam`. It checks your code, compiles it 
 If you have Node.js (or Bun), this is the shortest way. It installs the prebuilt `zam` for Windows x64, Linux x64, or macOS on Apple silicon:
 
 ```sh
-npm install -g zamak      # or: bun add -g zamak
+npm install -g @veyralux/zamak      # or: bun add -g @veyralux/zamak
 zam --version
 ```
 
-To try Zamak without installing it, run `npx zamak --version`. To update later, run `zam upgrade`. Without Node.js, use the install script: on Linux and macOS, run `curl -fsSL https://raw.githubusercontent.com/VeyraLux/Zamak/main/install.sh | sh`; on Windows, run `irm https://raw.githubusercontent.com/VeyraLux/Zamak/main/install.ps1 | iex`.
+To try Zamak without installing it, run `npx @veyralux/zamak --version`. To update later, run `zam upgrade`. Without Node.js, use the install script: on Linux and macOS, run `curl -fsSL https://raw.githubusercontent.com/VeyraLux/Zamak/main/install.sh | sh`; on Windows, run `irm https://raw.githubusercontent.com/VeyraLux/Zamak/main/install.ps1 | iex`.
 
 You still need a C compiler for `zam build` and `zam run`; see the next section. The Windows build isn't code-signed yet. The npm and script installs don't trigger Windows SmartScreen; if you download the zip in a browser and Windows warns you, choose **More info**, then **Run anyway**.
 

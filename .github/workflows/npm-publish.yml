@@ -1,0 +1,57 @@
+name: Publish to npm
+
+# Publishes the npm packages for an existing GitHub release, without building again. Use it when the
+# npm step of the Release workflow didn't finish, for example after renaming the main package.
+# Run it from the Actions tab and give the release tag, such as v0.1.0.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag, such as v0.1.0'
+        required: true
+      only_main:
+        description: 'Publish only the main package (the platform packages are already published)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  npm:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Download the release archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" --dir assets --pattern '*.zip' --pattern '*.tar.gz'
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TRUSTED: ${{ vars.NPM_TRUSTED }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ] && [ "$NPM_TRUSTED" != "true" ]; then
+            echo "Neither NPM_TOKEN nor trusted publishing is set up."
+            exit 1
+          fi
+          npm install -g npm@11
+          tag="${{ inputs.tag }}"
+          version="${tag#v}"
+          dist=latest
+          case "$version" in *-*) dist=next ;; esac
+          node tools/package-npm.mjs "$version" assets npm-out
+          packages="zamak"
+          if [ "${{ inputs.only_main }}" != "true" ]; then
+            packages="zamak-win32-x64 zamak-linux-x64 zamak-darwin-arm64 zamak"
+          fi
+          for package in $packages; do
+            (cd "npm-out/$package" && npm publish --access public --provenance --tag "$dist")
+          done

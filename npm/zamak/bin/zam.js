@@ -26,7 +26,7 @@ function binary() {
   try {
     return require.resolve(`${name}/bin/${process.platform === 'win32' ? 'zam.exe' : 'zam'}`);
   } catch {
-    fail(`the ${name} package is missing. Reinstall with: npm install -g zamak`);
+    fail(`the ${name} package is missing. Reinstall with: npm install -g @veyralux/zamak`);
   }
 }
 
@@ -35,12 +35,12 @@ function upgrade() {
   const here = __dirname.split(path.sep);
   let command;
   if (here.includes('_npx')) {
-    process.stdout.write('zam: npx already runs the version you ask for. Use npx zamak@latest for the newest release.\n');
+    process.stdout.write('zam: npx already runs the version you ask for. Use npx @veyralux/zamak@latest for the newest release.\n');
     return 0;
   } else if (here.includes('.bun')) {
-    command = ['bun', ['add', '-g', 'zamak@latest']];
+    command = ['bun', ['add', '-g', '@veyralux/zamak@latest']];
   } else {
-    command = ['npm', ['install', '-g', 'zamak@latest']];
+    command = ['npm', ['install', '-g', '@veyralux/zamak@latest']];
   }
   const [program, args] = command;
   process.stdout.write(`zam: ${program} ${args.join(' ')}\n`);

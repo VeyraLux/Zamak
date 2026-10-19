@@ -174,7 +174,7 @@ fn execute() -> project::Result<()> {
         Some("mcp") => mcp::run()?,
         // 用 npm、Bun 装的 zam 由 npm 包里的启动器处理 `zam upgrade`（编译器不在运行时才能替换它）；
         // 走到这里说明是安装脚本或源码装的。
-        Some("upgrade") => println!("zam {}: to get updates with one command, install Zamak with npm:\n  npm install -g zamak\nthen run `zam upgrade`. If you installed it with the install script, run the script again.", env!("CARGO_PKG_VERSION")),
+        Some("upgrade") => println!("zam {}: to get updates with one command, install Zamak with npm:\n  npm install -g @veyralux/zamak\nthen run `zam upgrade`. If you installed it with the install script, run the script again.", env!("CARGO_PKG_VERSION")),
         Some("--version") | Some("-V") => println!("{}", env!("CARGO_PKG_VERSION")),
         None | Some("--help") | Some("-h") => print!("{}", zh::help(env!("CARGO_PKG_VERSION"))),
         _ => return Err("usage: zam <check|build|run|test|fmt|new|add|remove|update|search|publish|doc> [project|file]".into()),

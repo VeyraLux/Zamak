@@ -164,7 +164,7 @@ Through `zam mcp`, an agent can call Zamak directly: `check`, `build`, `run` (wi
 Install the prebuilt compiler, then make a project. You need a C compiler for `zam build` and `zam run`; see [Install Zamak](#install-zamak).
 
 ```sh
-npm install -g zamak                # Or: bun add -g zamak. Or try it first with: npx zamak --version
+npm install -g @veyralux/zamak                # Or: bun add -g @veyralux/zamak. Or try it first with: npx @veyralux/zamak --version
 zam new hello                       # Creates hello/zam.toml and hello/src/main.zm.
 zam run hello                       # Prints "hello from zamak".
 ```

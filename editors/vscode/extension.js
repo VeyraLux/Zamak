@@ -64,11 +64,11 @@ function updateStatus() {
   status.show();
 }
 
-// 一键安装：在终端里跑 `npm install -g zamak`，装好后再点一次确认。
+// 一键安装：在终端里跑 `npm install -g @veyralux/zamak`，装好后再点一次确认。
 function install() {
   const terminal = vscode.window.createTerminal(t('Install Zamak', '安装 Zamak'));
   terminal.show();
-  terminal.sendText('npm install -g zamak', true);
+  terminal.sendText('npm install -g @veyralux/zamak', true);
   // 终端里的命令跑完拿不到退出码，所以请用户装完点一下确认。
   vscode.window
     .showInformationMessage(

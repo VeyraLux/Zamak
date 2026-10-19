@@ -56,7 +56,7 @@ for (const platform of PLATFORMS) {
     files: ['bin', 'LICENSE-MIT', 'LICENSE-APACHE'],
     preferUnplugged: true,
   }, null, 2) + '\n');
-  writeFileSync(join(dir, 'README.md'), `# ${platform.name}\n\nThe \`zam\` compiler for ${platform.os} ${platform.cpu}. Install [zamak](https://www.npmjs.com/package/zamak) instead; it picks this package for you.\n`);
+  writeFileSync(join(dir, 'README.md'), `# ${platform.name}\n\nThe \`zam\` compiler for ${platform.os} ${platform.cpu}. Install [zamak](https://www.npmjs.com/package/@veyralux/zamak) instead; it picks this package for you.\n`);
 }
 
 // 主包：启动器、README，子包按同一个版本精确依赖。

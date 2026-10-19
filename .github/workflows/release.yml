@@ -133,7 +133,7 @@ jobs:
             $prerelease \
             --generate-notes
 
-  # npm: `npm install -g zamak`, `npx zamak`, `bunx zamak`, and `zam upgrade`. Each platform gets a
+  # npm: `npm install -g @veyralux/zamak`, `npx @veyralux/zamak`, `bunx @veyralux/zamak`, and `zam upgrade`. Each platform gets a
   # package with its zam; the zamak package picks the right one. Skipped until the NPM_TOKEN secret exists.
   npm:
     if: startsWith(github.ref, 'refs/tags/')
@@ -166,7 +166,7 @@ jobs:
           fi
           npm install -g npm@11
           version="${GITHUB_REF_NAME#v}"
-          # Pre-releases go to the "next" tag, so `npm install -g zamak` keeps installing the latest release.
+          # Pre-releases go to the "next" tag, so `npm install -g @veyralux/zamak` keeps installing the latest release.
           tag=latest
           case "$version" in *-*) tag=next ;; esac
           node tools/package-npm.mjs "$version" assets npm-out

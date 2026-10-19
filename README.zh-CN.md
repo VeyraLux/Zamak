@@ -185,7 +185,7 @@ zam new hello --template ai
 安装预编译好的编译器：
 
 ```sh
-npm install -g zamak     # 或：bun add -g zamak；想先试试可以用 npx zamak --version
+npm install -g @veyralux/zamak     # 或：bun add -g @veyralux/zamak；想先试试可以用 npx @veyralux/zamak --version
 zam new hello
 zam run hello            # 打印 "hello from zamak"
 ```
