@@ -17,6 +17,13 @@ NAMING.md
 ROADMAP.md
 SYNTAX.md
 
+# 本地 AI 助手与编辑器的工作目录：不属于仓库内容，也不该出现在使用者的检出里
+.claude/
+.cursor/
+.idea/
+.vscode/
+*.code-workspace
+
 # Rust 构建产物
 target/
 **/target/
