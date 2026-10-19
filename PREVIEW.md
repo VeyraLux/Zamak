@@ -1,10 +1,21 @@
-# Zamak 0.1.0 预览版
+# Zamak 0.1.0 安装说明
 
-这是用于试用和反馈的早期版本，1.0 之前语法及缓存格式可能变化，暂不建议用于生产。
+这是早期版本，1.0 之前语法及缓存格式可能变化，暂不建议用于生产。
 
 ## 安装与工具链
 
-Windows x64：解压预览包，将其中 `bin` 目录加入 PATH。编译 Zamak 源码还需要一个 C 编译器：Visual Studio Build Tools（安装「使用 C++ 的桌面开发」和 Windows SDK，通过 `vswhere` 查找），或者 PATH 上的 MinGW-w64 `gcc`。没有 Visual Studio 时会自动改用 `gcc`，再试 `clang`；也可以用 `CC` 显式指定。`CC` 是单个编译器程序，不接受附加参数、MSVC `cl` 或 Windows `.bat` 包装脚本。不需要 Rust。仅运行已生成的程序不需要 Zamak 或 C 编译器。
+最省事的方式是 npm（Windows x64、Linux x64、macOS Apple 芯片）：
+
+```sh
+npm install -g zamak    # 或 bun add -g zamak；不安装直接试用：npx zamak --version
+zam upgrade             # 以后更新
+```
+
+没有 Node.js 时用安装脚本：Linux 和 macOS 运行 `curl -fsSL https://raw.githubusercontent.com/VeyraLux/Zamak/main/install.sh | sh`，Windows 运行 `irm https://raw.githubusercontent.com/VeyraLux/Zamak/main/install.ps1 | iex`。安装脚本会校验 SHA-256。
+
+Windows 版目前没有代码签名。用 npm 或安装脚本安装不会触发 SmartScreen；如果在浏览器里手动下载 zip，Windows 可能提示“已保护你的电脑”，点「更多信息」再点「仍要运行」即可。
+
+手动安装 Windows x64：解压安装包，将其中 `bin` 目录加入 PATH。编译 Zamak 源码还需要一个 C 编译器：Visual Studio Build Tools（安装「使用 C++ 的桌面开发」和 Windows SDK，通过 `vswhere` 查找），或者 PATH 上的 MinGW-w64 `gcc`。没有 Visual Studio 时会自动改用 `gcc`，再试 `clang`；也可以用 `CC` 显式指定。`CC` 是单个编译器程序，不接受附加参数、MSVC `cl` 或 Windows `.bat` 包装脚本。不需要 Rust。仅运行已生成的程序不需要 Zamak 或 C 编译器。
 
 Linux/macOS：从源码安装需要 Rust stable 和系统 `cc`：
 

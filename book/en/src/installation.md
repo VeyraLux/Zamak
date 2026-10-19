@@ -1,6 +1,21 @@
 # Install Zamak
 
-Zamak is a single command-line program, `zam`. It checks your code, compiles it to C, and calls a C compiler to produce a native executable. To install it, you need:
+Zamak is a single command-line program, `zam`. It checks your code, compiles it to C, and calls a C compiler to produce a native executable.
+
+## Quick install
+
+If you have Node.js (or Bun), this is the shortest way. It installs the prebuilt `zam` for Windows x64, Linux x64, or macOS on Apple silicon:
+
+```sh
+npm install -g zamak      # or: bun add -g zamak
+zam --version
+```
+
+To try Zamak without installing it, run `npx zamak --version`. To update later, run `zam upgrade`. Without Node.js, use the install script: on Linux and macOS, run `curl -fsSL https://raw.githubusercontent.com/VeyraLux/Zamak/main/install.sh | sh`; on Windows, run `irm https://raw.githubusercontent.com/VeyraLux/Zamak/main/install.ps1 | iex`.
+
+You still need a C compiler for `zam build` and `zam run`; see the next section. The Windows build isn't code-signed yet. The npm and script installs don't trigger Windows SmartScreen; if you download the zip in a browser and Windows warns you, choose **More info**, then **Run anyway**.
+
+If you'd rather build `zam` yourself, you need Rust stable:
 
 - **Rust stable**, to build `zam` itself. Install it from [rustup.rs](https://rustup.rs).
 - **A C compiler**, which `zam` calls to build your programs.

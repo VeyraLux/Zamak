@@ -180,7 +180,17 @@ zam new hello --template ai
 
 ## 快速运行
 
-第一次使用可以先读 [Zamak 语言手册](https://zamak.veyralux.org/zh-CN/)。Windows 预览包和各平台的工具链要求见 [安装说明](PREVIEW.md)。
+第一次使用可以先读 [Zamak 语言手册](https://zamak.veyralux.org/zh-CN/)。
+
+安装预编译好的编译器：
+
+```sh
+npm install -g zamak     # 或：bun add -g zamak；想先试试可以用 npx zamak --version
+zam new hello
+zam run hello            # 打印 "hello from zamak"
+```
+
+以后更新运行 `zam upgrade`。没有 Node.js 的话，可以用安装脚本（Linux 和 macOS：`curl -fsSL https://raw.githubusercontent.com/VeyraLux/Zamak/main/install.sh | sh`；Windows：`irm https://raw.githubusercontent.com/VeyraLux/Zamak/main/install.ps1 | iex`），工具链要求见 [安装说明](PREVIEW.md)。
 
 从源码安装需要 Rust stable 和一个 C 编译器。在仓库根目录执行：
 

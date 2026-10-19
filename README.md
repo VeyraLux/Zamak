@@ -161,17 +161,19 @@ Through `zam mcp`, an agent can call Zamak directly: `check`, `build`, `run` (wi
 
 ## Quickstart
 
-You need Rust stable and a C compiler. For the compiler that each platform uses, see [Install Zamak](#install-zamak).
+Install the prebuilt compiler, then make a project. You need a C compiler for `zam build` and `zam run`; see [Install Zamak](#install-zamak).
 
 ```sh
-cargo install --path zam --locked   # Run in the repository root.
+npm install -g zamak                # Or: bun add -g zamak. Or try it first with: npx zamak --version
 zam new hello                       # Creates hello/zam.toml and hello/src/main.zm.
 zam run hello                       # Prints "hello from zamak".
 ```
 
+To update later, run `zam upgrade`. Without Node.js, use the install script (Linux and macOS: `curl -fsSL https://raw.githubusercontent.com/VeyraLux/Zamak/main/install.sh | sh`; Windows: `irm https://raw.githubusercontent.com/VeyraLux/Zamak/main/install.ps1 | iex`) or build from source below.
+
 ## Install Zamak
 
-To build Zamak from source, you need Rust stable and a C compiler. In the repository root, run:
+To build Zamak from source instead of installing it with npm, you need Rust stable and a C compiler. In the repository root, run:
 
 ```sh
 cargo install --path zam --locked

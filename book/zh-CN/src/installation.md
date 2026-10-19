@@ -1,6 +1,21 @@
 # 安装 Zamak
 
-Zamak 只有一个命令行程序 `zam`。它检查你的代码、把代码编译成 C，再调用 C 编译器生成本机可执行文件。安装它需要：
+Zamak 只有一个命令行程序 `zam`。它检查你的代码、把代码编译成 C，再调用 C 编译器生成本机可执行文件。
+
+## 快速安装
+
+有 Node.js（或 Bun）的话，这是最省事的方式。它会安装预编译好的 `zam`，支持 Windows x64、Linux x64 和 Apple 芯片的 macOS：
+
+```sh
+npm install -g zamak      # 或：bun add -g zamak
+zam --version
+```
+
+想先试试，可以运行 `npx zamak --version`，不用安装。以后更新运行 `zam upgrade`。没有 Node.js 时用安装脚本：Linux 和 macOS 运行 `curl -fsSL https://raw.githubusercontent.com/VeyraLux/Zamak/main/install.sh | sh`，Windows 运行 `irm https://raw.githubusercontent.com/VeyraLux/Zamak/main/install.ps1 | iex`。
+
+`zam build` 和 `zam run` 仍然需要一个 C 编译器，见下一节。Windows 版目前没有代码签名。用 npm 或安装脚本安装不会触发 Windows SmartScreen；如果在浏览器里手动下载 zip、Windows 弹出警告，选**更多信息**，再选**仍要运行**。
+
+想自己编译 `zam` 的话，需要 Rust stable：
 
 - **Rust stable**：用来编译 `zam` 本身。从 [rustup.rs](https://rustup.rs) 安装。
 - **C 编译器**：`zam` 用它构建你的程序。

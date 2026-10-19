@@ -7,6 +7,8 @@ and this file is the source for the text of each GitHub release.
 
 ## 0.1.0
 
+Released 2026-10-19.
+
 The first release: a statically typed language with Python-shaped syntax that compiles to a
 standalone native executable, together with the `zam` toolchain, a VS Code extension, and an
 MCP server for AI coding agents.
@@ -118,6 +120,8 @@ this preview.
 ---
 
 ## 0.1.0（中文）
+
+发布日期：2026-10-19。
 
 第一个正式版本：一门语法接近 Python 的静态类型语言，编译成独立的原生可执行文件；同时包含
 `zam` 工具链、VS Code 扩展，以及给 AI 编程助手用的 MCP 服务器。
