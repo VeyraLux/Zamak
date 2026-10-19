@@ -26,7 +26,7 @@
 <p align="center">
   <a href="https://github.com/VeyraLux/Zamak/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/VeyraLux/Zamak/ci.yml?style=flat-square&label=ci&labelColor=161b22&logo=githubactions&logoColor=white" alt="CI"/></a>
   <a href="#许可证"><img src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-8b949e.svg?style=flat-square&labelColor=161b22" alt="许可证：MIT 或 Apache-2.0"/></a>
-  <img src="https://img.shields.io/badge/version-0.1.0-f97362.svg?style=flat-square&labelColor=161b22" alt="版本 0.1.0"/>
+  <img src="https://img.shields.io/badge/version-0.1.1-f97362.svg?style=flat-square&labelColor=161b22" alt="版本 0.1.1"/>
   <img src="https://img.shields.io/badge/platforms-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-6366f1.svg?style=flat-square&labelColor=161b22" alt="平台：Windows、Linux、macOS"/>
   <a href="https://github.com/VeyraLux/Zamak/stargazers"><img src="https://img.shields.io/github/stars/VeyraLux/Zamak.svg?style=flat-square&color=06b6d4&labelColor=161b22&logo=github&logoColor=white" alt="GitHub stars"/></a>
 </p>
@@ -463,7 +463,7 @@ python bench/ai/live/run.py --verify-solutions
 
 集成测试覆盖原生执行、模块与缓存、并发发布、所有权与借用、错误处理、源码诊断，以及新建项目与格式化，同时包含成功路径和应被拒绝的输入。教程代码块会自动编译检查；常见算法案例另有原生运行与完整输出断言。测试方法与性能结论见 [案例验证](docs/VALIDATION.md)，开发规范见 [贡献指南](CONTRIBUTING.md)。
 
-Zamak 0.1.0 是早期版本，1.0 之前语法与库都可能变化。
+Zamak 0.1.1 是早期版本，1.0 之前语法与库都可能变化。
 
 ## 许可证
 

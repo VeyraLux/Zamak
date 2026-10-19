@@ -49,7 +49,7 @@ zam --version
 ```
 
 ```console
-0.1.0
+0.1.1
 ```
 
 如果终端找不到 `zam`，打开一个新终端，让它读到更新后的 `PATH`。
@@ -64,13 +64,13 @@ zam --version
 ```sh
 # Linux 和 macOS
 cd /path/to/Zamak/editors/vscode && npm install
-ln -s /path/to/Zamak/editors/vscode ~/.vscode/extensions/zamak-0.1.0
+ln -s /path/to/Zamak/editors/vscode ~/.vscode/extensions/zamak-0.1.1
 ```
 
 ```powershell
 # Windows
 cd C:\path\to\Zamak\editors\vscode; npm install
-New-Item -ItemType Junction -Path "$env:USERPROFILE\.vscode\extensions\zamak-0.1.0" -Target "C:\path\to\Zamak\editors\vscode"
+New-Item -ItemType Junction -Path "$env:USERPROFILE\.vscode\extensions\zamak-0.1.1" -Target "C:\path\to\Zamak\editors\vscode"
 ```
 
 扩展运行 `PATH` 里的 `zam`。想用别的 `zam`，在 VS Code 设置里修改 **zamak.path**。其他支持语言服务器协议（LSP）的编辑器也可以用同样的方式运行 `zam lsp`。

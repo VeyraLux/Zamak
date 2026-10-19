@@ -3,7 +3,25 @@
 All notable changes to Zamak. This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html),
 and this file is the source for the text of each GitHub release.
 
-<!-- 中文版在下半部分。Chinese version: scroll down or search for "## 0.1.0（中文）". -->
+<!-- 中文版在下半部分。Chinese version: scroll down or search for "## 0.1.1（中文）". -->
+
+## 0.1.1
+
+Released 2026-10-19.
+
+A packaging fix, published the same day as 0.1.0. Nothing in the language changed, so programs
+and caches from 0.1.0 carry over unchanged.
+
+- **`zam upgrade` now prints the correct package name.** The 0.1.0 binaries told you to run
+  `npm install -g zamak`, which is not the published package. It now prints
+  `npm install -g @veyralux/zamak`.
+- **The VS Code extension is told the real package name too**, so its one-click install and its
+  "install with npm" hint point at a package that exists.
+- **The benchmark gained two size profiles.** `bench/compare` used to force `CC=gcc`, so its
+  reported binary size was the gcc number; on Windows the shipped compiler uses MSVC, which links
+  the C runtime statically and produces a much larger file. `run.py` can now measure both
+  (`zamak-msvc`) and a maximally stripped Rust build (`rust-min`) for comparison.
+- **The README's size claims are stated per platform** instead of quoting a single number.
 
 ## 0.1.0
 
@@ -118,6 +136,20 @@ interop layer, and the `zam lsp` server. Everything under "new in this release" 
 this preview.
 
 ---
+
+## 0.1.1（中文）
+
+发布日期：2026-10-19。
+
+一个打包层面的修复，与 0.1.0 同一天发布。语言本身没有任何变化，0.1.0 的程序和缓存都能照常沿用。
+
+- **`zam upgrade` 现在打印正确的包名。** 0.1.0 的二进制会提示你运行 `npm install -g zamak`，
+  而那不是实际发布的包。现在输出 `npm install -g @veyralux/zamak`。
+- **VS Code 扩展里的包名也一并改正**，一键安装和「用 npm 安装」的提示现在指向真实存在的包。
+- **基准新增两种体积口径。** `bench/compare` 以前强制 `CC=gcc`，报出来的是 gcc 口径的体积；
+  而 Windows 上发布版用的是 MSVC，静态链接 C 运行库，产物大得多。`run.py` 现在两种都能测
+  （`zamak-msvc`），也能测压到极限的 Rust（`rust-min`）作对照。
+- **README 的体积说法改成按平台分别说明**，不再只给一个数字。
 
 ## 0.1.0（中文）
 

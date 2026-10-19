@@ -24,7 +24,7 @@
 <p align="center">
   <a href="https://github.com/VeyraLux/Zamak/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/VeyraLux/Zamak/ci.yml?style=flat-square&label=ci&labelColor=161b22&logo=githubactions&logoColor=white" alt="CI"/></a>
   <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-8b949e.svg?style=flat-square&labelColor=161b22" alt="license: MIT or Apache-2.0"/></a>
-  <img src="https://img.shields.io/badge/version-0.1.0-f97362.svg?style=flat-square&labelColor=161b22" alt="version 0.1.0"/>
+  <img src="https://img.shields.io/badge/version-0.1.1-f97362.svg?style=flat-square&labelColor=161b22" alt="version 0.1.1"/>
   <img src="https://img.shields.io/badge/platforms-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-6366f1.svg?style=flat-square&labelColor=161b22" alt="platforms: Windows, Linux, macOS"/>
   <a href="https://github.com/VeyraLux/Zamak/stargazers"><img src="https://img.shields.io/github/stars/VeyraLux/Zamak.svg?style=flat-square&color=06b6d4&labelColor=161b22&logo=github&logoColor=white" alt="GitHub stars"/></a>
 </p>
@@ -99,7 +99,7 @@ not: 1
 ```
 
 > [!NOTE]
-> Zamak 0.1.0 is an early release. Use it to learn, experiment, and write command-line tools. Syntax and cache formats might still change before 1.0, so wait before you use it in production.
+> Zamak 0.1.1 is an early release. Use it to learn, experiment, and write command-line tools. Syntax and cache formats might still change before 1.0, so wait before you use it in production.
 
 ## Features
 
