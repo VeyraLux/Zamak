@@ -49,9 +49,40 @@
 | As fast as C | 16 KB hello world on Linux | 20 MB where Java uses 365 MB | No lifetime annotations | Overflow checked in release builds |
 | :---: | :---: | :---: | :---: | :---: |
 
+### Why this language exists
+
+Zamak grew out of a new way of working: several AI agents editing the same project in parallel,
+across worktrees, each one checking, building and testing hundreds or thousands of times a day.
+At that pace, how long a build takes, how big the artifact is, and whether a machine can read the
+error stop being matters of taste and become matters of throughput.
+
+So Zamak trades differently from most languages. When goals conflict, this order decides:
+
+1. **Build cost** — the whole loop (read → edit → check → build → test → read the error) times
+   how often it runs per day, plus disk footprint
+2. **Memory safety** — safe by default; unsafe code has to be marked
+3. **Runtime performance** — reach the Rust tier and stop; no attempt to beat it
+4. **Expressiveness** — Python-level readability, omitting noise but never safety
+
+That is why macros, dependent types, and anything needing whole-program analysis are out of scope:
+they slow the build down, and build speed is the first principle here. Generics are not
+monomorphized by default — no per-instance copies of the same code.
+
+### What it borrows
+
+Zamak is not trying to be a shadow of another language. It combines the parts each language does
+best:
+
+| From | What we wanted | How Zamak gets it |
+| --- | --- | --- |
+| Rust | Memory safety, no GC | Ownership plus call-frame borrows: values move by default, a borrow never outlives the call, and there are no lifetime annotations |
+| Go | Fast builds, one file to ship | Independently compilable units, content-addressed cache, one `zam` command for check, build, test and format |
+| C | Small binaries, speed, access to existing code | Emits C and hands it to MSVC, GCC or Clang; no runtime; `extern fn` calls C directly |
+| Python | Readability, nothing to unlearn | Indentation blocks, `len`, `range`, `in`, slicing, and Python's division rules |
+
 Zamak brings these together in one language. The numbers come from benchmarks you can run yourself; see [How Zamak compares](#how-zamak-compares) and [Features](#features).
 
-- **Python's readability at C's speed.** Zamak reads like Python: `for i in range(n)`, `xs[-1]`, `f"..."`, and Python's division rules. It compiles to native code that matches or beats C on spectral-norm, fannkuch-redux, primes, and word frequency, and runs compute-bound programs 43 to 204 times faster than Python.
+- **Python's readability at C's speed.** Zamak reads like Python: `for i in range(n)`, `xs[-1]`, `f"..."`, and Python's division rules. It compiles to native code that beats C on binary-trees, fannkuch-redux, primes, and word frequency, and trails C by about 1% on spectral-norm, while running compute-bound programs 43 to 204 times faster than Python.
 - **Memory safety you don't have to fight.** Ownership rules out use-after-free and double frees at compile time, with no garbage collector. Read-only borrows happen automatically, a borrow lasts at most one block, and you never write lifetime annotations. When the checker does reject code, the error names the problem and suggests the fix.
 - **Safer integer math than C, Rust, or Go.** Integer overflow, division by zero, and out-of-bounds indexes stop the program with a clear error in every build, including release builds. The compiler removes the checks it can prove unnecessary, so safe code still runs at C speed, and `@wrapping` turns checks off in one function when you want wrapping, such as in a hash.
 - **Small programs with a small footprint.** On Linux, a Zamak hello world is 16 KB: about the size of C's, and 1/17 of the same program in Rust even after `strip` plus LTO. On Windows the binary is bigger either way (`cl` links the C runtime statically): about 143 KB with the default MSVC toolchain, against 106 KB for a maximally stripped Rust build, so there the two are in the same range. On binary-trees, Zamak is the fastest of the seven languages tested and uses 20 MB, where Java and Node.js use more than 360 MB.
