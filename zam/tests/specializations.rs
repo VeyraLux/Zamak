@@ -137,3 +137,40 @@ fn list_indexes_keep_checks_when_the_length_can_change() {
         "3\n1\n2\n"
     );
 }
+
+#[test]
+fn generic_type_methods_can_have_their_own_type_parameters() {
+    let case = Case::new("specializations", "method-generics");
+    // 方法自己带的类型参数从实参推断：`U` 来自传进来的函数值。
+    let output = case.run("struct Box[T]:\n    value: T\n\n    fn map[U](&self, f: fn(T) -> U) -> U:\n        f(self.value)\n\nfn double(n: i64) -> i64: n * 2\n\nfn main():\n    let b = Box(value: 21)\n    println(b.map(double))\n");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "42\n");
+
+    // 两个方法自己的类型参数，一个由函数值给出，一个由普通实参给出。
+    let output = case.run("struct Box[T]:\n    value: T\n\n    fn combine[U, V](&self, f: fn(T, U) -> V, extra: U) -> V:\n        f(self.value, extra)\n\nfn add(n: i64, m: i64) -> i64: n + m\n\nfn main():\n    let b = Box(value: 10)\n    println(b.combine(add, 5))\n");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "15\n");
+
+    // 同一份模板按不同的 U 各生成一份副本。
+    let output = case.run("struct Box[T]:\n    value: T\n\n    fn map[U](&self, f: fn(T) -> U) -> U:\n        f(self.value)\n\nfn twice(n: i64) -> i64: n * 2\nfn wide(n: i64) -> f64: 1.5\n\nfn main():\n    let b = Box(value: 4)\n    println(b.map(twice))\n    println(b.map(wide))\n");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "8\n1.5\n");
+
+    // 推不出来时要报错，并说清楚怎么改。
+    let output = case.run("struct Box[T]:\n    value: T\n\n    fn make[U](&self) -> U:\n        self.value\n\nfn main():\n    let b = Box(value: 1)\n    println(b.make())\n");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("cannot infer U"), "{stderr}");
+}

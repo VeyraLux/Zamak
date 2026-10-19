@@ -12,7 +12,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-58");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-62");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -91,6 +91,8 @@ pub struct Project {
     pub name: String,
     pub root: PathBuf,
     entry: String,
+    // 直接检查单个 .zm 文件（不是项目）：报错里只有一个模块，函数名前的 `main:` 前缀是多余的。
+    single: bool,
     modules: BTreeMap<String, Input>,
     // 项目与各个依赖包的 `[native]`：（包的根目录, 设置）。
     native: Vec<(PathBuf, package::Native)>,
@@ -138,6 +140,36 @@ fn read_source(path: &Path) -> std::io::Result<String> {
 
 fn is_source(path: &Path) -> bool {
     path.extension().is_some_and(|ext| ext == "zm")
+}
+
+/// 单文件项目只有一个模块，报错里 `line L, column C: <模块>:<函数>: <信息>` 的 `<模块>` 是多余
+/// 的（文件名已经指向它），去掉后读作 `line L, column C: <信息>`。
+/// 消息正文里的 `模块:函数`（例如参数为 `main:f`）保留：那些是名字，不是位置标记。
+fn strip_function_module(error: &str) -> String {
+    let Some((position, rest)) = error.split_once(": ") else {
+        return error.to_owned();
+    };
+    let Some((head, message)) = rest.split_once(": ") else {
+        return error.to_owned();
+    };
+    match head.split_once(':') {
+        // `main:main: ...`：模块与函数名都去掉。
+        Some((module, name)) if is_identifier(module, true) && is_identifier(name, false) => {
+            format!("{position}: {message}")
+        }
+        // `main: borrow conflict: ...`：错误本身已经没有函数名，只去掉模块名。
+        None if is_identifier(head, true) => format!("{position}: {message}"),
+        _ => error.to_owned(),
+    }
+}
+
+/// 诊断里的 `<模块>:<函数>` 前缀只用标识符字符（模块路径可带 `/`）。
+fn is_identifier(text: &str, slash: bool) -> bool {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || (slash && c == '/'))
 }
 
 type Parse = fn(&str) -> std::result::Result<compiler::Module, String>;
@@ -272,6 +304,7 @@ impl Project {
                 name: "main".into(),
                 root: input.parent().unwrap_or(Path::new(".")).into(),
                 entry: "main".into(),
+                single: true,
                 modules: BTreeMap::from([(
                     "main".into(),
                     Input {
@@ -355,6 +388,7 @@ impl Project {
             name,
             root,
             entry,
+            single: false,
             modules,
             native,
             library,
@@ -423,6 +457,20 @@ impl Project {
             .collect()
     }
 
+    /// `zam doc` 用：项目自己的模块（不含依赖包），给出模块 id、源码与路径。
+    pub fn sources(&self) -> Vec<(&String, &str, &Path)> {
+        self.modules
+            .iter()
+            .filter(|(_, input)| input.package.is_none())
+            .map(|(id, input)| (id, input.source.as_str(), input.path.as_path()))
+            .collect()
+    }
+
+    /// 项目名与描述（`zam doc` 的页面标题与副标题）。
+    pub fn summary(&self) -> (&str, Option<&str>) {
+        (&self.name, self.description.as_deref())
+    }
+
     pub fn check(&self) -> Result<()> {
         self.check_with(self.library)
     }
@@ -481,7 +529,17 @@ impl Project {
                         | "std/path"
                 ) && !self.modules.contains_key(import)
                 {
-                    return Err(format!("{id}: missing module {import}"));
+                    // 导入不携带位置，就在源码里找 `use <名字>` 那一行：报错能直接指到它。
+                    let position = input
+                        .source
+                        .lines()
+                        .position(|line| {
+                            line.trim_start()
+                                .strip_prefix("use ")
+                                .is_some_and(|rest| rest.trim() == import)
+                        })
+                        .map_or((1, 1), |index| (index + 1, 1));
+                    return Err(self.located(id, position, format!("missing module {import}")));
                 }
             }
         }
@@ -741,6 +799,15 @@ impl Project {
         {
             return error;
         }
+        // 单文件项目只有一个模块：报错里 `<模块>:` 前缀是多余的（文件名已经指出位置）。
+        let error = if self.single {
+            match error.strip_prefix(&format!("{module}: ")) {
+                Some(rest) => rest.to_owned(),
+                None => error,
+            }
+        } else {
+            error
+        };
         self.with_module_path(
             module,
             format!("line {}, column {}: {error}", position.0, position.1),
@@ -761,6 +828,11 @@ impl Project {
             return error;
         };
         let module = module.to_string();
+        let error = if self.single {
+            strip_function_module(&error)
+        } else {
+            error
+        };
         self.with_module_path(&module, error)
     }
 
@@ -1808,6 +1880,14 @@ fn declared(body: &Block, names: &mut BTreeSet<String>) {
         match instruction {
             Instruction::Let(name, _, _, value) => {
                 names.insert(name.clone());
+                // 函数里定义的 fn 绑定到名字上（`let fact = fn(...)`）：函数体里再写 `fact(...)`
+                // 就是调用这个函数值，递归因此成立。名字先进 `names`，解析时不会被当成模块函数。
+                if let Expr::Lambda(params, _, body) = value {
+                    // 递归调用的实参也可能引用自己，一并登记。
+                    let mut inner: BTreeSet<String> = names.clone();
+                    inner.extend(params.iter().map(|(name, _)| name.clone()));
+                    declared(body, &mut inner);
+                }
                 expr(value, names);
             }
             Instruction::Unpack(bound, _, value) => {

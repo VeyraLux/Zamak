@@ -7,6 +7,9 @@
 //! - `explain`：按错误码（如 ZM301）给出含义与改法。
 //! - `docs`：一页纸语言参考（与 `zam new --template ai` 生成的相同）、某个标准库模块的函数签名，
 //!   或参考里与关键词有关的段落。
+//!
+//! 资源（`resources/list`、`resources/read`）：一页纸语言参考（`zamak://reference`）与错误码表
+//! （`zamak://diagnostics`），客户端可以把它们挂在上下文里，不用每次都调 `docs`、`explain`。
 
 use serde_json::{json, Value};
 use std::io::{BufRead, Read, Write};
@@ -18,6 +21,9 @@ const PROTOCOL: &str = "2025-06-18";
 /// 工具输出的上限：太长的程序输出截断，免得塞满助手的上下文。
 const LIMIT: usize = 64 * 1024;
 const DIAGNOSTICS: &str = include_str!("../../book/en/src/appendix-diagnostics.md");
+/// MCP 资源的 URI：语言参考与错误码表。
+const REFERENCE_URI: &str = "zamak://reference";
+const DIAGNOSTICS_URI: &str = "zamak://diagnostics";
 
 pub fn run() -> crate::project::Result<()> {
     let stdin = std::io::stdin();
@@ -52,9 +58,9 @@ fn handle(message: &Value) -> Option<Value> {
     let result = match message["method"].as_str().unwrap_or_default() {
         "initialize" => Ok(json!({
             "protocolVersion": params["protocolVersion"].as_str().unwrap_or(PROTOCOL),
-            "capabilities": { "tools": {} },
+            "capabilities": { "tools": {}, "resources": {} },
             "serverInfo": { "name": "zamak", "title": "Zamak", "version": env!("CARGO_PKG_VERSION") },
-            "instructions": "Tools for the Zamak programming language. Call docs before you write Zamak code, check after every change, and explain when a diagnostic code is unclear. Paths are relative to the folder the server runs in; \".\" is the current project.",
+            "instructions": "Tools and resources for the Zamak programming language. Read the zamak://reference resource (or call docs) before you write Zamak code, check after every change, and explain when a diagnostic code is unclear. Paths are relative to the folder the server runs in; \".\" is the current project.",
         })),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({ "tools": tools() })),
@@ -62,6 +68,19 @@ fn handle(message: &Value) -> Option<Value> {
             params["name"].as_str().unwrap_or_default(),
             &params["arguments"],
         )),
+        "resources/list" => Ok(json!({ "resources": resources() })),
+        "resources/templates/list" => Ok(json!({ "resourceTemplates": [] })),
+        "resources/read" => {
+            let uri = params["uri"].as_str().unwrap_or_default();
+            match resource(uri) {
+                Some(text) => Ok(json!({
+                    "contents": [{ "uri": uri, "mimeType": "text/markdown", "text": text }],
+                })),
+                None => {
+                    Err(json!({ "code": -32602, "message": format!("unknown resource {uri}") }))
+                }
+            }
+        }
         method => Err(json!({ "code": -32601, "message": format!("unknown method {method}") })),
     };
     Some(match result {
@@ -134,7 +153,47 @@ fn tools() -> Value {
             } },
             "annotations": read_only,
         },
+        {
+            "name": "hover",
+            "title": "Look up a type at a position",
+            "description": "Given a file, a line, and a column (both counted from 1), return what the name there is: the type of a local variable as the checker inferred it, or the signature of a function, method, field, or module function. Use it to find out what a value is before you call a method on it.",
+            "inputSchema": { "type": "object", "properties": {
+                "path": path_schema(),
+                "line": { "type": "integer", "description": "The line, counted from 1." },
+                "column": { "type": "integer", "description": "The column, counted from 1." },
+            }, "required": ["line", "column"] },
+            "annotations": read_only,
+        },
     ])
+}
+
+/// `resources/list`：挂在上下文里就能用的两份文档。
+fn resources() -> Value {
+    json!([
+        {
+            "uri": REFERENCE_URI,
+            "name": "Zamak language reference",
+            "title": "Zamak language reference",
+            "description": "A one-page reference: syntax, types, ownership, errors, and the standard library. Read it before you write Zamak code.",
+            "mimeType": "text/markdown",
+        },
+        {
+            "uri": DIAGNOSTICS_URI,
+            "name": "Zamak diagnostic codes",
+            "title": "Zamak diagnostic codes",
+            "description": "Every diagnostic code with its category and meaning, so a code from check --json can be explained without another call.",
+            "mimeType": "text/markdown",
+        },
+    ])
+}
+
+/// `resources/read`：按 URI 取出文档原文；没有这个 URI 时返回 None。
+fn resource(uri: &str) -> Option<String> {
+    match uri {
+        REFERENCE_URI => Some(crate::REFERENCE.to_owned()),
+        DIAGNOSTICS_URI => Some(DIAGNOSTICS.to_owned()),
+        _ => None,
+    }
 }
 
 fn text(content: String, error: bool) -> Value {
@@ -234,6 +293,11 @@ fn call(name: &str, arguments: &Value) -> Value {
         }
         "explain" => explain(arguments["code"].as_str().unwrap_or_default()),
         "docs" => docs(arguments["topic"].as_str().unwrap_or_default()),
+        "hover" => hover(
+            path,
+            arguments["line"].as_u64(),
+            arguments["column"].as_u64(),
+        ),
         _ => text(format!("unknown tool {name}"), true),
     }
 }
@@ -397,6 +461,61 @@ fn docs(topic: &str) -> Value {
     text(sections.join("\n\n"), false)
 }
 
+/// `hover`：给出文件、行、列（都从 1 起），返回那里的名字是什么——检查器推断出的局部变量
+/// 类型，或函数、方法、字段、标准库函数的签名。与编辑器里的悬停用的是同一套查询。
+fn hover(path: &str, line: Option<u64>, column: Option<u64>) -> Value {
+    let (Some(line), Some(column)) = (line, column) else {
+        return text(
+            "hover needs line and column, both counted from 1".into(),
+            true,
+        );
+    };
+    // 单个文件直接读；给的是目录时找入口模块。
+    let file = if path.ends_with(".zm") {
+        std::path::PathBuf::from(path)
+    } else {
+        let root = std::path::Path::new(path);
+        let manifest = root.join("zam.toml");
+        let entry = std::fs::read_to_string(&manifest)
+            .ok()
+            .and_then(|text| {
+                text.lines()
+                    .find_map(|line| line.trim().strip_prefix("entry").map(str::to_owned))
+                    .and_then(|rest| {
+                        let rest = rest.trim().strip_prefix('=')?.trim();
+                        Some(rest.trim_matches('"').to_owned())
+                    })
+            })
+            .unwrap_or_else(|| "src/main.zm".to_owned());
+        root.join(entry)
+    };
+    let text_of = match std::fs::read_to_string(&file) {
+        Ok(text) => text,
+        Err(error) => {
+            return text(format!("cannot read {}: {error}", file.display()), true);
+        }
+    };
+    let (line, column) = (line as usize, column as usize);
+    if line == 0 || column == 0 {
+        return text("line and column start at 1".into(), true);
+    }
+    // 编辑器里的悬停优先给出检查器的结论。
+    if let Some((name, ty)) = crate::lsp::type_of(&text_of, line - 1, column - 1) {
+        return text(format!("{name}: {ty}"), false);
+    }
+    // 不是局部变量：按声明找函数、方法、字段或标准库函数。
+    match crate::lsp::describe_at(&text_of, line - 1, column - 1) {
+        Some(answer) => text(answer, false),
+        None => text(
+            format!(
+                "nothing declared at {}:{line}:{column}; put the column inside a name",
+                file.display()
+            ),
+            false,
+        ),
+    }
+}
+
 fn split_sections(text: &str) -> Vec<&str> {
     let mut starts: Vec<usize> = text
         .match_indices("\n## ")
@@ -419,6 +538,56 @@ pub fn project_config() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resources_serve_the_reference_and_the_code_table() {
+        let listed =
+            handle(&json!({ "jsonrpc": "2.0", "id": 1, "method": "resources/list" })).unwrap();
+        let uris: Vec<&str> = listed["result"]["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|resource| resource["uri"].as_str().unwrap())
+            .collect();
+        assert_eq!(uris, vec![REFERENCE_URI, DIAGNOSTICS_URI]);
+
+        let reference = handle(
+            &json!({ "jsonrpc": "2.0", "id": 2, "method": "resources/read", "params": { "uri": REFERENCE_URI } }),
+        )
+        .unwrap();
+        let served = reference["result"]["contents"][0]["text"].as_str().unwrap();
+        assert_eq!(served, crate::REFERENCE, "the reference is served verbatim");
+        assert_eq!(
+            reference["result"]["contents"][0]["mimeType"],
+            "text/markdown"
+        );
+
+        let codes = handle(
+            &json!({ "jsonrpc": "2.0", "id": 3, "method": "resources/read", "params": { "uri": DIAGNOSTICS_URI } }),
+        )
+        .unwrap();
+        let table = codes["result"]["contents"][0]["text"].as_str().unwrap();
+        for code in ["ZM110", "ZM201", "ZM301", "ZM421", "ZM500", "ZM900"] {
+            assert!(table.contains(&format!("| `{code}` |")), "{code} missing");
+        }
+
+        // 没有的 URI 是错误，不是空内容。
+        let unknown = handle(
+            &json!({ "jsonrpc": "2.0", "id": 4, "method": "resources/read", "params": { "uri": "zamak://nope" } }),
+        )
+        .unwrap();
+        assert_eq!(unknown["error"]["code"], -32602);
+        assert!(unknown.get("result").is_none());
+
+        // initialize 要声明支持 resources，客户端才会去列。
+        let init =
+            handle(&json!({ "jsonrpc": "2.0", "id": 5, "method": "initialize", "params": {} }))
+                .unwrap();
+        assert!(
+            init["result"]["capabilities"]["resources"].is_object(),
+            "{init}"
+        );
+    }
 
     #[test]
     fn explain_reads_the_diagnostics_appendix() {
@@ -456,6 +625,57 @@ mod tests {
         let reply = handle(&json!({ "jsonrpc": "2.0", "id": 7, "method": "nope" })).unwrap();
         assert_eq!(reply["error"]["code"], -32601);
         let tools = handle(&json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" })).unwrap();
-        assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 7);
+        let names: Vec<&str> = tools["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["check", "build", "run", "test", "format", "explain", "docs", "hover"]
+        );
+    }
+
+    /// `hover` 工具：给文件、行、列，返回那里的类型或签名。行、列都从 1 起。
+    #[test]
+    fn hover_reports_types_and_signatures() {
+        let root = std::env::temp_dir().join(format!("zam-mcp-hover-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let source = "\
+struct Circle:
+    radius: f64
+
+fn make() -> Circle:
+    Circle(radius: 1.0)
+
+fn main():
+    let thing = make()
+    println(thing.radius)
+";
+        let file = root.join("main.zm");
+        std::fs::write(&file, source).unwrap();
+        let path = file.to_str().unwrap();
+
+        let body = |answer: Value| answer["content"][0]["text"].as_str().unwrap().to_owned();
+        // 第 8 行 `    let thing = make()`：`thing` 的类型是检查器推断出的 `Circle`。
+        let local = hover(path, Some(8), Some(10));
+        assert_eq!(body(local.clone()), "thing: Circle", "{local}");
+        // 第 9 行 `    println(thing.radius)`：`thing` 在第 13–17 列，仍是 `Circle`。
+        assert_eq!(body(hover(path, Some(9), Some(14))), "thing: Circle");
+        // `make` 是函数，给出签名。
+        let function = body(hover(path, Some(8), Some(18)));
+        assert!(function.contains("fn make() -> Circle"), "{function}");
+        // 结构体声明处给出它的定义。
+        let declared = body(hover(path, Some(1), Some(9)));
+        assert!(declared.contains("struct Circle"), "{declared}");
+        // 少了行列、或者行列不对，都要说清楚。
+        assert_eq!(hover(path, None, Some(3))["isError"], true);
+        assert_eq!(hover(path, Some(0), Some(3))["isError"], true);
+        let missing = body(hover(path, Some(200), Some(3)));
+        assert!(missing.contains("nothing declared"), "{missing}");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

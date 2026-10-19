@@ -21,3 +21,7 @@ fn main():
     println(name)
     let copy = "{name}"
     consume(copy)
+    # 冒号后面是格式说明：宽度、对齐（< > ^）与小数位。
+    let ratio = 2.0 / 3.0
+    println("比值 {ratio:.3}")
+    println("[{7:03}] [{name:>8}] [{42:^6}]")

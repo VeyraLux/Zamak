@@ -280,6 +280,9 @@ const REAL_SOURCE_CODES: &[(&str, &str, &str)] = &[
     ),
     ("fn main():\n    println(nope)\n", "ZM201", "name"),
     ("fn main():\n    nope()\n", "ZM201", "name"),
+    // 模块名写错：给位置（指向 use 那一行）并列出标准库模块，不落到 ZM999。
+    ("use std/str\n\nfn main(): pass\n", "ZM203", "name"),
+    ("use nope\n\nfn main(): pass\n", "ZM203", "name"),
     (
         "struct Point:\n    x: i64\n    y: i64\nfn main():\n    let p = Point(\n        x: 1,\n        y: 2,\n    )\n    println(p.z)\n",
         "ZM202",
@@ -294,6 +297,16 @@ const REAL_SOURCE_CODES: &[(&str, &str, &str)] = &[
         "fn main():\n    let x = 1\n    x = 2\n",
         "ZM302",
         "ownership",
+    ),
+    (
+        "fn main():\n    let a: [string; 3] = [\"a\", \"b\", \"c\"]\n",
+        "ZM200",
+        "type",
+    ),
+    (
+        "fn main():\n    let s = \"x\"\n    for ch in s:\n        match ch:\n            \"{{\": println(1)\n            _: println(2)\n",
+        "ZM511",
+        "control_flow",
     ),
     (
         "fn f(a: &string, b: string) -> i64:\n    return 1\nfn main():\n    let s = \"x\"\n    f(&s, s)\n",
@@ -423,13 +436,13 @@ fn json_codes_classify_real_sources() {
 /// 断言，反过来也不许断言了却没写进文档的码。任一侧单独更新，AI 循环就会照过期契约走。
 #[test]
 fn documented_codes_are_all_covered_by_real_sources() {
-    // 兜底分类没有稳定的可复现源文；文档本身要求 AI 保留完整 message 并提交最小复现。
-    const WITHOUT_REPRODUCIBLE_SOURCE: &[&str] = &["ZM999"];
+    // ZM999 是兜底分类：码表里保留它，说明「没归类的工具错误」这一档确实存在，
+    // 但不要求（也不该有）能复现的源码——真出现了就说明该补一条分类。
     let mut documented: Vec<&str> = include_str!("../../docs/AI_WORKFLOW.md")
         .lines()
         .filter_map(|line| line.strip_prefix("- `"))
         .filter_map(|rest| rest.split('`').next())
-        .filter(|code| !WITHOUT_REPRODUCIBLE_SOURCE.contains(code))
+        .filter(|code| *code != "ZM999")
         .collect();
     // 同一个码可以有多段源码（ZM201 就分了变量与函数两种），所以比的是去重后的集合。
     let mut asserted: Vec<&str> = REAL_SOURCE_CODES.iter().map(|(_, code, _)| *code).collect();
@@ -450,6 +463,33 @@ fn documented_codes_are_all_covered_by_real_sources() {
     assert!(
         only_documented.is_empty() && only_asserted.is_empty(),
         "文档码表与真实源码断言不一致：只有文档 {only_documented:?}，只有断言 {only_asserted:?}"
+    );
+}
+
+/// 反例里不该再出现 ZM999：它意味着某条报错没有归类，AI 拿不到稳定的码可判断。
+/// 这里把 `REAL_SOURCE_CODES` 的全部反例再跑一遍，任何一条落到 ZM999 就失败。
+#[test]
+fn real_counterexamples_never_fall_back_to_zm999() {
+    let path = std::env::temp_dir().join(format!("zam-no-zm999-{}.zm", std::process::id()));
+    let mut unclassified = Vec::new();
+    for (source, expected, _) in REAL_SOURCE_CODES {
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_zam"))
+            .args(["check", "--json"])
+            .arg(&path)
+            .env("ZAMAK_LANG", "en")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        if stdout.contains("\"code\":\"ZM999\"") {
+            unclassified.push(format!("{expected}: {source:?} -> {stdout}"));
+        }
+    }
+    let _ = fs::remove_file(&path);
+    assert!(
+        unclassified.is_empty(),
+        "这些反例落到了 ZM999（应归到对应的码）：\n{}",
+        unclassified.join("\n")
     );
 }
 
@@ -522,6 +562,57 @@ fn module_resolution_errors_include_location() {
     fs::remove_dir_all(root).unwrap();
 }
 
+/// 直接检查单个 `.zm` 文件时只有一个模块，报错里 `<模块>:` 前缀指的还是这个文件本身，读起来是噪音。
+/// 单文件去掉它，项目里保留（项目有多个模块，前缀才说明出错的是哪一个）。
+#[test]
+fn single_file_diagnostics_omit_the_module_prefix() {
+    let root = std::env::temp_dir().join(format!("zam-single-prefix-{}", std::process::id()));
+    fs::create_dir_all(root.join("src")).unwrap();
+    let file = root.join("main.zm");
+    fs::write(&file, "fn main():\n    nope()\n").unwrap();
+
+    for (lang, expected) in [("en", "unknown function nope"), ("zh", "未知的函数 nope")] {
+        let output = Command::new(env!("CARGO_BIN_EXE_zam"))
+            .args(["check", "--json"])
+            .arg(&file)
+            .env("ZAMAK_LANG", lang)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        assert!(!output.status.success(), "{stdout}");
+        // --json 始终是英文原文，中文只在终端渲染时经 zh::text() 翻译。
+        assert!(stdout.contains("unknown function nope"), "{stdout}");
+        assert!(!stdout.contains("main: unknown function nope"), "{stdout}");
+        let rendered = Command::new(env!("CARGO_BIN_EXE_zam"))
+            .arg("check")
+            .arg(&file)
+            .env("ZAMAK_LANG", lang)
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&rendered.stderr).into_owned();
+        assert!(text.contains(expected), "{text}");
+        assert!(!text.contains("main："), "{text}");
+        assert!(!text.contains("main: "), "{text}");
+    }
+
+    // 项目里保留模块名：它指出出错的是哪个模块。
+    fs::write(
+        root.join("zam.toml"),
+        "[project]\nname = \"probe\"\nentry = \"src/main.zm\"\nmodules = \"src\"\n",
+    )
+    .unwrap();
+    fs::write(root.join("src").join("main.zm"), "fn main():\n    nope()\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_zam"))
+        .args(["check", "--json"])
+        .arg(&root)
+        .env("ZAMAK_LANG", "en")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(stdout.contains("main: unknown function nope"), "{stdout}");
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn ambiguous_imports_are_classified_as_name_diagnostics() {
     let root = std::env::temp_dir().join(format!("zam-ambiguous-import-{}", std::process::id()));
@@ -588,7 +679,7 @@ fn catch_resolution_errors_keep_inner_location() {
         );
         fs::write(&file, &source).unwrap();
         fs::write(&module, &source).unwrap();
-        for (input, reported) in [(&file, &file), (&root, &module)] {
+        for (input, reported, prefix) in [(&file, &file, ""), (&root, &module, "main: ")] {
             let output = Command::new(env!("CARGO_BIN_EXE_zam"))
                 .args(["check", "--json"])
                 .arg(input)
@@ -603,7 +694,9 @@ fn catch_resolution_errors_keep_inner_location() {
                 format!("\"line\":{line},"),
                 format!("\"column\":{column},"),
                 "\"code\":\"ZM203\"".to_string(),
-                "\"message\":\"main: ambiguous or missing import for missing.call\"".to_string(),
+                format!(
+                    "\"message\":\"{prefix}ambiguous or missing import for missing.call\""
+                ),
             ] {
                 assert!(stdout.contains(&field), "{field} missing from {stdout}");
             }

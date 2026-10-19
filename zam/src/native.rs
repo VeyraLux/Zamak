@@ -3,7 +3,7 @@ use crate::compiler::{
     copied, each_bindings, elem_from, field_function, field_path, func_error, func_sig, func_type,
     func_type_full, generic_value, instance_of, instance_with, is_string, lambda_body,
     lambda_prints, linked_tuple, loop_list, membership, method_args, method_signature, nest,
-    nested, numeric, overload, promote, record_id, record_method, record_order, sort_by_type,
+    nested, numeric, overload, promote, record_id, record_method_with, record_order, sort_by_type,
     string_alias, string_method, terminates, tuple_fields, Block, Elem, Expr, Instruction, Module,
     Pattern, Receiver, Type, COPY,
 };
@@ -28,7 +28,61 @@ const RUNTIME: &str = r#"#if !defined(_WIN32) && !defined(__APPLE__)
 #include <limits.h>
 #include <math.h>
 #include <time.h>
-static void arithmetic_error(void) { fputs("zam: integer arithmetic error\n", stderr); exit(1); }
+// 运行时的报错（下标越界、除以零等）按 ZAMAK_LANG 显示：与编译器一致，设了 zh 就用中文，
+// 不设时跟随系统语言（Unix 看 LC_ALL、LC_MESSAGES、LANG，Windows 再看用户界面语言）。只读一次。
+#ifdef _WIN32
+__declspec(dllimport) unsigned short __stdcall GetUserDefaultUILanguage(void);
+#endif
+static int zam_chinese(void) {
+    static int state = -1;
+    if (state < 0) {
+        const char *lang = getenv("ZAMAK_LANG");
+        if (!lang || !*lang) lang = getenv("LC_ALL");
+        if (!lang || !*lang) lang = getenv("LC_MESSAGES");
+        if (!lang || !*lang) lang = getenv("LANG");
+        if (lang && *lang) {
+            state = (lang[0] == 'z' || lang[0] == 'Z') && (lang[1] == 'h' || lang[1] == 'H');
+        } else {
+#ifdef _WIN32
+            /* 与编译器一致：没设环境变量时看用户界面语言（主语言 0x04 是中文）。 */
+            state = (GetUserDefaultUILanguage() & 0x3ff) == 0x04;
+#else
+            state = 0;
+#endif
+        }
+    }
+    return state;
+}
+// 报错原文 → 中文。原文同时是查表的键，两边各写一次，其余地方只写原文。
+static const char *zam_zh(const char *en) {
+    static const struct { const char *en, *zh; } table[] = {
+        {"integer arithmetic error", "整数运算出错"},
+        {"division by zero", "除以零"},
+        {"array index out of bounds", "数组下标越界"},
+        {"allocation failed", "内存分配失败"},
+        {"time value out of range", "时间值超出范围"},
+        {"string index out of bounds", "字符串下标越界"},
+        {"negative exponent in an integer power; use floats such as 2.0 ** -1.0", "整数次幂的指数不能为负；要用小数写，例如 2.0 ** -1.0"},
+        {"random.randint needs a <= b", "random.randint 要求 a <= b"},
+        {"random.randrange needs start < stop", "random.randrange 要求 start < stop"},
+        {"exit code must be between 0 and 255", "退出码必须在 0 到 255 之间"},
+        {"f64 value out of i64 range", "f64 的值超出 i64 的范围"},
+        {"fmt.fixed digits must be between 0 and 30", "fmt.fixed 的小数位数必须在 0 到 30 之间"},
+        {"invalid code point", "码点不合法"},
+        {"key not found", "找不到这个键"},
+        {"list index out of bounds", "列表下标越界"},
+        {"pop from empty list", "对空列表调用 pop"},
+        {"min() of an empty list", "对空列表调用 min()"},
+        {"max() of an empty list", "对空列表调用 max()"},
+        {NULL, NULL},
+    };
+    int i;
+    if (!zam_chinese()) return en;
+    for (i = 0; table[i].en; i++) if (strcmp(table[i].en, en) == 0) return table[i].zh;
+    return en;
+}
+static void zam_panic_one(const char *en) { fflush(stdout); fprintf(stderr, "zam: %s\n", zam_zh(en)); }
+static void arithmetic_error(void) { zam_panic_one("integer arithmetic error"); exit(1); }
 // 移位量只能是 0–63；左移按无符号做（丢掉移出的位，不算溢出），右移是算术右移（向负无穷取整）。
 static int64_t zam_shl(int64_t a, int64_t n) { if (n < 0 || n > 63) arithmetic_error(); return (int64_t)((uint64_t)a << n); }
 static int64_t zam_shr(int64_t a, int64_t n) { if (n < 0 || n > 63) arithmetic_error(); return a >= 0 ? a >> n : ~(~a >> n); }
@@ -64,7 +118,7 @@ static int64_t mul(int64_t a, int64_t b) {
 }
 #endif
 // 除以零与 Python 一样报 division by zero。
-static void zam_zero_division(void) { fputs("zam: division by zero\n", stderr); exit(1); }
+static void zam_zero_division(void) { zam_panic_one("division by zero"); exit(1); }
 static int64_t quotient(int64_t a, int64_t b) {
     if (!b) zam_zero_division();
     if (a == INT64_MIN && b == -1) arithmetic_error();
@@ -124,7 +178,7 @@ static void zam_clamp(int64_t *from, int64_t *to, size_t length) {
 }
 static int64_t checked_index(int64_t index, size_t length) {
     if (index < 0) index += (int64_t)length;
-    if (index < 0 || (uintmax_t)index >= length) { fputs("zam: array index out of bounds\n", stderr); exit(1); }
+    if (index < 0 || (uintmax_t)index >= length) { zam_panic_one("array index out of bounds"); exit(1); }
     return index;
 }
 #ifdef _WIN32
@@ -151,7 +205,7 @@ static int zam_write(FILE *f, const unsigned char *p, size_t n) {
         wchar_t *wide;
         if (count <= 0 || fflush(f) == EOF) return 0;
         wide = (wchar_t*)malloc((size_t)count * sizeof(wchar_t));
-        if (!wide) { fputs("zam: allocation failed\n", stderr); exit(1); }
+        if (!wide) { zam_panic_one("allocation failed"); exit(1); }
         MultiByteToWideChar(65001, 0, (const char*)p, (int)n, wide, count);
         while (at < count) {
             chunk = count - at < 8192 ? count - at : 8192;
@@ -171,7 +225,7 @@ static int zam_write(FILE *f, const unsigned char *p, size_t n) {
 typedef struct { unsigned char *data; size_t len; size_t chars; } S;
 static S own(const unsigned char *p, size_t n) {
     S s; s.data = (unsigned char*)malloc(n ? n : 1); s.len = n; s.chars = 0;
-    if (!s.data) { fputs("zam: allocation failed\n", stderr); exit(1); }
+    if (!s.data) { zam_panic_one("allocation failed"); exit(1); }
     if (n) memcpy(s.data, p, n); return s;
 }
 static void drop(S *s) { free(s->data); s->data = NULL; s->len = 0; s->chars = 0; }
@@ -217,14 +271,14 @@ static S copy(S *s) { return own(s->data, s->len); }
 // extern fn 的 &string 参数：复制成以 \0 结尾的 C 字符串，调用后释放。
 static char *zam_cstr(S *s) {
     char *p = (char*)malloc(s->len + 1);
-    if (!p) { fputs("zam: allocation failed\n", stderr); exit(1); }
+    if (!p) { zam_panic_one("allocation failed"); exit(1); }
     if (s->len) memcpy(p, s->data, s->len);
     p[s->len] = 0; return p;
 }
 static S cat(S a, S b) {
     size_t n = a.len + b.len;
     unsigned char *p = (unsigned char*)malloc(n ? n : 1);
-    if (!p) { fputs("zam: allocation failed\n", stderr); exit(1); }
+    if (!p) { zam_panic_one("allocation failed"); exit(1); }
     if (a.len) memcpy(p, a.data, a.len);
     if (b.len) memcpy(p + a.len, b.data, b.len);
     drop(&a); drop(&b);
@@ -279,6 +333,47 @@ static S from_f64(double value) {
     char text[48];
     size_t n = zam_f64_text(value, text);
     return own((const unsigned char*)text, n);
+}
+/* f"{x:spec}"：把文本按说明补白/对齐；precision 非负时按它重写数字的小数位数。 */
+static S zam_format(S text, char align, char fill, size_t width, int precision) {
+    if (precision >= 0 && text.len > 0 && text.len < 63) {
+        /* 文本不带结尾的 \0：先抄进栈上的缓冲区再解析。不是数字时原样保留。 */
+        char buffer[64];
+        memcpy(buffer, text.data, text.len);
+        buffer[text.len] = '\0';
+        char *end = NULL;
+        double value = strtod(buffer, &end);
+        if (end != NULL && *end == '\0') {
+            int n = snprintf(buffer, sizeof buffer, "%.*f", precision, value);
+            if (n > 0 && (size_t)n < sizeof buffer) {
+                drop(&text);
+                text = own((const unsigned char*)buffer, (size_t)n);
+            }
+        }
+    }
+    /* 宽度按字符数（UTF-8 码点）算，与 Python 和 string.pad_left 一致。 */
+    size_t chars = 0;
+    for (size_t i = 0; i < text.len; i++) if ((text.data[i] & 0xC0) != 0x80) chars++;
+    if (width <= chars) return text;
+    size_t pad = width - chars;
+    size_t left = 0, right = 0;
+    if (align == '<') {
+        right = pad;
+    } else if (align == '^') {
+        left = pad / 2;
+        right = pad - left;
+    } else {
+        left = pad;
+    }
+    S out = own((const unsigned char*)"", 0);
+    /* 补零靠右时，零放在负号后面：-0042，不是 00-42。 */
+    size_t sign = (fill == '0' && align == '>' && text.len > 0 && (text.data[0] == '-' || text.data[0] == '+')) ? 1 : 0;
+    if (sign) out = cat(out, own(text.data, 1));
+    for (size_t i = 0; i < left; i++) out = cat(out, own((const unsigned char*)&fill, 1));
+    out = cat(out, own(text.data + sign, text.len - sign));
+    for (size_t i = 0; i < right; i++) out = cat(out, own((const unsigned char*)&fill, 1));
+    drop(&text);
+    return out;
 }
 static void print_f64(double value) {
     char text[48];
@@ -348,7 +443,7 @@ static int64_t zam_days(int64_t y, int64_t m, int64_t d) {
     return era * 146097 + doe - 719468;
 }
 static void zam_time_check(double t) {
-    if (t != t || t > 2.5e14 || t < -2.5e14) { fputs("zam: time value out of range\n", stderr); exit(1); }
+    if (t != t || t > 2.5e14 || t < -2.5e14) { zam_panic_one("time value out of range"); exit(1); }
 }
 // t 秒（向下取整）加上 offset 秒的时区偏移，写成 `2026-10-16T03:04:05`，再接上 zone。
 static S zam_time_text(double t, int64_t offset, const char *zone) {
@@ -402,7 +497,7 @@ static uint64_t zam_random_below(uint64_t range) {
 static double zam_random_unit(void) { return (double)(zam_random_next() >> 11) * (1.0 / 9007199254740992.0); }
 extern int zam_argc;
 extern char **zam_argv;
-static void zam_alloc_failed(void) { fputs("zam: allocation failed\n", stderr); exit(1); }
+static void zam_alloc_failed(void) { zam_panic_one("allocation failed"); exit(1); }
 // std/fs 的路径：UTF-8 里有 NUL 时返回 NULL（这样的路径不存在）。Windows 转成 UTF-16。
 #ifdef _WIN32
 static wchar_t *zam_path(S *path) {
@@ -478,7 +573,7 @@ static void zam_last_part(S *p, size_t *start, size_t *end) {
     *start = e;
 }
 static int zam_space(unsigned char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
-static void zam_string_bounds(void) { fputs("zam: string index out of bounds\n", stderr); exit(1); }
+static void zam_string_bounds(void) { zam_panic_one("string index out of bounds"); exit(1); }
 // 从 p 开始的一个 UTF-8 字符：返回字节数并写出码点；不合法（截断、过长编码、代理区、超出范围）时返回 0。
 static size_t zam_utf8_next(const unsigned char *p, size_t n, int64_t *code) {
     size_t len, i; uint32_t c;
@@ -855,7 +950,7 @@ const BUILTINS: &[Builtin] = &[
         result: Type::Int,
         fallible: false,
         // `a ** b`：按位快速幂，乘法溢出与 `*` 一样报错；整数不能有负指数。
-        body: r#"if (p1 < 0) { fputs("zam: negative exponent in an integer power; use floats such as 2.0 ** -1.0\n", stderr); exit(1); }
+        body: r#"if (p1 < 0) { zam_panic_one("negative exponent in an integer power; use floats such as 2.0 ** -1.0"); exit(1); }
 int64_t r = 1;
 while (p1 > 0) { if (p1 & 1) r = mul(r, p0); p1 >>= 1; if (p1 > 0) p0 = mul(p0, p0); }
 return r;"#,
@@ -955,7 +1050,7 @@ return zam_time_text(p0, offset, zone);"#,
         result: Type::Int,
         fallible: false,
         // 两端都包含，与 Python 的 random.randint 相同。
-        body: r#"if (p0 > p1) { fputs("zam: random.randint needs a <= b\n", stderr); exit(1); }
+        body: r#"if (p0 > p1) { zam_panic_one("random.randint needs a <= b"); exit(1); }
 return (int64_t)((uint64_t)p0 + zam_random_below((uint64_t)p1 - (uint64_t)p0 + 1));"#,
     },
     Builtin {
@@ -964,7 +1059,7 @@ return (int64_t)((uint64_t)p0 + zam_random_below((uint64_t)p1 - (uint64_t)p0 + 1
         result: Type::Int,
         fallible: false,
         // 不含终点，与 for i in a..b 相同。
-        body: r#"if (p0 >= p1) { fputs("zam: random.randrange needs start < stop\n", stderr); exit(1); }
+        body: r#"if (p0 >= p1) { zam_panic_one("random.randrange needs start < stop"); exit(1); }
 return (int64_t)((uint64_t)p0 + zam_random_below((uint64_t)p1 - (uint64_t)p0));"#,
     },
     Builtin {
@@ -1181,7 +1276,7 @@ return own(p0->data, 0);"#,
         result: Type::Unit,
         fallible: false,
         // 退出码限定在 0–255：Unix 只保留低 8 位，限定后三个平台行为一致。
-        body: r#"if (p0 < 0 || p0 > 255) { fputs("zam: exit code must be between 0 and 255\n", stderr); exit(1); }
+        body: r#"if (p0 < 0 || p0 > 255) { zam_panic_one("exit code must be between 0 and 255"); exit(1); }
 fflush(stdout);
 exit((int)p0);"#,
     },
@@ -1205,7 +1300,7 @@ exit((int)p0);"#,
         result: Type::Int,
         fallible: false,
         // 向零截断；NaN 与超出 i64 的值没有对应整数，按运行时错误停下。
-        body: r#"if (!(p0 >= -9223372036854775808.0 && p0 < 9223372036854775808.0)) { fputs("zam: f64 value out of i64 range\n", stderr); exit(1); }
+        body: r#"if (!(p0 >= -9223372036854775808.0 && p0 < 9223372036854775808.0)) { zam_panic_one("f64 value out of i64 range"); exit(1); }
 return (int64_t)p0;"#,
     },
     Builtin {
@@ -1249,7 +1344,7 @@ return (int64_t)p0;"#,
         result: Type::Owned,
         fallible: false,
         body: r#"char text[48]; int n; S s; s.chars = 0;
-if (p1 < 0 || p1 > 30) { fputs("zam: fmt.fixed digits must be between 0 and 30\n", stderr); exit(1); }
+if (p1 < 0 || p1 > 30) { zam_panic_one("fmt.fixed digits must be between 0 and 30"); exit(1); }
 if (p0 != p0 || p0 == HUGE_VAL || p0 == -HUGE_VAL) return own((const unsigned char*)text, zam_f64_text(p0, text));
 n = snprintf(NULL, 0, "%.*f", (int)p1, p0);
 s.data = (unsigned char*)malloc((size_t)n + 1);
@@ -1704,7 +1799,7 @@ return out;"#,
         result: Type::Owned,
         fallible: false,
         body: r#"unsigned char text[4]; size_t n = zam_utf8_put(p0, text);
-if (!n) { fputs("zam: invalid code point\n", stderr); exit(1); }
+if (!n) { zam_panic_one("invalid code point"); exit(1); }
 return own(text, n);"#,
     },
     Builtin {
@@ -1852,6 +1947,9 @@ struct Generator<'a> {
     lifted: Vec<(String, String)>,
     // 匿名函数的 C 名字前缀：所在函数的符号。
     prefix: String,
+    // 函数里定义的 fn：自己的（源码名字, 生成的 C 函数名, 函数类型编号）。函数体里调用自己
+    // （递归）时直接调这个静态函数，不经过局部变量。
+    own: Option<(String, String, u64)>,
 }
 /// 用到的容器：`(元素, None)` 是列表，`(键, Some(值))` 是字典。
 type Containers = std::collections::BTreeSet<(Elem, Option<Elem>)>;
@@ -1986,7 +2084,7 @@ fn elem_suffix(elem: Elem) -> String {
 fn map_name(key: Elem, value: Elem) -> String {
     format!("M{}{}", elem_suffix(key), elem_suffix(value))
 }
-const MAP_PRELUDE: &str = r#"static void map_missing(void) { fputs("zam: key not found\n", stderr); exit(1); }
+const MAP_PRELUDE: &str = r#"static void map_missing(void) { zam_panic_one("key not found"); exit(1); }
 static uint64_t zam_hash_int(int64_t key) { uint64_t x = (uint64_t)key; x ^= x >> 33; x *= 0xff51afd7ed558ccdULL; x ^= x >> 33; x *= 0xc4ceb9fe1a85ec53ULL; x ^= x >> 33; return x; }
 static uint64_t zam_hash_str(S *key) { uint64_t h = 1469598103934665603ULL; size_t i; for (i = 0; i < key->len; i++) { h ^= key->data[i]; h *= 1099511628211ULL; } return h; }
 "#;
@@ -2143,9 +2241,9 @@ fn drop_elem(elem: Elem, slot: &str) -> String {
         _ => String::new(),
     }
 }
-const LIST_PRELUDE: &str = r#"static void list_bounds(void) { fputs("zam: list index out of bounds\n", stderr); exit(1); }
-static void list_empty(void) { fputs("zam: pop from empty list\n", stderr); exit(1); }
-static void list_alloc_failed(void) { fputs("zam: allocation failed\n", stderr); exit(1); }
+const LIST_PRELUDE: &str = r#"static void list_bounds(void) { zam_panic_one("list index out of bounds"); exit(1); }
+static void list_empty(void) { zam_panic_one("pop from empty list"); exit(1); }
+static void list_alloc_failed(void) { zam_panic_one("allocation failed"); exit(1); }
 // 小列表缓冲区的空闲链表：按 16 字节分级，释放时留给下一次同级分配，最多缓存 32 MB。
 // 每块都是 malloc 来的真实内存块，别处直接 free 它也没问题，只是不回到这里。
 // 放进第 k 级的块至少有 16k 字节（按声明大小向下取级），取出时按请求向上取级。
@@ -2345,8 +2443,8 @@ static int64_t index{l}({l} *l, {param} v) {{ size_t i; for (i = 0; i < l->len; 
 static int has{l}({l} *l, {param} v) {{ return index{l}(l, v) >= 0; }}
 static {l} slice{l}({l} *l, int64_t from, int64_t to) {{ {l} out = {{0}}; int64_t i; zam_clamp(&from, &to, l->len); for (i = from; i < to; i++) {{ {t} x = l->data[i]; push{l}(&out, {copy}); }} return out; }}
 static {l} sorted{l}({l} *l) {{ {l} out = slice{l}(l, 0, (int64_t)l->len); sort{l}(&out); return out; }}
-static {t} min{l}({l} *l) {{ size_t i, best = 0; if (!l->len) {{ fputs(\"zam: min() of an empty list\\n\", stderr); exit(1); }} for (i = 1; i < l->len; i++) if (cmp{l}(&l->data[i], &l->data[best]) < 0) best = i; {{ {t} x = l->data[best]; return {copy}; }} }}
-static {t} max{l}({l} *l) {{ size_t i, best = 0; if (!l->len) {{ fputs(\"zam: max() of an empty list\\n\", stderr); exit(1); }} for (i = 1; i < l->len; i++) if (cmp{l}(&l->data[i], &l->data[best]) > 0) best = i; {{ {t} x = l->data[best]; return {copy}; }} }}
+static {t} min{l}({l} *l) {{ size_t i, best = 0; if (!l->len) {{ zam_panic_one(\"min() of an empty list\"); exit(1); }} for (i = 1; i < l->len; i++) if (cmp{l}(&l->data[i], &l->data[best]) < 0) best = i; {{ {t} x = l->data[best]; return {copy}; }} }}
+static {t} max{l}({l} *l) {{ size_t i, best = 0; if (!l->len) {{ zam_panic_one(\"max() of an empty list\"); exit(1); }} for (i = 1; i < l->len; i++) if (cmp{l}(&l->data[i], &l->data[best]) > 0) best = i; {{ {t} x = l->data[best]; return {copy}; }} }}
 {sum}"
     )
 }
@@ -2393,6 +2491,7 @@ impl<'a> Generator<'a> {
             funcs: Default::default(),
             lifted: Vec::new(),
             prefix: String::new(),
+            own: None,
         }
     }
     /// 匿名函数捕获的外层变量：函数体里用到、又是当前局部变量的名字。
@@ -2474,6 +2573,18 @@ impl<'a> Generator<'a> {
     }
     /// 匿名函数：函数体提成一个静态函数，捕获的变量放进栈上的环境结构体（存它们的地址）。
     fn lambda(&mut self, params: &[(String, Option<Type>)], body: &Block, ty: Type) -> String {
+        self.lambda_named(params, body, ty, None)
+    }
+
+    /// `self_name`：函数里定义的 fn 自己的名字。函数体里调用它自己（递归）时，生成的代码
+    /// 直接调这个静态函数（环境指针原样传下去），不经过局部变量。
+    fn lambda_named(
+        &mut self,
+        params: &[(String, Option<Type>)],
+        body: &Block,
+        ty: Type,
+        self_name: Option<&str>,
+    ) -> String {
         let (Type::Func(id) | Type::FuncRef(id)) = ty else {
             unreachable!("function type")
         };
@@ -2506,6 +2617,10 @@ impl<'a> Generator<'a> {
         let mut g = self.sub(BTreeMap::new(), result);
         g.error = failure;
         g.prefix = name.clone();
+        // 函数里定义的 fn 调用自己：直接调这个静态函数，环境指针原样传下去。
+        if let Some(own) = self_name {
+            g.own = Some((own.to_owned(), name.clone(), id));
+        }
         let mut header = Vec::new();
         for (i, ((param, _), ty)) in params.iter().zip(&types).enumerate() {
             let local = format!("a{i}");
@@ -2609,6 +2724,19 @@ impl<'a> Generator<'a> {
     }
     /// 调用函数值：`f.call(f.env, 实参...)`。`path` 是局部变量或结构体里的函数字段。
     fn apply(&mut self, path: &str, args: &[Expr]) -> String {
+        // 函数里定义的 fn 调用自己：直接调它自己的静态函数，环境指针原样传下去。
+        // 这时局部变量里放的还是占位，值要等整条 let 语句生成完才有。
+        if let Some((own, symbol, own_id)) = self.own.clone() {
+            if path == own {
+                // 递归调用：类型直接从函数签名取，函数体里没有这个名字的局部变量。
+                let (params, result) = func_sig(own_id);
+                let mut values = vec!["envp".to_owned()];
+                for (arg, ty) in args.iter().zip(params) {
+                    values.push(self.argument(arg, ty));
+                }
+                return self.call_value(&format!("{symbol}({})", values.join(", ")), result);
+            }
+        }
         let (Type::Func(id) | Type::FuncRef(id)) = self.place_ty(path) else {
             unreachable!("checked function value")
         };
@@ -2808,6 +2936,8 @@ impl<'a> Generator<'a> {
             return self.ty(&call);
         }
         match expr {
+            // `f"{x:.2}"` 的带格式段：拼进 f-string 时是字符串。
+            Expr::Formatted(..) => Type::Owned,
             Expr::Invoke(callee, _) => match self.value_type(callee) {
                 Type::Func(id) | Type::FuncRef(id) => func_sig(id).1,
                 _ => unreachable!("checked function value"),
@@ -2830,6 +2960,10 @@ impl<'a> Generator<'a> {
                     function.result,
                     function.error,
                 ))
+            }
+            // 递归调用：函数体里没有自己的局部变量，类型直接从自己的签名取。
+            Expr::Apply(path, _) if self.own.as_ref().is_some_and(|(own, ..)| own == path) => {
+                func_sig(self.own.as_ref().expect("own").2).1
             }
             Expr::Apply(path, _) => match self.place_ty(path) {
                 Type::Func(id) | Type::FuncRef(id) => func_sig(id).1,
@@ -2885,6 +3019,7 @@ impl<'a> Generator<'a> {
                     funcs: Default::default(),
                     lifted: Vec::new(),
                     prefix: String::new(),
+                    own: None,
                 }
                 .ty(value)
             }
@@ -3248,6 +3383,13 @@ impl<'a> Generator<'a> {
             return self.expr(&call);
         }
         match expr {
+            // 带格式的段只在 f-string 里出现，由上面 `Expr::Format` 的分支处理；
+            // 单独一个 `{x:.2}` 当值用时退化成那个值本身的文本。
+            Expr::Formatted(inner, _) => {
+                let ty = self.ty(inner);
+                let value = self.expr(inner);
+                self.text_of(value, ty)
+            }
             Expr::FnRef(name) => self.function_value(name),
             Expr::Invoke(callee, args) => {
                 let ty = self.value_type(callee);
@@ -3412,6 +3554,11 @@ impl<'a> Generator<'a> {
             Expr::Format(segments) => {
                 let mut name: Option<String> = None;
                 for segment in segments {
+                    // `{x:.2}`：先按普通段把值变成文本，再按说明补白/截小数。
+                    let (segment, spec) = match segment {
+                        Expr::Formatted(inner, spec) => (&**inner, Some(spec.as_str())),
+                        other => (other, None),
+                    };
                     let part = match segment {
                         Expr::Text(text) => self.literal(text),
                         _ if compound(self.value_type(segment)) => {
@@ -3444,6 +3591,33 @@ impl<'a> Generator<'a> {
                                 self.text_of(value, ty)
                             }
                         }
+                    };
+                    // 带格式的段：按说明补白与截小数（生成的文本本身已经释放得了）。
+                    let part = match spec {
+                        Some(spec) => {
+                            let parsed =
+                                crate::compiler::spec::parse(spec).expect("checked format spec");
+                            // C 的字符字面量：单引号包住，反斜杠与单引号转义。
+                            let literal = |c: char| match c {
+                                '\\' => "'\\\\'".to_owned(),
+                                '\'' => "'\\''".to_owned(),
+                                c => format!("'{c}'"),
+                            };
+                            format!(
+                                "zam_format({part}, {}, {}, {}, {})",
+                                literal(parsed.align.unwrap_or(if parsed.fill == '0' {
+                                    '>'
+                                } else {
+                                    ' '
+                                })),
+                                literal(parsed.fill),
+                                parsed.width,
+                                parsed
+                                    .precision
+                                    .map_or("-1".to_owned(), |digits| digits.to_string())
+                            )
+                        }
+                        None => part,
                     };
                     // 每段求值后立刻拼接，保持从左到右的顺序。
                     match &name {
@@ -4081,8 +4255,47 @@ impl<'a> Generator<'a> {
             }
             _ => return None,
         };
-        let (name, callee) =
-            record_method(&self.module.structs, &self.module.functions, ty, method).ok()??;
+        // 方法自己的类型参数（`fn map[U](&self, f: fn(T) -> U)`）要从实参推断，和检查器一致。
+        // 只有模板真的带了自己的类型参数才去估实参类型：这一步有副作用（会走到构造器的
+        // 期望类型推断上），普通方法不该多算一遍。匿名函数实参也跳过——它的类型由期望
+        // 类型决定，生成器单独取会走到 `lambda_type` 的断言上。
+        let (name, callee) = {
+            let owner_generics: std::collections::BTreeSet<&String> = self
+                .module
+                .structs
+                .values()
+                .flat_map(|s| s.generics.iter())
+                .collect();
+            let own = self
+                .module
+                .functions
+                .iter()
+                .find(|(fname, _)| fname.ends_with(&format!(".{method}")))
+                .is_some_and(|(_, function)| {
+                    function
+                        .generics
+                        .iter()
+                        .any(|g| !owner_generics.contains(g))
+                });
+            let actuals: Vec<Option<Type>> = if own {
+                args.iter()
+                    .map(|arg| match arg {
+                        Expr::Lambda(..) => None,
+                        _ => self.ty(arg).into(),
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            record_method_with(
+                &self.module.structs,
+                &self.module.functions,
+                ty,
+                method,
+                &actuals,
+            )
+            .ok()??
+        };
         Some((name, method_args(receiver, callee, method, args).ok()?))
     }
     fn record_call(&self, expr: &Expr) -> bool {
@@ -4238,7 +4451,14 @@ impl<'a> Generator<'a> {
                         }
                         (None, None) => self.ty(expr),
                     };
-                    let value = self.expr_as(expr, ty);
+                    // 函数里定义的 fn：函数体可能调用自己，递归在 `lambda_named` 里直接
+                    // 生成对它自己静态函数的调用，不经过这里的局部变量。
+                    let value = match expr {
+                        Expr::Lambda(params, _, body) => {
+                            self.lambda_named(params, body, ty, Some(name))
+                        }
+                        _ => self.expr_as(expr, ty),
+                    };
                     self.locals.insert(name.clone(), (value, ty));
                 }
                 // `for ch in s:`：在 UTF-8 字节上逐个切出字符。每个字符是一个临时字符串：continue 与
@@ -5214,6 +5434,7 @@ pub fn generate_with(module: &Module, entry: &str, unit: &str, tests: &[String])
             funcs: Default::default(),
             lifted: Vec::new(),
             prefix,
+            own: None,
         };
         for (i, (param, ty)) in function.params.iter().enumerate() {
             let local = format!("p{i}");

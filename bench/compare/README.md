@@ -11,16 +11,44 @@ This benchmark runs the same seven programs in Zamak, C, Rust, Go, Java, Node.js
   - `hello` prints one line. It measures executable size, startup time, and the smallest peak memory.
 - **Builds**: Zamak with the GCC back end (`CC=gcc`, the same C compiler as the C baseline) and a fresh cache, so builds are cold. C with `gcc -O2`, Rust with `rustc -C opt-level=3`, Go with `go build`, and Java with `javac`. Node.js and Python run the source directly.
 - **Measurements**: run time is the median wall-clock time of 5 runs (10 for `hello`; 1 for Python on the long programs, 3 on `wordfreq`), including process startup. Peak memory is the peak working set of the process, read with `GetProcessMemoryInfo`.
-- **Fairness notes**: Rust and Go wrap on integer overflow in these builds, and C doesn't check it; Zamak checks overflow and bounds by default. Zamak's range analysis removes checks it can prove redundant, and its 32-bit division fast path makes `primes` faster than the plain C version. One Zamak program opts out: the spectral-norm function `a(i, j)` is marked `@wrapping`, which turns off overflow checks in that function only (bounds stay checked). Without it, spectral-norm takes about 340 ms, about twice as long as C.
+- **Fairness notes**: Rust and Go wrap on integer overflow in these builds, and C doesn't check it; Zamak checks overflow and bounds by default. Zamak's range analysis removes checks it can prove redundant, and its 32-bit division fast path makes `primes` faster than the plain C version. One Zamak program opts out: the spectral-norm function `a(i, j)` is marked `@wrapping`, which turns off overflow checks in that function only (bounds stay checked). Without it, spectral-norm takes about 375 ms, about twice as long as C.
 
 ```sh
 python bench/compare/run.py            # Windows only; writes results/compare-<time>/results.json
 python bench/compare/chart.py results/compare-<time>/results.json   # writes docs/compare-*.svg
 ```
 
-## Results (2026-10-17)
+## Results (2026-10-18)
 
 Windows 10, zam 0.1.0 (GCC back end), GCC 16.1.0, rustc 1.99.0, Go 1.26.4, OpenJDK 11.0.28, Node.js 26.3.0, Python 3.11.9.
+
+| Measurement | Zamak | C | Rust | Go | Java | Node.js | Python |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| n-body run time | 212 ms | 222 ms | 129 ms | 208 ms | 361 ms | 356 ms | 16.34 s |
+| spectral-norm run time | 197 ms | 195 ms | 215 ms | 250 ms | 668 ms | 457 ms | 40.11 s |
+| fannkuch-redux run time | 197 ms | 200 ms | 207 ms | 214 ms | 391 ms | 336 ms | 10.88 s |
+| binary-trees run time | 318 ms | 961 ms | 1.04 s | 473 ms | 405 ms | 402 ms | 2.60 s |
+| primes run time | 203 ms | 568 ms | 200 ms | 531 ms | 680 ms | 313 ms | 8.64 s |
+| word frequency run time | 154 ms | 160 ms | 191 ms | 208 ms | 742 ms | 972 ms | 880 ms |
+| hello executable size | 56 KB | 54 KB | 128 KB | 2.3 MB | needs a JRE | needs Node.js | needs Python |
+| hello startup | 28 ms | 30 ms | 26 ms | 40 ms | 168 ms | 112 ms | 117 ms |
+| n-body peak memory | 3.8 MB | 3.7 MB | 3.8 MB | 5.3 MB | 51.0 MB | 64.9 MB | 12.2 MB |
+| binary-trees peak memory | 19.9 MB | 11.5 MB | 11.6 MB | 17.4 MB | 364.9 MB | 371.7 MB | 20.1 MB |
+| word frequency peak memory | 25.1 MB | 23.7 MB | 22.6 MB | 84.1 MB | 269.0 MB | 274.4 MB | 172.4 MB |
+
+What this shows:
+
+- Zamak runs in the same range as C on every compute-bound program, while it checks integer overflow and bounds by default. It is the fastest of the seven on fannkuch-redux, binary-trees, and word frequency; it is within 1 percent of C on spectral-norm and within 2 percent of Rust on primes.
+- Rust wins n-body (129 ms); Zamak is third (212 ms), just ahead of C (222 ms) and just behind Go (208 ms). This is the one program where Zamak's margin over C is not the story, and the previous run had Rust ahead there too.
+- Zamak is the fastest of the seven languages on binary-trees: about 3 times faster than C and Rust, and faster than the garbage-collected languages, with a tenth of the memory of Java and Node.js. Small list buffers are reused after they're freed instead of going back to `malloc`, and a list literal allocates exactly the elements it holds.
+- On word frequency, Zamak is the fastest, ahead of C, Rust, and Go. `for word in text.words()` walks the input without copying the words, and `counts[word] = counts.get(word, 0) + 1` looks the word up once.
+- A Zamak hello world is about as small as C: under half the size of Rust and about 1/40 of Go. On compute-bound programs, it starts and uses memory like C.
+- Zamak runs the compute-bound programs 43 to 204 times faster than Python, binary-trees about 8 times faster, and word frequency about 6 times faster.
+- Single-file builds are slower than `rustc` and GCC (about 0.5 s for `hello`), because each build also starts a C compiler. Zamak's caching targets multi-module projects and repeated edits, which this benchmark doesn't exercise.
+
+## Results (2026-10-17)
+
+The first full run, on the same machine and toolchains. Everything is within the run-to-run spread of the numbers above; that machine was a little faster across the board, including C and Rust, so the two tables are read as one picture rather than compared row by row.
 
 | Measurement | Zamak | C | Rust | Go | Java | Node.js | Python |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -35,13 +63,3 @@ Windows 10, zam 0.1.0 (GCC back end), GCC 16.1.0, rustc 1.99.0, Go 1.26.4, OpenJ
 | n-body peak memory | 3.7 MB | 3.7 MB | 3.8 MB | 5.2 MB | 51.0 MB | 66.0 MB | 12.3 MB |
 | binary-trees peak memory | 19.9 MB | 11.4 MB | 11.6 MB | 17.2 MB | 364.6 MB | 373.9 MB | 20.1 MB |
 | word frequency peak memory | 25.1 MB | 23.7 MB | 22.6 MB | 84.3 MB | 269.1 MB | 275.8 MB | 173.1 MB |
-
-What this shows:
-
-- Zamak runs in the same range as C on every compute-bound program, while it checks integer overflow and bounds by default. It's the fastest or tied for fastest on spectral-norm, fannkuch-redux, and primes.
-- Zamak is the fastest of the seven languages on binary-trees: about 3 times faster than C and Rust, and faster than the garbage-collected languages, with a tenth of the memory of Java and Node.js. Small list buffers are reused after they're freed instead of going back to `malloc`, and a list literal allocates exactly the elements it holds.
-- On word frequency, Zamak is close to C and faster than Rust and Go. `for word in text.words()` walks the input without copying the words, and `counts[word] = counts.get(word, 0) + 1` looks the word up once.
-- Rust is the fastest on n-body; Zamak is about 6 percent behind C and ahead of Go.
-- A Zamak hello world is about as small as C: under half the size of Rust and about 1/40 of Go. On compute-bound programs, it starts and uses memory like C.
-- Zamak runs the compute-bound programs 46 to 217 times faster than Python, binary-trees about 9 times faster, and word frequency about 6 times faster.
-- Single-file builds are slower than `rustc` and GCC (about 0.5 s for `hello`), because each build also starts a C compiler. Zamak's caching targets multi-module projects and repeated edits, which this benchmark doesn't exercise.

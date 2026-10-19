@@ -40,7 +40,7 @@ zam new myapp --template ai
 
 ## 为什么 AI 写得好 Zamak
 
-- **一页就够**：在一项有三个模型、八个命令行任务的测试里，每个模型只读了那一页语言参考。它们完成了全部 24 个 Zamak 任务，其中 21 个一次通过。方法和数据在仓库的 [bench/ai/live](https://github.com/VeyraLux/Zamak/tree/main/bench/ai/live) 里。
+- **一页就够**：在一项有三个模型、八个命令行任务的测试里，每个模型只读了那一页语言参考。它们完成了全部 24 个 Zamak 任务，其中 19 个一次通过；没一次通过的大多是漏写 `use std/string`，而报错会指名要加的那一行。方法和数据在仓库的 [bench/ai/live](https://github.com/VeyraLux/Zamak/tree/main/bench/ai/live) 里。
 - **熟悉的语法**：AI 读过大量 Python，Zamak 尽可能沿用 Python 的名字和规则。
 - **错误发现得早**：类型和所有权错误在 `zam check` 阶段就出现，而不是等到运行时；整数溢出和下标越界会带着清楚的消息停下，不会产生 AI 可能察觉不到的错误结果。
 - **按函数报告错误**：`zam` 每个函数报告一次类型错误，所以 AI 一次编辑就能修好好几处。
@@ -75,8 +75,18 @@ Claude Code 和 Cursor 打开项目时会读取 `.mcp.json`。其他 AI 助手�
 | `format` | 像 `zam fmt` 一样格式化项目文件。 |
 | `explain` | 解释一个错误码（例如 `ZM301`）以及怎么改。 |
 | `docs` | 返回语言参考、某个标准库模块的函数，或参考里与某个词有关的段落。 |
+| `hover` | 给出文件、行、列（从 1 数起），返回那里的类型或签名。 |
 
 这些工具调用的就是 `zam` 本身，所以结果和你在命令行里看到的完全一样。
+
+服务器还提供两份[资源](https://modelcontextprotocol.io/docs/concepts/resources)：MCP 客户端可以把它们一次装进助手的上下文，不必每次都调工具。
+
+| 资源 | 内容 |
+| --- | --- |
+| `zamak://reference` | 一页纸的语言参考：语法、类型、所有权、错误处理和标准库。 |
+| `zamak://diagnostics` | 每个错误码的分类与含义，从 `check` 拿到的码不用再问一次就能读懂。 |
+
+两份内容就是 `docs` 与 `explain` 工具返回的同一段文字，所以总是和编译器同步。
 
 ## 小结
 

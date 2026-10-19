@@ -584,7 +584,6 @@ fn local_functions_and_writable_captures() {
         ("fn main():\n    let mut xs: [i64] = [1]\n    fn add(): xs.push(1)\n    for x in &xs:\n        run(add)\n", "xs is borrowed by an enclosing for loop"),
         ("fn make() -> fn() -> i64:\n    let n = 1\n    fn get() -> i64: n\n    get\n\nfn main(): pass\n", "get uses local variables of this function"),
         ("struct H:\n    f: fn()\n\nfn main():\n    let n = 1\n    fn show(): println(n)\n    let h = H(f: show)\n", "show uses local variables of this function"),
-        ("fn main():\n    fn down(n: i64) -> i64:\n        if n == 0: return 0\n        down(n - 1)\n    println(down(3))\n", "down cannot call itself"),
         ("fn main():\n    fn id[T](x: T) -> T: x\n    println(id(1))\n", "cannot have type parameters"),
         ("fn main():\n    fn p() -> i64!string: 1\n    println(p()?)\n", "? cannot propagate the error of p"),
         ("fn main():\n    fn f(x: i64) -> i64:\n        if x > 0: return 1\n    println(f(1))\n", "missing return"),

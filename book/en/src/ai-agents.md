@@ -40,7 +40,7 @@ This loop suits agents because `zam check` takes a fraction of a second and need
 
 ## Why agents write Zamak well
 
-- **One page is enough.** In a benchmark with three models and eight command-line tasks, each model read only the one-page reference. The models solved all 24 Zamak tasks, 21 of them on the first try. The method and data are in the repository under [bench/ai/live](https://github.com/VeyraLux/Zamak/tree/main/bench/ai/live).
+- **One page is enough.** In a benchmark with three models and eight command-line tasks, each model read only the one-page reference. The models solved all 24 Zamak tasks, 19 of them on the first try; most of the misses were a missing `use std/string`, and the diagnostic names the line to add. The method and data are in the repository under [bench/ai/live](https://github.com/VeyraLux/Zamak/tree/main/bench/ai/live).
 - **Familiar syntax.** Agents have read a lot of Python, and Zamak keeps Python's names and rules wherever it can.
 - **Mistakes surface early.** Type and ownership errors appear in `zam check`, not at run time, and integer overflow and out-of-bounds indexes stop with a clear message instead of producing wrong results that an agent might not notice.
 - **Errors per function.** Because `zam` reports type errors once per function, an agent can fix several of them in one edit.
@@ -75,8 +75,18 @@ Claude Code and Cursor pick up `.mcp.json` when you open the project. For anothe
 | `format` | Formats the project's files, like `zam fmt`. |
 | `explain` | Explains a diagnostic code, such as `ZM301`, and how to fix it. |
 | `docs` | Returns the language reference, the functions of a standard library module, or the parts of the reference about a word. |
+| `hover` | Given a file, line, and column (counted from 1), returns the type of the name there or its signature. |
 
 The tools run `zam` itself, so their results are exactly what you'd see on the command line.
+
+The server also publishes two [resources](https://modelcontextprotocol.io/docs/concepts/resources), which an MCP client can load into the agent's context once instead of calling a tool every time:
+
+| Resource | What it holds |
+| --- | --- |
+| `zamak://reference` | The one-page language reference: syntax, types, ownership, errors, and the standard library. |
+| `zamak://diagnostics` | Every diagnostic code with its category and meaning, so a code from `check` can be read without another call. |
+
+Both are the same text the `docs` and `explain` tools return, so they stay in step with the compiler.
 
 ## Summary
 

@@ -17,6 +17,30 @@ ZAM_LLM_BASE_URL=https://... ZAM_LLM_API_KEY=... python bench/ai/live/run.py --m
 
 Results go to the ignored `results/ai-live-<time>/`: every prompt round's source code, `trials.jsonl`, and `summary.md`.
 
+## Results (2026-10-18)
+
+Windows 10, zam 0.1.0 with MSVC, rustc 1.99.0, go 1.26.4. Temperature 0, OpenAI-compatible endpoint. The reference is the one shipped with the compiler on that day, with indentation-based blocks, `and`/`or`/`not`, and the Python-style syntax.
+
+| model | language | solved | first try | compile errors | build s / round (median) | tokens |
+|---|---|---|---|---|---|---|
+| claude-opus-5-5-code | Zamak | 8/8 | 5/8 | 5 | 0.63 | 193,753 |
+| claude-opus-5-5-code | Rust | 8/8 | 8/8 | 0 | 0.40 | 12,955 |
+| claude-opus-5-5-code | Go | 8/8 | 8/8 | 0 | 1.74 | 10,587 |
+| deepseek-v4.1-flash | Zamak | 8/8 | 7/8 | 1 | 0.66 | 100,952 |
+| deepseek-v4.1-flash | Rust | 8/8 | 7/8 | 0 | 0.41 | 10,816 |
+| deepseek-v4.1-flash | Go | 8/8 | 8/8 | 0 | 1.79 | 11,474 |
+| gemini-3.8-flash | Zamak | 8/8 | 7/8 | 1 | 0.65 | 117,039 |
+| gemini-3.8-flash | Rust | 8/8 | 8/8 | 0 | 0.40 | 13,698 |
+| gemini-3.8-flash | Go | 8/8 | 8/8 | 0 | 1.79 | 18,732 |
+
+What this shows:
+
+- Every task was solved in every language. Zamak passed 19 of 24 trials on the first try, Rust 23 and Go 24.
+- All eight Zamak first-attempt failures but one were a `use std/string` that the program never added: the model called `string.byte_at`, `string.parse_i64` or `string.copy`. The compiler names the exact line to add (`ZM203`), and every one of those programs passed in round 2. The remaining first-attempt failure was writing `"{{"` for a literal brace inside a `match` arm, which reads as an interpolation; `ZM110` says where the brace is not closed.
+- Claude needed four rounds on `brackets` because each round fixed one diagnostic and the next one appeared: the unclosed brace, then a `match` arm whose pattern was not a literal, then the missing import. Reporting one error per function keeps the messages short, but a program with three independent mistakes takes three rounds.
+- Both of those messages improved while this benchmark ran: a `match` arm with a non-literal pattern used to fall back to `ZM999` and now reports `ZM511` with the pattern forms that work. The table records the run as it happened, before that fix.
+- The Rust and Go versions passed 23 and 24 trials on the first try, so these tasks still do not separate the languages by success rate. Zamak used 5 to 15 times more tokens, mostly the reference sent with every request.
+
 ## Results (2026-10-16)
 
 Windows 10, zam 0.1.0 with MSVC, rustc 1.99.0, go 1.26.4. Temperature 0, OpenAI-compatible endpoint. The reference described the language as of that day, before the Python-style syntax was added.
@@ -36,7 +60,7 @@ Windows 10, zam 0.1.0 with MSVC, rustc 1.99.0, go 1.26.4. Temperature 0, OpenAI-
 What this shows:
 
 - Every task was solved in every language. Zamak passed 21 of 24 trials on the first try, Rust 23 and Go 24.
-- Claude's three Zamak compile errors, each fixed in round 2: calling `string.codepoints` without `use std/string`, passing `env.arg(0)` without the `?` it needs, and writing `let entry = &entries[i]`, which Zamak did not allow then. Afterwards the missing-import message names the exact `use` line to add, and read-only borrows can be kept in locals. The benchmark has not been rerun since these changes or since the Python-style syntax was added.
+- Claude's three Zamak compile errors, each fixed in round 2: calling `string.codepoints` without `use std/string`, passing `env.arg(0)` without the `?` it needs, and writing `let entry = &entries[i]`, which Zamak did not allow then. Afterwards the missing-import message names the exact `use` line to add, and read-only borrows can be kept in locals.
 
 ## Results (2026-10-15)
 

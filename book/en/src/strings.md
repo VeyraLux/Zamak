@@ -45,6 +45,33 @@ Use { and } for literal braces
 
 An interpolated expression can't contain a string literal or braces. Bind the value to a name first when you need one.
 
+### Format specifiers
+
+A colon right after the expression sets how the value is printed. The spec is `[[fill]align][width][.precision]`, where `align` is `<` (left), `>` (right), or `^` (centered), `width` is the least number of columns, and `.precision` is the number of decimals for an `f64`. A leading `0` means "pad with zeros, right-aligned".
+
+```zamak
+fn main():
+    let ratio = 2.0 / 3.0
+    let name = "Ada"
+    println(f"{ratio:.3}")
+    println(f"{ratio:8.2}|")
+    println(f"[{name:>6}]")
+    println(f"[{name:^6}]")
+    println(f"[{name:<6}]")
+    println(f"[{7:03}]")
+```
+
+```text
+0.667
+    0.67|
+[   Ada]
+[ Ada  ]
+[Ada   ]
+[007]
+```
+
+Without a `:` you get the value's usual text. A precision only means something for an `f64`; writing it for an `i64` is an error rather than a silent rounding, so convert first with `f64(n)` when that's what you want.
+
 ## Length, indexes, and slices
 
 ```zamak

@@ -51,7 +51,7 @@
 
 Zamak brings these together in one language. The numbers come from benchmarks you can run yourself; see [How Zamak compares](#how-zamak-compares) and [Features](#features).
 
-- **Python's readability at C's speed.** Zamak reads like Python: `for i in range(n)`, `xs[-1]`, `f"..."`, and Python's division rules. It compiles to native code that matches or beats C on spectral-norm, fannkuch-redux, and primes, and runs compute-bound programs 46 to 217 times faster than Python.
+- **Python's readability at C's speed.** Zamak reads like Python: `for i in range(n)`, `xs[-1]`, `f"..."`, and Python's division rules. It compiles to native code that matches or beats C on spectral-norm, fannkuch-redux, primes, and word frequency, and runs compute-bound programs 43 to 204 times faster than Python.
 - **Memory safety you don't have to fight.** Ownership rules out use-after-free and double frees at compile time, with no garbage collector. Read-only borrows happen automatically, a borrow lasts at most one block, and you never write lifetime annotations. When the checker does reject code, the error names the problem and suggests the fix.
 - **Safer integer math than C, Rust, or Go.** Integer overflow, division by zero, and out-of-bounds indexes stop the program with a clear error in every build, including release builds. The compiler removes the checks it can prove unnecessary, so safe code still runs at C speed, and `@wrapping` turns checks off in one function when you want wrapping, such as in a hash.
 - **Small programs with a small footprint.** A hello world is 56 KB, about the size of C's and 1/40 of Go's. On binary-trees, Zamak is the fastest of the seven languages tested and uses 20 MB, where Java and Node.js use more than 360 MB.
@@ -107,7 +107,7 @@ not: 1
 - **Ownership without a garbage collector.** Strings, structs, lists, and maps move when you assign them. Passing a variable to a read-only parameter borrows it automatically, as in `show(name)`; a function that changes its argument says so at the call site with `&mut x`. A borrow lasts for one call, or until the end of the block for a read-only local such as `let entry = &entries[i]`, so you never write lifetime annotations. Zamak checks integer overflow, division by zero, and out-of-bounds access at run time, and it removes the checks that a conservative range analysis proves redundant. For a hot function where wrapping is intended, such as a hash, write `@wrapping` above `fn` to turn off overflow checks in that function only.
 - **Fast feedback.** `zam check` checks types and ownership without calling a C compiler. `zam build` caches each module by content, so a one-line edit rebuilds only the module you changed. On the project's 10-module, 5,250-line benchmark (Windows, MSVC, one machine), a one-line edit rebuilds in about 0.75 seconds, and `zam check` finishes in less than 0.1 seconds. For the method and raw numbers, see [docs/ENGINEERING.md](docs/ENGINEERING.md) and [docs/PERFORMANCE.md](docs/PERFORMANCE.md) (in Chinese).
 - **Diagnostics built for tools.** Every error has a stable code such as `ZM301`, a category, a position, and usually a suggested fix. If you use a Python spelling that Zamak writes differently, the message shows the Zamak spelling. `zam check --json` writes the diagnostics as one line of JSON. Zamak reports type errors per function, so an agent can fix several of them in one pass.
-- **Learnable from one page.** In a benchmark with three models and eight small command-line tasks, each model read only a one-page language reference. The models solved all 24 Zamak tasks, 21 of them on the first try. The three other first attempts had a missing import, a missing `?`, and a borrowed local. Zamak now names the missing `use` line and allows read-only borrows in locals, but the benchmark hasn't been rerun since. The Rust and Go versions passed 23 and 24 tasks on the first try, so these tasks are too easy to rank the languages. For the method, tasks, and data, see [bench/ai/live](bench/ai/live/README.md).
+- **Learnable from one page.** In a benchmark with three models and eight small command-line tasks, each model read only a one-page language reference. The models solved all 24 Zamak tasks, 21 of them on the first try. The three other first attempts were one missing import, one missing `?`, and one `{{` written as an interpolated brace. The Rust and Go versions passed 23 and 24 tasks on the first try, so these tasks are too easy to rank the languages. For the method, tasks, and data, see [bench/ai/live](bench/ai/live/README.md).
 - **Native, standalone output.** Zamak generates C and compiles it with Microsoft C++ (MSVC), GCC, or Clang. The executable runs without Zamak or Rust installed. On the integer benchmarks in [docs/PERFORMANCE.md](docs/PERFORMANCE.md), its runtime performance is in the same range as Rust and Go.
 
 ## How Zamak compares
@@ -137,7 +137,7 @@ Zamak brings together what C, Rust, Go, and Python each do best. These charts ru
 | Standalone native executable | ✓ | ✓ | ✓ | ✓ | ✗ |
 | No lifetime annotations | ✓ | ✓ | ✗ | ✓ | ✓ |
 
-Zamak runs in the same range as C on every compute-bound program here, while it checks overflow and bounds by default. It's the fastest of the seven languages on binary-trees, and it counts words faster than Rust and Go. Its one opt-out is `@wrapping` on the spectral-norm hot function, which turns off overflow checks for that function only. For the method, the full results, and how to run the benchmark yourself, see [bench/compare](bench/compare/README.md).
+Zamak runs in the same range as C on every compute-bound program here, while it checks overflow and bounds by default. It's the fastest of the seven languages on binary-trees and on word frequency; on spectral-norm it is within 1% of C and on primes within 2% of Rust; only n-body puts it third (Rust first, Go second), 5% ahead of C. Its one opt-out is `@wrapping` on the spectral-norm hot function, which turns off overflow checks for that function only. For the method, the full results, and how to run the benchmark yourself, see [bench/compare](bench/compare/README.md).
 
 ## Use Zamak with your AI agent
 
@@ -197,6 +197,7 @@ zam fmt hello        # normalizes indentation
 zam test hello       # runs every fn test_...() in the project
 zam build hello      # writes build/hello-<hash>(.exe)
 zam run app.zm -- a b   # pass arguments to the program
+zam doc hello        # writes an HTML API page from the pub declarations
 ```
 
 `zam` writes build progress to standard error, so standard output contains only your program's output.

@@ -8,14 +8,14 @@ The repository's [comparison benchmark](https://github.com/VeyraLux/Zamak/tree/m
 
 | Program | Zamak | C | Rust | Go | Java | Node.js | Python |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| n-body | 167 | 158 | 112 | 183 | 332 | 326 | 15,514 |
-| spectral-norm | 174 | 172 | 187 | 238 | 642 | 428 | 37,751 |
-| fannkuch-redux | 185 | 190 | 194 | 203 | 390 | 321 | 10,463 |
-| binary-trees | 273 | 864 | 963 | 466 | 378 | 380 | 2,510 |
-| primes | 183 | 504 | 184 | 513 | 642 | 302 | 8,499 |
-| word frequency | 137 | 122 | 190 | 190 | 658 | 816 | 785 |
+| n-body | 212 | 222 | 129 | 208 | 361 | 356 | 16,340 |
+| spectral-norm | 197 | 195 | 215 | 250 | 668 | 457 | 40,114 |
+| fannkuch-redux | 197 | 200 | 207 | 214 | 391 | 336 | 10,885 |
+| binary-trees | 318 | 961 | 1,041 | 473 | 405 | 402 | 2,603 |
+| primes | 203 | 568 | 200 | 531 | 680 | 313 | 8,642 |
+| word frequency | 154 | 160 | 191 | 208 | 742 | 972 | 880 |
 
-A hello world is 56 KB, starts in 16 ms, and uses 3.7 MB of memory, about the same as C. The benchmark's README describes the method, the machine, and how to run it yourself.
+A hello world is 56 KB, starts in 28 ms, and uses 3.8 MB of memory, about the same as C. The benchmark's README describes the method, the machine, and how to run it yourself.
 
 ## What the safety checks cost
 
@@ -27,7 +27,7 @@ Zamak checks integer overflow, division by zero, and list indexes. Each check is
 
 ## Make a hot function faster
 
-When a hot function does integer arithmetic that the compiler can't prove safe, and wrapping is acceptable, mark it `@wrapping`. In the spectral-norm benchmark, this one line takes the program from about 340 ms to 174 ms:
+When a hot function does integer arithmetic that the compiler can't prove safe, and wrapping is acceptable, mark it `@wrapping`. In the spectral-norm benchmark, this one line takes the program from about 375 ms to about 200 ms:
 
 ```zamak
 @wrapping

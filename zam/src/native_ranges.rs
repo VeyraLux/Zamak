@@ -284,6 +284,11 @@ impl Analysis {
         let key = expr as *const Expr as usize;
         match expr {
             Expr::Int(value) => Interval::point(*value),
+            // 带格式的段只是把值变成字符串，区间推理对它没有意义。
+            Expr::Formatted(inner, _) => {
+                self.expr(inner, env, collect);
+                Interval::TOP
+            }
             // 匿名函数体在别处执行，不参与这里的区间推理；函数值的调用结果未知。
             Expr::Lambda(..) | Expr::FnRef(_) => Interval::TOP,
             Expr::Apply(_, values) => {

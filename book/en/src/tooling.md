@@ -16,6 +16,7 @@ Most subcommands take a project folder or a single `.zm` file. Without one, they
 | `zam fmt` | Normalizes indentation and blank lines. |
 | `zam add`, `zam remove`, `zam update` | Manage dependencies. |
 | `zam search WORD`, `zam publish` | Find and publish packages. |
+| `zam doc [FOLDER]` | Writes an HTML API page from the `pub` declarations. |
 | `zam lsp` | Runs the language server for editors. The VS Code extension starts it for you. |
 | `zam mcp` | Runs the MCP server for AI coding agents. See [Work with AI coding agents](ai-agents.md). |
 | `zam --version` | Prints the version. |
@@ -66,6 +67,42 @@ zam check --json main.zm
 
 `zam fmt` rewrites files in place: it turns tabs into spaces, indents each block by 4 spaces, and puts one blank line between top-level declarations. It only changes leading whitespace and blank lines, so it never touches comments, strings, or the spacing inside a line. It prints `FORMAT path` for each file it changes and refuses to touch a file that doesn't parse.
 
+## Generate an API page
+
+`zam doc` reads the `pub` declarations of your project and writes a single HTML page:
+
+```sh
+zam doc
+zam doc . site
+```
+
+The first form writes `docs/index.html`; the second picks the output folder. Each module gets a section, and each public function, struct, enum, and constant gets its own entry. Struct fields, enum variants, and methods are listed under their type.
+
+Write documentation as `#` comments directly above a declaration. The first line becomes the summary and the rest is the body:
+
+```zamak
+# A point on the plane.
+struct Point:
+    # The horizontal coordinate.
+    x: i64
+    y: i64
+
+    # Returns a copy moved to the right.
+    fn right(&self, steps: i64) -> Point:
+        Point(x: self.x + steps, y: self.y)
+
+fn main():
+    let p = Point(x: 1, y: 2)
+    let moved = p.right(3)
+    println(moved.x)
+```
+
+```text
+4
+```
+
+Only `pub` declarations are documented, so a project's helpers stay out of the page. The page needs no JavaScript and opens straight from disk, which makes it easy to publish next to your repository.
+
 ## How the cache works
 
 `zam` caches every compiled module by the content of its source and of the modules it depends on. The cache lives in `~/.zam/cache`, and it's shared by all projects and all copies of a project, such as Git worktrees. As a result:
@@ -90,5 +127,6 @@ You can delete `~/.zam/cache` at any time; `zam` rebuilds what it needs.
 ## Summary
 
 - `zam check`, `build`, `run`, `test`, and `fmt` cover the edit loop; `add`, `remove`, `update`, `search`, and `publish` manage packages.
+- `zam doc` turns `pub` declarations and their `#` comments into an HTML API page.
 - Every diagnostic has a stable code and usually a fix; `--json` gives the same information to tools.
 - The content-based cache makes repeated and incremental builds fast.

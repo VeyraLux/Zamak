@@ -182,6 +182,31 @@ fn main():
 
 A function that uses variables around it is called a closure. A closure can be called, bound with `let`, and passed as an argument, but it can't be stored in a struct or list or returned from a function. That rule means a closure never outlives the variables it uses, which is how Zamak supports closures without a garbage collector. Functions that don't use outside variables have no such limits.
 
+## Functions inside functions
+
+A function declared inside another one can call itself, which is useful for a helper that only this function needs. Write the return type, since there is nowhere else to infer it from:
+
+```zamak
+fn main():
+    fn fact(n: i64) -> i64:
+        if n < 2: return 1
+        return n * fact(n - 1)
+
+    fn stars(n: i64) -> string:
+        if n < 1: return ""
+        return "*" + stars(n - 1)
+
+    println(fact(5))
+    println(stars(4))
+```
+
+```text
+120
+****
+```
+
+Recursion works the same way as any other call: the arguments are checked against the function's own parameter types, and the result has its declared type. A nested function can still use the variables around it, so a recursive helper may read them too. It cannot call a function declared after it, so order the helpers you need from the top down.
+
 ## Summary
 
 - `fn name(param: Type) -> Result:` defines a function; the last expression is the result.

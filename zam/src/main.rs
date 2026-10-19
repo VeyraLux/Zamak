@@ -1,4 +1,5 @@
 mod compiler;
+mod doc;
 mod lsp;
 mod mcp;
 mod native;
@@ -47,6 +48,7 @@ fn execute() -> project::Result<()> {
         Some("add") => matches!(args.len(), 2..=4),
         Some("remove") => args.len() == 2,
         Some("search" | "publish") => matches!(args.len(), 1..=2),
+        Some("doc") => matches!(args.len(), 1..=3),
         Some("new") => {
             args.len() == 2
                 || (args.len() == 4 && args[2] == "--template" && args[3] == "ai")
@@ -62,7 +64,7 @@ fn execute() -> project::Result<()> {
     let missing_command = raw_args.first().is_some_and(|arg| arg == "--json");
     if !valid_shape || option_as_path || missing_command {
         return Err(
-            "usage: zam <check|build|run|test|fmt|new|add|remove|update|search|publish> [project|file] [--template ai]"
+            "usage: zam <check|build|run|test|fmt|new|add|remove|update|search|publish|doc> [project|file] [--template ai]"
                 .into(),
         );
     }
@@ -143,6 +145,17 @@ fn execute() -> project::Result<()> {
                 return Err(format!("{failed} test(s) failed"));
             }
         }
+        // `zam doc [project|file] [输出目录]`：从 pub 声明与 `#` 注释生成 API 页面。
+        Some("doc") => {
+            let project = project::Project::load(input)?;
+            let page = doc::html(&project);
+            let directory = Path::new(args.get(2).map(String::as_str).unwrap_or("docs"));
+            std::fs::create_dir_all(directory)
+                .map_err(|e| format!("{}: {e}", directory.display()))?;
+            let file = directory.join("index.html");
+            std::fs::write(&file, page).map_err(|e| format!("{}: {e}", file.display()))?;
+            eprintln!("DOC {}", file.display());
+        }
         Some("new") if args.len() == 2 => new_project(input, false)?,
         Some("new") if args.len() == 4 && args[2] == "--template" && args[3] == "ai" => {
             new_project(input, true)?
@@ -163,8 +176,8 @@ fn execute() -> project::Result<()> {
         // 走到这里说明是安装脚本或源码装的。
         Some("upgrade") => println!("zam {}: to get updates with one command, install Zamak with npm:\n  npm install -g zamak\nthen run `zam upgrade`. If you installed it with the install script, run the script again.", env!("CARGO_PKG_VERSION")),
         Some("--version") | Some("-V") => println!("{}", env!("CARGO_PKG_VERSION")),
-        None | Some("--help") | Some("-h") => println!("zam {}\n  zam check [project|file]\n  zam build [project|file]\n  zam fmt [project|file]\n  zam run [project|file|artifact] [-- args...]\n  zam test [project|file] [filter]\n  zam add <name> [version|git-url|directory] [rev]\n  zam remove <name>\n  zam update [project]\n  zam search [word]\n  zam publish [project]\n  zam new <directory> [--template ai]\n  zam check --json [project|file]\n  zam build --json [project|file]\n  zam lsp\n  zam mcp\n  zam upgrade\n  zam demo\n  zam --version", env!("CARGO_PKG_VERSION")),
-        _ => return Err("usage: zam <check|build|run|test|fmt|new|add|remove|update|search|publish> [project|file]".into()),
+        None | Some("--help") | Some("-h") => print!("{}", zh::help(env!("CARGO_PKG_VERSION"))),
+        _ => return Err("usage: zam <check|build|run|test|fmt|new|add|remove|update|search|publish|doc> [project|file]".into()),
     }
     Ok(())
 }
@@ -493,7 +506,13 @@ fn diagnostic(entry: &str, error: &str) -> Diagnostic {
         None => (None, rest.clone()),
     };
     let message = with_python_hint(message);
-    let (code, category, suggestion) = classify(&message);
+    // 模块解析期的错误在整条信息里只带 `模块:`（没有函数名），上面的 `模块:函数:` 分支认不出来，
+    // `message` 会留着这个前缀；classify 按句子开头匹配，先去掉它再分。
+    let body = match message.split_once(": ") {
+        Some((head, tail)) if identifier(head, true) => tail.to_owned(),
+        _ => message.clone(),
+    };
+    let (code, category, suggestion) = classify(&body);
     Diagnostic {
         file,
         line,
@@ -522,6 +541,25 @@ fn with_python_hint(message: String) -> String {
 }
 
 fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>) {
+    // 字符串字面量里的插值与格式说明：都是字面量写法的问题，按语法错误给位置与改法。
+    if message.contains("in string literal")
+        || message.contains("in string interpolation")
+        || message.contains("in interpolation")
+        || message.contains("unsupported interpolation")
+        || message.contains("unsupported format")
+        || message.contains("decimals after the dot")
+        || message.contains("takes decimals in a format")
+        || message.contains("format width")
+        || message.contains("format precision")
+    {
+        return (
+            "ZM110",
+            "syntax",
+            Some(
+                "write {value} to insert a value, {{}} for literal braces, and a format such as {x:.2} or {x:>5} after a colon",
+            ),
+        );
+    }
     if message.contains("index requires an array, list or map") {
         return (
             "ZM200",
@@ -597,6 +635,16 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
             "control_flow",
             Some("add an arm for each missing variant or a final `_:` arm, and remove arms after `_`"),
         )
+    } else if message.contains("match patterns are literals such as")
+        || message.contains("match requires an enum value, or literal patterns")
+    {
+        (
+            "ZM511",
+            "control_flow",
+            Some(
+                "a match subject is an enum, i64, f64, bool or string; give each arm a literal pattern such as `1:`, `\"go\":` or a variant name",
+            ),
+        )
     } else if message.contains("fallible call") || message.contains("propagate the error") {
         (
             "ZM500",
@@ -632,6 +680,18 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
             "ZM406",
             "bounds",
             Some("ensure the index is within the declared array length"),
+        )
+    } else if message.contains("arrays are only supported as local values")
+        || message.contains("only [i64; N] arrays are supported")
+        || message.contains("array length must be")
+        || message.contains("invalid array length")
+    {
+        (
+            "ZM200",
+            "type",
+            Some(
+                "fixed arrays are written [T; N] with a length from 1 to 1024 and declared as local values, and [T] is a growable list",
+            ),
         )
     } else if message.starts_with("test function ") || message.contains(": test function ") {
         (
@@ -696,6 +756,15 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
             "name",
             Some("check the name, declaration, and module import"),
         )
+    } else if message.contains("missing module ") {
+        // `use std/str`、`use greeting`：模块不存在，或者名字写错了。
+        (
+            "ZM203",
+            "name",
+            Some(
+                "check the module name and the file it should come from; the standard library modules are std/string, std/io, std/fmt, std/fs, std/path, std/env, std/math, std/time and std/random",
+            ),
+        )
     } else if message.contains("ambiguous or missing import for ")
         || message.contains("missing or ambiguous struct import")
         || message.contains("ambiguous string import")
@@ -733,7 +802,9 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
             "type",
             Some("end every path of the fn body with a value or a return statement"),
         )
-    } else if message.starts_with("cannot assign immutable value ") {
+    } else if message.starts_with("cannot assign immutable value ")
+        || message.contains("cannot assign to the constant ")
+    {
         (
             "ZM302",
             "ownership",

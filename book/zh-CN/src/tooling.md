@@ -16,6 +16,7 @@
 | `zam fmt` | 规范缩进和空行。 |
 | `zam add`、`zam remove`、`zam update` | 管理依赖。 |
 | `zam search WORD`、`zam publish` | 查找和发布包。 |
+| `zam doc [目录]` | 从 `pub` 声明生成 HTML 的 API 页面。 |
 | `zam lsp` | 运行给编辑器用的语言服务器。VS Code 扩展会自动启动它。 |
 | `zam mcp` | 运行给 AI 编程助手用的 MCP 服务器，见[配合 AI 编程助手](ai-agents.md)。 |
 | `zam --version` | 打印版本号。 |
@@ -66,6 +67,42 @@ zam check --json main.zm
 
 `zam fmt` 就地改写文件：把 Tab 换成空格，每层代码块缩进 4 个空格，顶层声明之间留一个空行。它只改行首的空白和空行，所以永远不会动注释、字符串或行内的空格。每改动一个文件就打印 `FORMAT path`；语法不对的文件它不会修改。
 
+## 生成 API 页面
+
+`zam doc` 读取项目里的 `pub` 声明，写出一张 HTML 页面：
+
+```sh
+zam doc
+zam doc . site
+```
+
+第一种写法写到 `docs/index.html`；第二种自己指定输出目录。每个模块一节，每个公开的函数、结构体、枚举和常量各有一条；结构体的字段、枚举的变体和方法列在它们的类型下面。
+
+文档写成声明正上方的 `#` 注释：第一行是摘要，其余各行是正文。
+
+```zamak
+# 平面上的一个点。
+struct Point:
+    # 横坐标。
+    x: i64
+    y: i64
+
+    # 返回向右移动过的一个副本。
+    fn right(&self, steps: i64) -> Point:
+        Point(x: self.x + steps, y: self.y)
+
+fn main():
+    let p = Point(x: 1, y: 2)
+    let moved = p.right(3)
+    println(moved.x)
+```
+
+```text
+4
+```
+
+只有 `pub` 声明会出现在页面里，所以项目内部的帮手不会露出来。页面不需要 JavaScript，从磁盘直接打开就能看，放在仓库旁边就能发布。
+
 ## 缓存怎样工作
 
 `zam` 按源码内容（以及它依赖的模块的内容）缓存每个编译好的模块。缓存放在 `~/.zam/cache`，所有项目、同一项目的所有副本（例如 Git worktree）共用。因此：
@@ -90,5 +127,6 @@ zam check --json main.zm
 ## 小结
 
 - `zam check`、`build`、`run`、`test`、`fmt` 覆盖日常的编辑循环；`add`、`remove`、`update`、`search`、`publish` 管理包。
+- `zam doc` 把 `pub` 声明和它们的 `#` 注释变成一张 HTML 的 API 页面。
 - 每条诊断都有稳定的错误码，通常还有修改建议；`--json` 把同样的信息提供给工具。
 - 基于内容的缓存让重复构建和增量构建都很快。

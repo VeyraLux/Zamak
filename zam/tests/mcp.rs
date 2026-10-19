@@ -76,6 +76,16 @@ fn mcp_server_exposes_the_zamak_tools() {
     let init = client.request("initialize", json!({ "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": { "name": "test", "version": "1" } }));
     assert_eq!(init["protocolVersion"], "2025-06-18");
     assert_eq!(init["serverInfo"]["name"], "zamak");
+    // 语言参考与错误码表作为资源提供：客户端可以挂在上下文里，不用每次调工具。
+    assert!(init["capabilities"]["resources"].is_object(), "{init}");
+    let resources = client.request("resources/list", json!({}));
+    let uris: Vec<&str> = resources["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|resource| resource["uri"].as_str().unwrap())
+        .collect();
+    assert_eq!(uris, vec!["zamak://reference", "zamak://diagnostics"]);
     writeln!(
         client.input,
         "{}",
@@ -91,7 +101,7 @@ fn mcp_server_exposes_the_zamak_tools() {
         .collect();
     assert_eq!(
         names,
-        ["check", "build", "run", "test", "format", "explain", "docs"]
+        ["check", "build", "run", "test", "format", "explain", "docs", "hover"]
     );
 
     // check：与 `zam check --json` 相同的诊断。
@@ -132,6 +142,18 @@ fn mcp_server_exposes_the_zamak_tools() {
     assert!(meaning.starts_with("ZM301 (ownership)"), "{meaning}");
     let (functions, _) = client.tool("docs", json!({ "topic": "string" }));
     assert!(functions.contains("string.split("), "{functions}");
+
+    // hover：按行、列（从 1 起）给出那里的类型或签名。
+    let (label, error) = client.tool(
+        "hover",
+        json!({ "path": "bad.zm", "line": 2, "column": 10 }),
+    );
+    assert!(!error, "{label}");
+    assert_eq!(label, "s: string", "{label}");
+    let (signature, error) =
+        client.tool("hover", json!({ "path": "bad.zm", "line": 4, "column": 6 }));
+    assert!(!error, "{signature}");
+    assert!(signature.contains("fn println"), "{signature}");
 
     drop(client);
     assert!(child.wait().unwrap().success());

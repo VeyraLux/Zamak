@@ -95,6 +95,9 @@ impl Server {
                     "completionProvider": { "triggerCharacters": ["."] },
                     "hoverProvider": true,
                     "definitionProvider": true,
+                    "signatureHelpProvider": { "triggerCharacters": ["(", ","] },
+                    "renameProvider": { "prepareProvider": true },
+                    "referencesProvider": true,
                     "documentFormattingProvider": true,
                 },
                 "serverInfo": { "name": "zam", "version": env!("CARGO_PKG_VERSION") },
@@ -133,6 +136,10 @@ impl Server {
             "textDocument/completion" => Some(self.request(params, completion)),
             "textDocument/hover" => Some(self.request(params, hover)),
             "textDocument/definition" => Some(self.request(params, definition)),
+            "textDocument/signatureHelp" => Some(self.request(params, signature_help)),
+            "textDocument/references" => Some(self.with_documents(params, references)),
+            "textDocument/prepareRename" => Some(self.with_documents(params, prepare_rename)),
+            "textDocument/rename" => Some(self.with_documents(params, rename)),
             "textDocument/formatting" => Some(self.formatting(params)),
             _ if id.is_some() => {
                 send(
@@ -175,6 +182,14 @@ impl Server {
             column,
         };
         answer(&context)
+    }
+
+    fn with_documents(
+        &self,
+        params: &Value,
+        answer: fn(&BTreeMap<String, String>, &Value) -> Value,
+    ) -> Value {
+        answer(&self.documents, params)
     }
 
     fn formatting(&self, params: &Value) -> Value {
@@ -786,8 +801,8 @@ fn member_items(context: &Context, owner: &str) -> Vec<Value> {
         }
         return items;
     }
-    // 值：按声明的类型给出方法与字段；看不出类型时全部列出。
-    let kind = value_type(context, owner);
+    // 值：先问检查器要真实类型，检查不过（代码写到一半）再按文字猜；都看不出时全部列出。
+    let kind = checked_type(context, owner).or_else(|| value_type(context, owner));
     let string = || {
         std_functions("string")
             .into_iter()
@@ -820,7 +835,78 @@ fn member_items(context: &Context, owner: &str) -> Vec<Value> {
     items
 }
 
-/// 从声明里看出变量的类型：`string`、`list`、`map` 或结构体名。
+/// 编辑器（LSP）与 MCP 共用的类型查询：`line`、`column` 从 0 起（LSP 的列是 UTF-16，
+/// 这里按字符算，两者在 ASCII 代码里一致）。光标处的名字在所在函数里是局部变量时返回它的
+/// 源码写法类型（`Point`、`[string]`、`&mut Point`），否则返回 None。
+pub(crate) fn type_of(text: &str, line: usize, column: usize) -> Option<(String, String)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let current = lines.get(line).copied().unwrap_or("");
+    let context = Context {
+        uri: "",
+        path: PathBuf::new(),
+        text,
+        lines,
+        line,
+        column: char_index(current, column),
+    };
+    let (name, _, _) = identifier_at(&context)?;
+    let ty = inferred_type(&context, &name)?;
+    Some((name, ty))
+}
+
+/// 检查器推断出的类型（不做 `string`/`list`/结构体的粗分类）：`compiler::local_type` 的原样结果。
+fn inferred_type(context: &Context, name: &str) -> Option<String> {
+    // 把光标所在行也带上：`let thing = make()` 的绑定就在这一行，只取前面的行就看不到它。
+    // 光标右侧的 `thing.` 去掉之后，剩下的整行仍是合法语句，解析器和检查器都能接着用。
+    let mut prefix = String::new();
+    for line in context.lines.iter().take(context.line) {
+        prefix.push_str(line);
+        prefix.push('\n');
+    }
+    let current = context.lines.get(context.line).copied().unwrap_or("");
+    // 光标所在这一行可能还是半截（`thing.`、`let x =`）。整行能解析就带上——悬停与补全
+    // 都要靠它里面的绑定；解析不了就整行丢掉，前面的语句已经足够推断类型。
+    let full = format!("{prefix}{current}\n");
+    let usable = if compiler::parse(&full).is_ok() {
+        full
+    } else {
+        prefix.clone()
+    };
+    let module = compiler::parse(&usable).ok()?;
+    // 检查器要知道入口函数，单文件入口是 `main`（与 `zam check` 一致）。
+    compiler::check(&module, "main").ok()?;
+    compiler::local_type(&module, context.line + 1, name)
+}
+
+/// 用检查器推断变量的真实类型：解析并检查光标之前的代码，问 `compiler::local_type`。
+/// 只认那几种补全需要的分类（`string`、`list`、`map`、结构体名），和 `value_type` 对齐；
+/// 任何一步失败都返回 None，让调用方退回文字推断。
+fn checked_type(context: &Context, name: &str) -> Option<String> {
+    let ty = inferred_type(context, name)?;
+    // `&mut [string]`、`&Point` 这类借用按被借用的类型分类。
+    let ty = ty
+        .trim()
+        .trim_start_matches('&')
+        .trim_start_matches("mut ")
+        .trim()
+        .to_owned();
+    if ty == "string" {
+        Some("string".to_owned())
+    } else if ty.starts_with('[') {
+        Some("list".to_owned())
+    } else if ty.starts_with('{') {
+        Some("map".to_owned())
+    } else {
+        let head: String = ty
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        (!head.is_empty() && head.starts_with(char::is_uppercase)).then_some(head)
+    }
+}
+
+/// 从声明里看出变量的类型：`string`、`list`、`map` 或结构体名。这是检查不通过时的退路；
+/// 能检查的项目先用 `checked_type`（检查器推断出的真实类型）。
 fn value_type(context: &Context, name: &str) -> Option<String> {
     let classify = |ty: &str| {
         let ty = ty
@@ -907,47 +993,67 @@ fn markdown(code: &str) -> Value {
 }
 
 fn hover(context: &Context) -> Value {
-    let Some((owner, name)) = context.word() else {
-        return Value::Null;
+    match describe_at_context(context) {
+        Some(answer) => markdown(&answer),
+        None => Value::Null,
+    }
+}
+
+/// MCP 的 `hover` 工具用：`line`、`column` 从 0 起，返回那里的声明说明（不带 markdown 包装）。
+pub(crate) fn describe_at(text: &str, line: usize, column: usize) -> Option<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let current = lines.get(line).copied().unwrap_or("");
+    let context = Context {
+        uri: "",
+        path: PathBuf::new(),
+        text,
+        lines,
+        line,
+        column: char_index(current, column),
     };
+    describe_at_context(&context)
+}
+
+/// 光标处名字的说明：结构体字段/方法、函数、标准库函数、全局函数或模块名。
+fn describe_at_context(context: &Context) -> Option<String> {
+    let (owner, name) = context.word()?;
     if let Some(owner) = owner {
         if let Some(path) = imports(context.text).get(&owner) {
             if let Some(module) = path.strip_prefix("std/") {
                 if let Some((_, signature)) =
                     std_functions(module).into_iter().find(|(n, _)| *n == name)
                 {
-                    return markdown(&signature);
+                    return Some(signature);
                 }
             } else if let Some((_, text)) = module_source(context, path) {
                 if let Some(declaration) = declarations(&text).into_iter().find(|d| d.name == name)
                 {
-                    return markdown(&describe(&declaration));
+                    return Some(describe(&declaration));
                 }
             }
-            return Value::Null;
+            return None;
         }
         for declaration in declarations(context.text) {
             if declaration.name == owner {
                 if let Some((_, detail)) = declaration.members.iter().find(|(n, _)| *n == name) {
-                    return markdown(detail);
+                    return Some(detail.clone());
                 }
             }
         }
-        return Value::Null;
+        return None;
     }
     if let Some(declaration) = declarations(context.text)
         .into_iter()
         .find(|d| d.name == name)
     {
-        return markdown(&describe(&declaration));
+        return Some(describe(&declaration));
     }
     if let Some((_, detail)) = GLOBALS.iter().find(|(n, _)| *n == name) {
-        return markdown(detail);
+        return Some((*detail).to_owned());
     }
-    if let Some(path) = imports(context.text).get(&name) {
-        return markdown(&format!("use {path}"));
-    }
-    Value::Null
+    imports(context.text)
+        .get(&name)
+        .map(|path| format!("use {path}"))
 }
 
 fn describe(declaration: &Declaration) -> String {
@@ -959,6 +1065,394 @@ fn describe(declaration: &Declaration) -> String {
         text.push_str(&format!("\n    {member}"));
     }
     text
+}
+
+/// 光标处的调用：从光标往前找到还没闭合的 `(`，取出被调用的名字与前面已经写了几个参数。
+/// 返回（被调用的名字, 当前是第几个参数）。
+fn open_call(context: &Context) -> Option<(String, usize)> {
+    // 只看光标之前的文本；跨行调用也要能找到，所以把前面的行拼起来。
+    let mut before = String::new();
+    for (index, line) in context.lines.iter().enumerate() {
+        if index < context.line {
+            before.push_str(line);
+            before.push('\n');
+        } else {
+            before.extend(line.chars().take(context.column));
+            break;
+        }
+    }
+    let chars: Vec<char> = before.chars().collect();
+    // 从后往前找未配对的 `(`；顺便数这一层里已经出现了几个逗号。
+    let mut depth = 0i32;
+    let mut commas = 0usize;
+    for position in (0..chars.len()).rev() {
+        match chars[position] {
+            ')' | ']' | '}' => depth += 1,
+            // 遇到没配对的闭括号就说明光标不在这次调用里。
+            '(' | '[' | '{' if depth > 0 => depth -= 1,
+            '(' => {
+                // 找到调用，往左取名字（可以带 `模块.` 前缀）。
+                let mut start = position;
+                while start > 0
+                    && (chars[start - 1].is_alphanumeric()
+                        || chars[start - 1] == '_'
+                        || chars[start - 1] == '.')
+                {
+                    start -= 1;
+                }
+                let name: String = chars[start..position].iter().collect();
+                if name.is_empty()
+                    || !name
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_alphabetic() || c == '_')
+                {
+                    return None;
+                }
+                // 括号里的逗号就是已经写好的参数个数（跳过嵌套的括号）。
+                let mut inner = 0i32;
+                for c in &chars[position + 1..] {
+                    match c {
+                        '(' | '[' | '{' => inner += 1,
+                        ')' | ']' | '}' => inner -= 1,
+                        ',' if inner == 0 => commas += 1,
+                        _ => {}
+                    }
+                }
+                return Some((name, commas));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// 把签名拆成（前缀, 每个参数, 返回类型）：`fn f(a: i64, b: &string) -> bool` →
+/// （`fn f(`, [`a: i64`, `b: &string`], `) -> bool`）。
+fn signature_parts(signature: &str) -> Option<(String, Vec<String>, String)> {
+    let open = signature.find('(')?;
+    let mut depth = 0i32;
+    let mut close = None;
+    for (offset, c) in signature[open..].char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(open + offset);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let close = close?;
+    let inner = &signature[open + 1..close];
+    // 参数按顶层逗号切开（`{K: V}`、`fn(...)`、元组里的逗号不算）。
+    let mut params = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0;
+    for (index, c) in inner.char_indices() {
+        match c {
+            '(' | '[' | '{' | '<' => depth += 1,
+            ')' | ']' | '}' | '>' => depth -= 1,
+            ',' if depth == 0 => {
+                params.push(inner[start..index].trim().to_owned());
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    let tail = inner[start..].trim();
+    if !tail.is_empty() {
+        params.push(tail.to_owned());
+    }
+    Some((
+        signature[..=open].to_owned(),
+        params,
+        signature[close..].to_owned(),
+    ))
+}
+
+/// 本地或标准库函数的签名：`模块.名` 优先查标准库，否则查本文档与 `use` 进来的模块。
+fn declared_signature(context: &Context, name: &str) -> Option<String> {
+    let (owner, short) = match name.split_once('.') {
+        Some((owner, short)) => (Some(owner), short),
+        None => (None, name),
+    };
+    if let Some(owner) = owner {
+        // 结构体方法：`p.norm()` 里的 `norm` 属于接收者类型，名字里没有类型信息，按方法名找。
+        for declaration in declarations(context.text) {
+            if declaration.name == owner {
+                if let Some((_, member)) = declaration.members.iter().find(|(n, _)| n == short) {
+                    return Some(member.clone());
+                }
+            }
+        }
+        if let Some(path) = imports(context.text).get(owner) {
+            if let Some(module) = path.strip_prefix("std/") {
+                return std_functions(module)
+                    .into_iter()
+                    .find(|(n, _)| n == short)
+                    .map(|(_, signature)| signature);
+            }
+            if let Some((_, text)) = module_source(context, path) {
+                return declarations(&text)
+                    .into_iter()
+                    .find(|d| d.name == short)
+                    .map(|d| d.signature);
+            }
+        }
+        // 方法调用的接收者不是模块名：按方法名在本文档的类型里找。
+        for declaration in declarations(context.text) {
+            if let Some((_, member)) = declaration.members.iter().find(|(n, _)| n == short) {
+                if declaration.kind != "fn" {
+                    return Some(member.clone());
+                }
+            }
+        }
+        return None;
+    }
+    if let Some(declaration) = declarations(context.text)
+        .into_iter()
+        .find(|d| d.name == short && d.kind == "fn")
+    {
+        return Some(declaration.signature);
+    }
+    if let Some((_, signature)) = GLOBALS.iter().find(|(n, _)| *n == short) {
+        return Some((*signature).to_owned());
+    }
+    // 打开的标准库模块里找（`use std/io` 之后 `io.read_line(...)` 走上面的分支，
+    // 这里是没写前缀时直接叫名字的情况）。
+    for path in imports(context.text).values() {
+        if let Some(module) = path.strip_prefix("std/") {
+            if let Some((_, signature)) =
+                std_functions(module).into_iter().find(|(n, _)| n == short)
+            {
+                return Some(signature);
+            }
+        }
+    }
+    None
+}
+
+/// `textDocument/signatureHelp`：输入 `foo(` 时显示参数列表，并标出当前是第几个参数。
+fn signature_help(context: &Context) -> Value {
+    let Some((name, active)) = open_call(context) else {
+        return Value::Null;
+    };
+    let Some(declaration) = declared_signature(context, &name) else {
+        return Value::Null;
+    };
+    let Some((prefix, params, tail)) = signature_parts(&declaration) else {
+        return Value::Null;
+    };
+    // 签名里的 `; 说明` 之类的补充不算参数，只保留 `fn ...(...) -> T` 这一段。
+    let label = format!("{prefix}{}{tail}", params.join(", "));
+    let mut parameters = Vec::new();
+    let mut offset = prefix.chars().count();
+    for parameter in &params {
+        let length = parameter.chars().count();
+        parameters.push(json!({
+            "label": [offset, offset + length],
+            "documentation": json!({ "kind": "markdown", "value": parameter }),
+        }));
+        offset += length + ", ".len();
+    }
+    // 当前参数：写多了就停在最后一个，参数列表为空时给 None。
+    let active_parameter = (!params.is_empty()).then(|| active.min(params.len() - 1));
+    json!({
+        "signatures": [{
+            "label": label,
+            "documentation": json!({ "kind": "markdown", "value": format!("```zamak\n{declaration}\n```") }),
+            "parameters": parameters,
+        }],
+        "activeSignature": 0,
+        "activeParameter": active_parameter,
+    })
+}
+
+/// 第 `line` 行的第 `start` 个字符（0 起）处、横跨 `length` 个字符的范围（列号按 UTF-16）。
+fn span(line: usize, source: &str, start: usize, length: usize) -> Value {
+    let begin = utf16(source, start);
+    let end = utf16(source, start + length);
+    range(line, begin, line, end)
+}
+
+/// 光标所在的标识符：返回（名字, 起始字符下标, 字符数）。
+fn identifier_at(context: &Context) -> Option<(String, usize, usize)> {
+    let chars: Vec<char> = context.lines.get(context.line)?.chars().collect();
+    let ident = |c: &char| c.is_alphanumeric() || *c == '_';
+    let mut start = context.column.min(chars.len());
+    while start > 0 && ident(&chars[start - 1]) {
+        start -= 1;
+    }
+    let mut end = context.column.min(chars.len());
+    while end < chars.len() && ident(&chars[end]) {
+        end += 1;
+    }
+    if start == end {
+        return None;
+    }
+    Some((chars[start..end].iter().collect(), start, end - start))
+}
+
+/// 本文件里 `name` 的每次出现：按标识符边界匹配，跳过注释（`#` 之后）与字符串字面量里的文字。
+fn occurrences(text: &str, name: &str) -> Vec<(usize, usize, usize)> {
+    let wanted: Vec<char> = name.chars().collect();
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    let mut found = Vec::new();
+    for (number, line) in text.lines().enumerate() {
+        let chars: Vec<char> = line.chars().collect();
+        let mut in_string = false;
+        let mut escaped = false;
+        let mut index = 0;
+        while index < chars.len() {
+            let c = chars[index];
+            if in_string {
+                if escaped {
+                    escaped = false;
+                } else if c == '\\' {
+                    escaped = true;
+                } else if c == '"' {
+                    in_string = false;
+                }
+                index += 1;
+                continue;
+            }
+            if c == '"' {
+                in_string = true;
+                index += 1;
+                continue;
+            }
+            // `#` 之后是注释，剩下这一行都不用看。
+            if c == '#' && (index == 0 || chars[index - 1] != '\\') {
+                break;
+            }
+            let boundary = (index == 0 || !ident(chars[index - 1]))
+                && chars.get(index + wanted.len()).is_none_or(|c| !ident(*c));
+            if boundary && chars[index..].starts_with(&wanted) {
+                found.push((number, index, wanted.len()));
+                index += wanted.len();
+                continue;
+            }
+            index += 1;
+        }
+    }
+    found
+}
+
+/// 光标位置的上下文（供需要文档映射的处理函数共用）。
+fn context_at<'a>(text: &'a str, params: &Value) -> Option<Context<'a>> {
+    let line = params["position"]["line"].as_u64().unwrap_or(0) as usize;
+    let character = params["position"]["character"].as_u64().unwrap_or(0) as usize;
+    let lines: Vec<&str> = text.lines().collect();
+    let current = lines.get(line).copied().unwrap_or("");
+    Some(Context {
+        uri: "",
+        path: PathBuf::new(),
+        text,
+        lines,
+        line,
+        column: char_index(current, character),
+    })
+}
+
+/// `textDocument/references`：本文件里这个名字出现在哪些地方。`includeDeclaration` 为假时
+/// 去掉声明那一行。跨模块的引用先不做（那要按 `use` 去解析别的模块）。
+fn references(documents: &BTreeMap<String, String>, params: &Value) -> Value {
+    let uri = params["textDocument"]["uri"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    let Some(text) = documents.get(&uri) else {
+        return Value::Null;
+    };
+    let Some(context) = context_at(text, params) else {
+        return json!([]);
+    };
+    let Some((name, _, _)) = identifier_at(&context) else {
+        return json!([]);
+    };
+    let include_declaration = params["context"]["includeDeclaration"]
+        .as_bool()
+        .unwrap_or(true);
+    let declaration = declarations(text)
+        .into_iter()
+        .find(|d| d.name == name)
+        .map(|d| d.line);
+    json!(occurrences(text, &name)
+        .into_iter()
+        .filter(|(number, _, _)| include_declaration || Some(*number) != declaration)
+        .map(|(number, start, length)| {
+            json!({ "uri": uri, "range": span(number, context.lines[number], start, length) })
+        })
+        .collect::<Vec<_>>())
+}
+
+/// `textDocument/prepareRename`：报告会被一起改掉的范围，编辑器据此弹出输入框；
+/// 光标不在标识符上时返回 null，编辑器就不会弹出。
+fn prepare_rename(documents: &BTreeMap<String, String>, params: &Value) -> Value {
+    let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
+    let Some(text) = documents.get(uri) else {
+        return Value::Null;
+    };
+    let Some(context) = context_at(text, params) else {
+        return Value::Null;
+    };
+    let Some((name, start, length)) = identifier_at(&context) else {
+        return Value::Null;
+    };
+    json!({
+        "range": span(context.line, context.lines[context.line], start, length),
+        "placeholder": name,
+    })
+}
+
+/// `textDocument/rename`：把本文件里这个名字的所有出现改成新名字。跨模块重命名留到以后。
+fn rename(documents: &BTreeMap<String, String>, params: &Value) -> Value {
+    let uri = params["textDocument"]["uri"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    let Some(text) = documents.get(&uri) else {
+        return Value::Null;
+    };
+    let Some(new_name) = params["newName"].as_str() else {
+        return Value::Null;
+    };
+    // 新名字必须是本语言认可的标识符（不以数字开头、不是保留字），否则会直接编不过。
+    let valid = !new_name.is_empty()
+        && new_name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_alphabetic() || c == '_')
+        && new_name.chars().all(|c| c.is_alphanumeric() || c == '_')
+        && !KEYWORDS.contains(&new_name);
+    if !valid {
+        return json!({ "changes": {} });
+    }
+    let Some(context) = context_at(text, params) else {
+        return json!({ "changes": {} });
+    };
+    let Some((name, _, _)) = identifier_at(&context) else {
+        return json!({ "changes": {} });
+    };
+    let edits: Vec<Value> = occurrences(text, &name)
+        .into_iter()
+        .map(|(number, start, length)| {
+            json!({
+                "range": span(number, context.lines[number], start, length),
+                "newText": new_name,
+            })
+        })
+        .collect();
+    let mut changes = serde_json::Map::new();
+    changes.insert(uri, Value::Array(edits));
+    json!({ "changes": changes })
 }
 
 fn location(uri: &str, line: usize, text: &str, name: &str) -> Value {
