@@ -454,10 +454,6 @@ python bench/ai/live/run.py --verify-solutions
 
 Zamak 0.1.0 是早期版本，1.0 之前语法与库都可能变化。
 
-## 代码签名
-
-Windows 版本经过代码签名。Free code signing provided by SignPath.io, certificate by SignPath Foundation（由 SignPath.io 免费提供代码签名，证书由 SignPath 基金会签发）。详见[代码签名政策](CODE_SIGNING.md)。
-
 ## 许可证
 
 本项目按 [MIT](LICENSE-MIT) 或 [Apache-2.0](LICENSE-APACHE) 双许可发布，使用者可以任选其一。除非另有声明，你提交的贡献同样按这两种许可证发布。

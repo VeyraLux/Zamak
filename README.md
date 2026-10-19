@@ -300,10 +300,6 @@ Zamak doesn't support threads or networking yet. C functions take and return onl
 - **VS Code.** The extension in [editors/vscode](editors/vscode) adds syntax highlighting and runs `zam lsp`, the Zamak language server, for diagnostics as you type, completion, hover, go to definition, and formatting. Other editors that support the Language Server Protocol can run `zam lsp` too.
 - **AI coding agents.** `zam mcp` is an MCP server with tools to check, build, run, test, and format code, explain diagnostics, and look up docs. `zam new --template ai` adds a skill file, `AGENTS.md`, and `.mcp.json` to a new project, and [.agents/skills/zamak/SKILL.md](.agents/skills/zamak/SKILL.md) guides agents that work on the compiler itself.
 
-## Code signing
-
-Windows releases are signed. Free code signing provided by SignPath.io, certificate by SignPath Foundation. See the [code signing policy](CODE_SIGNING.md).
-
 ## Contribute
 
 For the development guide, see [CONTRIBUTING.md](CONTRIBUTING.md) (in Chinese). Before you submit a change, make sure these commands pass in the `zam` folder:
