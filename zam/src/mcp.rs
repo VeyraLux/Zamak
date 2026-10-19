@@ -511,7 +511,7 @@ fn hover(path: &str, line: Option<u64>, column: Option<u64>) -> Value {
                 "nothing declared at {}:{line}:{column}; put the column inside a name",
                 file.display()
             ),
-            false,
+            true,
         ),
     }
 }
@@ -673,6 +673,7 @@ fn main():
         // 少了行列、或者行列不对，都要说清楚。
         assert_eq!(hover(path, None, Some(3))["isError"], true);
         assert_eq!(hover(path, Some(0), Some(3))["isError"], true);
+        assert_eq!(hover(path, Some(200), Some(3))["isError"], true);
         let missing = body(hover(path, Some(200), Some(3)));
         assert!(missing.contains("nothing declared"), "{missing}");
 

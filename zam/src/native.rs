@@ -344,10 +344,16 @@ static S zam_format(S text, char align, char fill, size_t width, int precision) 
         char *end = NULL;
         double value = strtod(buffer, &end);
         if (end != NULL && *end == '\0') {
-            int n = snprintf(buffer, sizeof buffer, "%.*f", precision, value);
-            if (n > 0 && (size_t)n < sizeof buffer) {
-                drop(&text);
-                text = own((const unsigned char*)buffer, (size_t)n);
+            /* 很大的数（1e300）整数部分有三百多位：先量长度，再按需要分配。 */
+            int n = snprintf(NULL, 0, "%.*f", precision, value);
+            if (n > 0) {
+                char *digits = (char*)malloc((size_t)n + 1);
+                if (digits != NULL) {
+                    snprintf(digits, (size_t)n + 1, "%.*f", precision, value);
+                    drop(&text);
+                    text = own((const unsigned char*)digits, (size_t)n);
+                    free(digits);
+                }
             }
         }
     }

@@ -181,7 +181,9 @@ impl Server {
             line,
             column,
         };
-        answer(&context)
+        // 补全、悬停等扫描文字的代码出了意外，只让这一次请求没有结果，不拖垮整个服务器。
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| answer(&context)))
+            .unwrap_or(Value::Null)
     }
 
     fn with_documents(
