@@ -14,7 +14,7 @@
   &nbsp;&middot;&nbsp;
   <a href="#why-zamak">Why Zamak</a>
   &nbsp;·&nbsp;
-  <a href="https://zamak.veyralux.org/">The Book</a>
+  <a href="book/en/src/introduction.md">The Book</a>
   &nbsp;·&nbsp;
   <a href="#language-tour">Language tour</a>
   &nbsp;·&nbsp;
@@ -54,9 +54,9 @@ zam run hello                     # Prints "hello from zamak"
 
 Other ways to install, and the full command set:
 
-- [Install from the script or build from source](https://zamak.veyralux.org/installation.html)
-- [Every `zam` command](https://zamak.veyralux.org/tooling.html)
-- [Create your first project](https://zamak.veyralux.org/first-program.html)
+- [Install from the script or build from source](book/en/src/installation.md)
+- [Every `zam` command](book/en/src/tooling.md)
+- [Create your first project](book/en/src/first-program.md)
 
 
 ## Use Zamak with your AI agent
@@ -67,7 +67,7 @@ zam new myapp --template ai
 
 That creates `.claude/skills/zamak/SKILL.md`, `AGENTS.md`, and `.mcp.json` alongside the project, each carrying a one-page language reference and the check-fix loop. The text is built into `zam`, so it always matches your version. Your agent reads diagnostics from `zam check --json`, and through `zam mcp` it can call `check`, `build`, `run`, `test`, `format`, `explain`, and `docs` directly.
 
-- [Work with AI coding agents](https://zamak.veyralux.org/ai-agents.html)
+- [Work with AI coding agents](book/en/src/ai-agents.md)
 - [The AI benchmark behind these claims](bench/ai/live/README.md)
 
 
@@ -117,8 +117,8 @@ zam doc hello           # writes an HTML API page from the pub declarations
 
 Zamak is built for a way of working where several AI agents edit one project in parallel and build thousands of times a day. When goals conflict it prioritizes build cost, then memory safety, then runtime performance, then expressiveness, which is why there are no macros, no dependent types, and no lifetime annotations.
 
-- [Why this language exists, and what it borrows from Rust, Go, C, and Python](https://zamak.veyralux.org/why-zamak.html)
-- [How it compares with popular languages, and when to choose something else](https://zamak.veyralux.org/why-zamak.html#compared-with-popular-languages)
+- [Why this language exists, and what it borrows from Rust, Go, C, and Python](book/en/src/why-zamak.md)
+- [How it compares with popular languages, and when to choose something else](book/en/src/why-zamak.md#compared-with-popular-languages)
 
 ## Example
 
@@ -157,7 +157,7 @@ not: 1
 - **Fast feedback.** `zam check` needs no C compiler and finishes in under 0.1 s on a 5,000-line project; a one-line edit rebuilds in about 0.75 s.
 - **Native, standalone output.** Zamak generates C and compiles it with MSVC, GCC, or Clang. The executable needs neither Zamak nor Rust.
 
-See [Grammar at a glance](https://zamak.veyralux.org/grammar.html) for the syntax and [B. Performance](https://zamak.veyralux.org/appendix-performance.html) for build and run numbers.
+See [Grammar at a glance](book/en/src/grammar.md) for the syntax and [B. Performance](book/en/src/appendix-performance.md) for build and run numbers.
 
 ## How Zamak compares
 
@@ -221,8 +221,8 @@ fn main() -> !string:
 
 Blocks are indentation, `T!E` is an error value, `catch` handles it in place, `&names` borrows for the loop, and `{...}` interpolates.
 
-- [Grammar at a glance](https://zamak.veyralux.org/grammar.html) has every construct, one section per topic with a runnable example.
-- [The Book](https://zamak.veyralux.org/) goes deeper per chapter.
+- [Grammar at a glance](book/en/src/grammar.md) has every construct, one section per topic with a runnable example.
+- [The Book](book/en/src/introduction.md) goes deeper per chapter.
 - [examples/md2html](examples/md2html) is a four-module Markdown-to-HTML converter, about 270 lines: `zam run examples/md2html -- examples/md2html/sample.md`.
 
 ## Diagnostics
@@ -240,7 +240,7 @@ error[ZM301]: use after move: name
 
 `zam check --json` reports the same thing as one line of JSON, always in English, which is what an agent reads. On a system set to Chinese the text diagnostic is Chinese; set `ZAMAK_LANG` to `en` or `zh` to choose.
 
-See [diagnostic codes](https://zamak.veyralux.org/appendix-diagnostics.html) and the [agent workflow](docs/AI_WORKFLOW.md).
+See [diagnostic codes](book/en/src/appendix-diagnostics.md) and the [agent workflow](docs/AI_WORKFLOW.md).
 
 ## Current limitations
 

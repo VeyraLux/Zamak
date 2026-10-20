@@ -14,7 +14,7 @@
   &nbsp;·&nbsp;
   <a href="#为什么选择-zamak">为什么选择 Zamak</a>
   &nbsp;·&nbsp;
-  <a href="https://zamak.veyralux.org/zh-CN/">语言手册</a>
+  <a href="book/zh-CN/src/introduction.md">语言手册</a>
   &nbsp;·&nbsp;
   <a href="./PREVIEW.md">预览版安装</a>
   &nbsp;·&nbsp;
@@ -54,9 +54,9 @@ zam run hello                     # 打印 hello from zamak
 
 其他安装方式与完整的命令说明：
 
-- [用安装脚本或从源码构建](https://zamak.veyralux.org/zh-CN/installation.html)
-- [每个 `zam` 子命令的细节](https://zamak.veyralux.org/zh-CN/tooling.html)
-- [写第一个程序](https://zamak.veyralux.org/zh-CN/first-program.html)
+- [用安装脚本或从源码构建](book/zh-CN/src/installation.md)
+- [每个 `zam` 子命令的细节](book/zh-CN/src/tooling.md)
+- [写第一个程序](book/zh-CN/src/first-program.md)
 
 `zam` 把构建进度写到 stderr，stdout 只留程序自己的输出。产物不需要装 Zamak 或 Rust 就能运行。
 ## 配合 AI 编程助手使用
@@ -67,7 +67,7 @@ zam new myapp --template ai
 
 项目里会多出 `.claude/skills/zamak/SKILL.md`、`AGENTS.md` 和 `.mcp.json`，每份都带一页纸语言参考和「检查 → 修复」的循环。这些说明由编进 `zam` 的参考生成，总和你安装的版本一致。助手从 `zam check --json` 读诊断，也可以通过 `zam mcp` 直接调用 `check`、`build`、`run`、`test`、`format`、`explain` 和 `docs`。
 
-- [配合 AI 编程助手](https://zamak.veyralux.org/zh-CN/ai-agents.html)
+- [配合 AI 编程助手](book/zh-CN/src/ai-agents.md)
 - [AI 实测的方法与数据](bench/ai/live/README.md)
 
 ## 安装 Zamak
@@ -116,8 +116,8 @@ zam doc hello           # 从 pub 声明生成 HTML API 页面
 
 Zamak 面向这样一种工作方式：多个 AI 助手并行修改同一个项目，一天构建上千次。目标冲突时它的优先级是构建成本、内存安全、运行性能、表达力，所以没有宏，没有依赖类型，也不用写生命周期。
 
-- [为什么做这门语言，以及从 Rust、Go、C、Python 各借了什么](https://zamak.veyralux.org/zh-CN/why-zamak.html)
-- [与热门语言相比，以及什么时候该选别的语言](https://zamak.veyralux.org/zh-CN/why-zamak.html#与热门语言相比)
+- [为什么做这门语言，以及从 Rust、Go、C、Python 各借了什么](book/zh-CN/src/why-zamak.md)
+- [与热门语言相比，以及什么时候该选别的语言](book/zh-CN/src/why-zamak.md#与热门语言相比)
 
 ## 示例
 
@@ -155,7 +155,7 @@ Zamak 是为频繁构建和多 worktree 协作设计的语言，改完代码，�
 - **反馈快**：`zam check` 不需要 C 编译器，5,000 行项目不到 0.1 秒；改一行重建约 0.75 秒。
 - **原生独立运行**：生成 C 再交给 MSVC、GCC 或 Clang 编译，产物不需要装 Zamak 或 Rust。
 
-语法看[语法总览](https://zamak.veyralux.org/zh-CN/grammar.html)，构建与运行数字看 [B. 性能](https://zamak.veyralux.org/zh-CN/appendix-performance.html)。
+语法看[语法总览](book/zh-CN/src/grammar.md)，构建与运行数字看 [B. 性能](book/zh-CN/src/appendix-performance.md)。
 
 ## 与其他语言对比
 
@@ -206,14 +206,14 @@ modules = "src"
 
 一个 `.zm` 文件就是一个模块，`src/tools/greeting.zm` 的模块名是 `tools/greeting`。可选段落：`[dependencies]` 声明依赖，`[native]` 配置要链接的 C 代码，`[project]` 里还可以写发布用的 `version` 和 `description`。
 
-- [模块与包](https://zamak.veyralux.org/zh-CN/modules.html)
-- [调用 C 代码](https://zamak.veyralux.org/zh-CN/c-libraries.html)
+- [模块与包](book/zh-CN/src/modules.md)
+- [调用 C 代码](book/zh-CN/src/c-libraries.md)
 
 ## 缓存
 
 缓存默认在 `~/.zam/cache`，可用 `ZAMAK_CACHE_DIR` 改位置。模块键取源码内容、递归依赖哈希、编译器与 IR 版本、系统和架构，**不含项目路径**，所以同一份源码从不同目录构建会共享产物。改一个模块只让它和依赖它的模块失效。
 
-目标文件与可执行文件另有一层按内容寻址的缓存，构建输出里的 `CACHE`、`OBJECT`、`LINK`、`OUTPUT` 就是这几层的命中情况。细节见 [工具链说明](https://zamak.veyralux.org/zh-CN/tooling.html)。
+目标文件与可执行文件另有一层按内容寻址的缓存，构建输出里的 `CACHE`、`OBJECT`、`LINK`、`OUTPUT` 就是这几层的命中情况。细节见 [工具链说明](book/zh-CN/src/tooling.md)。
 ## 验证
 
 提交前在仓库根目录跑这几条，必须全部通过：
