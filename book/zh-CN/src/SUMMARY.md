@@ -43,6 +43,10 @@
 - [zam 命令](tooling.md)
 - [配合 AI 编程助手](ai-agents.md)
 
+# 参考
+
+- [语法总览](grammar.md)
+
 # 附录
 
 - [A. 写给 Python 程序员](appendix-python.md)

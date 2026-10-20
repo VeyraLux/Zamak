@@ -43,6 +43,10 @@
 - [The zam command](tooling.md)
 - [Work with AI coding agents](ai-agents.md)
 
+# Reference
+
+- [Grammar at a glance](grammar.md)
+
 # Appendixes
 
 - [A. Zamak for Python programmers](appendix-python.md)
