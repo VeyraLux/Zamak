@@ -58,6 +58,52 @@ Other ways to install, and the full command set:
 - [Every `zam` command](https://zamak.veyralux.org/tooling.html)
 - [Create your first project](https://zamak.veyralux.org/first-program.html)
 
+
+## Use Zamak with your AI agent
+
+```sh
+zam new myapp --template ai
+```
+
+That creates `.claude/skills/zamak/SKILL.md`, `AGENTS.md`, and `.mcp.json` alongside the project, each carrying a one-page language reference and the check-fix loop. The text is built into `zam`, so it always matches your version. Your agent reads diagnostics from `zam check --json`, and through `zam mcp` it can call `check`, `build`, `run`, `test`, `format`, `explain`, and `docs` directly.
+
+- [Work with AI coding agents](https://zamak.veyralux.org/ai-agents.html)
+- [The AI benchmark behind these claims](bench/ai/live/README.md)
+
+
+## Install Zamak
+
+To build from source instead of using npm, you need Rust stable and a C compiler. In the repository root:
+
+```sh
+cargo install --path zam --locked
+```
+
+Zamak finds a C compiler on each platform as follows:
+
+| Platform | C compiler |
+| --- | --- |
+| Windows x64 | Visual Studio Build Tools with the **Desktop development with C++** workload, located through `vswhere`. If it isn't installed, Zamak uses `gcc` (for example, MinGW-w64) or `clang` from `PATH`. |
+| Linux | `cc`, `clang`, or `gcc` from `PATH`. On Debian and Ubuntu, install `build-essential`. |
+| macOS | Xcode Command Line Tools. To install them, run `xcode-select --install`. |
+
+To choose a GCC-style compiler yourself, set `CC`. `zam check` doesn't need a C compiler. CI runs the full test suite on all three platforms.
+
+## Create your first project
+
+```sh
+zam new hello           # creates hello/zam.toml and hello/src/main.zm
+zam run hello           # prints: hello from zamak
+zam check hello         # type and borrow check only, no C compiler needed
+zam fmt hello           # normalizes indentation
+zam test hello          # runs every fn test_...() in the project
+zam build hello         # writes build/hello-<hash>(.exe)
+zam run app.zm -- a b   # pass arguments to the program
+zam doc hello           # writes an HTML API page from the pub declarations
+```
+
+`zam` writes build progress to standard error, so standard output holds only your program's output.
+
 ## Why Zamak
 
 **Reads like Python. Runs like C. Safe without a garbage collector.**
@@ -141,18 +187,6 @@ The same six programs, run in seven languages on one machine:
 | No lifetime annotations | ✓ | ✓ | ✗ | ✓ | ✓ |
 
 Zamak stays in C's range on every compute-bound program while checking overflow and bounds by default. It is the fastest of the seven on binary-trees and word frequency, within 1% of C on spectral-norm, and third on n-body. For the method, full results, and the scripts, see [bench/compare](bench/compare/README.md).
-
-## Use Zamak with your AI agent
-
-```sh
-zam new myapp --template ai
-```
-
-That creates `.claude/skills/zamak/SKILL.md`, `AGENTS.md`, and `.mcp.json` alongside the project, each carrying a one-page language reference and the check-fix loop. The text is built into `zam`, so it always matches your version. Your agent reads diagnostics from `zam check --json`, and through `zam mcp` it can call `check`, `build`, `run`, `test`, `format`, `explain`, and `docs` directly.
-
-- [Work with AI coding agents](https://zamak.veyralux.org/ai-agents.html)
-- [The AI benchmark behind these claims](bench/ai/live/README.md)
-
 ## Language tour
 
 One program, using structs, error values, lists, borrows, and interpolation:

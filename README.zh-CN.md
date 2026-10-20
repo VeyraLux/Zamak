@@ -59,6 +59,50 @@ zam run hello                     # 打印 hello from zamak
 - [写第一个程序](https://zamak.veyralux.org/zh-CN/first-program.html)
 
 `zam` 把构建进度写到 stderr，stdout 只留程序自己的输出。产物不需要装 Zamak 或 Rust 就能运行。
+## 配合 AI 编程助手使用
+
+```sh
+zam new myapp --template ai
+```
+
+项目里会多出 `.claude/skills/zamak/SKILL.md`、`AGENTS.md` 和 `.mcp.json`，每份都带一页纸语言参考和「检查 → 修复」的循环。这些说明由编进 `zam` 的参考生成，总和你安装的版本一致。助手从 `zam check --json` 读诊断，也可以通过 `zam mcp` 直接调用 `check`、`build`、`run`、`test`、`format`、`explain` 和 `docs`。
+
+- [配合 AI 编程助手](https://zamak.veyralux.org/zh-CN/ai-agents.html)
+- [AI 实测的方法与数据](bench/ai/live/README.md)
+
+## 安装 Zamak
+
+从源码安装需要 Rust stable 和一个 C 编译器。在仓库根目录执行：
+
+```sh
+cargo install --path zam --locked
+```
+
+`zam` 按下面的顺序找 C 编译器：
+
+| 平台 | C 编译器 |
+| --- | --- |
+| Windows x64 | Visual Studio Build Tools 的「使用 C++ 的桌面开发」，通过 `vswhere` 查找。没装时依次使用 PATH 上的 `gcc`（如 MinGW-w64）或 `clang`。 |
+| Linux | PATH 上的 `cc`、`clang` 或 `gcc`。Debian 和 Ubuntu 上装 `build-essential`。 |
+| macOS | Xcode Command Line Tools，运行 `xcode-select --install` 安装。 |
+
+想自己指定编译器就设 `CC`。`zam check` 不需要 C 编译器。CI 在三个平台上跑完整测试。
+
+## 新建项目
+
+```sh
+zam new hello           # 生成 hello/zam.toml 与 hello/src/main.zm
+zam run hello           # 打印 hello from zamak
+zam check hello         # 只做类型与借用检查，不需要 C 编译器
+zam fmt hello           # 规范化缩进
+zam test hello          # 运行项目里所有 fn test_...()
+zam build hello         # 写出 build/hello-<hash>(.exe)
+zam run app.zm -- a b   # 给程序传参数
+zam doc hello           # 从 pub 声明生成 HTML API 页面
+```
+
+`zam` 把构建进度写到 stderr，stdout 只留程序自己的输出。
+
 ## 为什么选择 Zamak
 
 **像 Python 一样好读，像 C 一样快，无GC也安全。**
@@ -141,17 +185,6 @@ Zamak 想把 C、Rust、Go 与 Python 各自最擅长的部分融合在一起。
 | 不写生命周期标注 | ✓ | ✓ | ✗ | ✓ | ✓ |
 
 在这些计算密集的程序上，Zamak 都与 C 处在同一档，同时默认检查溢出与越界。binary-trees 和词频统计在七种语言里最快；spectral-norm 与 C 相差 1% 以内，素数统计与 Rust 相差 2% 以内；只有 n-body 排在第三（Rust 第一、Go 第二），比 C 快 5%。唯一的例外是 spectral-norm 的热点函数用了 `@wrapping`，只在这一个函数里关闭溢出检查。测试方法、完整结果与复现步骤见 [bench/compare](bench/compare/README.md)。
-
-## 配合 AI 编程助手使用
-
-```sh
-zam new myapp --template ai
-```
-
-项目里会多出 `.claude/skills/zamak/SKILL.md`、`AGENTS.md` 和 `.mcp.json`，每份都带一页纸语言参考和「检查 → 修复」的循环。这些说明由编进 `zam` 的参考生成，总和你安装的版本一致。助手从 `zam check --json` 读诊断，也可以通过 `zam mcp` 直接调用 `check`、`build`、`run`、`test`、`format`、`explain` 和 `docs`。
-
-- [配合 AI 编程助手](https://zamak.veyralux.org/zh-CN/ai-agents.html)
-- [AI 实测的方法与数据](bench/ai/live/README.md)
 
 ## 编辑器与 AI 工具
 
