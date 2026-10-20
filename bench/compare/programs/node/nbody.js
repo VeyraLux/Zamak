@@ -60,5 +60,10 @@ function advance(bodies, dt) {
 const steps = Number(process.argv[2]);
 const bodies = planets();
 console.log(energy(bodies).toFixed(9));
+// 只计计算本身；写到 stderr，不影响输出比对。
+const t0 = process.hrtime.bigint();
 for (let i = 0; i < steps; i++) advance(bodies, 0.01);
-console.log(energy(bodies).toFixed(9));
+const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+const e2 = energy(bodies);
+process.stderr.write(`TIME ${ms.toFixed(3)}\n`);
+console.log(e2.toFixed(9));

@@ -64,7 +64,12 @@ public class Nbody {
         int steps = Integer.parseInt(args[0]);
         Body[] bodies = planets();
         System.out.printf("%.9f%n", energy(bodies));
+        // Time the compute loop only, and write to stderr so the output stays comparable.
+        long t0 = System.nanoTime();
         for (int i = 0; i < steps; i++) advance(bodies, 0.01);
-        System.out.printf("%.9f%n", energy(bodies));
+        double ms = (System.nanoTime() - t0) / 1e6;
+        double e2 = energy(bodies);
+        System.err.printf("TIME %.3f%n", ms);
+        System.out.printf("%.9f%n", e2);
     }
 }

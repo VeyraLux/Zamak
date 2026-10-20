@@ -1,4 +1,5 @@
 #include <math.h>
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -69,7 +70,15 @@ int main(int argc, char **argv) {
     bodies[0].vy = -py / SOLAR_MASS;
     bodies[0].vz = -pz / SOLAR_MASS;
     printf("%.9f\n", energy());
+    /* 只计计算本身：起点放在第一行输出之后，终点放在第二行输出之前，
+       这样外部计时（含启动）与这里能对得上去。写到 stderr，不干扰输出比对。 */
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
     for (int i = 0; i < steps; i++) advance(0.01);
-    printf("%.9f\n", energy());
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    double e2 = energy();
+    double ms = (t1.tv_sec - t0.tv_sec) * 1000.0 + (t1.tv_nsec - t0.tv_nsec) / 1e6;
+    fprintf(stderr, "TIME %.3f\n", ms);
+    printf("%.9f\n", e2);
     return 0;
 }

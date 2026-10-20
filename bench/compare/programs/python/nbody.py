@@ -1,5 +1,6 @@
 import math
 import sys
+import time
 
 PI = 3.141592653589793
 SOLAR_MASS = 4 * PI * PI
@@ -65,6 +66,11 @@ def advance(bodies, dt):
 
 bodies = planets()
 print(f"{energy(bodies):.9f}")
+# 只计计算本身；写到 stderr，不影响输出比对。
+_t0 = time.perf_counter()
 for _ in range(int(sys.argv[1])):
     advance(bodies, 0.01)
-print(f"{energy(bodies):.9f}")
+_ms = (time.perf_counter() - _t0) * 1000.0
+_e2 = energy(bodies)
+print(f"TIME {_ms:.3f}", file=sys.stderr)
+print(f"{_e2:.9f}")

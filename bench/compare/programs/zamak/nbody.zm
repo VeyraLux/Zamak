@@ -2,6 +2,8 @@
 use std/env
 use std/fmt
 use std/math
+use std/time
+use std/io
 
 struct Body:
     x: f64
@@ -82,6 +84,11 @@ fn main() -> !string:
     let steps = int(env.arg(0)?)?
     let mut bodies = planets()
     print(fmt.fixed(energy(bodies), 9))
+    # 只计计算本身；写到 stderr，不影响输出比对。
+    let t0 = time.monotonic()
     for _ in range(steps):
         advance(&mut bodies, 0.01)
-    print(fmt.fixed(energy(bodies), 9))
+    let ms = (time.monotonic() - t0) * 1000.0
+    let e2 = energy(bodies)
+    io.eprintln("TIME {fmt.fixed(ms, 3)}")
+    print(fmt.fixed(e2, 9))

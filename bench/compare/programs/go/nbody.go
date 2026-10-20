@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"time"
 )
 
 const (
@@ -84,8 +85,12 @@ func main() {
 	steps, _ := strconv.Atoi(os.Args[1])
 	bodies := planets()
 	fmt.Printf("%.9f\n", energy(bodies))
+	t0 := time.Now()
 	for i := 0; i < steps; i++ {
 		advance(bodies, 0.01)
 	}
-	fmt.Printf("%.9f\n", energy(bodies))
+	ms := float64(time.Since(t0).Nanoseconds()) / 1e6
+	e2 := energy(bodies)
+	fmt.Fprintf(os.Stderr, "TIME %.3f\n", ms)
+	fmt.Printf("%.9f\n", e2)
 }

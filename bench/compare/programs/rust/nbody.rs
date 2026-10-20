@@ -72,8 +72,13 @@ fn main() {
     let steps: usize = std::env::args().nth(1).unwrap().parse().unwrap();
     let mut bodies = planets();
     println!("{:.9}", energy(&bodies));
+    // 只计计算本身；写到 stderr，不影响输出比对。
+    let t0 = std::time::Instant::now();
     for _ in 0..steps {
         advance(&mut bodies, 0.01);
     }
-    println!("{:.9}", energy(&bodies));
+    let ms = t0.elapsed().as_secs_f64() * 1000.0;
+    let e2 = energy(&bodies);
+    eprintln!("TIME {:.3}", ms);
+    println!("{:.9}", e2);
 }

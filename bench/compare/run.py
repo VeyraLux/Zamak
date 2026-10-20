@@ -33,7 +33,12 @@ class Counters(ctypes.Structure):
 
 
 def run_once(command, stdin_path):
-    """运行一次：返回（秒, 峰值工作集字节数, 标准输出）。"""
+    """运行一次：返回（秒, 峰值工作集字节数, 标准输出, 程序内部计时秒数或 None）。
+
+    外部计时（`seconds`）含进程启动、动态链接和退出，是用户实际感受到的耗时。
+    程序自己在计算前后打一圈时钟，把 `TIME <毫秒>` 写到 stderr，得到纯计算耗时；
+    两个数都记下来，才分得清「算得快」和「启动快」。
+    """
     with open(stdin_path, 'rb') if stdin_path else open(os.devnull, 'rb') as stdin:
         start = time.perf_counter()
         proc = subprocess.Popen(command, stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -44,7 +49,11 @@ def run_once(command, stdin_path):
     counters = Counters()
     counters.cb = ctypes.sizeof(Counters)
     ctypes.windll.psapi.GetProcessMemoryInfo(int(proc._handle), ctypes.byref(counters), counters.cb)
-    return seconds, counters.PeakWorkingSetSize, out.decode().replace('\r\n', '\n')
+    inner = None
+    for line in err.decode(errors='replace').splitlines():
+        if line.startswith('TIME '):
+            inner = float(line[5:]) / 1000.0
+    return seconds, counters.PeakWorkingSetSize, out.decode().replace('\r\n', '\n'), inner
 
 
 def timed(command, env=None, cwd=None):
@@ -78,6 +87,16 @@ def zam_command(zam):
     if str(zam).endswith('.js'):
         return ['node', str(zam)]
     return [str(zam)]
+
+
+def git_commit():
+    """当前检出的短 commit；不是 git 仓库（例如下载的源码包）时返回 unknown。"""
+    try:
+        r = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], cwd=ROOT,
+                           capture_output=True, text=True)
+        return r.stdout.strip() or 'unknown'
+    except OSError:
+        return 'unknown'
 
 
 def build(language, task, work, zam):
@@ -180,6 +199,9 @@ def main():
                 'run_s': statistics.median(s[0] for s in samples),
                 'peak_bytes': max(s[1] for s in samples),
             }
+            # 程序内部计时：把「算得快」和「启动快」分开。只有写了 TIME 的程序才有。
+            inners = [s[3] for s in samples if s[3] is not None]
+            row['inner_s'] = statistics.median(inners) if inners else None
             rows.append(row)
             print(json.dumps(row), flush=True)
     # 各语言输出必须一致。
@@ -195,6 +217,8 @@ def main():
             versions[name] = (r.stdout or r.stderr).splitlines()[0]
         except OSError:
             pass
+    # 记下跑这一轮的代码版本，否则同一个版本号的不同 commit 分不清。
+    versions['zam_commit'] = git_commit()
     (work / 'results.json').write_text(json.dumps({'versions': versions, 'rows': rows}, indent=2), encoding='utf-8')
     print(f'results: {work}')
 
