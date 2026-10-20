@@ -2,6 +2,8 @@
 
 [简介](introduction.md)
 
+- [为什么选择 Zamak](why-zamak.md)
+
 # 入门
 
 - [安装 Zamak](installation.md)

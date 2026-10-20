@@ -2,6 +2,8 @@
 
 [Introduction](introduction.md)
 
+- [Why Zamak](why-zamak.md)
+
 # Getting started
 
 - [Install Zamak](installation.md)
