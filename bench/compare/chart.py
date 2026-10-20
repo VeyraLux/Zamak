@@ -16,8 +16,11 @@ ORDER = ['zamak', 'c', 'rust', 'go', 'java', 'node', 'python']
 COMPILED = {'zamak', 'c', 'rust', 'go'}
 
 THEMES = {
-    'dark': dict(text='#e6edf3', muted='#9198a1', bar='#3d444d', track='#151b23'),
-    'light': dict(text='#1f2328', muted='#59636e', bar='#c8d1da', track='#f6f8fa'),
+    # `label` 是其他语言的名字和数值，`bar` 是它们的柱子。三者都按白底/深底取到
+    # 足够对比度：label 9:1 以上、数值 9:1 以上、柱子 2.4:1 以上，缩写后仍然分得清。
+    # muped（remark 那种说明文字）保持偏淡，它只是补充信息。
+    'dark': dict(text='#e6edf3', label='#a8b0b8', muted='#b9c0c8', bar='#4d565f', track='#151b23'),
+    'light': dict(text='#1f2328', label='#424a53', muted='#4d565f', bar='#9aa8b8', track='#eef1f4'),
 }
 BRAND = [('0', '#f59e0b'), ('0.4', '#f97362'), ('0.75', '#6366f1'), ('1', '#06b6d4')]
 
@@ -35,7 +38,7 @@ def panel(title, note, items, fmt, x, y, width, theme):
     t = THEMES[theme]
     out = [f'<text x="{x}" y="{y}" font-size="14.5" font-weight="600" fill="{t["text"]}">{title}</text>',
            f'<text x="{x}" y="{y + 17}" font-size="11.5" fill="{t["muted"]}">{note}</text>']
-    label_w, value_w = 66, 70
+    label_w, value_w = 66, 78
     bar_x, bar_w = x + label_w, width - label_w - value_w
     values = sorted(v for _, v, _ in items if v)
     # 刻度：比第二慢的还慢 4 倍以上的柱子截断，免得把其他柱子压扁。
@@ -45,8 +48,8 @@ def panel(title, note, items, fmt, x, y, width, theme):
     row_y = y + 30
     for language, value, remark in items:
         mine = language == 'zamak'
-        color = t['text'] if mine else t['muted']
-        weight = 600 if mine else 400
+        color = t['text'] if mine else t['label']
+        weight = 600 if mine else 500
         out.append(f'<text x="{bar_x - 9}" y="{row_y + 12}" font-size="12" text-anchor="end" font-weight="{weight}" fill="{color}">{NAMES[language]}</text>')
         out.append(f'<rect x="{bar_x}" y="{row_y + 2}" width="{bar_w}" height="13" rx="3" fill="{t["track"]}"/>')
         if value:
