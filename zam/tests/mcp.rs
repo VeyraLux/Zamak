@@ -65,6 +65,7 @@ fn mcp_server_exposes_the_zamak_tools() {
         .env("ZAMAK_CACHE_DIR", root.join("cache"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
+        .env("ZAMAK_LANG", "en")
         .spawn()
         .unwrap();
     let mut client = Client {

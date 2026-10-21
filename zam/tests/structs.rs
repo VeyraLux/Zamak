@@ -48,6 +48,7 @@ fn struct_declarations_and_rejections() {
         let output = Command::new(env!("CARGO_BIN_EXE_zam"))
             .arg("check")
             .arg(&path)
+            .env("ZAMAK_LANG", "en")
             .output()
             .unwrap();
         assert_eq!(
@@ -69,6 +70,7 @@ fn struct_declarations_and_rejections() {
         let output = Command::new(env!("CARGO_BIN_EXE_zam"))
             .arg("check")
             .arg(&path)
+            .env("ZAMAK_LANG", "en")
             .output()
             .unwrap();
         assert!(!output.status.success(), "accepted {body}");
@@ -77,6 +79,7 @@ fn struct_declarations_and_rejections() {
     let output = Command::new(env!("CARGO_BIN_EXE_zam"))
         .arg("run")
         .arg(&path)
+        .env("ZAMAK_LANG", "en")
         .output()
         .unwrap();
     assert!(
@@ -97,6 +100,7 @@ fn struct_declarations_and_rejections() {
         let output = Command::new(env!("CARGO_BIN_EXE_zam"))
             .arg("check")
             .arg(&path)
+            .env("ZAMAK_LANG", "en")
             .output()
             .unwrap();
         assert!(!output.status.success(), "accepted {body}");
@@ -105,6 +109,7 @@ fn struct_declarations_and_rejections() {
     let output = Command::new(env!("CARGO_BIN_EXE_zam"))
         .arg("run")
         .arg(&path)
+        .env("ZAMAK_LANG", "en")
         .output()
         .unwrap();
     assert!(
@@ -129,6 +134,7 @@ fn struct_declarations_and_rejections() {
     let output = Command::new(env!("CARGO_BIN_EXE_zam"))
         .arg("run")
         .arg(&path)
+        .env("ZAMAK_LANG", "en")
         .output()
         .unwrap();
     assert!(
@@ -149,6 +155,7 @@ fn struct_declarations_and_rejections() {
         let output = Command::new(env!("CARGO_BIN_EXE_zam"))
             .arg("check")
             .arg(&path)
+            .env("ZAMAK_LANG", "en")
             .output()
             .unwrap();
         assert!(!output.status.success(), "accepted {source}");
@@ -157,6 +164,7 @@ fn struct_declarations_and_rejections() {
     let output = Command::new(env!("CARGO_BIN_EXE_zam"))
         .arg("run")
         .arg(&path)
+        .env("ZAMAK_LANG", "en")
         .output()
         .unwrap();
     assert!(
@@ -178,6 +186,7 @@ fn struct_declarations_and_rejections() {
         let output = Command::new(env!("CARGO_BIN_EXE_zam"))
             .arg("check")
             .arg(&path)
+            .env("ZAMAK_LANG", "en")
             .output()
             .unwrap();
         assert!(!output.status.success(), "accepted {body}");
@@ -186,6 +195,7 @@ fn struct_declarations_and_rejections() {
     let output = Command::new(env!("CARGO_BIN_EXE_zam"))
         .arg("run")
         .arg(&path)
+        .env("ZAMAK_LANG", "en")
         .output()
         .unwrap();
     assert!(
@@ -199,6 +209,7 @@ fn struct_declarations_and_rejections() {
     let output = Command::new(env!("CARGO_BIN_EXE_zam"))
         .arg("check")
         .arg(&legacy)
+        .env("ZAMAK_LANG", "en")
         .output()
         .unwrap();
     assert!(

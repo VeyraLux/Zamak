@@ -31,6 +31,8 @@ impl TempWorkspace {
             .arg(command)
             .arg(self.source())
             .env("ZAMAK_CACHE_DIR", self.root.join("cache"))
+            // 断言的是运行时英文报错；中文机器上 stderr 默认是译文，钉住 en 才稳定。
+            .env("ZAMAK_LANG", "en")
             .output()
             .unwrap()
     }

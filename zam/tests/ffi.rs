@@ -4,6 +4,7 @@ fn zam(args: &[&str], cache: &Path) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_zam"))
         .args(args)
         .env("ZAMAK_CACHE_DIR", cache)
+        .env("ZAMAK_LANG", "en")
         .output()
         .unwrap()
 }

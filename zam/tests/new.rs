@@ -3,6 +3,7 @@ use std::{fs, process::Command};
 fn zam(args: &[&str]) -> std::process::Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_zam"));
     command.args(args);
+    command.env("ZAMAK_LANG", "en");
     command.output().unwrap()
 }
 

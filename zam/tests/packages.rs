@@ -16,6 +16,7 @@ fn zam(args: &[&str], dir: &Path, cache: &Path) -> std::process::Output {
         .args(args)
         .current_dir(dir)
         .env("ZAMAK_CACHE_DIR", cache)
+        .env("ZAMAK_LANG", "en")
         .output()
         .unwrap()
 }
@@ -274,6 +275,7 @@ fn zam_index(args: &[&str], dir: &Path, cache: &Path, index: &Path) -> std::proc
         .current_dir(dir)
         .env("ZAMAK_CACHE_DIR", cache)
         .env("ZAMAK_INDEX", index)
+        .env("ZAMAK_LANG", "en")
         .output()
         .unwrap()
 }

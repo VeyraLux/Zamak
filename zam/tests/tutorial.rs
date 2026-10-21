@@ -23,6 +23,7 @@ fn english_readme_examples_run() {
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
+            .env("ZAMAK_LANG", "en")
             .spawn()
             .unwrap();
         use std::io::Write;

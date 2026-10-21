@@ -76,8 +76,11 @@ fn invalid_arguments_fail_before_loading_or_writing_projects() {
         vec!["--json", "check"],
         vec!["check", "--json", "--json"],
     ] {
+        // 报错文案跟随 ZAMAK_LANG，这里断言的是英文原文，所以要显式钉住 en，
+        // 否则中文机器上 stderr 是译文，测试会因为本机语言而红。
         let output = Command::new(env!("CARGO_BIN_EXE_zam"))
             .args(&args)
+            .env("ZAMAK_LANG", "en")
             .output()
             .unwrap();
         assert!(!output.status.success(), "accepted {args:?}");
@@ -209,6 +212,7 @@ fn fmt_accepts_a_single_file_and_rejects_json() {
     // fmt 没有结构化输出；明确拒绝比静默忽略 --json 更容易被 AI 循环发现。
     let output = Command::new(env!("CARGO_BIN_EXE_zam"))
         .args(["fmt", "--json", "."])
+        .env("ZAMAK_LANG", "en")
         .output()
         .unwrap();
     assert!(!output.status.success());

@@ -841,6 +841,7 @@ static TABLE: &[(&str, &str)] = &[
     ("--json is only supported by check and build", "只有 check 和 build 支持 --json"),
     ("usage: zam <check|build|run|test|fmt|new|add|remove|update|search|publish> [project|file]", "用法：zam <check|build|run|test|fmt|new|add|remove|update|search|publish> [项目|文件]"),
     ("usage: zam <check|build|run|test|fmt|new|add|remove|update|search|publish|doc> [project|file]", "用法：zam <check|build|run|test|fmt|new|add|remove|update|search|publish|doc> [项目|文件]"),
+    ("usage: zam <check|build|run|test|fmt|new|add|remove|update|search|publish|doc> [project|file] [--template ai]", "用法：zam <check|build|run|test|fmt|new|add|remove|update|search|publish|doc> [项目|文件] [--template ai]"),
 
     // ---- C 工具链 ----
     ("install MSVC C++ build tools for native builds", "构建原生程序需要安装 MSVC C++ 生成工具"),

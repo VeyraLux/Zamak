@@ -75,6 +75,7 @@ fn syntax_diagnostics_include_source_and_line() {
         let output = Command::new(env!("CARGO_BIN_EXE_zam"))
             .arg("check")
             .arg(&path)
+            .env("ZAMAK_LANG", "en")
             .output()
             .unwrap();
         let error = String::from_utf8_lossy(&output.stderr);
@@ -124,6 +125,7 @@ fn semantic_diagnostics_include_line_and_column() {
         let output = Command::new(env!("CARGO_BIN_EXE_zam"))
             .arg("check")
             .arg(&path)
+            .env("ZAMAK_LANG", "en")
             .output()
             .unwrap();
         let error = String::from_utf8_lossy(&output.stderr);
@@ -161,6 +163,7 @@ fn every_failing_function_reports_its_first_error() {
     let output = Command::new(env!("CARGO_BIN_EXE_zam"))
         .arg("check")
         .arg(&path)
+        .env("ZAMAK_LANG", "en")
         .output()
         .unwrap();
     let error = String::from_utf8_lossy(&output.stderr);
@@ -253,6 +256,7 @@ fn json_diagnostics_are_one_line_and_structured() {
     let output = Command::new(env!("CARGO_BIN_EXE_zam"))
         .args(["run", "--json"])
         .arg(&path)
+        .env("ZAMAK_LANG", "en")
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -261,6 +265,7 @@ fn json_diagnostics_are_one_line_and_structured() {
     let output = Command::new(env!("CARGO_BIN_EXE_zam"))
         .args(["check", "--json", "--json"])
         .arg(&path)
+        .env("ZAMAK_LANG", "en")
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -762,6 +767,7 @@ fn python_habits_get_the_zamak_spelling() {
         let output = Command::new(env!("CARGO_BIN_EXE_zam"))
             .arg("check")
             .arg(&path)
+            .env("ZAMAK_LANG", "en")
             .output()
             .unwrap();
         let stderr = String::from_utf8_lossy(&output.stderr);

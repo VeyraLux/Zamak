@@ -34,6 +34,7 @@ impl Sandbox {
             })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .env("ZAMAK_LANG", "en")
             .spawn()
             .unwrap();
         if let Some(input) = input {
@@ -132,6 +133,7 @@ fn arguments_survive_quoting_and_unicode() {
     assert_eq!(stdout(&sandbox.run(echo, NONE, None)), "0\n");
     let invalid = Command::new(env!("CARGO_BIN_EXE_zam"))
         .args(["check", "x.zm", "--", "a"])
+        .env("ZAMAK_LANG", "en")
         .output()
         .unwrap();
     failure(&invalid, "only zam run accepts program arguments");
@@ -278,6 +280,7 @@ fn time_and_random() {
         .arg("run")
         .arg(&project)
         .env("ZAMAK_CACHE_DIR", sandbox.path("cache"))
+        .env("ZAMAK_LANG", "en")
         .output()
         .unwrap();
     let single = "use std/random\n\nfn main():\n    random.seed(9)\n    for i in 0..3:\n        println(random.randint(1, 1000000))\n";

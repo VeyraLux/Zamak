@@ -9,6 +9,7 @@ fn borrowed_byte_length() {
         Command::new(env!("CARGO_BIN_EXE_zam"))
             .arg(command)
             .arg(&path)
+            .env("ZAMAK_LANG", "en")
             .output()
             .unwrap()
     };

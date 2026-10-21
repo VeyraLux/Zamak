@@ -47,6 +47,7 @@ fn md2html_converts_the_sample_document() {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .env("ZAMAK_LANG", "en")
             .spawn()
             .unwrap();
         child.stdin.take().unwrap().write_all(input).unwrap();

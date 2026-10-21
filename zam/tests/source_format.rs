@@ -4,6 +4,7 @@ fn format(root: &Path) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_zam"))
         .arg("fmt")
         .arg(root)
+        .env("ZAMAK_LANG", "en")
         .output()
         .unwrap()
 }

@@ -10,6 +10,7 @@ fn ownership_borrows_and_native_execution() {
             .arg(command)
             .arg(&file)
             .env("ZAMAK_CACHE_DIR", root.join("cache"))
+            .env("ZAMAK_LANG", "en")
             .output()
             .unwrap()
     };

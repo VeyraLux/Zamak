@@ -18,6 +18,7 @@ fn invoke(root: &Path, cache: &Path, command: &str) -> Output {
         .args([command])
         .arg(root)
         .env("ZAMAK_CACHE_DIR", cache)
+        .env("ZAMAK_LANG", "en")
         .output()
         .unwrap()
 }
@@ -256,6 +257,7 @@ fn project_cache_execution_and_failures() {
                 .env("ZAMAK_CACHE_DIR", &concurrent_cache)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
+                .env("ZAMAK_LANG", "en")
                 .spawn()
                 .unwrap(),
         );

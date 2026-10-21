@@ -156,6 +156,7 @@ fn global_numeric_builtins_exit_and_env() {
             Some(value) => command.env("ZAM_DEMO_HOME", value),
             None => command.env_remove("ZAM_DEMO_HOME"),
         };
+        command.env("ZAMAK_LANG", "en");
         command.output().unwrap()
     };
     let output = run(Some("/srv/中文"));
@@ -254,6 +255,7 @@ fn constants_fold_and_inline() {
             .arg("run")
             .arg(&project)
             .env("ZAMAK_CACHE_DIR", case.path("cache"))
+            .env("ZAMAK_LANG", "en")
             .output()
             .unwrap()
     };
@@ -347,6 +349,7 @@ fn tuples_and_multiple_returns() {
         .arg("run")
         .arg(&project)
         .env("ZAMAK_CACHE_DIR", case.path("cache"))
+        .env("ZAMAK_LANG", "en")
         .output()
         .unwrap();
     assert_eq!(stdout(&output), "7=seven\n7 seven\n7\n12\n");
@@ -411,6 +414,7 @@ fn generic_functions() {
             .arg("run")
             .arg(&project)
             .env("ZAMAK_CACHE_DIR", case.path("cache"))
+            .env("ZAMAK_LANG", "en")
             .output()
             .unwrap()
     };
@@ -465,6 +469,7 @@ fn generic_structs_enums_and_option() {
         .arg("run")
         .arg(&project)
         .env("ZAMAK_CACHE_DIR", case.path("cache"))
+        .env("ZAMAK_LANG", "en")
         .output()
         .unwrap();
     assert_eq!(stdout(&output), "x\n2\nOption.Some(1)\n");
@@ -535,6 +540,7 @@ fn function_values_and_closures() {
         .arg("run")
         .arg(&project)
         .env("ZAMAK_CACHE_DIR", case.path("cache"))
+        .env("ZAMAK_LANG", "en")
         .output()
         .unwrap();
     assert_eq!(stdout(&output), "14\n60\n");

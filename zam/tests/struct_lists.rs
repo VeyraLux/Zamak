@@ -79,6 +79,7 @@ fn struct_lists_work_across_modules() {
         .arg("run")
         .arg(&root)
         .env("ZAMAK_CACHE_DIR", case.path("cache"))
+        .env("ZAMAK_LANG", "en")
         .output()
         .unwrap();
     assert_eq!(stdout(&output), "11\n2\n");
@@ -231,6 +232,7 @@ fn struct_and_enum_methods() {
             .arg("run")
             .arg(&project)
             .env("ZAMAK_CACHE_DIR", case.path("cache"))
+            .env("ZAMAK_LANG", "en")
             .output()
             .unwrap()
     };

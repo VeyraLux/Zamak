@@ -193,6 +193,8 @@ fn custom_error_types() {
             .arg("run")
             .arg(&file)
             .env("ZAMAK_CACHE_DIR", dir.join("cache"))
+            // 断言英文诊断原文；终端显示跟随 ZAMAK_LANG。
+            .env("ZAMAK_LANG", "en")
             .output()
             .unwrap()
     };

@@ -28,6 +28,8 @@ impl Case {
             .arg("run")
             .arg(file)
             .env("ZAMAK_CACHE_DIR", self.root.join("cache"))
+            // 用例断言的是英文报错原文；终端显示跟随 ZAMAK_LANG，中文机器上会是译文。
+            .env("ZAMAK_LANG", "en")
             .output()
             .unwrap()
     }
@@ -43,6 +45,7 @@ impl Case {
             .arg("run")
             .arg(file)
             .env("ZAMAK_CACHE_DIR", self.root.join("cache"))
+            .env("ZAMAK_LANG", "en")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

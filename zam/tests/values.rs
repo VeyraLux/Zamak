@@ -67,6 +67,7 @@ fn constant_divisors_preserve_signed_arithmetic() {
         .arg("run")
         .arg(&file)
         .env("ZAMAK_CACHE_DIR", root.join("cache"))
+        .env("ZAMAK_LANG", "en")
         .output()
         .unwrap();
     assert!(
@@ -115,6 +116,7 @@ fn variable_divisors_preserve_width_and_sign_boundaries() {
         .arg("run")
         .arg(&file)
         .env("ZAMAK_CACHE_DIR", root.join("cache"))
+        .env("ZAMAK_LANG", "en")
         .output()
         .unwrap();
     assert!(
@@ -136,6 +138,7 @@ fn scalar_values_and_checked_arithmetic() {
             .arg(command)
             .arg(&file)
             .env("ZAMAK_CACHE_DIR", root.join("cache"))
+            .env("ZAMAK_LANG", "en")
             .output()
             .unwrap()
     };

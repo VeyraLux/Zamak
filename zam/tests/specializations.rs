@@ -84,6 +84,7 @@ fn run_and_dump(case: &Case, source: &str) -> (std::process::Output, String) {
         .arg(&file)
         .env("ZAMAK_CACHE_DIR", case.path("cache"))
         .env("ZAMAK_DUMP_C", &dump)
+        .env("ZAMAK_LANG", "en")
         .output()
         .unwrap();
     // 命中缓存时不会重新生成 C；每次用新的缓存目录保证能取到。

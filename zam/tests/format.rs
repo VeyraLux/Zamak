@@ -7,6 +7,7 @@ fn string_interpolation_reads_without_moving() {
         Command::new(env!("CARGO_BIN_EXE_zam"))
             .arg(command)
             .arg(&path)
+            .env("ZAMAK_LANG", "en")
             .output()
             .unwrap()
     };
@@ -153,6 +154,7 @@ fn format_widths_count_characters_and_zero_pad_after_the_sign() {
         .arg("run")
         .arg(&file)
         .env("ZAMAK_CACHE_DIR", root.join("cache"))
+        .env("ZAMAK_LANG", "en")
         .output()
         .unwrap();
     assert!(

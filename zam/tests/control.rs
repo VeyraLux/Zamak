@@ -76,6 +76,8 @@ fn control_flow_and_path_ownership() {
             .arg(command)
             .arg(&file)
             .env("ZAMAK_CACHE_DIR", root.join("cache"))
+            // 断言运行时报错原文；中文机器上 stderr 默认是译文。
+            .env("ZAMAK_LANG", "en")
             .output()
             .unwrap()
     };

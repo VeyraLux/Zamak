@@ -27,6 +27,7 @@ fn missing_compilers_explain_what_to_install() {
     if cfg!(windows) {
         command.env("ProgramFiles(x86)", &empty);
     }
+    command.env("ZAMAK_LANG", "en");
     let output = command.output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success(), "{stderr}");
@@ -54,6 +55,7 @@ fn windows_falls_back_to_gcc_without_msvc() {
         .env("ZAMAK_CACHE_DIR", root.join("cache"))
         .env_remove("CC")
         .env("ProgramFiles(x86)", root.join("no-visual-studio"))
+        .env("ZAMAK_LANG", "en")
         .output()
         .unwrap();
     assert!(

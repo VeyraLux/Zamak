@@ -34,6 +34,7 @@ fn run_with(case: &Case, name: &str, source: &str, args: &[&str], input: &[u8]) 
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .env("ZAMAK_LANG", "en")
         .spawn()
         .unwrap();
     child.stdin.take().unwrap().write_all(input).unwrap();
