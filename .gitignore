@@ -10,19 +10,34 @@ book/site/
 book/*/theme/
 book/*/src/assets/
 
+# 部署工具的本地缓存：含 Cloudflare 账号信息，不属于仓库内容
+.wrangler/
+**/.wrangler/
+
 # 内部设计与开发文档：只在本地维护，不进公开仓库
 DESIGN.md
 MIGRATION.md
 NAMING.md
 ROADMAP.md
 SYNTAX.md
+POLISH_PLAN.md
+
+# 发布与宣传材料：本地留档，不入库
+promo/
 
 # 本地 AI 助手与编辑器的工作目录：不属于仓库内容，也不该出现在使用者的检出里
+# .agents/skills/zamak/SKILL.md 是例外，它随仓库发布，供 AI 助手直接读取
 .claude/
 .cursor/
 .idea/
 .vscode/
 *.code-workspace
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/zamak/
+.agents/skills/zamak/*
+!.agents/skills/zamak/SKILL.md
 
 # Rust 构建产物
 target/
@@ -37,6 +52,8 @@ target/
 *.log
 __pycache__/
 *.pyc
+*~
+*.swp
 
 # 会话恢复材料（本地上下文，不属于仓库内容）
 _session-restore/
