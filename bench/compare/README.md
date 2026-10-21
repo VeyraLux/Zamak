@@ -16,34 +16,43 @@ This benchmark runs the same seven programs in Zamak, C, Rust, Go, Java, Node.js
 - **Fairness notes**: Rust and Go wrap on integer overflow in these builds, and C doesn't check it; Zamak checks overflow and bounds by default. Zamak's range analysis removes checks it can prove redundant, and its 32-bit division fast path makes `primes` faster than the plain C version. One Zamak program opts out: the spectral-norm function `a(i, j)` is marked `@wrapping`, which turns off overflow checks in that function only (bounds stay checked). Without it, spectral-norm takes about 375 ms, about twice as long as C.
 
 ```sh
-python bench/compare/run.py            # Windows only; writes results/compare-<time>/results.json
-python bench/compare/chart.py results/compare-<time>/results.json   # writes docs/compare-*.svg
+# 全部语言、全部程序，写进 results/compare-<time>/results.json
+python bench/compare/run.py
+
+# 只跑两项对照，几分钟就能自己验证
+python bench/compare/run.py --languages zamak,c,c-unroll --tasks binarytrees
+python bench/compare/run.py --languages c,c-arena --tasks binarytrees
+
+# 出图
+python bench/compare/chart.py results/compare-<time>/results.json
 ```
+
+Every number in this file can be reproduced with those commands. `--languages` and `--tasks` take comma-separated names; `run.py --help` lists the accepted values. A single-task comparison finishes in a couple of minutes, so there is no need to trust the tables: run the two control commands above and read `run_s` from the JSON.
+
+The programs themselves are in [programs/](programs), one file per language per task. `programs/c/binarytrees_arena.c` is the arena variant used by `c-arena`; it is a separate file rather than a flag so the diff against `binarytrees.c` is readable.
 
 ## Results (2026-10-21)
 
-Windows 10, zam 0.1.1 (GCC back end), GCC 16.1.0, rustc 1.99.0, Go 1.26.4, OpenJDK 11.0.28, Node.js 26.3.0, Python 3.11.9. Every program now reports its own compute time, and the two C controls ran for the first time.
+Windows 10, zam 0.1.1 (GCC back end), GCC 16.1.0, rustc 1.99.0, Go 1.26.4, OpenJDK 11.0.28, Node.js 26.3.0, Python 3.11.9. Every program now reports its own compute time, and both C controls ran in the same batch as everything else.
 
-| Measurement | Zamak | C | C `-funroll-loops` | Rust | Go | Java | Node.js | Python |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| n-body | 169 ms | 161 ms | 198 ms | 93 ms | 204 ms | 362 ms | 347 ms | 16.40 s |
-| spectral-norm | 177 ms | 179 ms | 225 ms | 200 ms | 307 ms | 668 ms | 472 ms | 43.15 s |
-| fannkuch-redux | 194 ms | 192 ms | 219 ms | 205 ms | 213 ms | 403 ms | 337 ms | 11.84 s |
-| binary-trees | 265 ms | 997 ms | 903 ms | 1.13 s | 516 ms | 419 ms | 440 ms | 2.11 s |
-| primes | 263 ms | 607 ms | 679 ms | 234 ms | 713 ms | 881 ms | 361 ms | 10.13 s |
-| word frequency | 124 ms | 107 ms | 150 ms | 132 ms | 181 ms | 739 ms | 912 ms | 766 ms |
-| n-body compute time | 163 ms | 158 ms | 194 ms | — | 183 ms | 192 ms | 248 ms | 16.32 s |
-| binary-trees compute time | 250 ms | 945 ms | 880 ms | — | — | — | — | — |
+| Measurement | Zamak | C | C `-funroll-loops` | C arena | Rust | Go | Java | Node.js | Python |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| n-body | 208 ms | 201 ms | 211 ms | — | 118 ms | 254 ms | 404 ms | 418 ms | 18.11 s |
+| spectral-norm | 207 ms | 201 ms | 220 ms | — | 217 ms | 286 ms | 732 ms | 510 ms | 47.91 s |
+| fannkuch-redux | 209 ms | 213 ms | 229 ms | — | 221 ms | 257 ms | 453 ms | 371 ms | 13.96 s |
+| binary-trees | 322 ms | 1.04 s | 1.07 s | **63 ms** | 1.13 s | 584 ms | 455 ms | 426 ms | 2.41 s |
+| primes | 291 ms | 628 ms | 681 ms | — | 239 ms | 639 ms | 946 ms | 379 ms | 11.34 s |
+| word frequency | 158 ms | 165 ms | 168 ms | — | 191 ms | 213 ms | 997 ms | 1.04 s | 819 ms |
 
-The compute-time rows are the `inner_s` numbers, which exclude process startup. Only Zamak and C report them so far; the rest of the programs have no inner clock yet.
+A dash means that control has no variant for that program. `c-arena` is only written for `binarytrees`, which is the one program where the allocation strategy is the question.
 
 What the controls say:
 
-- **`-funroll-loops` does not explain the gap.** On `binarytrees`, C goes from 997 ms to 903 ms with the flag, while Zamak is at 265 ms. On the other five programs the flag makes C *slower* (198 ms vs 161 ms on `nbody`, 225 vs 179 on `spectralnorm`). The flag is not a hidden advantage; if anything it costs C time on this machine.
-- **Allocation strategy explains most of `binarytrees`.** `c-arena` is the same tree work with nodes taken from one contiguous block instead of a `malloc` per node. It runs in **46 ms** against Zamak's 265 ms — about 5.8 times faster than Zamak, and 22 times faster than the `malloc` version of C. So Zamak's 3.8x lead over C on this program is not the compiler generating better code; it is that the Zamak program reuses buffers while the C reference calls `malloc` per node. A C program using an arena wins outright.
-- **What remains is a fair comparison.** On the five programs other than `binarytrees`, Zamak and C land within a few percent of each other with identical build flags apart from the one above. The honest summary is "same range as C", not "faster than C".
+- **`-funroll-loops` does not explain anything.** On `binarytrees` the flag leaves C where it was (1.04 s to 1.07 s) while Zamak is at 322 ms. On the other five programs it makes C slightly *slower*: 211 ms vs 201 on `n-body`, 220 vs 201 on `spectralnorm`, 229 vs 213 on `fannkuch`, 681 vs 628 on `primes`, 168 vs 165 on `wordfreq`. The flag is not a hidden advantage; on this machine it costs C time.
+- **Allocation strategy is the whole story on `binarytrees`.** `c-arena` does the same tree work with nodes taken from one contiguous block instead of a `malloc` per node. It finishes in **63 ms** against Zamak's 322 ms — 5.1 times faster than Zamak, and 16.5 times faster than the `malloc` version of C. So Zamak's 3.2x lead over C there is not the compiler emitting better code: the Zamak program reuses small list buffers while the C reference calls `malloc` once per node. A C program with an arena wins outright, and by a wide margin.
+- **What is left is the fair comparison.** On the five programs other than `binarytrees`, Zamak and C are within a few percent of each other — sometimes ahead, sometimes behind. The honest summary is "same range as C", not "faster than C". The earlier README said "3 times faster than C" without that caveat; that claim is withdrawn.
 
-Against the 2026-10-18 run, this machine was faster across the board (most rows 10 to 30 percent lower), and not by the same factor per program, so the two tables are read as one picture rather than compared row by row. `primes` is the exception in the other direction: it went up for every language, which looks like machine state rather than a code change.
+Two things make the tables readable only as one picture, not row by row. Run-to-run spread is real: the 2026-10-18 run had Zamak at 265 ms on `binarytrees`, this one 322 ms, with the C and Rust numbers moving too. And machine state moves every language at once — `primes` came out 10 to 30 percent slower for all seven languages in this batch than in the previous one. Differences of a few percent between two languages in a single run are not a ranking.
 
 ## Results (2026-10-18)
 
