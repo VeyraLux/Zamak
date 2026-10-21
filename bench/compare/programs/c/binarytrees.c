@@ -1,5 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
+
+static double now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
+}
 
 typedef struct Node { struct Node *left, *right; } Node;
 
@@ -22,6 +29,7 @@ static void release(Node *node) {
 int main(int argc, char **argv) {
     int n = atoi(argv[1]);
     int max_depth = n > 6 ? n : 6, stretch = max_depth + 1;
+    double t0 = now_ms();
     Node *tree = make(stretch);
     printf("stretch tree of depth %d\t check: %ld\n", stretch, check(tree));
     release(tree);
@@ -36,6 +44,8 @@ int main(int argc, char **argv) {
         printf("%ld\t trees of depth %d\t check: %ld\n", iterations, depth, total);
     }
     printf("long lived tree of depth %d\t check: %ld\n", max_depth, check(long_lived));
+    double ms = now_ms() - t0;
+    fprintf(stderr, "TIME %.3f\n", ms);
     release(long_lived);
     return 0;
 }

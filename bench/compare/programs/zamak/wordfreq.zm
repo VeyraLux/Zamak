@@ -1,13 +1,17 @@
 # 统计标准输入里的词频：输出不同的词数与最常见的词出现的次数。
 use std/io
+use std/time
+use std/fmt
 
 fn main() -> !string:
     let text = io.read_all()?
+    let t0 = time.monotonic()
     let mut counts: {string: i64} = {}
     for word in text.words():
         counts[word] = counts.get(word, 0) + 1
     let mut best = 0
     for word, n in counts:
         if n > best: best = n
+    io.eprintln("TIME {fmt.fixed((time.monotonic() - t0) * 1000.0, 3)}")
     print(len(counts))
     print(best)

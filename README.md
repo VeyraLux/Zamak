@@ -186,7 +186,8 @@ The same six programs, run in seven languages on one machine:
 | Standalone native executable | ✓ | ✓ | ✓ | ✓ | ✗ |
 | No lifetime annotations | ✓ | ✓ | ✗ | ✓ | ✓ |
 
-Zamak stays in C's range on every compute-bound program while checking overflow and bounds by default. It is the fastest of the seven on binary-trees and word frequency, within 1% of C on spectral-norm, and third on n-body. For the method, full results, and the scripts, see [bench/compare](bench/compare/README.md).
+Zamak stays in C's range on the compute-bound programs while checking overflow and bounds by default: within a few percent either way on n-body, spectral-norm, fannkuch-redux, primes, and word frequency. On binary-trees it is about 3.8 times faster than the C reference, but that gap comes from the benchmark programs rather than the compiler: the C version allocates one node at a time while the Zamak version reuses buffers. A C build with an arena allocator finishes the same work in 46 ms against Zamak's 265 ms, so the row measures allocation strategy, not code generation. The flags are matched too: giving C the same `-funroll-loops` Zamak's back end adds does not close the gap, and makes C slower on the other five programs. For the method, both controls, and the scripts, see [bench/compare](bench/compare/README.md).
+
 ## Language tour
 
 One program, using structs, error values, lists, borrows, and interpolation:

@@ -1,5 +1,8 @@
 # fannkuch-redux：遍历 n 个数的全部排列，数出“翻煎饼”的次数（The Computer Language Benchmarks Game）。
 use std/env
+use std/time
+use std/io
+use std/fmt
 
 fn main() -> !string:
     let n = int(env.arg(0)?)?
@@ -14,6 +17,7 @@ fn main() -> !string:
     let mut checksum = 0
     let mut permutation = 0
     let mut r = n
+    let t0 = time.monotonic()
     while True:
         while r != 1:
             count[r - 1] = r
@@ -37,6 +41,7 @@ fn main() -> !string:
         # 下一个排列。
         while True:
             if r == n:
+                io.eprintln("TIME {fmt.fixed((time.monotonic() - t0) * 1000.0, 3)}")
                 print(checksum)
                 print(f"Pfannkuchen({n}) = {max_flips}")
                 return

@@ -3,6 +3,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+
+static double now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
+}
 
 typedef struct { const char *word; size_t len; long count; } Entry;
 static Entry *table;
@@ -34,6 +41,7 @@ static void insert(const char *p, size_t n, long add) {
 }
 
 int main(void) {
+    double t0;
     size_t size = 0, room = 1 << 20;
     char *text = malloc(room);
     size_t got;
@@ -41,6 +49,7 @@ int main(void) {
         size += got;
         if (size == room) { room *= 2; text = realloc(text, room); }
     }
+    t0 = now_ms();
     table = calloc(cap, sizeof(Entry));
     for (size_t i = 0; i < size;) {
         while (i < size && (text[i] == ' ' || text[i] == '\n' || text[i] == '\r' || text[i] == '\t')) i++;
@@ -50,6 +59,8 @@ int main(void) {
     }
     long best = 0;
     for (size_t i = 0; i < cap; i++) if (table[i].word && table[i].count > best) best = table[i].count;
+    double ms = now_ms() - t0;
+    fprintf(stderr, "TIME %.3f\n", ms);
     printf("%zu\n%ld\n", used, best);
     return 0;
 }

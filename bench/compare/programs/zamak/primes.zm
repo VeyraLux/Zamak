@@ -1,5 +1,9 @@
 # 试除法数出 100 万以内的质数。
+use std/time
+use std/io
+use std/fmt
 fn main():
+    let t0 = time.monotonic()
     let mut count = 0
     for n in range(2, 1_000_000):
         let mut prime = True
@@ -10,4 +14,5 @@ fn main():
                 break
             d += 1
         if prime: count += 1
+    io.eprintln("TIME {fmt.fixed((time.monotonic() - t0) * 1000.0, 3)}")
     print(count)

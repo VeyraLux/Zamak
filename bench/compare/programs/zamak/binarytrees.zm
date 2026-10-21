@@ -1,5 +1,8 @@
 # binary-trees：反复建立、遍历、释放大量二叉树（The Computer Language Benchmarks Game）。
 use std/env
+use std/time
+use std/io
+use std/fmt
 
 struct Node:
     children: [Node]
@@ -18,6 +21,7 @@ fn main() -> !string:
     let n = int(env.arg(0)?)?
     let max_depth = max(6, n)
     let stretch = max_depth + 1
+    let t0 = time.monotonic()
     print(f"stretch tree of depth {stretch}\t check: {check(make(stretch))}")
     let long_lived = make(max_depth)
     let mut depth = 4
@@ -28,4 +32,5 @@ fn main() -> !string:
             total += check(make(depth))
         print(f"{iterations}\t trees of depth {depth}\t check: {total}")
         depth += 2
+    io.eprintln("TIME {fmt.fixed((time.monotonic() - t0) * 1000.0, 3)}")
     print(f"long lived tree of depth {max_depth}\t check: {check(long_lived)}")

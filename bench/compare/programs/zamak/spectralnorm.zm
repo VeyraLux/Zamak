@@ -2,6 +2,8 @@
 use std/env
 use std/fmt
 use std/math
+use std/time
+use std/io
 
 # 下标不超过 n，整数运算不会溢出：@wrapping 去掉这个热点函数里的溢出检查。
 @wrapping
@@ -34,6 +36,7 @@ fn main() -> !string:
         u.push(1.0)
         v.push(0.0)
         tmp.push(0.0)
+    let t0 = time.monotonic()
     for _ in range(10):
         at_times(u, &mut v, &mut tmp)
         at_times(v, &mut u, &mut tmp)
@@ -42,4 +45,5 @@ fn main() -> !string:
     for i in range(n):
         vbv += u[i] * v[i]
         vv += v[i] * v[i]
+    io.eprintln("TIME {fmt.fixed((time.monotonic() - t0) * 1000.0, 3)}")
     print(fmt.fixed(math.sqrt(vbv / vv), 9))

@@ -184,7 +184,7 @@ Zamak 想把 C、Rust、Go 与 Python 各自最擅长的部分融合在一起。
 | 独立的原生可执行文件 | ✓ | ✓ | ✓ | ✓ | ✗ |
 | 不写生命周期标注 | ✓ | ✓ | ✗ | ✓ | ✓ |
 
-在这些计算密集的程序上，Zamak 都与 C 处在同一档，同时默认检查溢出与越界。binary-trees 和词频统计在七种语言里最快；spectral-norm 与 C 相差 1% 以内，素数统计与 Rust 相差 2% 以内；n-body 排在第三（Rust 第一、Go 第二），与 C 处于相近范围，具体先后会随测试批次变化。唯一的例外是 spectral-norm 的热点函数用了 `@wrapping`，只在这一个函数里关闭溢出检查。测试方法、完整结果与复现步骤见 [bench/compare](bench/compare/README.md)。
+在这些计算密集的程序上，Zamak 与 C 处在同一档，同时默认检查溢出与越界：n-body、spectral-norm、fannkuch-redux、素数统计和词频统计互有高下，差距都在几个百分点内。binary-trees 比 C 参考实现快约 3.8 倍，但这个差距来自两个 benchmark 程序本身的写法，不来自编译器：C 版本逐个节点 `malloc`，Zamak 版本复用了缓冲区。同样用 arena 分配的 C 版本只要 46 ms，而 Zamak 是 265 ms，所以这一项量的是分配策略，不是代码生成。编译参数也已对齐：给 C 加上 Zamak 后端同样使用的 `-funroll-loops` 并不能缩小差距，反而让它在其余五项上变慢。唯一的例外是 spectral-norm 的热点函数用了 `@wrapping`，只在这一个函数里关闭溢出检查。测试方法、两组对照与复现步骤见 [bench/compare](bench/compare/README.md)。
 
 ## 编辑器与 AI 工具
 

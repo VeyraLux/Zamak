@@ -126,6 +126,20 @@ def build(language, task, work, zam):
     if language == 'c':
         seconds, _ = timed(['gcc', '-O2', '-o', str(exe), str(PROGRAMS / 'c' / f'{task}.c')])
         return seconds, exe, [str(exe)]
+    # 对照口径：C 也用 -O2 -funroll-loops，与 Zamak 后端实际加的选项一致。
+    # 只回应用 questions「Zamak 领先是不是只靠这个 flag」，不参与主排名。
+    if language == 'c-unroll':
+        seconds, _ = timed(['gcc', '-O2', '-funroll-loops', '-o', str(exe),
+                            str(PROGRAMS / 'c' / f'{task}.c')])
+        return seconds, exe, [str(exe)]
+    # 对照口径：binary-trees 用 arena 分配，与 Zamak 的小缓冲复用策略对齐，
+    # 用来把「代码生成快」和「分配策略省」分开。其他任务没有对应实现。
+    if language == 'c-arena':
+        source = PROGRAMS / 'c' / f'{task}_arena.c'
+        if not source.exists():
+            raise Skip(f'{language}: no arena variant for {task}')
+        seconds, _ = timed(['gcc', '-O2', '-o', str(exe), str(source)])
+        return seconds, exe, [str(exe)]
     if language == 'rust':
         seconds, _ = timed(['rustc', '-C', 'opt-level=3', '-o', str(exe), str(PROGRAMS / 'rust' / f'{task}.rs')])
         return seconds, exe, [str(exe)]
