@@ -61,4 +61,3 @@ Zamak 由 rayL-K 创作，在 VeyraLux 旗下开发，以 MIT 或 Apache 2.0 许
 ## 获取帮助
 
 - 在 [GitHub](https://github.com/VeyraLux/Zamak/issues) 上报告问题或提问。
-- 发现书里的错误，可以选择任意页面顶部的编辑图标直接修改。
