@@ -9,6 +9,8 @@ dist/
 book/site/
 book/*/theme/
 book/*/src/assets/
+# mdbook 直接在 book/<lang>/ 下构建时的默认输出目录
+book/*/book/
 
 # 部署工具的本地缓存：含 Cloudflare 账号信息，不属于仓库内容
 .wrangler/

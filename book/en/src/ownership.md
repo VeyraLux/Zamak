@@ -45,6 +45,8 @@ error[ZM301]: use after move: name
 
 Moving is cheap: it copies a pointer, not the text. And because only one variable owns the text, Zamak knows exactly when to free it.
 
+The pointer is copied, but you never get two variables sharing the same text: the old variable is dead after the move, and using it is a compile error, as the example above shows. So changing one variable and watching another change cannot happen here, because the other one is no longer available. When you really do want two copies you can edit independently, use `copy`, below.
+
 ## Passing to a function can move too
 
 A parameter whose type has no `&` takes ownership:
