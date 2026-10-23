@@ -2963,6 +2963,14 @@ Sleep((unsigned long)(seconds * 1000.0 + 0.5));
         body: r#"return zam_time_text(p0, 0, "Z");"#,
     },
     Builtin {
+        // 时间 t 所在时刻本地时区比 UTC 快多少秒（东八区是 28800），std/datetime 用它算本地时间。
+        name: "std/time:local_offset",
+        params: &[Type::Float],
+        result: Type::Int,
+        fallible: false,
+        body: "zam_time_check(p0); return zam_local_offset(p0);",
+    },
+    Builtin {
         name: "std/time:iso_local",
         params: &[Type::Float],
         result: Type::Owned,
@@ -4014,6 +4022,129 @@ if (!p1->len) return 0;
 if (p1->len > p0->len) return -1;
 for (i = 0; i + p1->len <= p0->len; i++) if (memcmp(p0->data + i, p1->data, p1->len) == 0) return (int64_t)zam_char_of(p0, i);
 return -1;"#,
+    },
+    // 最后一次出现的位置（按字符算），找不到是 -1。与 Python 的 str.rfind 相同。
+    Builtin {
+        name: "std/string:rfind",
+        params: &[Type::Shared, Type::Shared],
+        result: Type::Int,
+        fallible: false,
+        body: r#"size_t i;
+if (!p1->len) return (int64_t)zam_chars(p0);
+if (p1->len > p0->len) return -1;
+for (i = p0->len - p1->len + 1; i-- > 0;) if (memcmp(p0->data + i, p1->data, p1->len) == 0) return (int64_t)zam_char_of(p0, i);
+return -1;"#,
+    },
+    // 去掉开头的 prefix（没有就原样复制）。
+    Builtin {
+        name: "std/string:removeprefix",
+        params: &[Type::Shared, Type::Shared],
+        result: Type::Owned,
+        fallible: false,
+        body: "if (p1->len <= p0->len && (!p1->len || memcmp(p0->data, p1->data, p1->len) == 0)) return own(p0->data + p1->len, p0->len - p1->len); return copy(p0);",
+    },
+    // 去掉结尾的 suffix（没有就原样复制）。
+    Builtin {
+        name: "std/string:removesuffix",
+        params: &[Type::Shared, Type::Shared],
+        result: Type::Owned,
+        fallible: false,
+        body: "if (p1->len <= p0->len && (!p1->len || memcmp(p0->data + p0->len - p1->len, p1->data, p1->len) == 0)) return own(p0->data, p0->len - p1->len); return copy(p0);",
+    },
+    // 首字母大写，其余小写（ASCII 字母）。
+    Builtin {
+        name: "std/string:capitalize",
+        params: &[Type::Shared],
+        result: Type::Owned,
+        fallible: false,
+        body: r#"S s = copy(p0); size_t i;
+for (i = 0; i < s.len; i++) {
+    unsigned char c = s.data[i];
+    if (i == 0 && c >= 'a' && c <= 'z') s.data[i] = (unsigned char)(c - 32);
+    else if (i > 0 && c >= 'A' && c <= 'Z') s.data[i] = (unsigned char)(c + 32);
+}
+return s;"#,
+    },
+    // 每个词的首字母大写，其余小写（ASCII 字母；字母以外的字符分开词）。
+    Builtin {
+        name: "std/string:title",
+        params: &[Type::Shared],
+        result: Type::Owned,
+        fallible: false,
+        body: r#"S s = copy(p0); size_t i; int inside = 0;
+for (i = 0; i < s.len; i++) {
+    unsigned char c = s.data[i];
+    int letter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+    if (letter && !inside && c >= 'a' && c <= 'z') s.data[i] = (unsigned char)(c - 32);
+    else if (letter && inside && c >= 'A' && c <= 'Z') s.data[i] = (unsigned char)(c + 32);
+    inside = letter;
+}
+return s;"#,
+    },
+    // 居中：两边补空格到 width 个字符；补不匀时与 Python 的 str.center 一样分配。
+    Builtin {
+        name: "std/string:center",
+        params: &[Type::Shared, Type::Int],
+        result: Type::Owned,
+        fallible: false,
+        body: r#"int64_t n = (int64_t)zam_chars(p0), margin, left, i;
+S s;
+if (p1 <= n) return copy(p0);
+margin = p1 - n;
+left = margin / 2 + (margin & p1 & 1);
+s.len = p0->len + (size_t)margin; s.chars = 0;
+s.data = (unsigned char *)malloc(s.len);
+if (!s.data) { zam_panic_one("allocation failed"); exit(1); }
+for (i = 0; i < left; i++) s.data[i] = ' ';
+if (p0->len) memcpy(s.data + left, p0->data, p0->len);
+for (i = left + (int64_t)p0->len; i < (int64_t)s.len; i++) s.data[i] = ' ';
+return s;"#,
+    },
+    // 左边补 0 到 width 个字符，正负号留在最前面（"-42".zfill(5) 是 "-0042"）。
+    Builtin {
+        name: "std/string:zfill",
+        params: &[Type::Shared, Type::Int],
+        result: Type::Owned,
+        fallible: false,
+        body: r#"int64_t n = (int64_t)zam_chars(p0), fill, i;
+size_t sign;
+S s;
+if (p1 <= n) return copy(p0);
+fill = p1 - n;
+sign = p0->len && (p0->data[0] == '-' || p0->data[0] == '+') ? 1 : 0;
+s.len = p0->len + (size_t)fill; s.chars = 0;
+s.data = (unsigned char *)malloc(s.len);
+if (!s.data) { zam_panic_one("allocation failed"); exit(1); }
+if (sign) s.data[0] = p0->data[0];
+for (i = 0; i < fill; i++) s.data[sign + (size_t)i] = '0';
+memcpy(s.data + sign + (size_t)fill, p0->data + sign, p0->len - sign);
+return s;"#,
+    },
+    // 至少有一个字母，并且字母都是大写（ASCII）。
+    Builtin {
+        name: "std/string:isupper",
+        params: &[Type::Shared],
+        result: Type::Bool,
+        fallible: false,
+        body: r#"size_t i; int cased = 0;
+for (i = 0; i < p0->len; i++) {
+    if (p0->data[i] >= 'a' && p0->data[i] <= 'z') return 0;
+    if (p0->data[i] >= 'A' && p0->data[i] <= 'Z') cased = 1;
+}
+return cased;"#,
+    },
+    // 至少有一个字母，并且字母都是小写（ASCII）。
+    Builtin {
+        name: "std/string:islower",
+        params: &[Type::Shared],
+        result: Type::Bool,
+        fallible: false,
+        body: r#"size_t i; int cased = 0;
+for (i = 0; i < p0->len; i++) {
+    if (p0->data[i] >= 'A' && p0->data[i] <= 'Z') return 0;
+    if (p0->data[i] >= 'a' && p0->data[i] <= 'z') cased = 1;
+}
+return cased;"#,
     },
     Builtin {
         name: "std/string:byte_find",
@@ -5289,6 +5420,12 @@ impl<'a> Generator<'a> {
             Expr::Tuple(items) => Type::Record(linked_tuple(
                 items.iter().map(|item| self.ty(item)).collect(),
             )),
+            Expr::Chain(receiver, method, _) if crate::compiler::call_field(method).is_some() => {
+                let field = crate::compiler::call_field(method).expect("guarded");
+                field_path(&self.module.structs, self.ty(receiver), field)
+                    .expect("checked field path")
+                    .1
+            }
             Expr::Chain(receiver, method, _) => {
                 method_signature(self.ty(receiver), method)
                     .expect("checked method")
@@ -5443,6 +5580,15 @@ impl<'a> Generator<'a> {
     }
     /// 按目标类型生成值：列表字面量只有知道目标类型才能和定长数组区分开。
     fn expr_as(&mut self, expr: &Expr, ty: Type) -> String {
+        // 要的是纯数据的值、给的是它的借用（`&Date` 参数）：复制一份，和数字一样。
+        if let (Type::Record(id), Expr::Variable(name)) = (ty, expr) {
+            if by_value(ty)
+                && matches!(self.locals.get(name), Some((_, Type::RecordRef(other, _))) if *other == id)
+            {
+                let pointer = self.locals[name].0.clone();
+                return self.scalar(&format!("*{pointer}"), ty);
+            }
+        }
         // 期望接口值、给的是具体类型：把值移到堆上，配上这个具体类型的虚表。
         if let Type::Record(interface) = ty {
             if self.is_interface(interface) {
@@ -5702,6 +5848,11 @@ impl<'a> Generator<'a> {
                 }
                 local
             }
+            // 字符串字段读出来是副本，结构体里的那份不动。
+            Expr::Field(local, field) if self.ty(expr) == Type::Owned => {
+                let target = self.field(local, field);
+                self.temporary(&format!("copy(&{target})"))
+            }
             Expr::Field(local, field) => self.scalar(&self.field(local, field), self.ty(expr)),
             // 移走结构体、列表、字典；纯数据的结构体与枚举按值复制，原变量不清零（走下面的分支）。
             Expr::Variable(name)
@@ -5742,10 +5893,12 @@ impl<'a> Generator<'a> {
                 let container = self.place_ty(local).container().expect("guarded");
                 let key = self.key(index, container);
                 let pointer = self.pointer(local);
-                self.scalar(
-                    &format!("*{}", self.slot(container, &pointer, &key, index)),
-                    self.ty(expr),
-                )
+                let slot = self.slot(container, &pointer, &key, index);
+                // 字符串元素读出来是副本，列表里的那份不动。
+                if self.ty(expr) == Type::Owned {
+                    return self.temporary(&format!("copy({slot})"));
+                }
+                self.scalar(&format!("*{slot}"), self.ty(expr))
             }
             Expr::BorrowIndex(path, index, field, _) => {
                 let ty = self.ty(expr);
@@ -5776,6 +5929,19 @@ impl<'a> Generator<'a> {
             Expr::Tuple(_) => {
                 let ty = self.ty(expr);
                 self.expr_as(expr, ty)
+            }
+            // 调用结果的字段：结果先放进临时变量（语句结束时释放），字符串字段复制一份。
+            Expr::Chain(receiver, method, _) if crate::compiler::call_field(method).is_some() => {
+                let field = crate::compiler::call_field(method).expect("guarded");
+                let ty = self.ty(receiver);
+                let value = self.expr_as(receiver, ty);
+                let target = format!("{value}{}", self.members(ty, field));
+                let found = self.ty(expr);
+                if found == Type::Owned {
+                    self.temporary(&format!("copy(&{target})"))
+                } else {
+                    self.scalar(&target, found)
+                }
             }
             Expr::Chain(receiver, method, args) => {
                 let ty = self.ty(receiver);
@@ -6520,6 +6686,9 @@ impl<'a> Generator<'a> {
                 method,
                 args,
             ),
+            Expr::Chain(_, method, _) if crate::compiler::call_field(method).is_some() => {
+                return None
+            }
             Expr::Chain(receiver, method, args) => {
                 (Receiver::Temp(receiver), self.ty(receiver), method, args)
             }
@@ -7580,6 +7749,10 @@ pub fn generate_with(
                     let string = format!("std/string:{}", string_alias(method));
                     if module.functions.contains_key(&string) {
                         needed.insert(string);
+                    }
+                    // `s.find(sub, start)` 调用的是 find_from。
+                    if method == "find" && module.functions.contains_key("std/string:find_from") {
+                        needed.insert("std/string:find_from".to_owned());
                     }
                     let bytes = format!("std/bytes:{method}");
                     if module.functions.contains_key(&bytes) {

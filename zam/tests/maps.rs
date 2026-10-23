@@ -165,10 +165,6 @@ fn checker_rejects_map_misuse() {
         ("let m: {string: thing} = {}", "unsupported map value type"),
         ("let m = {\"a\": 1, \"b\": true}", "mismatch"),
         (
-            "let m = {\"a\": \"x\"}\n    let s = m[\"a\"]",
-            "cannot move a string out of m",
-        ),
-        (
             "let m: {string: i64} = {}\n    m[\"a\"] = 1",
             "cannot mutably borrow immutable value m",
         ),

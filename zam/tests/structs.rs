@@ -64,7 +64,6 @@ fn struct_declarations_and_rejections() {
         "let p = Person(\n        name: \"a\",\n        age: true,\n    )",
         "let p = Person(\n        name: \"a\",\n        age: 1,\n        age: 2,\n    )",
         "let p = Person(\n        name: \"a\",\n        age: 1,\n    )\n    let q = p\n    println(p.age)",
-        "let p = Person(\n        name: \"a\",\n        age: 1,\n    )\n    let s = p.name",
     ] {
         fs::write(&path, format!("{declaration}fn main():\n    {body}")).unwrap();
         let output = Command::new(env!("CARGO_BIN_EXE_zam"))
@@ -94,7 +93,6 @@ fn struct_declarations_and_rejections() {
         "let mut p = Person(\n        name: \"a\",\n        age: 1,\n    )\n    p.missing = 2",
         "let mut p = Person(\n        name: \"a\",\n        age: 1,\n    )\n    let q = p\n    p.name = \"b\"",
         "let mut p = Person(\n        name: \"a\",\n        age: 1,\n    )\n    let s = \"b\"\n    p.name = s\n    println(s)",
-        "let mut p = Person(\n        name: \"a\",\n        age: 1,\n    )\n    p.name = p.name",
     ] {
         fs::write(&path, format!("{declaration}fn main():\n    {body}")).unwrap();
         let output = Command::new(env!("CARGO_BIN_EXE_zam"))
@@ -179,7 +177,6 @@ fn struct_declarations_and_rejections() {
         "let mut r = Root(leaf: Leaf(\n            name: \"a\",\n            age: 1,\n        ))\n    r.leaf.age = true",
         "let r = Root(leaf: Leaf(\n            name: \"a\",\n            age: 1,\n        ))\n    println(r.leaf.age.bad)",
         "let r = Root(leaf: Leaf(\n            name: \"a\",\n            age: 1,\n        ))\n    let q = r\n    println(r.leaf.name)",
-        "let r = Root(leaf: Leaf(\n            name: \"a\",\n            age: 1,\n        ))\n    let s = r.leaf.name",
         "let r = Root(leaf: Leaf(\n            name: \"a\",\n            age: 1,\n        ))\n    println(r.leaf.missing)",
     ] {
         fs::write(&path, format!("{nested}fn main():\n    {body}")).unwrap();

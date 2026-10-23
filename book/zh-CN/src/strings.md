@@ -61,7 +61,7 @@ Ada has 2 items, total 7
 Use { and } for literal braces
 ```
 
-插值的表达式里不能有字符串字面量或花括号。需要时先把值绑定到一个名字上。
+插值里可以写任何表达式，包括字符串字面量、切片和调用，与 Python 3.12 相同：`f"{d["key"]} {s[:5]} {s.replace(",", " ")}"`。括号里的冒号属于表达式，只有括号外面的冒号才开始格式说明。
 
 ### 格式说明
 
@@ -194,7 +194,7 @@ true
 ababab
 ```
 
-`find` 返回第一个匹配的字符位置，找不到时返回 `-1`。Python 的方法名都能用：`strip`、`lstrip`、`rstrip`、`startswith`、`endswith`、`isdigit`、`isalpha`、`isspace`、`ljust` 和 `rjust`。
+`find` 返回第一个匹配的字符位置，找不到时返回 `-1`；`s.find(sub, start)` 从第 `start` 个字符开始找，`rfind` 找最后一个匹配。Python 的方法名都能用：`strip`、`lstrip`、`rstrip`、`startswith`、`endswith`、`removeprefix`、`removesuffix`、`capitalize`、`title`、`center`、`zfill`、`isdigit`、`isalpha`、`isspace`、`isupper`、`islower`、`ljust` 和 `rjust`。
 
 ## 切分与连接
 

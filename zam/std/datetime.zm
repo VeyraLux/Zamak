@@ -1,0 +1,318 @@
+# 日期与时间，形状参考 Python 的 datetime：
+#
+#     let d = datetime.date_from_iso("2026-11-01")?
+#     println(d.add_days(30).isoformat())
+#     println(datetime.now().strftime("%Y-%m-%d %H:%M"))
+#
+# Date 与 DateTime 都是普通的值（只有数字），赋值时复制。DateTime 记着它相对 UTC 的偏移（秒），
+# now() 与 from_timestamp(t) 用本地时区，utcnow() 用 UTC。日期按公历算，年份可以是任何整数。
+use std/math
+use std/time
+
+fn day_name(weekday: i64) -> string:
+    let names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    names[weekday]
+
+fn month_name(month: i64) -> string:
+    let names = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+    names[month - 1]
+
+pub struct Date:
+    year: i64
+    month: i64
+    day: i64
+
+    # 1970-01-01 以来的天数（之前的日期是负数）。
+    pub fn to_days(&self) -> i64:
+        days_from_civil(self.year, self.month, self.day)
+
+    # ISO 8601 写法：2026-11-01。
+    pub fn isoformat(&self) -> string:
+        f"{self.year:04}-{self.month:02}-{self.day:02}"
+
+    # 星期几：星期一是 0，星期日是 6（同 Python）。
+    pub fn weekday(&self) -> i64:
+        (self.to_days() + 3) % 7
+
+    # 一年里的第几天，1 月 1 日是 1。
+    pub fn day_of_year(&self) -> i64:
+        self.to_days() - days_from_civil(self.year, 1, 1) + 1
+
+    # 往后（n 为负时往前）数 n 天的日期。
+    pub fn add_days(&self, n: i64) -> Date:
+        date_from_days(self.to_days() + n)
+
+    # 从 other 到这一天相隔几天（这一天在后时是正数），同 Python 的 (a - b).days。
+    pub fn days_since(&self, other: &Date) -> i64:
+        self.to_days() - other.to_days()
+
+    # 按格式写出日期，格式同 DateTime.strftime（时间的部分都是 0）。
+    pub fn strftime(&self, format: &string) -> string:
+        let moment = DateTime(year: self.year, month: self.month, day: self.day, hour: 0, minute: 0, second: 0, microsecond: 0, offset: 0)
+        moment.strftime(format)
+
+pub struct DateTime:
+    year: i64
+    month: i64
+    day: i64
+    hour: i64
+    minute: i64
+    second: i64
+    microsecond: i64
+    # 相对 UTC 的偏移，单位秒：东八区是 28800。
+    offset: i64
+
+    pub fn date(&self) -> Date:
+        Date(year: self.year, month: self.month, day: self.day)
+
+    # 1970-01-01T00:00:00Z 以来的秒数，与 time.time() 相同。
+    pub fn timestamp(&self) -> f64:
+        let seconds = days_from_civil(self.year, self.month, self.day) * 86400 + self.hour * 3600 + self.minute * 60 + self.second - self.offset
+        float(seconds) + float(self.microsecond) / 1000000.0
+
+    # ISO 8601 写法：2026-11-01T08:30:00+08:00；有微秒时写在秒后面。
+    pub fn isoformat(&self) -> string:
+        let fraction = if self.microsecond > 0: f".{self.microsecond:06}" else: ""
+        f"{self.date().isoformat()}T{self.hour:02}:{self.minute:02}:{self.second:02}{fraction}{zone(self.offset, true)}"
+
+    pub fn weekday(&self) -> i64:
+        self.date().weekday()
+
+    # 往后（为负时往前）加上 seconds 秒，偏移不变。
+    pub fn add_seconds(&self, seconds: f64) -> DateTime:
+        moment(self.timestamp() + seconds, self.offset)
+
+    # 从 other 到这一刻过了多少秒。
+    pub fn seconds_since(&self, other: &DateTime) -> f64:
+        self.timestamp() - other.timestamp()
+
+    # 同一时刻在另一个偏移（秒）下的写法；to_utc() 是偏移 0。
+    pub fn with_offset(&self, offset: i64) -> DateTime:
+        moment(self.timestamp(), offset)
+
+    pub fn to_utc(&self) -> DateTime:
+        self.with_offset(0)
+
+    # 按格式写出时间，同 Python 的 strftime：%Y 年、%m 月、%d 日、%H 时、%M 分、%S 秒、%f 微秒、
+    # %y 两位年、%I 十二小时制、%p AM/PM、%j 年内第几天、%a/%A 星期、%b/%B 月份名、%z 偏移、%% 百分号。
+    pub fn strftime(&self, format: &string) -> string:
+        let mut out = ""
+        let mut percent = false
+
+        for c in format.chars():
+            if not percent:
+                if c == "%":
+                    percent = true
+                else:
+                    out += c
+
+                continue
+
+            percent = false
+
+            if c == "Y":
+                out += f"{self.year:04}"
+            elif c == "m":
+                out += f"{self.month:02}"
+            elif c == "d":
+                out += f"{self.day:02}"
+            elif c == "H":
+                out += f"{self.hour:02}"
+            elif c == "M":
+                out += f"{self.minute:02}"
+            elif c == "S":
+                out += f"{self.second:02}"
+            elif c == "f":
+                out += f"{self.microsecond:06}"
+            elif c == "y":
+                out += f"{self.year % 100:02}"
+            elif c == "I":
+                let twelve = if self.hour % 12 == 0: 12 else: self.hour % 12
+                out += f"{twelve:02}"
+            elif c == "p":
+                out += if self.hour < 12: "AM" else: "PM"
+            elif c == "j":
+                out += f"{self.date().day_of_year():03}"
+            elif c == "a":
+                out += day_name(self.weekday())[:3]
+            elif c == "A":
+                out += day_name(self.weekday())
+            elif c == "b":
+                out += month_name(self.month)[:3]
+            elif c == "B":
+                out += month_name(self.month)
+            elif c == "z":
+                out += zone(self.offset, false)
+            elif c == "%":
+                out += "%"
+            else:
+                out += f"%{c}"
+
+        if percent:
+            out += "%"
+
+        out
+
+# 检查过的日期：月份 1 到 12，日子不超过这个月的天数。
+pub fn date(year: i64, month: i64, day: i64) -> Date!string:
+    if month < 1 or month > 12:
+        fail f"month must be in 1..12, not {month}"
+
+    if day < 1 or day > days_in_month(year, month):
+        fail f"day is out of range for {year:04}-{month:02}: {day}"
+
+    Date(year: year, month: month, day: day)
+
+# 检查过的时间，偏移是那一刻本地时区的偏移。
+pub fn datetime(year: i64, month: i64, day: i64, hour: i64 = 0, minute: i64 = 0, second: i64 = 0) -> DateTime!string:
+    date(year, month, day)?
+
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59 or second < 0 or second > 59:
+        fail f"time out of range: {hour:02}:{minute:02}:{second:02}"
+
+    let utc_guess = float(days_from_civil(year, month, day) * 86400 + hour * 3600 + minute * 60 + second)
+    let offset = time.local_offset(utc_guess)
+    DateTime(year: year, month: month, day: day, hour: hour, minute: minute, second: second, microsecond: 0, offset: offset)
+
+# 今天的日期（本地时区）。
+pub fn today() -> Date:
+    now().date()
+
+# 现在的本地时间。
+pub fn now() -> DateTime:
+    from_timestamp(time.time())
+
+# 现在的 UTC 时间。
+pub fn utcnow() -> DateTime:
+    moment(time.time(), 0)
+
+# time.time() 这样的秒数对应的时间；utc 为 true 时用 UTC，否则用本地时区。
+pub fn from_timestamp(t: f64, utc: bool = false) -> DateTime:
+    let offset = if utc: 0 else: time.local_offset(t)
+    moment(t, offset)
+
+# 1970-01-01 以来第 days 天的日期。
+pub fn date_from_days(days: i64) -> Date:
+    let z = days + 719468
+    let era = z // 146097
+    let doe = z - era * 146097
+    let yoe = (doe - doe // 1460 + doe // 36524 - doe // 146096) // 365
+    let doy = doe - (365 * yoe + yoe // 4 - yoe // 100)
+    let mp = (5 * doy + 2) // 153
+    let day = doy - (153 * mp + 2) // 5 + 1
+    let month = if mp < 10: mp + 3 else: mp - 9
+    let year = yoe + era * 400 + (if month <= 2: 1 else: 0)
+    Date(year: year, month: month, day: day)
+
+# 读 ISO 8601 的日期：2026-11-01。
+pub fn date_from_iso(text: &string) -> Date!string:
+    let parts = text.strip().split("-")
+
+    if len(parts) != 3 or parts[0].len() != 4 or parts[1].len() != 2 or parts[2].len() != 2:
+        fail f"not an ISO date (YYYY-MM-DD): {text}"
+
+    let year = parts[0].parse_i64() catch e: fail f"not an ISO date (YYYY-MM-DD): {text}"
+    let month = parts[1].parse_i64() catch e: fail f"not an ISO date (YYYY-MM-DD): {text}"
+    let day = parts[2].parse_i64() catch e: fail f"not an ISO date (YYYY-MM-DD): {text}"
+    date(year, month, day)?
+
+# 读 ISO 8601 的时间：2026-11-01T08:30、2026-11-01 08:30:05.250、末尾可以有 Z 或 +08:00；
+# 没写偏移时按本地时区。
+pub fn datetime_from_iso(text: &string) -> DateTime!string:
+    let clean = text.strip()
+    let bad = f"not an ISO date and time (YYYY-MM-DDTHH:MM[:SS]): {text}"
+
+    if clean.len() < 16 or (clean[10] != "T" and clean[10] != " "):
+        fail bad
+
+    let day = date_from_iso(clean[:10]) catch e: fail bad
+    let mut rest = clean[11:]
+    let mut offset = -1
+    let mut has_offset = false
+
+    if rest.ends_with("Z"):
+        rest = rest[:rest.len() - 1]
+        offset = 0
+        has_offset = true
+    elif rest.len() > 6 and (rest[rest.len() - 6] == "+" or rest[rest.len() - 6] == "-"):
+        let sign = if rest[rest.len() - 6] == "-": -1 else: 1
+        let hours = rest[rest.len() - 5:rest.len() - 3].parse_i64() catch e: fail bad
+        let minutes = rest[rest.len() - 2:].parse_i64() catch e: fail bad
+        offset = sign * (hours * 3600 + minutes * 60)
+        has_offset = true
+        rest = rest[:rest.len() - 6]
+
+    let mut microsecond = 0
+    let dot = rest.find(".")
+
+    if dot >= 0:
+        let digits = rest[dot + 1:]
+        let padded = (digits + "000000")[:6]
+        microsecond = padded.parse_i64() catch e: fail bad
+        rest = rest[:dot]
+
+    let clock = rest.split(":")
+
+    if len(clock) < 2 or len(clock) > 3:
+        fail bad
+
+    let hour = clock[0].parse_i64() catch e: fail bad
+    let minute = clock[1].parse_i64() catch e: fail bad
+    let second = if len(clock) == 3: clock[2].parse_i64() catch e: fail bad else: 0
+    let mut moment = datetime(day.year, day.month, day.day, hour, minute, second)?
+    moment.microsecond = microsecond
+
+    if has_offset:
+        moment.offset = offset
+
+    moment
+
+# 这一年是不是闰年。
+pub fn is_leap(year: i64) -> bool:
+    year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+
+# 这个月有几天。
+pub fn days_in_month(year: i64, month: i64) -> i64:
+    if month == 2:
+        return if is_leap(year): 29 else: 28
+
+    if month == 4 or month == 6 or month == 9 or month == 11:
+        return 30
+
+    31
+
+# 公历日期到 1970-01-01 以来天数的换算（Howard Hinnant 的算法，// 向下取整）。
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64:
+    let y = if month <= 2: year - 1 else: year
+    let era = y // 400
+    let yoe = y - era * 400
+    let mp = (month + 9) % 12
+    let doy = (153 * mp + 2) // 5 + day - 1
+    let doe = yoe * 365 + yoe // 4 - yoe // 100 + doy
+    era * 146097 + doe - 719468
+
+fn moment(t: f64, offset: i64) -> DateTime:
+    let whole = math.floor(t)
+    let micro = int(math.round((t - whole) * 1000000.0))
+    let mut seconds = int(whole) + offset
+    let mut microsecond = micro
+
+    if microsecond >= 1000000:
+        seconds += 1
+        microsecond -= 1000000
+
+    let day = date_from_days(seconds // 86400)
+    let rest = seconds % 86400
+    DateTime(year: day.year, month: day.month, day: day.day, hour: rest // 3600, minute: rest % 3600 // 60, second: rest % 60, microsecond: microsecond, offset: offset)
+
+# +08:00（colon 为 false 时是 +0800），同 Python 的 isoformat 与 %z。
+fn zone(offset: i64, colon: bool) -> string:
+    let sign = if offset < 0: "-" else: "+"
+    let total = if offset < 0: -offset else: offset
+    let hours = total // 3600
+    let minutes = total % 3600 // 60
+
+    if colon:
+        return f"{sign}{hours:02}:{minutes:02}"
+
+    f"{sign}{hours:02}{minutes:02}"

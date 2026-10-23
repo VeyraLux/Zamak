@@ -1,0 +1,4 @@
+[project]
+name = "linkcheck"
+entry = "src/main.zm"
+modules = "src"

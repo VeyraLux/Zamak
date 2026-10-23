@@ -134,3 +134,14 @@ fn raw_triple_quoted_and_unicode_strings() {
     let output = case.run("fn main():\n    println(\"\"\"open\n");
     assert!(stderr(&output).contains("a triple-quoted string must end on the same line"));
 }
+
+#[test]
+fn datetime_matches_python() {
+    // 期望值是 Python 的 datetime 对同样输入的输出（布尔值按 Zamak 的写法）。
+    let case = Case::new("std", "datetime");
+    let output = case.run(include_str!("../../examples/values/dates.zm"));
+    assert_eq!(
+        stdout(&output),
+        "2026-11-01\n6\n305\n2026-12-31\n2025-09-27\n976\nThu Thursday Feb February 29/02/24 060\n1970-01-01\n1969-12-31\n-135080\n2026-11-01T08:05:09.250000+08:00\n1793491509.25\n2026-11-01T00:05:09.250000+00:00\n2026-11-01 08:05:09 08AM +0800 250000 %\n2023-11-14T22:13:20.500000+00:00\n2023-11-15T22:13:20.500000+00:00\n2026-11-01T23:59:00+00:00\nday is out of range for 2023-02: 29\nnot an ISO date (YYYY-MM-DD): 2026/11/01\n29\nfalse\n"
+    );
+}

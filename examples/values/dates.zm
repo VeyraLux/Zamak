@@ -1,0 +1,31 @@
+# 日期与时间（std/datetime）：解析、计算、格式化，结果与 Python 的 datetime 相同。
+use std/datetime
+
+fn main() -> !string:
+    let d = datetime.date_from_iso("2026-11-01")?
+    println(d.isoformat())
+    println(d.weekday())
+    println(d.day_of_year())
+    println(d.add_days(60).isoformat())
+    println(d.add_days(-400).isoformat())
+    let other = datetime.date(2024, 2, 29)?
+    println(d.days_since(other))
+    println(other.strftime("%a %A %b %B %d/%m/%y %j"))
+    println(datetime.date_from_days(0).isoformat())
+    println(datetime.date_from_days(-1).isoformat())
+    println(datetime.date(1600, 3, 1)?.to_days())
+    let t = datetime.datetime_from_iso("2026-11-01T08:05:09.250+08:00")?
+    println(t.isoformat())
+    println(t.timestamp())
+    println(t.to_utc().isoformat())
+    println(t.strftime("%Y-%m-%d %H:%M:%S %I%p %z %f %%"))
+    let u = datetime.from_timestamp(1700000000.5, utc=true)
+    println(u.isoformat())
+    println(u.add_seconds(86400.0).isoformat())
+    println(datetime.datetime_from_iso("2026-11-01 23:59Z")?.isoformat())
+    datetime.date(2023, 2, 29) catch e:
+        println(e)
+    datetime.date_from_iso("2026/11/01") catch e:
+        println(e)
+    println(datetime.days_in_month(2000, 2))
+    println(datetime.is_leap(1900))

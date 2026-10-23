@@ -145,10 +145,6 @@ fn checker_rejects_list_misuse() {
             "cannot mutably borrow immutable value xs",
         ),
         (
-            "let xs: [string] = [\"a\"]\n    let s = xs[0]",
-            "cannot move a string out of xs",
-        ),
-        (
             "let mut xs: [i64] = [1]\n    for x in &xs:\n        xs.push(x)",
             "borrowed by an enclosing for loop",
         ),

@@ -1,0 +1,120 @@
+# linkcheck：打开一个网页，找出里面的链接，用几个线程同时检查它们能不能打开。
+#
+#     zam run examples/apps/linkcheck -- https://example.com --threads 8
+#
+# 有打不开的链接时退出码是 1，可以放进 CI 里检查文档站的死链。
+use std/env
+use std/http
+use std/re
+use std/thread
+
+struct Options:
+    url: string
+    threads: i64
+    timeout: f64
+
+struct Checked:
+    url: string
+    status: i64
+    error: string
+
+fn usage() -> string:
+    "usage: linkcheck <url> [--threads N] [--timeout SECONDS]"
+
+fn parse_options(args: &[string]) -> Options!string:
+    let mut url = ""
+    let mut threads = 4
+    let mut timeout = 10.0
+    let mut i = 0
+
+    while i < len(args):
+        let arg = args[i]
+
+        if arg == "--threads" or arg == "--timeout":
+            if i + 1 >= len(args):
+                fail f"{arg} needs a value\n{usage()}"
+
+            let value = args[i + 1]
+
+            if arg == "--threads":
+                threads = value.parse_i64()?
+            else:
+                timeout = value.parse_f64()?
+
+            i += 2
+        elif arg.starts_with("--"):
+            fail f"unknown option {arg}\n{usage()}"
+        else:
+            url = arg
+            i += 1
+
+    if url == "":
+        fail usage()
+
+    Options(url: url, threads: threads, timeout: timeout)
+
+fn links(base: &string, page: &string) -> [string]!string:
+    let mut found: {string} = {}
+    let mut ordered: [string] = []
+
+    for m in re.findall(r"href=[\"']([^\"'#]+)", page)?:
+        if m.starts_with("mailto:") or m.starts_with("javascript:"):
+            continue
+
+        let url = http.urljoin(base, m)
+
+        if url.starts_with("http") and url not in found:
+            found.add(copy(url))
+            ordered.push(url)
+
+    ordered
+
+fn worker(jobs: thread.Queue[string], results: thread.Queue[Checked], timeout: f64) -> !string:
+    while true:
+        match jobs.get():
+            Some(url):
+                let r = http.get(url, timeout=timeout) catch e:
+                    results.put(Checked(url: url, status: 0, error: e))?
+                    continue
+                results.put(Checked(url: url, status: r.status, error: ""))?
+            None: break
+
+fn main() -> !string:
+    let options = parse_options(env.args())?
+    let page = http.get(options.url, timeout=options.timeout)?
+    let all = links(options.url, page.text()?)?
+    println(f"{len(all)} links on {options.url}")
+
+    let jobs: thread.Queue[string] = thread.queue()
+    let results: thread.Queue[Checked] = thread.queue()
+    let mut workers: [thread.Thread] = []
+
+    for _ in range(options.threads):
+        workers.push(thread.spawn(worker, jobs.clone(), results.clone(), options.timeout))
+
+    for url in &all:
+        jobs.put(copy(url))?
+
+    jobs.close()
+
+    for w in &workers:
+        w.join()?
+
+    results.close()
+    let mut broken = 0
+
+    while true:
+        match results.get():
+            Some(c):
+                if c.status >= 200 and c.status < 400:
+                    println(f"ok   {c.status} {c.url}")
+                else:
+                    broken += 1
+                    let why = if c.error != "": c.error else: f"status {c.status}"
+                    println(f"FAIL {why} {c.url}")
+            None: break
+
+    println(f"{len(all) - broken} ok, {broken} broken")
+
+    if broken > 0:
+        env.exit(1)

@@ -427,6 +427,9 @@ static TABLE: &[(&str, &str)] = &[
     // ---- 名字与声明 ----
     ("unknown variable %", "未知的变量 {0}"),
     ("unknown function %", "未知的函数 {0}"),
+    ("owned field moves are not supported; borrow the field, or copy it with copy(&x.field)", "不能把字段整个移走；借用这个字段，或者用 copy(&x.field) 复制"),
+    ("unterminated string literal inside an interpolation", "插值里的字符串字面量没有结束"),
+    ("expected an index or a slice inside [ ]", "[ ] 里要写下标或切片"),
     ("thread.spawn takes the name of a function, then its arguments, such as thread.spawn(work, 1)", "thread.spawn 先写函数名，再写它的参数，例如 thread.spawn(work, 1)"),
     ("thread.spawn needs a function that isn't generic; % has type parameters", "thread.spawn 需要不是泛型的函数；{0} 有类型参数"),
     ("% borrows its parameter %; a thread function takes its arguments by value, because the new thread can outlive the values of the thread that starts it", "{0} 借用了参数 {1}；线程函数的参数要按值传，因为新线程可能比启动它的线程里的值活得更久"),

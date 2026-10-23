@@ -154,6 +154,38 @@ true
 - `time.time()` is the current time in seconds since 1970, and `time.monotonic()` measures durations. `time.sleep(seconds)` pauses. `time.iso_utc(t)` and `time.iso_local(t)` format a time.
 - `random.randint(a, b)` includes both ends, and `random.randrange(a, b)` excludes `b`. `random.random()` returns an `f64` in [0, 1), and `random.uniform(a, b)` one in [a, b). `random.seed(n)` makes the sequence repeatable, which helps in tests.
 
+## Dates and times: std/datetime
+
+`std/datetime` follows Python's `datetime`:
+
+```zamak
+use std/datetime
+
+fn main() -> !string:
+    let due = datetime.date_from_iso("2026-11-01")?
+    println(due.add_days(30).isoformat())
+    println(due.weekday())
+    println(due.strftime("%A, %d %B %Y"))
+    let start = datetime.date(2026, 1, 1)?
+    println(due.days_since(start))
+    let t = datetime.datetime_from_iso("2026-11-01T08:30:00+08:00")?
+    println(t.to_utc().isoformat())
+```
+
+```text
+2026-12-01
+6
+Sunday, 01 November 2026
+304
+2026-11-01T00:30:00+00:00
+```
+
+- A `Date` has `year`, `month`, and `day`. `datetime.today()` is today's date, and `datetime.date(y, m, d)` checks the values.
+- A `DateTime` also has `hour`, `minute`, `second`, `microsecond`, and `offset` (seconds east of UTC). `datetime.now()` uses the local time zone, and `datetime.utcnow()` uses UTC. `datetime.from_timestamp(t)` converts a `time.time()` value.
+- `add_days(n)`, `days_since(other)`, `add_seconds(s)`, and `seconds_since(other)` do arithmetic. `weekday()` is 0 for Monday.
+- `isoformat()`, `strftime(format)`, `date_from_iso(text)`, and `datetime_from_iso(text)` convert to and from text.
+- Dates and times hold only numbers, so they're copied like numbers.
+
 ## Strings: std/string
 
 Every string function is also a method, so you rarely need to import `std/string`. [Strings](strings.md) covers the common ones. The full list includes:
@@ -286,6 +318,7 @@ fn main() -> !string:
 | `http.get(url, timeout=30.0)` | Sends a GET request and returns a `Response`. |
 | `http.post(url, body, content_type="text/plain; charset=utf-8")`, `http.post_json(url, value)` | Posts text or JSON. |
 | `http.request(method, url, body, headers)` | Any method, with your own headers and a `bytes` body. |
+| `http.urljoin(base, link)` | Resolves a link against a page's URL, like Python's `urllib.parse.urljoin`. |
 | `Response` | `status`, `reason`, `headers` (lowercase keys), and `body`, plus `text()`, `json()`, and `ok()`. |
 
 On the server side, `http.serve(host, port, handler)` handles requests until the program stops. Each request goes to `handler`, and the `Response` it returns goes back to the client:
@@ -299,6 +332,8 @@ fn hello(req: &http.Request) -> http.Response:
 fn main() -> !string:
     http.serve("127.0.0.1", 8000, hello)?
 ```
+
+Requests follow redirects (301, 302, 303, 307, and 308, up to 10 times), as `requests` does; pass `follow=false` to get the redirect itself.
 
 `http.respond(status, text)` and `http.respond_json(status, value)` build responses. A `Request` has `method`, `path`, `query`, `headers`, and `body`.
 

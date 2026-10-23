@@ -61,7 +61,7 @@ Ada has 2 items, total 7
 Use { and } for literal braces
 ```
 
-An interpolated expression can't contain a string literal or braces. Bind the value to a name first when you need one.
+An interpolated expression can be any expression, including string literals, slices, and calls, as in Python 3.12: `f"{d["key"]} {s[:5]} {s.replace(",", " ")}"`. A colon inside brackets belongs to the expression; only a colon outside them starts a format specifier.
 
 ### Format specifiers
 
@@ -194,7 +194,7 @@ true
 ababab
 ```
 
-`find` returns the character position of the first match, or `-1`. Python's names work: `strip`, `lstrip`, `rstrip`, `startswith`, `endswith`, `isdigit`, `isalpha`, `isspace`, `ljust`, and `rjust`.
+`find` returns the character position of the first match, or `-1`; `s.find(sub, start)` starts looking at character `start`, and `rfind` finds the last match. Python's names work: `strip`, `lstrip`, `rstrip`, `startswith`, `endswith`, `removeprefix`, `removesuffix`, `capitalize`, `title`, `center`, `zfill`, `isdigit`, `isalpha`, `isspace`, `isupper`, `islower`, `ljust`, and `rjust`.
 
 ## Split and join
 

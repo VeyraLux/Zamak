@@ -817,3 +817,63 @@ fn power_binds_tighter_than_unary_minus_as_in_python() {
         "-4\n-5\n0.5\n4\n-9223372036854775808\n-4.0\n512\n5\n-9\n"
     );
 }
+
+#[test]
+fn everyday_python_shapes_compile() {
+    // 实战里遇到的写法：调用结果取下标与切片、元素方法后接 ?、字面量上调方法、
+    // 嵌套的 catch e、catch 块里 fail 同一个值、借来的纯数据值当回退值、带格式说明的链式调用。
+    let case = common::Case::new("expressions", "python-shapes");
+    let output = case.run(
+        r#"use std/env
+
+struct P:
+    x: i64
+
+    fn q(&self) -> P:
+        P(x: self.x * 2)
+
+    fn show(&self) -> string:
+        f"{self.q().double():03}"
+
+    fn double(&self) -> i64:
+        self.x * 2
+
+fn parse(a: &string, b: &string) -> i64!string:
+    let bad = "bad input"
+    let x = a.parse_i64() catch e: fail bad
+    let y = b.parse_i64() catch e: fail bad
+    x + y
+
+fn parse_p(text: &string) -> P!string:
+    P(x: text.parse_i64()?)
+
+fn fallback(p: &P, text: &string) -> P:
+    let d = parse_p(text) catch e: p
+    d
+
+fn main() -> !string:
+    let line = "a,b,c"
+    println(line.split(",")[0])
+    println(line.split(",")[1:])
+    println(line.upper()[-1])
+    let args: [string] = ["7", "x"]
+    println(args[0].parse_i64()? + 1)
+    println(P(x: 2).show())
+    println(parse("1", "2")?)
+    parse("1", "z") catch e:
+        println(e)
+    let home = env.var("ZAMAK_NO_SUCH_VAR") catch e: env.var("ZAMAK_NO_SUCH_VAR_2") catch e: "."
+    println(home)
+    println(fallback(P(x: 5), "q").x)
+"#,
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "a\n[\"b\", \"c\"]\nC\n8\n008\n3\nbad input\n.\n5\n"
+    );
+}

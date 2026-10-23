@@ -38,24 +38,132 @@ pub struct Request:
         json.loads(self.body.decode()?)?
 
 # 发一个 GET 请求。
-pub fn get(url: &string, timeout: f64 = 30.0) -> Response!string:
+# follow 为 true（默认）时跟随重定向（301、302、303、307、308，最多 10 次），与 requests 相同。
+pub fn get(url: &string, timeout: f64 = 30.0, follow: bool = true) -> Response!string:
     let headers: {string: string} = {}
-    request("GET", url, b"", headers, timeout)?
+    request("GET", url, b"", headers, timeout, follow)?
 
 # 发一个 POST 请求，body 是文字。
-pub fn post(url: &string, body: &string, content_type: &string = "text/plain; charset=utf-8", timeout: f64 = 30.0) -> Response!string:
+pub fn post(url: &string, body: &string, content_type: &string = "text/plain; charset=utf-8", timeout: f64 = 30.0, follow: bool = true) -> Response!string:
     let mut headers: {string: string} = {}
     headers["Content-Type"] = content_type
-    request("POST", url, body.encode(), headers, timeout)?
+    request("POST", url, body.encode(), headers, timeout, follow)?
 
 # 把 value 写成 JSON，用 POST 发出去。
-pub fn post_json(url: &string, value: &json.Json, timeout: f64 = 30.0) -> Response!string:
+pub fn post_json(url: &string, value: &json.Json, timeout: f64 = 30.0, follow: bool = true) -> Response!string:
     let mut headers: {string: string} = {}
     headers["Content-Type"] = "application/json"
-    request("POST", url, json.dumps(value).encode(), headers, timeout)?
+    request("POST", url, json.dumps(value).encode(), headers, timeout, follow)?
 
-# 任意方法的请求。headers 里的项原样加进请求头。
-pub fn request(method: &string, url: &string, body: &bytes, headers: &{string: string}, timeout: f64 = 30.0) -> Response!string:
+# 任意方法的请求。headers 里的项原样加进请求头。follow 为 true（默认）时跟随重定向：
+# 303，以及 POST 遇到 301、302 时改用 GET 并不再发请求体；307、308 原样重发。最多跳 10 次。
+pub fn request(method: &string, url: &string, body: &bytes, headers: &{string: string}, timeout: f64 = 30.0, follow: bool = true) -> Response!string:
+    let mut current = copy(url)
+    let mut get_now = false
+    let empty: bytes = b""
+    let mut hops = 0
+
+    while true:
+        let r = if get_now: send("GET", current, empty, headers, timeout)? else: send(method, current, body, headers, timeout)?
+
+        if not follow or not redirect(r.status):
+            return r
+
+        let location = r.headers.get("location", "")
+
+        if location == "":
+            return r
+
+        hops += 1
+
+        if hops > 10:
+            fail f"too many redirects starting at {url}"
+
+        if r.status == 303 or ((r.status == 301 or r.status == 302) and method != "GET" and method != "HEAD"):
+            get_now = true
+
+        current = urljoin(current, location)
+
+    fail "unreachable"
+
+fn redirect(status: i64) -> bool:
+    status == 301 or status == 302 or status == 303 or status == 307 or status == 308
+
+# 把 link 按 base 补全成完整地址，与 Python 的 urllib.parse.urljoin 相同：
+# 完整地址原样返回，//host 换协议，/path 换路径，?query 换查询，其他按目录补全并处理 . 与 ..。
+pub fn urljoin(base: &string, link: &string) -> string:
+    if link.find("://") > 0 and link.find("://") < 10:
+        return copy(link)
+
+    let scheme_end = base.find("://")
+
+    if scheme_end < 0:
+        return copy(link)
+
+    if link.starts_with("//"):
+        return f"{base[:scheme_end]}:{link}"
+
+    let host_end = base.find("/", scheme_end + 3)
+    let origin = if host_end < 0: copy(base) else: base[:host_end]
+    let mut path = if host_end < 0: "/" else: base[host_end:]
+    let query = path.find("?")
+
+    if query >= 0:
+        path = path[:query]
+
+    let fragment = path.find("#")
+
+    if fragment >= 0:
+        path = path[:fragment]
+
+    if link == "":
+        return copy(base)
+
+    if link.starts_with("?"):
+        return f"{origin}{path}{link}"
+
+    if link.starts_with("#"):
+        let whole = base.find("#")
+        let unmarked = if whole < 0: copy(base) else: base[:whole]
+        return f"{unmarked}{link}"
+
+    let folder_end = path.rfind("/") + 1
+    let folder = path[:folder_end]
+    let joined = if link.starts_with("/"): copy(link) else: f"{folder}{link}"
+    f"{origin}{clean_path(joined)}"
+
+# 去掉路径里的 . 与 ..（.. 不越过根）。查询与片段原样保留。
+fn clean_path(full: &string) -> string:
+    let mut path = copy(full)
+    let mut rest = ""
+    let cut = path.find("?")
+
+    if cut >= 0:
+        rest = path[cut:]
+        path = path[:cut]
+
+    let mut parts: [string] = []
+
+    for part in path.split("/"):
+        if part == "..":
+            if len(parts) > 1:
+                parts.pop()
+        elif part != ".":
+            parts.push(copy(part))
+
+    let tail = path.ends_with("/.") or path.ends_with("/..")
+    let mut cleaned = "/".join(parts)
+
+    if tail:
+        cleaned += "/"
+
+    if not cleaned.starts_with("/"):
+        cleaned = f"/{cleaned}"
+
+    f"{cleaned}{rest}"
+
+# 发一次请求，不跟随重定向。
+fn send(method: &string, url: &string, body: &bytes, headers: &{string: string}, timeout: f64) -> Response!string:
     let target = parse_url(url)?
     let mut conn = net.connect(target.host, target.port, timeout)?
 

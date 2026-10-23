@@ -154,6 +154,38 @@ true
 - `time.time()` 是自 1970 年以来的秒数，`time.monotonic()` 用来测量时长，`time.sleep(seconds)` 暂停。`time.iso_utc(t)` 和 `time.iso_local(t)` 格式化时间。
 - `random.randint(a, b)` 包含两端，`random.randrange(a, b)` 不包含 `b`。`random.random()` 返回 [0, 1) 之间的 `f64`，`random.uniform(a, b)` 返回 [a, b) 之间的值。`random.seed(n)` 让随机序列可以重现，写测试时很有用。
 
+## 日期与时间：std/datetime
+
+`std/datetime` 的用法参考 Python 的 `datetime`：
+
+```zamak
+use std/datetime
+
+fn main() -> !string:
+    let due = datetime.date_from_iso("2026-11-01")?
+    println(due.add_days(30).isoformat())
+    println(due.weekday())
+    println(due.strftime("%A, %d %B %Y"))
+    let start = datetime.date(2026, 1, 1)?
+    println(due.days_since(start))
+    let t = datetime.datetime_from_iso("2026-11-01T08:30:00+08:00")?
+    println(t.to_utc().isoformat())
+```
+
+```text
+2026-12-01
+6
+Sunday, 01 November 2026
+304
+2026-11-01T00:30:00+00:00
+```
+
+- `Date` 有 `year`、`month`、`day`。`datetime.today()` 是今天的日期，`datetime.date(y, m, d)` 会检查数值是否合法。
+- `DateTime` 还有 `hour`、`minute`、`second`、`microsecond` 和 `offset`（比 UTC 快多少秒）。`datetime.now()` 用本地时区，`datetime.utcnow()` 用 UTC，`datetime.from_timestamp(t)` 把 `time.time()` 的值转成时间。
+- `add_days(n)`、`days_since(other)`、`add_seconds(s)`、`seconds_since(other)` 做加减。`weekday()` 星期一是 0。
+- `isoformat()`、`strftime(format)`、`date_from_iso(text)`、`datetime_from_iso(text)` 在时间和文字之间转换。
+- 日期和时间只含数字，赋值时像数字一样复制。
+
 ## 字符串：std/string
 
 每个字符串函数都可以当方法用，所以很少需要导入 `std/string`。常用的见[字符串](strings.md)一章，完整列表包括：
@@ -286,6 +318,7 @@ fn main() -> !string:
 | `http.get(url, timeout=30.0)` | GET 请求，返回 `Response`。 |
 | `http.post(url, body, content_type="text/plain; charset=utf-8")`、`http.post_json(url, value)` | POST 文字或 JSON。 |
 | `http.request(method, url, body, headers)` | 任意方法，自己给请求头与 `bytes` 请求体。 |
+| `http.urljoin(base, link)` | 按网页地址补全链接，与 Python 的 `urllib.parse.urljoin` 相同。 |
 | `Response` | `status`、`reason`、`headers`（键是小写）、`body`，以及 `text()`、`json()`、`ok()`。 |
 
 服务端：`http.serve(host, port, handler)` 一直处理请求，每个请求交给 `handler`，它返回的 `Response` 发回给客户端：
@@ -299,6 +332,8 @@ fn hello(req: &http.Request) -> http.Response:
 fn main() -> !string:
     http.serve("127.0.0.1", 8000, hello)?
 ```
+
+请求会跟随重定向（301、302、303、307、308，最多 10 次），与 `requests` 相同；传 `follow=false` 可以拿到重定向本身。
 
 `http.respond(status, text)` 与 `http.respond_json(status, value)` 构造响应；`Request` 有 `method`、`path`、`query`、`headers`、`body`。
 

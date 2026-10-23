@@ -119,3 +119,93 @@ fn string_methods_work_on_elements_and_their_fields() {
         "5\nADA\nv\n1\n"
     );
 }
+
+fn run_source(name: &str, source: &str) -> String {
+    let case = common::Case::new("strings", name);
+    let output = case.run(source);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n")
+}
+
+#[test]
+fn python_string_methods_match_python() {
+    // 期望值是 Python 3 对同样输入的输出。
+    let out = run_source(
+        "python-methods",
+        r#"fn main():
+    let s = "https://example.com/a/b.html"
+    println(s.find("/", 8))
+    println(s.rfind("/"))
+    println(s.rfind("zz"))
+    println(s.removeprefix("https://"))
+    println(s.removesuffix(".html"))
+    println(s.removesuffix(".txt"))
+    println("hELLO wORLD".capitalize())
+    println("hello big-world 2x".title())
+    println(f"[{"ab".center(6)}] [{"a".center(4)}] [{"abc".center(2)}]")
+    println("42".zfill(5))
+    println("-42".zfill(5))
+    println("ABC1".isupper())
+    println("abc".islower())
+    println("123".isupper())
+"#,
+    );
+    assert_eq!(
+        out,
+        "19\n21\n-1\nexample.com/a/b.html\nhttps://example.com/a/b\nhttps://example.com/a/b.html\nHello world\nHello Big-World 2X\n[  ab  ] [ a  ] [abc]\n00042\n-0042\ntrue\ntrue\nfalse\n"
+    );
+}
+
+#[test]
+fn interpolation_takes_strings_slices_and_formats() {
+    let out = run_source(
+        "interpolation",
+        r#"fn main():
+    let mut d: {string: i64} = {}
+    d["key"] = 7
+    let s = "hello world"
+    let n = 5
+    let xs: [i64] = [1, 2, 3, 4]
+    println(f"{d["key"]} {s.split(" ")} {{x}} {s.replace("o", "0")}")
+    println(f"[{s[:n]}] [{s[6:]}] {xs[1:3]} {n:>4} {3.14159:.2}")
+"#,
+    );
+    assert_eq!(
+        out,
+        "7 [\"hello\", \"world\"] {x} hell0 w0rld\n[hello] [world] [2, 3]    5 3.14\n"
+    );
+}
+
+#[test]
+fn string_elements_and_fields_are_read_as_copies() {
+    // `let arg = args[i]`、`let why = c.error` 得到副本，原来的列表与结构体不变。
+    let out = run_source(
+        "copies",
+        r#"struct C:
+    url: string
+    error: string
+    n: i64
+
+fn main():
+    let args: [string] = ["a", "--b"]
+    let mut i = 0
+    while i < len(args):
+        let arg = args[i]
+        println(arg)
+        i += 1
+    println(args)
+    let c = C(url: "u", error: "", n: 3)
+    let why = if c.error != "": c.error else: f"status {c.n}"
+    let u = c.url
+    println(f"{why} {u} {c.url}")
+    let cs = [C(url: "x", error: "e", n: 1)]
+    let e = cs[0].error
+    println(f"{e} {cs[0].error}")
+"#,
+    );
+    assert_eq!(out, "a\n--b\n[\"a\", \"--b\"]\nstatus 3 u u\ne e\n");
+}

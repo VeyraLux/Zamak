@@ -253,6 +253,7 @@ See [Calling C](c-libraries.md).
 | `std/env` | Arguments, environment variables, exit |
 | `std/math` | sqrt, pow, trigonometry, rounding, constants |
 | `std/time` | Current time, monotonic clock, sleep, ISO format |
+| `std/datetime` | Dates, times, arithmetic, parsing, and `strftime` |
 | `std/random` | Integers, floats, seeding |
 | `std/fmt` | Fixed decimal places |
 | `std/process` | Run other programs, read their output and exit code |

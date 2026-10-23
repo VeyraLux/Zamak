@@ -206,3 +206,23 @@ fn threads_make_https_requests_at_the_same_time() {
     assert_eq!(stdout(&client), "page /n0\npage /n1\npage /n2\npage /n3\n");
     assert_eq!(stdout(&served), "served 4\n");
 }
+
+#[test]
+fn urljoin_matches_python() {
+    // 期望值是 Python 的 urllib.parse.urljoin 对同样输入的结果。
+    let case = Case::new("net", "urljoin");
+    let output = case.run(
+        r##"use std/http
+
+fn main():
+    let base = "https://a.com/x/y/page.html?q=1#top"
+    for link in ["b.html", "../c", "./d/", "/root", "//cdn.com/s.js", "?z=2", "#sec", "https://o.org/p", "../../../up", "e/../f", ""]:
+        println(http.urljoin(base, link))
+    println(http.urljoin("https://a.com", "x"))
+"##,
+    );
+    assert_eq!(
+        stdout(&output),
+        "https://a.com/x/y/b.html\nhttps://a.com/x/c\nhttps://a.com/x/y/d/\nhttps://a.com/root\nhttps://cdn.com/s.js\nhttps://a.com/x/y/page.html?z=2\nhttps://a.com/x/y/page.html?q=1#sec\nhttps://o.org/p\nhttps://a.com/up\nhttps://a.com/x/y/f\nhttps://a.com/x/y/page.html?q=1#top\nhttps://a.com/x\n"
+    );
+}

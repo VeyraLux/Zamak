@@ -484,8 +484,15 @@ pub fn loop_list<'e>(local: &str, expr: &'e Expr) -> Option<&'e Expr> {
 /// 表达式（变量写成 `&s`，调用结果原样作临时值）。不是字符串方法时返回 None。检查器与生成器共用。
 /// Python 的字符串方法名对应的 std/string 函数：`s.strip()` 是 trim，`s.startswith(p)` 是
 /// starts_with，`ljust`/`rjust` 补空格。检查器、生成器与“用到哪些函数”的收集共用。
+/// `f().name` 记成 `Chain(f(), "$field.name", [])`：返回字段名。
+pub fn call_field(method: &str) -> Option<&str> {
+    method.strip_prefix("$field.")
+}
+
 pub fn string_alias(method: &str) -> &str {
     match method {
+        // `f()[i]`：调用结果是字符串时取第 i 个字符。
+        "$at" => "char_at",
         "strip" => "trim",
         "startswith" => "starts_with",
         "endswith" => "ends_with",
@@ -512,6 +519,12 @@ pub fn string_method(
         }
         _ => {}
     }
+    // `s.find(sub, start)`：与 Python 一样从第 start 个字符起找。
+    let method = if method == "find" && args.len() == 2 {
+        "find_from"
+    } else {
+        method
+    };
     let name = format!("std/string:{}", string_alias(method));
     let function = functions.get(&name)?;
     if function.params.first().map(|(_, ty)| *ty) != Some(Type::Shared) {
@@ -2591,6 +2604,10 @@ fn lex(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>, bool), String> 
                     // `"""..."""`：三引号字符串，里面可以直接写 `"`（同 Python）。目前要写在同一行。
                     let triple = at(i + 1) == Some('"') && at(i + 2) == Some('"');
                     let mut j = if triple { i + 3 } else { i + 1 };
+                    // 插值 `{...}` 里面的层数：里面可以写字符串字面量（`f"{d["key"]}"`，同 Python 3.12），
+                    // 它不结束外层字符串；插值的内容原样保留，由插值解析再分析一遍。
+                    let interpolates = !raw && !raw_bytes;
+                    let mut depth = 0usize;
                     loop {
                         match at(j) {
                             None if triple => {
@@ -2612,6 +2629,53 @@ fn lex(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>, bool), String> 
                                 }
                                 text.push('"');
                                 j += 1;
+                            }
+                            Some('"') if depth > 0 => {
+                                text.push('"');
+                                j += 1;
+                                loop {
+                                    match at(j) {
+                                        None => return Err(error("unterminated string literal inside an interpolation")),
+                                        Some('\\') => {
+                                            text.push('\\');
+                                            if let Some(next) = at(j + 1) {
+                                                text.push(next);
+                                            }
+                                            j += 2;
+                                        }
+                                        Some('"') => {
+                                            text.push('"');
+                                            j += 1;
+                                            break;
+                                        }
+                                        Some(c) => {
+                                            text.push(c);
+                                            j += 1;
+                                        }
+                                    }
+                                }
+                            }
+                            Some('{') if interpolates => {
+                                if depth == 0 && at(j + 1) == Some('{') {
+                                    text.push_str("{{");
+                                    j += 2;
+                                } else {
+                                    depth += 1;
+                                    text.push('{');
+                                    j += 1;
+                                }
+                            }
+                            Some('}') if depth > 0 => {
+                                depth -= 1;
+                                text.push('}');
+                                j += 1;
+                            }
+                            Some('\\') if depth > 0 => {
+                                text.push('\\');
+                                if let Some(next) = at(j + 1) {
+                                    text.push(next);
+                                }
+                                j += 2;
                             }
                             Some('"') => break,
                             // 原始字符串里 `\"` 也不结束字符串，两个字符都保留（同 Python）。
@@ -3216,6 +3280,7 @@ pub fn fallback_fits(found: Type, success: Type) -> bool {
     found == success
         || (found == Type::Int && success == Type::Float)
         || (success == Type::Owned && is_string(found))
+        || matches!((found, success), (Type::RecordRef(a, _), Type::Record(b)) if a == b && copied(success))
 }
 fn untail(body: &mut Block, tail: bool, implicit: &BTreeSet<SourcePosition>) {
     let last = body.len().saturating_sub(1);
@@ -4178,7 +4243,8 @@ impl Parser {
                 if !field.is_empty() && self.symbol('(') {
                     let (field, method) = field.rsplit_once('.').unwrap_or(("", &field));
                     let args = self.arguments()?;
-                    return Ok(Expr::ElementMethod(
+                    // 和普通调用一样，后面可以接 `?`、`catch` 与链式方法：`args[1].parse_i64()?`。
+                    return self.after_call(Expr::ElementMethod(
                         name,
                         Box::new(index),
                         field.to_owned(),
@@ -4230,14 +4296,15 @@ impl Parser {
                         break;
                     }
                 }
-                return Ok(Expr::Record(name, fields));
+                // 字面量后面也能接方法：`Point(x: 1, y: 2).norm()`。
+                return self.after_call(Expr::Record(name, fields));
             }
             let args = self.arguments()?;
             return match name.rsplit_once('.') {
                 Some((enumeration, variant)) => {
-                    Ok(Expr::Variant(enumeration.into(), variant.into(), args))
+                    self.after_call(Expr::Variant(enumeration.into(), variant.into(), args))
                 }
-                None if args.is_empty() => Ok(Expr::Record(name, Vec::new())),
+                None if args.is_empty() => self.after_call(Expr::Record(name, Vec::new())),
                 None => Err(format!(
                     "expected field names in the struct literal, such as {name}(x: 1, y: 2)"
                 )),
@@ -4266,18 +4333,55 @@ impl Parser {
             }
             return Ok(Expr::Catch(Box::new(call), binding, block));
         }
-        // 调用结果上接着调用方法：`string.split(&s, ",").len()`。
+        // 调用结果上接着调用方法：`string.split(&s, ",").len()`；也可以取下标或切片：
+        // `line.split(",")[0]`、`name.upper()[:3]`（同 Python）。
         let mut chained = false;
-        while self.peek() == Some(&Token::Symbol('.'))
-            && matches!(self.tokens.get(self.position + 1), Some(Token::Word(_)))
-            && self.tokens.get(self.position + 2) == Some(&Token::Symbol('('))
-        {
-            self.take();
-            let method = self.word()?;
-            self.expect('(')?;
-            let args = self.arguments()?;
-            call = Expr::Chain(Box::new(call), method, args);
-            chained = true;
+        loop {
+            if self.peek() == Some(&Token::Symbol('.'))
+                && matches!(self.tokens.get(self.position + 1), Some(Token::Word(_)))
+                && self.tokens.get(self.position + 2) == Some(&Token::Symbol('('))
+            {
+                self.take();
+                let method = self.word()?;
+                self.expect('(')?;
+                let args = self.arguments()?;
+                call = Expr::Chain(Box::new(call), method, args);
+                chained = true;
+            } else if self.peek() == Some(&Token::Symbol('.'))
+                && matches!(self.tokens.get(self.position + 1), Some(Token::Word(_)))
+            {
+                // `user().name`：调用结果的字段，记成 `$field.name`（见 `call_field`）。
+                self.take();
+                let field = self.word()?;
+                call = Expr::Chain(Box::new(call), format!("$field.{field}"), Vec::new());
+                chained = true;
+            } else if self.symbol('[') {
+                let from = if self.peek() == Some(&Token::Symbol(':')) {
+                    None
+                } else {
+                    Some(self.expr()?)
+                };
+                if self.symbol(':') {
+                    let to = if self.peek() == Some(&Token::Symbol(']')) {
+                        None
+                    } else {
+                        Some(self.expr()?)
+                    };
+                    self.expect(']')?;
+                    let bounds = vec![
+                        from.unwrap_or(Expr::Int(0)),
+                        to.unwrap_or(Expr::Int(i64::MAX)),
+                    ];
+                    call = Expr::Chain(Box::new(call), "slice".into(), bounds);
+                } else {
+                    self.expect(']')?;
+                    let index = from.ok_or("expected an index or a slice inside [ ]")?;
+                    call = Expr::Chain(Box::new(call), "$at".into(), vec![index]);
+                }
+                chained = true;
+            } else {
+                break;
+            }
         }
         // 链尾的调用也能接 `?` 或 `catch`：`buf[:n].decode() catch e: "?"`。
         if chained {
@@ -5314,11 +5418,32 @@ fn literal(text: &str) -> Result<Expr, String> {
                 if !literal.is_empty() {
                     segments.push(Expr::Text(std::mem::take(&mut literal)));
                 }
+                // 插值的内容：里面可以有字符串字面量（引号里的括号不算），以及成对的花括号。
                 let mut inner = String::new();
+                let mut depth = 0usize;
+                let mut quoted = false;
                 loop {
                     match chars.next() {
+                        Some('\\') if quoted => {
+                            inner.push('\\');
+                            if let Some(next) = chars.next() {
+                                inner.push(next);
+                            }
+                        }
+                        Some('"') => {
+                            quoted = !quoted;
+                            inner.push('"');
+                        }
+                        Some(c) if quoted => inner.push(c),
+                        Some('{') => {
+                            depth += 1;
+                            inner.push('{');
+                        }
+                        Some('}') if depth > 0 => {
+                            depth -= 1;
+                            inner.push('}');
+                        }
                         Some('}') => break,
-                        Some('{') => return Err("nested { in string interpolation".into()),
                         Some(c) => inner.push(c),
                         None => return Err("unterminated { in string literal".into()),
                     }
@@ -5327,10 +5452,24 @@ fn literal(text: &str) -> Result<Expr, String> {
                 if path.is_empty() {
                     return Err("empty {} in string literal; write {{}} for literal braces".into());
                 }
-                // `{x:.2}`：冒号后面是格式说明。只在顶层找第一个冒号，`:` 出现在
-                // 表达式自己的字符串里时不会走到这里（插值里不能写字符串字面量）。
-                let (path, spec) = match path.split_once(':') {
-                    Some((path, spec)) => (path.trim(), Some(spec.trim())),
+                // `{x:.2}`：冒号后面是格式说明。只认括号外面的第一个冒号，切片
+                // `{s[:n]}`、`{f(a[1:])}` 里的冒号属于表达式；字符串里的冒号也不算。
+                let mut depth = 0i32;
+                let mut quote: Option<char> = None;
+                let split = path.char_indices().find(|&(_, c)| {
+                    match (quote, c) {
+                        (Some(q), c) if c == q => quote = None,
+                        (Some(_), _) => {}
+                        (None, '"' | '\'') => quote = Some(c),
+                        (None, '(' | '[' | '{') => depth += 1,
+                        (None, ')' | ']' | '}') => depth -= 1,
+                        (None, ':') if depth == 0 => return true,
+                        _ => {}
+                    }
+                    false
+                });
+                let (path, spec) = match split {
+                    Some((at, _)) => (path[..at].trim(), Some(path[at + 1..].trim())),
                     None => (path, None),
                 };
                 if path.is_empty() {
@@ -5923,6 +6062,8 @@ struct Checker<'a> {
     // 块内声明的每个局部量的类型（`block` 退出时会从 `locals` 删掉它们，这里留一份）。
     // 编辑器（`local_type`）靠它拿到光标处变量的类型。
     declared: BTreeMap<String, Type>,
+    // 外层 catch 块的错误变量名：嵌套的 `catch e:` 可以遮住它们（普通局部变量不能被遮住）。
+    caught: Vec<String>,
 }
 impl<'a> Checker<'a> {
     fn thawed(&self, root: &str) -> Result<(), String> {
@@ -6220,6 +6361,7 @@ impl<'a> Checker<'a> {
                 method,
                 args,
             ),
+            Expr::Chain(_, method, _) if call_field(method).is_some() => return Ok(None),
             Expr::Chain(receiver, method, args) => {
                 (Receiver::Temp(receiver), self.ty(receiver)?, method, args)
             }
@@ -6390,6 +6532,7 @@ impl<'a> Checker<'a> {
             module: self.module,
             generic: self.generic,
             declared: Default::default(),
+            caught: Vec::new(),
             discarded: false,
             written: Default::default(),
             closures: self.closures.clone(),
@@ -6789,6 +6932,7 @@ impl<'a> Checker<'a> {
                     module: self.module,
                     generic: self.generic,
                     declared: Default::default(),
+                    caught: Vec::new(),
             discarded: false,
             written: Default::default(),
             closures: BTreeMap::new(),
@@ -6865,6 +7009,10 @@ impl<'a> Checker<'a> {
                     fields.push(ty);
                 }
                 Ok(Type::Record(linked_tuple(fields)))
+            }
+            Expr::Chain(receiver, method, _) if call_field(method).is_some() => {
+                let field = call_field(method).expect("guarded");
+                field_path(self.structs, self.ty(receiver)?, field).map(|(_, ty)| ty)
             }
             Expr::Chain(receiver, method, _) => {
                 let ty = self.ty(receiver)?;
@@ -7273,6 +7421,14 @@ impl<'a> Checker<'a> {
             }
             Expr::Index(local, index) if self.place(local)?.1.container().is_some() => {
                 let (key, elem) = Self::subscript(self.container(local, false, loans)?);
+                // 读出一个字符串元素（`let arg = args[i]`）得到它的副本，列表不变；纯数据的结构体
+                // 元素同样按值复制。
+                if (elem == Elem::Str && expected == Type::Owned) || copied(elem.ty()) {
+                    if elem.ty() != expected {
+                        return Err("type mismatch: element type differs".into());
+                    }
+                    return self.expr(index, key, loans);
+                }
                 if elem == Elem::Str {
                     return Err(format!(
                         "cannot move a string out of {local}[..]; borrow it with &{local}[..] or copy it with string.copy(&{local}[..])"
@@ -7298,7 +7454,8 @@ impl<'a> Checker<'a> {
                 if target != expected {
                     return Err("field type mismatch".into());
                 }
-                if !matches!(target, Type::Int | Type::Float | Type::Bool) {
+                // 字符串字段读出来是副本；数字、布尔与纯数据结构体按值复制。
+                if !copied(target) && target != Type::Owned {
                     return Err(format!(
                         "owned field moves are not supported; borrow it with &{path}[..].{field}"
                     ));
@@ -7326,13 +7483,12 @@ impl<'a> Checker<'a> {
                 if self.ty(expr)? != expected {
                     return Err("field type mismatch".into());
                 }
+                // 字符串字段读出来是副本（`let why = c.error`），结构体不变；纯数据的值按值复制。
+                // 列表、字典与其他结构体太大，不悄悄复制：借用它，或写 copy(&x.field)。
                 if !copied(expected)
-                    && matches!(
-                        expected,
-                        Type::Owned | Type::Record(_) | Type::List(_) | Type::Map(_, _)
-                    )
+                    && matches!(expected, Type::Record(_) | Type::List(_) | Type::Map(_, _))
                 {
-                    return Err("owned field moves are not supported; move the whole struct".into());
+                    return Err("owned field moves are not supported; borrow the field, or copy it with copy(&x.field)".into());
                 }
                 Ok(())
             }
@@ -7341,6 +7497,12 @@ impl<'a> Checker<'a> {
             }
             Expr::Variable(name) if matches!(expected, Type::Record(_)) => {
                 let ty = self.binding(name)?.ty;
+                // 借来的纯数据值在要值的地方自动复制（`today` 是 `&Date` 参数时，`let d = today`）。
+                if copied(expected)
+                    && matches!((ty, expected), (Type::RecordRef(a, _), Type::Record(b)) if a == b)
+                {
+                    return Ok(());
+                }
                 if ty.is_reference() {
                     return Err(format!("cannot move borrowed value {name}"));
                 }
@@ -7727,6 +7889,21 @@ impl<'a> Checker<'a> {
                 }
                 Ok(())
             }
+            // 调用结果的字段：数字、纯数据值按值复制，字符串得到副本；结构体、列表、字典要先绑定。
+            Expr::Chain(receiver, method, _) if call_field(method).is_some() => {
+                let field = call_field(method).expect("guarded");
+                let ty = self.ty(receiver)?;
+                let (_, found) = field_path(self.structs, ty, field)?;
+                if found != expected {
+                    return Err("field type mismatch".into());
+                }
+                if !copied(found) && found != Type::Owned {
+                    return Err(format!(
+                        "take a struct, list or map field from a call result by binding the result first: let value = ...; then use value.{field}"
+                    ));
+                }
+                self.expr(receiver, ty, loans)
+            }
             Expr::Chain(receiver, method, args) => {
                 // 先求值调用结果（临时值，语句结束时释放），再求实参，然后调用方法。
                 let ty = self.ty(receiver)?;
@@ -7894,10 +8071,13 @@ impl<'a> Checker<'a> {
                     }
                 };
                 let name = &name;
-                // 错误值只在 catch 的代码块里可见。
-                if self.locals.contains_key(binding) {
+                // 错误值只在 catch 的代码块里可见。嵌套的 `catch e: g() catch e: ...` 里，内层的 e
+                // 遮住外层 catch 的 e，块结束后外层的照旧可用；普通局部变量不能被遮住。
+                if self.locals.contains_key(binding) && !self.caught.contains(binding) {
                     return Err(format!("duplicate binding {binding}"));
                 }
+                let shadowed = self.locals.remove(binding);
+                self.caught.push(binding.clone());
                 self.locals.insert(
                     binding.clone(),
                     Binding {
@@ -7913,16 +8093,34 @@ impl<'a> Checker<'a> {
                     {
                         let checked = self.expr(value, success, loans);
                         self.locals.remove(binding);
+                        if let Some(outer) = shadowed.clone() {
+                            self.locals.insert(binding.clone(), outer);
+                        }
+                        self.caught.pop();
                         return checked;
                     }
                 }
+                let before = self.locals.clone();
                 let returned = self.block(block, self.result)?;
                 self.locals.remove(binding);
+                if let Some(outer) = shadowed.clone() {
+                    self.locals.insert(binding.clone(), outer);
+                }
+                self.caught.pop();
                 // 在循环里用 break / continue 收尾也算走完：控制流离开了这次调用所在的语句。
                 let jumped = matches!(
                     block.last(),
                     Some((Instruction::Break | Instruction::Continue, _))
                 );
+                // 块以 return、fail、break、continue 收尾时，块里的移动只发生在离开的那条路上，
+                // 不影响后面的代码（与 if 的分支一样）：`catch e: fail bad` 可以写好几次。
+                if returned || jumped {
+                    for (name, binding) in &before {
+                        if let Some(current) = self.locals.get_mut(name) {
+                            current.live = binding.live;
+                        }
+                    }
+                }
                 // 没有成功值的调用（`fs.remove(p) catch e:`）或单独成句、值没人用的调用：处理完错误
                 // 可以接着往下走，块里移走的变量之后照旧算移走。值要用时块必须离开，否则表达式没有值。
                 if !returned && !jumped && success != Type::Unit && !discarded {
@@ -8718,6 +8916,7 @@ pub fn check(module: &Module, entry: &str) -> Result<(), String> {
             module: name.split(':').next().unwrap_or(name),
             generic: name.ends_with(']'),
             declared: Default::default(),
+            caught: Vec::new(),
             discarded: false,
             written: Default::default(),
             closures: BTreeMap::new(),
@@ -8802,6 +9001,7 @@ pub fn local_type(module: &Module, line: usize, name: &str) -> Option<String> {
         module: function_name.split(':').next().unwrap_or(function_name),
         generic: false,
         declared: BTreeMap::new(),
+        caught: Vec::new(),
         discarded: false,
         written: Default::default(),
         closures: BTreeMap::new(),

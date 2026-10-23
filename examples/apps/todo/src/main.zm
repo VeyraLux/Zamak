@@ -1,0 +1,174 @@
+# todo：命令行的待办事项。数据存在一个 JSON 文件里（默认 ~/.zamak-todo.json，可以用环境变量
+# TODO_FILE 指定）。
+#
+#     todo add "write the report" --due 2026-11-01 --tag work
+#     todo list
+#     todo done 1
+use std/datetime
+use std/env
+use std/fs
+use std/json
+use std/path
+
+struct Task:
+    id: i64
+    text: string
+    done: bool
+    due: string
+    tags: [string]
+
+fn usage() -> string:
+    """usage: todo add TEXT [--due YYYY-MM-DD] [--tag TAG]... | list [--all] [--tag TAG] | done ID | remove ID | edit ID TEXT"""
+
+fn store() -> string:
+    let chosen = env.var("TODO_FILE") catch e: ""
+
+    if chosen != "":
+        return chosen
+
+    let home = env.var("HOME") catch e: env.var("USERPROFILE") catch e: "."
+    path.join(home, ".zamak-todo.json")
+
+fn load(file: &string) -> [Task]!string:
+    let mut tasks: [Task] = []
+
+    if not fs.exists(file):
+        return tasks
+
+    let data = json.loads(fs.read(file)?)?
+    let items = data.get("tasks")?
+
+    for i in range(items.len()):
+        let item = items.item(i)?
+        let mut tags: [string] = []
+        let names = item.get("tags")?
+
+        for j in range(names.len()):
+            tags.push(names.item(j)?.as_str()?)
+
+        tasks.push(Task(id: item.get("id")?.as_i64()?, text: item.get("text")?.as_str()?, done: item.get("done")?.as_bool()?, due: item.get("due")?.as_str()?, tags: tags))
+
+    tasks
+
+fn save(file: &string, tasks: &[Task]) -> !string:
+    let mut items: [json.Json] = []
+
+    for t in tasks:
+        let mut fields: {string: json.Json} = {}
+        fields["id"] = json.Json.Number(float(t.id))
+        fields["text"] = json.Json.Str(copy(t.text))
+        fields["done"] = json.Json.Bool(t.done)
+        fields["due"] = json.Json.Str(copy(t.due))
+        let mut tags: [json.Json] = []
+
+        for tag in t.tags:
+            tags.push(json.Json.Str(copy(tag)))
+
+        fields["tags"] = json.Json.Array(tags)
+        items.push(json.Json.Object(fields))
+
+    let mut root: {string: json.Json} = {}
+    root["tasks"] = json.Json.Array(items)
+    fs.write(file, json.dumps(json.Json.Object(root), indent=2))?
+
+fn find(tasks: &[Task], id: i64) -> i64!string:
+    for i, t in tasks:
+        if t.id == id:
+            return i
+
+    fail f"no task {id}"
+
+fn show(t: &Task, today: &datetime.Date):
+    let mark = if t.done: "x" else: " "
+    let mut line = f"[{mark}] {t.id:>3}  {t.text}"
+
+    if t.due != "":
+        let due = datetime.date_from_iso(t.due) catch e: today
+        let days = due.days_since(today)
+        let when = if days < 0: f"overdue {-days}d" elif days == 0: "due today" else: f"due in {days}d"
+        line += f"  ({t.due}, {when})"
+
+    if len(t.tags) > 0:
+        line += f"  #{" #".join(t.tags)}"
+
+    println(line)
+
+fn main() -> !string:
+    let args = env.args()
+
+    if len(args) == 0:
+        fail usage()
+
+    let file = store()
+    let mut tasks = load(file)?
+    let command = args[0]
+    let today = datetime.today()
+
+    if command == "add":
+        let mut text = ""
+        let mut due = ""
+        let mut tags: [string] = []
+        let mut i = 1
+
+        while i < len(args):
+            if args[i] == "--due" and i + 1 < len(args):
+                due = datetime.date_from_iso(args[i + 1])?.isoformat()
+                i += 2
+            elif args[i] == "--tag" and i + 1 < len(args):
+                tags.push(args[i + 1])
+                i += 2
+            else:
+                text = if text == "": args[i] else: f"{text} {args[i]}"
+                i += 1
+
+        if text == "":
+            fail usage()
+
+        let mut next = 1
+
+        for t in &tasks:
+            next = max(next, t.id + 1)
+
+        tasks.push(Task(id: next, text: text, done: false, due: due, tags: tags))
+        save(file, tasks)?
+        println(f"added {next}")
+    elif command == "list":
+        let all = "--all" in args
+        let mut tag = ""
+
+        for i, arg in &args:
+            if arg == "--tag" and i + 1 < len(args):
+                tag = args[i + 1]
+
+        let mut shown = 0
+
+        for t in &tasks:
+            if (all or not t.done) and (tag == "" or tag in t.tags):
+                show(t, today)
+                shown += 1
+
+        if shown == 0:
+            println("nothing to do")
+    elif command == "done" or command == "remove":
+        if len(args) < 2:
+            fail usage()
+
+        let at = find(tasks, args[1].parse_i64()?)?
+
+        if command == "done":
+            tasks[at].done = true
+        else:
+            tasks.remove(at)
+
+        save(file, tasks)?
+        println(f"{command} {args[1]}")
+    elif command == "edit":
+        if len(args) < 3:
+            fail usage()
+
+        let at = find(tasks, args[1].parse_i64()?)?
+        tasks[at].text = " ".join(args[2:])
+        save(file, tasks)?
+        println(f"edited {args[1]}")
+    else:
+        fail f"unknown command {command}\n{usage()}"

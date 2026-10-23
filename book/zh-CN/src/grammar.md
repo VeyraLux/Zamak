@@ -253,6 +253,7 @@ fn main():
 | `std/env` | 命令行参数、环境变量、退出 |
 | `std/math` | sqrt、pow、三角、取整、常量 |
 | `std/time` | 当前时间、单调时钟、休眠、ISO 格式 |
+| `std/datetime` | 日期与时间：计算、解析与 `strftime` |
 | `std/random` | 整数、浮点、设置种子 |
 | `std/fmt` | 保留小数位 |
 | `std/process` | 运行其他程序，取得输出与退出码 |

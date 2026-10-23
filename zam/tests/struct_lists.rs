@@ -92,10 +92,6 @@ fn checker_rejects_struct_list_misuse() {
     for (body, message) in [
         ("let p = items[0]", "cannot move a struct out of items[..]"),
         (
-            "let n = items[0].name",
-            "owned field moves are not supported",
-        ),
-        (
             "for it in &items:\n        it.qty = 1",
             "cannot assign immutable value it; it is a shared borrow",
         ),
@@ -136,7 +132,7 @@ fn checker_rejects_struct_list_misuse() {
             "it is a shared borrow",
         ),
         (
-            "struct Item:\n    qty: i64\nfn copy(item: &Item) -> Item:\n    item\nfn main(): pass\n",
+            "struct Item:\n    name: string\nfn copy(item: &Item) -> Item:\n    item\nfn main(): pass\n",
             "cannot move borrowed value item",
         ),
         (

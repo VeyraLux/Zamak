@@ -70,6 +70,20 @@ and this file is the source for the text of each GitHub release.
   that don't use local variables.
 - A generic method of a struct that isn't generic, such as `fn add[C: Control](&self, child: &C)`,
   now infers its type parameters.
+- Reading a string element or field gives a copy: `let arg = args[i]` and `let why = c.error` work,
+  and the list or struct keeps its value.
+- String methods `rfind`, `removeprefix`, `removesuffix`, `capitalize`, `title`, `center`, `zfill`,
+  `isupper`, and `islower`, and `s.find(sub, start)`.
+- Interpolation takes any expression, including string literals and slices: `f"{d["key"]} {s[:5]}"`.
+- `std/http` follows redirects by default (`follow=false` turns it off) and has `http.urljoin`.
+- `examples/apps/linkcheck` checks the links of a web page with several threads.
+- **Dates and times.** `std/datetime` follows Python's `datetime`: `Date` and `DateTime`, `today()`,
+  `now()`, parsing and `isoformat()`, `strftime`, `add_days`, `days_since`, and time zone offsets.
+- More everyday shapes compile: indexing, slicing, and reading a field of a call result
+  (`line.split(",")[0]`, `user().name`), `?` after an element's method (`args[1].parse_i64()?`),
+  methods on struct literals, nested `catch e:`, `fail x` in several `catch` blocks, and a borrowed
+  plain value where a value is needed.
+- `examples/apps/todo` is a command-line task list that stores its tasks as JSON.
 - A parenthesized value can take a method call: `(a + b).upper()`.
 
 ## 0.1.1
@@ -256,6 +270,18 @@ this preview.
   以 `&mut` 收到它。底层是 libui-ng（MIT），`zam` 自带源码，程序第一次用到时编译进缓存。
 - `kept fn(...)` 标出函数会被保存下来的参数，它只收不用局部变量的函数。
 - 非泛型结构体的泛型方法（如 `fn add[C: Control](&self, child: &C)`）现在能推断类型参数。
+- 读取字符串元素或字段得到副本：`let arg = args[i]`、`let why = c.error` 都能写，列表与结构体不变。
+- 字符串方法 `rfind`、`removeprefix`、`removesuffix`、`capitalize`、`title`、`center`、`zfill`、`isupper`、
+  `islower`，以及 `s.find(sub, start)`。
+- 插值里可以写任何表达式，包括字符串字面量与切片：`f"{d["key"]} {s[:5]}"`。
+- `std/http` 默认跟随重定向（`follow=false` 关闭），新增 `http.urljoin`。
+- `examples/apps/linkcheck`：用多个线程检查网页上的链接。
+- **日期与时间。** `std/datetime` 参考 Python 的 `datetime`：`Date` 与 `DateTime`、`today()`、`now()`、解析与
+  `isoformat()`、`strftime`、`add_days`、`days_since`，以及时区偏移。
+- 更多日常写法可以编译：调用结果上取下标、切片和字段（`line.split(",")[0]`、`user().name`），元素方法后接 `?`
+  （`args[1].parse_i64()?`），结构体字面量上调方法，嵌套的 `catch e:`，几个 `catch` 块里 `fail` 同一个值，
+  以及在要值的地方使用借来的纯数据值。
+- `examples/apps/todo`：命令行的待办事项，任务存成 JSON。
 - 括号里的值也能接方法调用：`(a + b).upper()`。
 
 ## 0.1.1（中文）

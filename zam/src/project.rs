@@ -184,6 +184,7 @@ const STD_SOURCES: &[(&str, &str)] = &[
     ("std/http", include_str!("../std/http.zm")),
     ("std/thread", include_str!("../std/thread.zm")),
     ("std/ui", include_str!("../std/ui.zm")),
+    ("std/datetime", include_str!("../std/datetime.zm")),
 ];
 
 /// Mbed TLS 的源码（vendor/mbedtls，build.rs 压缩后嵌进来）：程序用到 std/net 时解压到缓存编译。
@@ -1638,6 +1639,8 @@ impl Project {
                     self.resolve_expr(module, locals, segment)?;
                 }
             }
+            // `{self.q().twice():03}`：带格式说明的插值里也有要解析的调用。
+            Expr::Formatted(inner, _) => self.resolve_expr(module, locals, inner)?,
             Expr::If(condition, yes, no) => {
                 self.resolve_expr(module, locals, condition)?;
                 self.resolve_expr(module, locals, yes)?;
