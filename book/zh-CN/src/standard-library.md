@@ -273,7 +273,7 @@ fn main() -> !string:
 use std/http
 
 fn main() -> !string:
-    let r = http.get("http://example.com/")?
+    let r = http.get("https://example.com/")?
     println(r.status)
     println(r.headers["content-type"])
     println(r.text()?)
@@ -302,9 +302,21 @@ fn main() -> !string:
 
 `http.respond(status, text)` 与 `http.respond_json(status, value)` 构造响应；`Request` 有 `method`、`path`、`query`、`headers`、`body`。
 
-`std/net` 是更底层的 TCP：`net.connect(host, port)` 得到连接，`net.listen(host, port)` 得到监听器，连接有 `send`、`recv`、`recv_all`、`set_timeout`。连接与监听器离开作用域时自动关闭。
+`std/net` 是更底层的 TCP：`net.connect(host, port)` 得到连接，`net.listen(host, port)` 得到监听器，连接有 `send`、`recv`、`recv_all`、`set_timeout`。连接与监听器离开作用域时自动关闭。服务端一次处理一个请求。
 
-目前只支持 `http://`。`https://` 需要 TLS，后续版本加上；服务端一次处理一个请求。
+### HTTPS 与 TLS
+
+`https://` 开头的地址自动走 TLS，并校验服务器证书：证书要由受信任的根证书签发，名字要和主机名一致，否则请求失败，错误信息会说明原因。根证书来自系统（Windows 的证书库，Linux 和 macOS 的常见证书文件）；设置环境变量 `SSL_CERT_FILE` 可以改用你自己的 PEM 文件。
+
+服务端给 `serve` 传上证书和私钥（都是 PEM 文件）就是 HTTPS：
+
+```zamak,ignore
+http.serve("0.0.0.0", 8443, hello, cert_file="cert.pem", key_file="key.pem")?
+```
+
+在 `std/net` 里，`conn.start_tls(host)` 在已有的连接上开启 TLS（客户端），`listener.accept_tls(cert_file, key_file)` 接受一条 TLS 连接。之后照常用 `send` 和 `recv`。
+
+TLS 由 [Mbed TLS](https://github.com/Mbed-TLS/mbedtls)（Apache-2.0）实现，`zam` 自带它的源码。程序第一次用到 `std/net` 或 `std/http` 时，`zam` 把它编译进缓存，要多花一些时间（通常十几秒）；之后直接复用。分发这样的程序时，请附上 Mbed TLS 的许可证。
 
 ## 哈希与 base64：std/hashlib 和 std/base64
 

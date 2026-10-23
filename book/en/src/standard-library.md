@@ -273,7 +273,7 @@ fn main() -> !string:
 use std/http
 
 fn main() -> !string:
-    let r = http.get("http://example.com/")?
+    let r = http.get("https://example.com/")?
     println(r.status)
     println(r.headers["content-type"])
     println(r.text()?)
@@ -302,9 +302,21 @@ fn main() -> !string:
 
 `http.respond(status, text)` and `http.respond_json(status, value)` build responses. A `Request` has `method`, `path`, `query`, `headers`, and `body`.
 
-`std/net` is plain TCP underneath: `net.connect(host, port)` returns a connection, and `net.listen(host, port)` returns a listener. A connection has `send`, `recv`, `recv_all`, and `set_timeout`. Connections and listeners close when they go out of scope.
+`std/net` is plain TCP underneath: `net.connect(host, port)` returns a connection, and `net.listen(host, port)` returns a listener. A connection has `send`, `recv`, `recv_all`, and `set_timeout`. Connections and listeners close when they go out of scope. The server handles one request at a time.
 
-Only `http://` works for now. `https://` needs TLS, which a later version adds, and the server handles one request at a time.
+### HTTPS and TLS
+
+URLs that start with `https://` use TLS and check the server's certificate. A trusted root must sign the certificate, and its name must match the host. Otherwise the request fails, and the error says why. Root certificates come from the system: the certificate store on Windows, and the usual certificate files on Linux and macOS. To use your own PEM file instead, set the `SSL_CERT_FILE` environment variable.
+
+To serve HTTPS, pass a certificate and a private key, both PEM files, to `serve`:
+
+```zamak,ignore
+http.serve("0.0.0.0", 8443, hello, cert_file="cert.pem", key_file="key.pem")?
+```
+
+In `std/net`, `conn.start_tls(host)` starts TLS on an open connection as a client, and `listener.accept_tls(cert_file, key_file)` accepts a TLS connection. After that, use `send` and `recv` as usual.
+
+TLS comes from [Mbed TLS](https://github.com/Mbed-TLS/mbedtls) (Apache-2.0), and `zam` carries its source. The first time a program uses `std/net` or `std/http`, `zam` compiles it into the cache, which usually takes 10 to 20 extra seconds. Later builds reuse it. When you distribute such a program, include the Mbed TLS license.
 
 ## Hashes and base64: std/hashlib and std/base64
 

@@ -1,6 +1,6 @@
 # HTTP/1.1 客户端与服务端。客户端的形状参考 Python 的 requests：http.get(url)、http.post(url, body)，
 # 响应有 status、headers、text()、json()。服务端：http.serve(host, port, handler)。
-# 目前只支持 http://；https:// 需要 TLS，后续版本加上。
+# https:// 用 TLS，校验服务器证书（根证书来自系统，或环境变量 SSL_CERT_FILE 指定的文件）。
 use std/net
 use std/json
 
@@ -57,7 +57,11 @@ pub fn post_json(url: &string, value: &json.Json, timeout: f64 = 30.0) -> Respon
 # 任意方法的请求。headers 里的项原样加进请求头。
 pub fn request(method: &string, url: &string, body: &bytes, headers: &{string: string}, timeout: f64 = 30.0) -> Response!string:
     let target = parse_url(url)?
-    let conn = net.connect(target.host, target.port, timeout)?
+    let mut conn = net.connect(target.host, target.port, timeout)?
+
+    if target.secure:
+        conn.start_tls(target.host)?
+
     let mut head: [string] = [f"{method} {target.path} HTTP/1.1", f"Host: {target.host_header}", "Connection: close", "User-Agent: zamak", "Accept-Encoding: identity"]
 
     if len(body) > 0 or method == "POST" or method == "PUT" or method == "PATCH":
@@ -74,16 +78,17 @@ pub fn request(method: &string, url: &string, body: &bytes, headers: &{string: s
     parse_response(conn.recv_all()?)?
 
 # 在 host 的 port 端口上一直处理请求：每个请求交给 handler，把它返回的响应发回去。
-pub fn serve(host: &string, port: i64, handler: fn(&Request) -> Response) -> !string:
+# 给出 cert_file 与 key_file（PEM 文件）时用 HTTPS。
+pub fn serve(host: &string, port: i64, handler: fn(&Request) -> Response, cert_file: &string = "", key_file: &string = "") -> !string:
     let listener = net.listen(host, port)?
 
     while true:
-        serve_one(listener, handler) catch e:
+        serve_one(listener, handler, cert_file, key_file) catch e:
             continue
 
 # 接受一条连接、处理一个请求。测试或自己控制循环时用。
-pub fn serve_one(listener: &net.Listener, handler: fn(&Request) -> Response) -> !string:
-    let conn = listener.accept()?
+pub fn serve_one(listener: &net.Listener, handler: fn(&Request) -> Response, cert_file: &string = "", key_file: &string = "") -> !string:
+    let conn = if cert_file == "": listener.accept()? else: listener.accept_tls(cert_file, key_file)?
     conn.set_timeout(30.0)
     let mut raw: bytes = []
     let mut end = -1
@@ -141,6 +146,7 @@ pub fn respond_json(status: i64, value: &json.Json) -> Response:
     respond(status, json.dumps(value), content_type="application/json")
 
 struct Target:
+    secure: bool
     host: string
     host_header: string
     port: i64
@@ -149,13 +155,16 @@ struct Target:
 fn parse_url(url: &string) -> Target!string:
     let mut rest = ""
     let mut port = 80
+    let mut secure = false
 
     if url.starts_with("https://"):
-        fail "https:// is not supported yet: it needs TLS, which a later version adds; use http://"
+        rest = url[8:]
+        port = 443
+        secure = true
     elif url.starts_with("http://"):
         rest = url[7:]
     else:
-        fail f"a URL starts with http://, such as http://example.com/path; got {url}"
+        fail f"a URL starts with http:// or https://, such as https://example.com/path; got {url}"
 
     let slash = rest.find("/")
     let question = rest.find("?")
@@ -189,7 +198,7 @@ fn parse_url(url: &string) -> Target!string:
     if host == "":
         fail f"the URL has no host: {url}"
 
-    Target(host=host, host_header=authority, port=port, path=path)
+    Target(secure=secure, host=host, host_header=authority, port=port, path=path)
 
 # 头部结束的位置（\r\n\r\n 的开头）；还没收到时是 -1。
 fn find_blank_line(data: &bytes) -> i64:

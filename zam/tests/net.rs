@@ -91,3 +91,81 @@ fn http_server_answers_requests() {
 HTTP/1.1 404 Not Found\nContent-Length: 20\nConnection: close\ncontent-type: application/json\n\n{\"path\": \"/missing\"}\n"
     );
 }
+
+#[test]
+fn tls_server_and_client_talk_over_loopback() {
+    // TLS 握手要两边交替收发，单线程做不到：服务端与客户端各是一个 Zamak 进程，共用缓存，
+    // Mbed TLS 只编译一次。服务端把端口写到 stderr（不经缓冲），客户端用 SSL_CERT_FILE 信任测试证书。
+    use std::io::BufRead;
+    use std::process::{Command, Stdio};
+    let case = Case::new("net", "tls");
+    let fixture = |name: &str| {
+        std::path::absolute(format!("tests/fixtures/tls/{name}"))
+            .unwrap()
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    };
+    let (cert, key) = (fixture("cert.pem"), fixture("key.pem"));
+    let zam = |file: &str, source: String| {
+        let path = case.path(file);
+        std::fs::write(&path, source).unwrap();
+        let mut command = Command::new(env!("CARGO_BIN_EXE_zam"));
+        command
+            .arg("run")
+            .arg(path)
+            .env("ZAMAK_CACHE_DIR", case.path("cache"))
+            .env("ZAMAK_LANG", "en")
+            .env("SSL_CERT_FILE", &cert);
+        command
+    };
+    let mut server = zam(
+        "server.zm",
+        format!(
+            "use std/http\nuse std/io\nuse std/net\n\nfn hello(req: &http.Request) -> http.Response:\n    http.respond(200, f\"secure {{req.path}}\")\n\nfn main() -> !string:\n    let listener = net.listen(\"127.0.0.1\", 0)?\n    io.eprintln(f\"port {{listener.port()}}\")\n    http.serve_one(listener, hello, cert_file=\"{cert}\", key_file=\"{key}\")?\n    let conn = listener.accept_tls(\"{cert}\", \"{key}\")?\n    conn.send(conn.recv()?)?\n    listener.accept_tls(\"{cert}\", \"{key}\") catch e:\n        println(\"refused\")\n"
+        ),
+    )
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()
+    .unwrap();
+    let mut port = String::new();
+    let mut log = String::new();
+    for line in std::io::BufReader::new(server.stderr.take().unwrap()).lines() {
+        let line = line.unwrap();
+        if let Some(found) = line.strip_prefix("port ") {
+            port = found.to_owned();
+            break;
+        }
+        log += &line;
+        log += "\n";
+    }
+    if port.is_empty() {
+        // 先结束服务端，Case 才删得掉它占着的目录。
+        let _ = server.kill();
+        let _ = server.wait();
+        panic!("the server did not start:\n{log}");
+    }
+    let client = zam(
+        "client.zm",
+        format!(
+            "use std/http\nuse std/net\n\nfn main() -> !string:\n    let r = http.get(\"https://localhost:{port}/hi\")?\n    println(f\"{{r.status}} {{r.text()?}}\")\n    let mut conn = net.connect(\"127.0.0.1\", {port})?\n    conn.start_tls(\"127.0.0.1\")?\n    conn.send(b\"ping\")?\n    println(conn.recv()?)\n    let mut other = net.connect(\"127.0.0.1\", {port})?\n    other.start_tls(\"example.com\") catch e:\n        println(e)\n"
+        ),
+    )
+    .output()
+    .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while server.try_wait().unwrap().is_none() {
+        if std::time::Instant::now() > deadline {
+            let _ = server.kill();
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let served = server.wait_with_output().unwrap();
+    assert_eq!(
+        stdout(&client),
+        "200 secure /hi\nb\"ping\"\ncannot start TLS with example.com: the server's certificate is not trusted: The certificate Common Name (CN) does not match with the expected CN\n"
+    );
+    assert_eq!(stdout(&served), "refused\n");
+}

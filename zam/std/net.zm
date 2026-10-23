@@ -1,5 +1,6 @@
 # TCP 网络：连接、监听、收发字节。形状参考 Python 的 socket 模块，但用起来更直接：
 # net.connect 得到连接，net.listen 得到监听器，连接与监听器离开作用域时自动关闭。
+# conn.start_tls(host) 在连接上开启 TLS（客户端，校验证书），listener.accept_tls(...) 接受 TLS 连接。
 use std/bytes
 
 extern type Socket: "void", close = zam_net_close
@@ -14,12 +15,42 @@ extern fn zam_net_recv(conn: &Socket, buf: &mut bytes, n: i64) -> i64
 extern fn zam_net_timeout(conn: &Socket, seconds: f64)
 extern fn zam_net_error() -> string
 
+extern type Tls: "void", close = zam_tls_free
+
+extern fn zam_tls_connect(socket: &Socket, host: &string, out: &mut Option[Tls]) -> i64
+extern fn zam_tls_accept(socket: &Socket, cert_file: &string, key_file: &string, out: &mut Option[Tls]) -> i64
+extern fn zam_tls_send(tls: &Tls, data: &bytes, n: i64) -> i64
+extern fn zam_tls_recv(tls: &Tls, buf: &mut bytes, n: i64) -> i64
+extern fn zam_tls_error() -> string
+
 # 一条 TCP 连接。
 pub struct Conn:
+    # TLS 写在套接字前面：释放时先发 close_notify，再关套接字。
+    tls: Option[Tls]
     socket: Option[Socket]
+
+    # 在这条连接上开启 TLS（客户端）：校验服务器证书，host 用来核对证书上的名字。
+    pub fn start_tls(&mut self, host: &string) -> !string:
+        let mut tls: Option[Tls] = Option.None
+
+        match self.socket:
+            Some(s):
+                if zam_tls_connect(s, host, &mut tls) < 0:
+                    fail f"cannot start TLS with {host}: {zam_tls_error()}"
+            None: fail "the connection is closed"
+
+        self.tls = tls
 
     # 把 data 全部发出去。
     pub fn send(&self, data: &bytes) -> !string:
+        match self.tls:
+            Some(t):
+                if zam_tls_send(t, data, len(data)) < 0:
+                    fail zam_tls_error()
+
+                return
+            None: pass
+
         match self.socket:
             Some(s):
                 if zam_net_send(s, data, len(data)) < 0:
@@ -28,6 +59,17 @@ pub struct Conn:
 
     # 收一次数据，最多 max 个字节。对方关闭连接时得到空的 bytes。
     pub fn recv(&self, max: i64 = 65536) -> bytes!string:
+        match self.tls:
+            Some(t):
+                let mut secret = bytes.zeros(max)
+                let got = zam_tls_recv(t, &mut secret, max)
+
+                if got < 0:
+                    fail zam_tls_error()
+
+                return secret[:got]
+            None: pass
+
         match self.socket:
             Some(s):
                 let mut buf = bytes.zeros(max)
@@ -60,6 +102,7 @@ pub struct Conn:
             None: pass
 
     pub fn close(&mut self):
+        self.tls = Option.None
         self.socket = Option.None
 
 # 监听某个地址的 TCP 连接。
@@ -68,7 +111,7 @@ pub struct Listener:
 
     # 等下一条连接。
     pub fn accept(&self) -> Conn!string:
-        let mut conn = Conn(socket=Option.None)
+        let mut conn = Conn(tls=Option.None, socket=Option.None)
 
         match self.socket:
             Some(s):
@@ -76,6 +119,20 @@ pub struct Listener:
                     fail zam_net_error()
             None: fail "the listener is closed"
 
+        conn
+
+    # 等下一条连接，并用 cert_file（PEM 格式的证书链）与 key_file（私钥）完成 TLS 握手。
+    pub fn accept_tls(&self, cert_file: &string, key_file: &string) -> Conn!string:
+        let mut conn = self.accept()?
+        let mut tls: Option[Tls] = Option.None
+
+        match conn.socket:
+            Some(s):
+                if zam_tls_accept(s, cert_file, key_file, &mut tls) < 0:
+                    fail zam_tls_error()
+            None: fail "the connection is closed"
+
+        conn.tls = tls
         conn
 
     # 实际监听的端口（监听 0 号端口时由系统挑选）。
@@ -89,7 +146,7 @@ pub struct Listener:
 
 # 连接到 host 的 port 端口。timeout 秒内连不上或收发停住时返回错误。
 pub fn connect(host: &string, port: i64, timeout: f64 = 30.0) -> Conn!string:
-    let mut conn = Conn(socket=Option.None)
+    let mut conn = Conn(tls=Option.None, socket=Option.None)
 
     if zam_net_connect(host, port, timeout, &mut conn.socket) < 0:
         fail f"cannot connect to {host}:{port}: {zam_net_error()}"

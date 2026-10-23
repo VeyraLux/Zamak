@@ -1597,7 +1597,199 @@ void zam_net_timeout(void *conn, double seconds) { zam_set_timeout(zam_handle_so
 void zam_net_close(void *conn) { zam_close_socket(zam_handle_sock(conn)); }
 "#;
 /// 用 Zamak 写的标准库模块自带的 C 代码：编译这个模块的目标文件时放在开头（extern fn 调用它们）。
-const UNIT_PRELUDES: &[(&str, &str)] = &[("std/net", NET_PRELUDE)];
+const TLS_PRELUDE: &str = r#"// TLS（Mbed TLS）：在已经连上的 TCP 套接字上握手，之后的收发都加密。客户端校验服务器证书和主机名，
+// 根证书来自系统（Windows 的证书库；其他平台的常见证书文件），或者环境变量 SSL_CERT_FILE 指定的文件。
+#include "mbedtls/ssl.h"
+#include "mbedtls/entropy.h"
+#include "mbedtls/ctr_drbg.h"
+#include "mbedtls/x509_crt.h"
+#include "mbedtls/pk.h"
+#include "mbedtls/error.h"
+#include "psa/crypto.h"
+#define ZAM_TLS_SEND_FAILED (-0x004E)
+#define ZAM_TLS_RECV_FAILED (-0x004C)
+typedef struct {
+    mbedtls_ssl_context ssl;
+    mbedtls_ssl_config conf;
+    mbedtls_x509_crt ca, cert;
+    mbedtls_pk_context key;
+    mbedtls_entropy_context entropy;
+    mbedtls_ctr_drbg_context drbg;
+    void *socket;
+} zam_tls;
+static char zam_tls_message[512];
+const char *zam_tls_error(void) { return zam_tls_message; }
+static void zam_tls_fail(const char *what, int rc) {
+    char detail[256];
+    mbedtls_strerror(rc, detail, sizeof detail);
+    snprintf(zam_tls_message, sizeof zam_tls_message, "%s: %s", what, detail);
+}
+static int zam_tls_bio_send(void *ctx, const unsigned char *buf, size_t len) {
+    int sent = (int)send(zam_handle_sock(ctx), (const char *)buf, len > 1 << 30 ? 1 << 30 : (int)len, 0);
+    return sent < 0 ? ZAM_TLS_SEND_FAILED : sent;
+}
+static int zam_tls_bio_recv(void *ctx, unsigned char *buf, size_t len) {
+    int got = (int)recv(zam_handle_sock(ctx), (char *)buf, len > 1 << 30 ? 1 << 30 : (int)len, 0);
+    return got < 0 ? ZAM_TLS_RECV_FAILED : got;
+}
+#ifdef _WIN32
+typedef struct { unsigned long encoding; unsigned char *data; unsigned long size; void *info; void *store; } zam_cert_context;
+__declspec(dllimport) void *__stdcall CertOpenSystemStoreW(uintptr_t, const wchar_t *);
+__declspec(dllimport) const void *__stdcall CertEnumCertificatesInStore(void *, const void *);
+__declspec(dllimport) int __stdcall CertCloseStore(void *, unsigned long);
+#endif
+// 系统的根证书。返回装进来的证书数；0 表示一张都没找到。
+static int zam_tls_roots(mbedtls_x509_crt *ca) {
+    const char *file = getenv("SSL_CERT_FILE");
+    int loaded = 0;
+    if (file && *file) return mbedtls_x509_crt_parse_file(ca, file) >= 0 && ca->raw.len ? 1 : 0;
+#ifdef _WIN32
+    {
+        const wchar_t *stores[] = {L"ROOT", L"CA"};
+        size_t k;
+        for (k = 0; k < 2; k++) {
+            void *store = CertOpenSystemStoreW(0, stores[k]);
+            const zam_cert_context *c = NULL;
+            if (!store) continue;
+            while ((c = (const zam_cert_context *)CertEnumCertificatesInStore(store, c)) != NULL) {
+                if ((c->encoding & 1) && mbedtls_x509_crt_parse_der(ca, c->data, c->size) == 0) loaded++;
+            }
+            CertCloseStore(store, 0);
+        }
+    }
+#else
+    {
+        static const char *files[] = {
+            "/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/ca-bundle.pem",
+            "/etc/pki/tls/cacert.pem", "/etc/ssl/cert.pem", "/usr/local/etc/openssl/cert.pem", "/opt/homebrew/etc/openssl@3/cert.pem", NULL};
+        size_t k;
+        for (k = 0; files[k] && !loaded; k++) {
+            FILE *probe = fopen(files[k], "rb");
+            if (!probe) continue;
+            fclose(probe);
+            if (mbedtls_x509_crt_parse_file(ca, files[k]) >= 0 && ca->raw.len) loaded = 1;
+        }
+        if (!loaded && mbedtls_x509_crt_parse_path(ca, "/etc/ssl/certs") >= 0 && ca->raw.len) loaded = 1;
+    }
+#endif
+    return loaded;
+}
+static zam_tls *zam_tls_new(void *socket, int server) {
+    static int ready;
+    zam_tls *t = (zam_tls *)calloc(1, sizeof *t);
+    int rc;
+    if (!t) { snprintf(zam_tls_message, sizeof zam_tls_message, "out of memory"); return NULL; }
+    if (!ready) {
+        if (psa_crypto_init() != PSA_SUCCESS) { snprintf(zam_tls_message, sizeof zam_tls_message, "cannot start the crypto library"); free(t); return NULL; }
+        ready = 1;
+    }
+    t->socket = socket;
+    mbedtls_ssl_init(&t->ssl);
+    mbedtls_ssl_config_init(&t->conf);
+    mbedtls_x509_crt_init(&t->ca);
+    mbedtls_x509_crt_init(&t->cert);
+    mbedtls_pk_init(&t->key);
+    mbedtls_entropy_init(&t->entropy);
+    mbedtls_ctr_drbg_init(&t->drbg);
+    rc = mbedtls_ctr_drbg_seed(&t->drbg, mbedtls_entropy_func, &t->entropy, (const unsigned char *)"zamak", 5);
+    if (rc == 0) rc = mbedtls_ssl_config_defaults(&t->conf, server ? MBEDTLS_SSL_IS_SERVER : MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT);
+    if (rc != 0) { zam_tls_fail("cannot set up TLS", rc); return t; }
+    mbedtls_ssl_conf_rng(&t->conf, mbedtls_ctr_drbg_random, &t->drbg);
+    return t;
+}
+void zam_tls_free(void *handle) {
+    zam_tls *t = (zam_tls *)handle;
+    if (!t) return;
+    mbedtls_ssl_close_notify(&t->ssl);
+    mbedtls_ssl_free(&t->ssl);
+    mbedtls_ssl_config_free(&t->conf);
+    mbedtls_x509_crt_free(&t->ca);
+    mbedtls_x509_crt_free(&t->cert);
+    mbedtls_pk_free(&t->key);
+    mbedtls_ctr_drbg_free(&t->drbg);
+    mbedtls_entropy_free(&t->entropy);
+    free(t);
+}
+static int64_t zam_tls_handshake(zam_tls *t, void **out) {
+    int rc;
+    mbedtls_ssl_set_bio(&t->ssl, t->socket, zam_tls_bio_send, zam_tls_bio_recv, NULL);
+    while ((rc = mbedtls_ssl_handshake(&t->ssl)) != 0) {
+        if (rc == MBEDTLS_ERR_SSL_WANT_READ || rc == MBEDTLS_ERR_SSL_WANT_WRITE) continue;
+        if (rc == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED) {
+            char why[256];
+            mbedtls_x509_crt_verify_info(why, sizeof why, "", mbedtls_ssl_get_verify_result(&t->ssl));
+            snprintf(zam_tls_message, sizeof zam_tls_message, "the server's certificate is not trusted: %s", why);
+            { size_t n = strlen(zam_tls_message); while (n && (zam_tls_message[n - 1] == '\n' || zam_tls_message[n - 1] == ' ')) zam_tls_message[--n] = 0; }
+        } else {
+            zam_tls_fail("TLS handshake failed", rc);
+        }
+        zam_tls_free(t);
+        return -1;
+    }
+    *out = t;
+    return 0;
+}
+// 客户端：校验证书链与主机名（同时用作 SNI）。
+int64_t zam_tls_connect(void *socket, const char *host, void **out) {
+    zam_tls *t = zam_tls_new(socket, 0);
+    int rc;
+    *out = NULL;
+    if (!t) return -1;
+    if (!zam_tls_roots(&t->ca)) {
+        snprintf(zam_tls_message, sizeof zam_tls_message, "no trusted root certificates found; set SSL_CERT_FILE to a PEM file of CA certificates");
+        zam_tls_free(t);
+        return -1;
+    }
+    mbedtls_ssl_conf_authmode(&t->conf, MBEDTLS_SSL_VERIFY_REQUIRED);
+    mbedtls_ssl_conf_ca_chain(&t->conf, &t->ca, NULL);
+    rc = mbedtls_ssl_setup(&t->ssl, &t->conf);
+    if (rc == 0) rc = mbedtls_ssl_set_hostname(&t->ssl, host);
+    if (rc != 0) { zam_tls_fail("cannot set up TLS", rc); zam_tls_free(t); return -1; }
+    return zam_tls_handshake(t, out);
+}
+// 服务端：用 PEM 文件里的证书链与私钥。
+int64_t zam_tls_accept(void *socket, const char *cert_file, const char *key_file, void **out) {
+    zam_tls *t = zam_tls_new(socket, 1);
+    int rc;
+    *out = NULL;
+    if (!t) return -1;
+    rc = mbedtls_x509_crt_parse_file(&t->cert, cert_file);
+    if (rc != 0) { zam_tls_fail("cannot read the certificate file", rc); zam_tls_free(t); return -1; }
+    rc = mbedtls_pk_parse_keyfile(&t->key, key_file, NULL, mbedtls_ctr_drbg_random, &t->drbg);
+    if (rc != 0) { zam_tls_fail("cannot read the private key file", rc); zam_tls_free(t); return -1; }
+    rc = mbedtls_ssl_conf_own_cert(&t->conf, &t->cert, &t->key);
+    if (rc == 0) rc = mbedtls_ssl_setup(&t->ssl, &t->conf);
+    if (rc != 0) { zam_tls_fail("cannot set up TLS", rc); zam_tls_free(t); return -1; }
+    return zam_tls_handshake(t, out);
+}
+int64_t zam_tls_send(void *handle, const uint8_t *data, int64_t n) {
+    zam_tls *t = (zam_tls *)handle;
+    int64_t done = 0;
+    while (done < n) {
+        int rc = mbedtls_ssl_write(&t->ssl, data + done, (size_t)(n - done > 16384 ? 16384 : n - done));
+        if (rc == MBEDTLS_ERR_SSL_WANT_READ || rc == MBEDTLS_ERR_SSL_WANT_WRITE) continue;
+        if (rc < 0) { zam_tls_fail("cannot send", rc); return -1; }
+        done += rc;
+    }
+    return done;
+}
+// 对方正常关闭（close_notify 或连接结束）时返回 0。
+int64_t zam_tls_recv(void *handle, uint8_t *buf, int64_t n) {
+    zam_tls *t = (zam_tls *)handle;
+    for (;;) {
+        int rc = mbedtls_ssl_read(&t->ssl, buf, (size_t)(n > 1 << 30 ? 1 << 30 : n));
+        if (rc == MBEDTLS_ERR_SSL_WANT_READ || rc == MBEDTLS_ERR_SSL_WANT_WRITE) continue;
+#ifdef MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET
+        if (rc == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET) continue;
+#endif
+        // 有的服务器不发 close_notify 就断开连接，也算正常结束。
+        if (rc == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY || rc == MBEDTLS_ERR_SSL_CONN_EOF || rc == 0) return 0;
+        if (rc < 0) { zam_tls_fail("cannot receive", rc); return -1; }
+        return rc;
+    }
+}
+"#;
+const UNIT_PRELUDES: &[(&str, &[&str])] = &[("std/net", &[NET_PRELUDE, TLS_PRELUDE])];
 /// 只在用到某个标准库模块时才需要的 C 辅助代码：（模块前缀, 代码）。
 const MODULE_PRELUDES: &[(&str, &str)] = &[
     ("std/hashlib:", HASH_PRELUDE),
@@ -7337,7 +7529,7 @@ pub fn generate_with(
     }
     source.push_str(&bodies);
     if let Some((_, code)) = UNIT_PRELUDES.iter().find(|(id, _)| *id == unit) {
-        source.insert_str(RUNTIME.len(), code);
+        source.insert_str(RUNTIME.len(), &code.concat());
     }
     if needs_headers && !headers.is_empty() {
         let includes: String = headers
@@ -7854,9 +8046,23 @@ pub fn compile_with(
         .to_string_lossy()
         .trim_start_matches(r"\\?\")
         .to_owned();
+    // 头文件目录同理：头文件里的 `__FILE__`（如 Mbed TLS 的调试宏）会带上目录的绝对路径，
+    // 换个缓存目录或机器就变。MSVC 用 `/d1trimfile` 把目录前缀裁掉（`/d2pathmap` 管不到 `__FILE__`），
+    // GCC/Clang 把每个目录映射成固定的 `I0`、`I1`……
+    let includes: Vec<String> = includes
+        .iter()
+        .map(|dir| {
+            std::fs::canonicalize(dir)
+                .map(|dir| dir.to_string_lossy().trim_start_matches(r"\\?\").to_owned())
+                .unwrap_or_else(|_| dir.display().to_string())
+        })
+        .collect();
     let output = if uses_msvc(tool) {
         let environment = msvc_environment(tool)?;
-        if mapped.contains(['"', '%', '\r', '\n']) {
+        if std::iter::once(&mapped)
+            .chain(&includes)
+            .any(|path| path.contains(['"', '%', '\r', '\n']))
+        {
             return Err("unsupported native cache path".into());
         }
         // ponytail: 源码按 UTF-8 写出，cl 默认按本地代码页(如 936)读取会吞掉中文注释后的下一行；/utf-8 固定两端编码。
@@ -7874,7 +8080,8 @@ pub fn compile_with(
                 "program.c",
                 "/Fo:program.obj",
             ])
-            .args(includes.iter().map(|dir| format!("/I{}", dir.display())))
+            .args(includes.iter().map(|dir| format!("/I{dir}")))
+            .args(includes.iter().map(|dir| format!("/d1trimfile:{dir}\\")))
             .output()
     } else {
         // ponytail: `-g`（用户经 CC 传入）会把编译目录写进 DWARF，同一个缓存键在不同临时目录
@@ -7893,7 +8100,13 @@ pub fn compile_with(
                 "-o",
                 "program.obj",
             ])
-            .args(includes.iter().map(|dir| format!("-I{}", dir.display())))
+            .args(includes.iter().map(|dir| format!("-I{dir}")))
+            .args(
+                includes
+                    .iter()
+                    .enumerate()
+                    .map(|(n, dir)| format!("-ffile-prefix-map={dir}=I{n}")),
+            )
             .output()
     }
     .map_err(|e| e.to_string())?;

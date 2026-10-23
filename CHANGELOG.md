@@ -39,7 +39,13 @@ and this file is the source for the text of each GitHub release.
   (`fn total[T: Shape]`, compiled once per type).
 - **Networking.** `std/http` sends requests in the shape of Python's `requests` (`http.get`,
   `http.post`, `r.status`, `r.text()`, `r.json()`) and serves them with `http.serve`. `std/net` has
-  TCP connections and listeners that close when they go out of scope. Only `http://` for now.
+  TCP connections and listeners that close when they go out of scope.
+- **HTTPS.** `https://` URLs use TLS and check the server's certificate against the system's roots
+  (or `SSL_CERT_FILE`). `http.serve` takes `cert_file` and `key_file` to serve HTTPS, and `std/net` has
+  `conn.start_tls(host)` and `listener.accept_tls(cert_file, key_file)`. TLS comes from Mbed TLS 3.6
+  (Apache-2.0), which `zam` carries and compiles into the cache the first time a program needs it.
+- `[native]` C sources compile in parallel, and a header's `__FILE__` no longer puts the build
+  machine's paths into the program.
 - A parenthesized value can take a method call: `(a + b).upper()`.
 
 ## 0.1.1
@@ -205,7 +211,11 @@ this preview.
   （`fn total[T: Shape]`，每种类型各生成一份代码）。
 - **网络。** `std/http` 发请求的写法参考 Python 的 `requests`（`http.get`、`http.post`、`r.status`、
   `r.text()`、`r.json()`），`http.serve` 处理请求。`std/net` 提供 TCP 连接与监听，离开作用域时自动关闭。
-  目前只支持 `http://`。
+- **HTTPS。** `https://` 地址走 TLS，用系统的根证书（或 `SSL_CERT_FILE`）校验服务器证书。`http.serve` 传
+  `cert_file` 与 `key_file` 即提供 HTTPS；`std/net` 有 `conn.start_tls(host)` 与
+  `listener.accept_tls(cert_file, key_file)`。TLS 来自 Mbed TLS 3.6（Apache-2.0），`zam` 自带源码，
+  程序第一次用到时编译进缓存。
+- `[native]` 的 C 源码并行编译；头文件里的 `__FILE__` 不再把构建机器的路径带进程序。
 - 括号里的值也能接方法调用：`(a + b).upper()`。
 
 ## 0.1.1（中文）

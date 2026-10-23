@@ -12,7 +12,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-70");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-71");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -183,6 +183,59 @@ const STD_SOURCES: &[(&str, &str)] = &[
     ("std/net", include_str!("../std/net.zm")),
     ("std/http", include_str!("../std/http.zm")),
 ];
+
+/// Mbed TLS 的源码（vendor/mbedtls，build.rs 压缩后嵌进来）：程序用到 std/net 时解压到缓存编译。
+const MBEDTLS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mbedtls.bin"));
+
+/// 把 Mbed TLS 解压到缓存目录（按内容哈希区分版本），返回目录与其中的 .c 文件（相对路径）。
+/// 先解压到临时目录再改名，几个 zam 同时构建也不会看到写了一半的文件。
+fn mbedtls_sources() -> Result<(PathBuf, Vec<PathBuf>)> {
+    let digest = hash(&[MBEDTLS]);
+    let dir = cache_dir()
+        .join("vendor")
+        .join(format!("mbedtls-{:.16}", digest));
+    let archive = miniz_oxide::inflate::decompress_to_vec(MBEDTLS)
+        .map_err(|_| "the embedded Mbed TLS archive is corrupt")?;
+    let mut files = Vec::new();
+    let mut at = 0;
+    while at < archive.len() {
+        let end = at
+            + archive[at..]
+                .iter()
+                .position(|b| *b == 0)
+                .ok_or("corrupt Mbed TLS archive")?;
+        let name = String::from_utf8_lossy(&archive[at..end]).to_string();
+        let size =
+            u32::from_le_bytes(archive[end + 1..end + 5].try_into().expect("four bytes")) as usize;
+        files.push((name, end + 5, size));
+        at = end + 5 + size;
+    }
+    if !dir.join(".complete").exists() {
+        let scratch = dir.with_extension(format!("tmp-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&scratch);
+        for (name, start, size) in &files {
+            let path = scratch.join(name);
+            fs::create_dir_all(path.parent().expect("vendor files are in folders"))
+                .map_err(|e| format!("{}: {e}", path.display()))?;
+            fs::write(&path, &archive[*start..start + size])
+                .map_err(|e| format!("{}: {e}", path.display()))?;
+        }
+        fs::write(scratch.join(".complete"), b"").map_err(|e| e.to_string())?;
+        if fs::rename(&scratch, &dir).is_err() {
+            // 另一个 zam 先解压好了：用它的。
+            let _ = fs::remove_dir_all(&scratch);
+            if !dir.join(".complete").exists() {
+                return Err(format!("cannot unpack Mbed TLS into {}", dir.display()));
+            }
+        }
+    }
+    let sources = files
+        .iter()
+        .filter(|(name, _, _)| name.starts_with("library/") && name.ends_with(".c"))
+        .map(|(name, _, _)| PathBuf::from(name))
+        .collect();
+    Ok((dir, sources))
+}
 
 /// 用 Zamak 写的标准库模块的源码（语言服务器用它补全与悬停）。
 pub fn std_source(id: &str) -> Option<&'static str> {
@@ -1622,13 +1675,30 @@ impl Project {
         let entry = format!("{}:main", self.entry);
         // `[native] headers`：用到 extern fn 或 C 句柄的模块包含它们，编译时带上各个 include 目录，
         // 缓存键里加上这些目录里头文件的摘要。
-        let headers: Vec<String> = self
-            .native
+        // 项目与依赖包的 [native]，再加上用到 std/net 时的 Mbed TLS。
+        let mut natives = self.native.clone();
+        if self.modules.contains_key("std/net") {
+            let (dir, sources) = mbedtls_sources()?;
+            natives.push((
+                dir,
+                package::Native {
+                    sources,
+                    include: vec![PathBuf::from("include"), PathBuf::from("library")],
+                    headers: Vec::new(),
+                    libraries: if cfg!(windows) {
+                        vec!["bcrypt".into(), "crypt32".into()]
+                    } else {
+                        Vec::new()
+                    },
+                    library_paths: Vec::new(),
+                },
+            ));
+        }
+        let headers: Vec<String> = natives
             .iter()
             .flat_map(|(_, settings)| settings.headers.iter().cloned())
             .collect();
-        let header_dirs: Vec<PathBuf> = self
-            .native
+        let header_dirs: Vec<PathBuf> = natives
             .iter()
             .flat_map(|(root, settings)| {
                 settings
@@ -1760,9 +1830,11 @@ impl Project {
             objects.push(bytes);
         }
         // `[native]` 的 C 源码：各自编成目标文件，按源码与头文件的内容缓存。
+        // 先算好每个文件的缓存键，再像上面一样用工作队列并行编译（Mbed TLS 有一百多个文件）。
         let mut libraries = Vec::new();
         let mut library_paths = Vec::new();
-        for (root, settings) in &self.native {
+        let mut sources: Vec<(String, PathBuf, Vec<u8>, Vec<PathBuf>)> = Vec::new();
+        for (root, settings) in &natives {
             // 编译在缓存的临时目录里进行，路径都换成绝对路径。
             let absolute = |path: PathBuf| std::path::absolute(&path).unwrap_or(path);
             let includes: Vec<PathBuf> = settings
@@ -1787,17 +1859,7 @@ impl Project {
                     env::consts::OS.as_bytes(),
                     env::consts::ARCH.as_bytes(),
                 ]);
-                let (bytes, hit) = native_cached(cache, &key, "obj", |scratch| {
-                    native::compile_with(&tool, scratch, &String::from_utf8_lossy(&text), &dirs)
-                })?;
-                eprintln!(
-                    "OBJECT {} {:.12} {}",
-                    if hit { "HIT" } else { "MISS" },
-                    key,
-                    source.display()
-                );
-                object_keys.push(key);
-                objects.push(bytes);
+                sources.push((key, source.clone(), text, dirs));
             }
             libraries.extend(settings.libraries.iter().cloned());
             library_paths.extend(
@@ -1806,6 +1868,57 @@ impl Project {
                     .iter()
                     .map(|dir| absolute(root.join(dir))),
             );
+        }
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let results = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..jobs.min(sources.len()))
+                .map(|_| {
+                    let (sources, next, tool) = (&sources, &next, &tool);
+                    scope.spawn(move || -> Result<Vec<(usize, Vec<u8>)>> {
+                        let mut completed = Vec::new();
+                        loop {
+                            let index = next.fetch_add(1, Ordering::Relaxed);
+                            let Some((key, source, text, dirs)) = sources.get(index) else {
+                                break;
+                            };
+                            let (bytes, hit) = native_cached(cache, key, "obj", |scratch| {
+                                native::compile_with(
+                                    tool,
+                                    scratch,
+                                    &String::from_utf8_lossy(text),
+                                    dirs,
+                                )
+                            })?;
+                            eprintln!(
+                                "OBJECT {} {:.12} {}",
+                                if hit { "HIT" } else { "MISS" },
+                                key,
+                                source.display()
+                            );
+                            completed.push((index, bytes));
+                        }
+                        Ok(completed)
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .unwrap_or_else(|_| Err("worker panicked".into()))
+                })
+                .collect::<Vec<_>>()
+        });
+        let mut compiled: Vec<Option<Vec<u8>>> = vec![None; sources.len()];
+        for result in results {
+            for (index, bytes) in result? {
+                compiled[index] = Some(bytes);
+            }
+        }
+        for ((key, _, _, _), bytes) in sources.into_iter().zip(compiled) {
+            object_keys.push(key);
+            objects.push(bytes.ok_or("native cache entry was not produced")?);
         }
         let link_settings = format!("{libraries:?}\n{library_paths:?}");
         let app_key = hash(&[

@@ -268,7 +268,6 @@ See [Standard library](standard-library.md).
 ## Not supported yet
 
 - Threads and concurrency
-- HTTPS (TLS)
 - Macros
 - Class inheritance
 - Generic specialization, type-level programming
