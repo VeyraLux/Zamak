@@ -15,6 +15,12 @@ and this file is the source for the text of each GitHub release.
 - **`?` and `catch` work on method calls** such as `text.decode()?` and `line.parse_i64()?`.
 - **Clearer error** when you assign a list to a string variable: it now says the types differ
   instead of "cannot move borrowed value".
+- **C handles.** `extern type Db: "sqlite3", close = sqlite3_close` declares a C pointer type that
+  Zamak closes exactly once when it goes out of scope. C functions return it as `Option[Db]` (NULL
+  is `None`) or through an output parameter `&mut Option[Db]`, and take it as `&Db`.
+- **`[native] headers`** lets Zamak call a C library through its own header, so `int` and
+  `size_t` parameters work without a C wrapper. `extern fn` also takes `&bytes` and `&mut bytes`.
+- **`?` and `catch` after a method chain**, such as `buf[:n].decode() catch e: "?"`.
 
 ## 0.1.1
 
@@ -157,6 +163,12 @@ this preview.
 - **字符串转义新增 `\xNN` 和 `\0`**，与 Python 相同。
 - **方法调用也能接 `?` 和 `catch`**，例如 `text.decode()?`、`line.parse_i64()?`。
 - **报错更清楚**：把列表赋给字符串变量时，现在说类型不同，而不是“不能移动被借用的值”。
+- **C 句柄。** `extern type Db: "sqlite3", close = sqlite3_close` 声明一个 C 指针类型，离开作用域时
+  Zamak 正好调用一次 close。C 函数以 `Option[Db]` 返回它（NULL 是 `None`），或通过输出参数
+  `&mut Option[Db]` 交出它；参数写 `&Db`。
+- **`[native] headers`**：按 C 库自己的头文件调用，`int`、`size_t` 参数不用再写 C 包装。
+  `extern fn` 也能接收 `&bytes` 和 `&mut bytes`。
+- **方法链之后也能接 `?` 和 `catch`**，例如 `buf[:n].decode() catch e: "?"`。
 
 ## 0.1.1（中文）
 

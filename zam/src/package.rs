@@ -35,6 +35,8 @@ pub struct Manifest {
 pub struct Native {
     pub sources: Vec<PathBuf>,
     pub include: Vec<PathBuf>,
+    // C 库的头文件（`"sqlite3.h"`）：用到 extern fn 或 C 句柄的模块包含它们，按真实原型调用。
+    pub headers: Vec<String>,
     pub libraries: Vec<String>,
     pub library_paths: Vec<PathBuf>,
 }
@@ -47,11 +49,11 @@ fn native(config: &toml::Table) -> Result<Native> {
     if let Some(key) = table.keys().find(|key| {
         !matches!(
             key.as_str(),
-            "sources" | "include" | "libraries" | "library_paths"
+            "sources" | "include" | "headers" | "libraries" | "library_paths"
         )
     }) {
         return Err(format!(
-            "unknown native setting {key}; [native] accepts sources, include, libraries and library_paths"
+            "unknown native setting {key}; [native] accepts sources, include, headers, libraries and library_paths"
         ));
     }
     let list = |key: &str| -> Result<Vec<String>> {
@@ -88,9 +90,21 @@ fn native(config: &toml::Table) -> Result<Native> {
             "invalid library name {bad:?}; write the bare name, such as \"sqlite3\" for libsqlite3 or sqlite3.lib"
         ));
     }
+    let headers = list("headers")?;
+    if let Some(bad) = headers.iter().find(|header| {
+        header.is_empty()
+            || !header
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/'))
+    }) {
+        return Err(format!(
+            "invalid header name {bad:?}; write it as in #include, such as \"sqlite3.h\" or \"SDL2/SDL.h\""
+        ));
+    }
     Ok(Native {
         sources,
         include: list("include")?.into_iter().map(PathBuf::from).collect(),
+        headers,
         libraries,
         library_paths: list("library_paths")?
             .into_iter()

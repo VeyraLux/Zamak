@@ -541,6 +541,17 @@ fn with_python_hint(message: String) -> String {
 }
 
 fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>) {
+    // C 句柄：只能由 extern fn 产生，不能复制。
+    if message.contains("is a C handle")
+        || message.contains("C handle cannot be copied")
+        || message.contains("C handle type names")
+    {
+        return (
+            "ZM200",
+            "type",
+            Some("get C handles from an extern fn and share them as &value"),
+        );
+    }
     // 字符串字面量里的插值与格式说明：都是字面量写法的问题，按语法错误给位置与改法。
     if message.contains("in string literal")
         || message.contains("in string interpolation")

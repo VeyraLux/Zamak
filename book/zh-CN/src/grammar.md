@@ -220,7 +220,7 @@ fn main():
     println(sqrt(16.0))
 ```
 
-`extern fn` 声明后用同名 C 函数。C 标准库开箱即用，其他库在 `zam.toml` 的 `[native]` 里配置源码、头文件目录和要链接的库。
+`extern fn` 声明后用同名 C 函数。C 标准库开箱即用，其他库在 `zam.toml` 的 `[native]` 里配置源码、头文件和要链接的库。`extern type Db: "sqlite3", close = sqlite3_close` 声明 C 句柄，离开作用域时自动释放。
 
 详见[调用 C 代码](c-libraries.md)。
 

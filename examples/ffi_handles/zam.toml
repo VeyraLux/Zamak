@@ -1,0 +1,10 @@
+[project]
+name = "ffi_handles"
+entry = "src/main.zm"
+modules = "src"
+
+# headers 让 Zamak 按库自己的原型调用 C 函数：int、size_t 这类参数由 C 编译器转换。
+[native]
+sources = ["c/counter.c"]
+include = ["c"]
+headers = ["counter.h"]

@@ -1051,18 +1051,26 @@ pub struct Function {
 /// 返回字符串（从 C 的 `const char *` 复制一份）。
 pub fn extern_signature(name: &str, params: &[(String, Type)], result: Type) -> Result<(), String> {
     for (param, ty) in params {
-        if !matches!(ty, Type::Int | Type::Float | Type::Bool | Type::Shared) {
+        if !matches!(
+            ty,
+            Type::Int
+                | Type::Float
+                | Type::Bool
+                | Type::Shared
+                | Type::ListRef(Elem::Byte, _)
+                | Type::RecordRef(_, _)
+        ) {
             return Err(format!(
-                "unsupported type for parameter {param} of extern fn {name}; extern functions take i64, f64, bool or &string, so pass other data through a small C wrapper"
+                "unsupported type for parameter {param} of extern fn {name}; extern functions take i64, f64, bool, &string, &bytes, &mut bytes or a C handle such as &Db"
             ));
         }
     }
     if !matches!(
         result,
-        Type::Unit | Type::Int | Type::Float | Type::Bool | Type::Owned
+        Type::Unit | Type::Int | Type::Float | Type::Bool | Type::Owned | Type::Record(_)
     ) {
         return Err(format!(
-            "unsupported return type for extern fn {name}; extern functions return nothing, i64, f64, bool or string"
+            "unsupported return type for extern fn {name}; extern functions return nothing, i64, f64, bool, string or Option[Db] for a C handle"
         ));
     }
     Ok(())
@@ -1417,6 +1425,95 @@ pub struct Struct {
     // 泛型结构体或枚举的类型参数（`struct Pair[A, B]`、`enum Option[T]`）。模板本身不生成，
     // 用到的具体类型（`Option[Int]`）按结构生成实例。
     pub generics: Vec<String>,
+    // `extern type Db: "sqlite3", close = sqlite3_close`：C 句柄。唯一的字段 `$handle` 存指针，
+    // 释放时调用 close；不能在 Zamak 里构造或复制，只能由 extern fn 返回。
+    pub handle: Option<Handle>,
+}
+
+/// C 句柄类型的 C 侧描述。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Handle {
+    // 指针指向的 C 类型（`sqlite3` → `sqlite3 *`）。
+    pub c_type: String,
+    // 释放句柄的 C 函数；没有时 Zamak 不负责释放（例如 stdout 这类借来的句柄）。
+    pub close: Option<String>,
+}
+
+/// 类型里是否含有 C 句柄（直接是句柄，或字段、元素里有）：这样的值不能复制。
+pub fn holds_handle(ty: Type, structs: &BTreeMap<String, Struct>) -> bool {
+    fn walk(ty: Type, structs: &BTreeMap<String, Struct>, seen: &mut BTreeSet<u64>) -> bool {
+        match ty {
+            Type::Record(id) | Type::RecordRef(id, _) => {
+                if !seen.insert(id) {
+                    return false;
+                }
+                let Some((_, structure)) = structs.iter().find(|(name, _)| record_id(name) == id)
+                else {
+                    return false;
+                };
+                structure.handle.is_some()
+                    || structure
+                        .fields
+                        .iter()
+                        .any(|(_, field)| walk(*field, structs, seen))
+            }
+            Type::List(elem) | Type::ListRef(elem, _) => walk(elem.ty(), structs, seen),
+            Type::Map(key, value) | Type::MapRef(key, value, _) => {
+                walk(key.ty(), structs, seen) || walk(value.ty(), structs, seen)
+            }
+            _ => false,
+        }
+    }
+    walk(ty, structs, &mut BTreeSet::new())
+}
+
+/// 编号对应的结构体（名字, 声明）。
+pub fn struct_of(id: u64, structs: &BTreeMap<String, Struct>) -> Option<(&String, &Struct)> {
+    structs.iter().find(|(name, _)| record_id(name) == id)
+}
+
+/// `Option[句柄]` 的实例：返回句柄的声明。
+pub fn option_handle(id: u64, structs: &BTreeMap<String, Struct>) -> Option<&Handle> {
+    let (name, structure) = struct_of(id, structs)?;
+    if !name.contains(":Option[") || structure.fields.len() != 2 {
+        return None;
+    }
+    let Type::Record(inner) = structure.fields[1].1 else {
+        return None;
+    };
+    struct_of(inner, structs)?.1.handle.as_ref()
+}
+
+/// extern fn 的签名里用到 C 句柄时，类型要对得上：参数是 `&Db`、`&mut Db` 或输出参数
+/// `&mut Option[Db]`，返回值是 `Option[Db]`（C 返回 NULL 时是 None）。解析时还不知道结构体是不是
+/// 句柄，链接后在这里检查。
+pub fn check_extern_handles(
+    name: &str,
+    function: &Function,
+    structs: &BTreeMap<String, Struct>,
+) -> Result<(), String> {
+    let short = name.rsplit(':').next().unwrap_or(name);
+    let is_handle = |id: u64| struct_of(id, structs).is_some_and(|(_, s)| s.handle.is_some());
+    for (param, ty) in &function.params {
+        match *ty {
+            Type::RecordRef(id, _) if is_handle(id) => {}
+            Type::RecordRef(id, true) if option_handle(id, structs).is_some() => {}
+            Type::RecordRef(..) => {
+                return Err(format!(
+                    "unsupported type for parameter {param} of extern fn {short}; a struct reaches C only as a C handle declared with extern type, such as &Db or &mut Option[Db]"
+                ))
+            }
+            _ => {}
+        }
+    }
+    if let Type::Record(id) = function.result {
+        if option_handle(id, structs).is_none() {
+            return Err(format!(
+                "unsupported return type for extern fn {short}; a C handle is returned as Option[Db], which is None when C returns NULL"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// 泛型结构体与枚举的实例：编号 → （模板名, 类型实参, 实例名）。实例名如 `main:Option[Int]`，
@@ -1576,6 +1673,7 @@ pub fn option() -> Struct {
         ],
         variants: vec![("Some".into(), 1, 1), ("None".into(), 2, 0)],
         generics: vec!["T".into()],
+        handle: None,
     }
 }
 
@@ -3406,6 +3504,7 @@ impl Parser {
             return Ok(Expr::Catch(Box::new(call), binding, block));
         }
         // 调用结果上接着调用方法：`string.split(&s, ",").len()`。
+        let mut chained = false;
         while self.peek() == Some(&Token::Symbol('.'))
             && matches!(self.tokens.get(self.position + 1), Some(Token::Word(_)))
             && self.tokens.get(self.position + 2) == Some(&Token::Symbol('('))
@@ -3415,6 +3514,11 @@ impl Parser {
             self.expect('(')?;
             let args = self.arguments()?;
             call = Expr::Chain(Box::new(call), method, args);
+            chained = true;
+        }
+        // 链尾的调用也能接 `?` 或 `catch`：`buf[:n].decode() catch e: "?"`。
+        if chained {
+            return self.after_call(call);
         }
         Ok(call)
     }
@@ -4598,6 +4702,7 @@ pub fn parse(source: &str) -> Result<Module, String> {
                                 fields,
                                 variants: Vec::new(),
                                 generics,
+                                handle: None,
                             },
                         )
                         .is_some()
@@ -4691,6 +4796,7 @@ pub fn parse(source: &str) -> Result<Module, String> {
                                 fields,
                                 variants,
                                 generics,
+                                handle: None,
                             },
                         )
                         .is_some()
@@ -4700,6 +4806,68 @@ pub fn parse(source: &str) -> Result<Module, String> {
                 add_methods(&mut module, methods)?;
                 p.type_params.clear();
                 p.owner_generics.clear();
+                p.separator()?;
+                continue;
+            }
+            // `extern type Db: "sqlite3", close = sqlite3_close`：C 句柄类型，唯一的字段存指针。
+            if p.peek() == Some(&Token::Word("extern".into()))
+                && p.tokens.get(p.position + 1) == Some(&Token::Word("type".into()))
+            {
+                p.take();
+                p.take();
+                let name = p.word()?;
+                if !name.starts_with(char::is_uppercase) {
+                    return Err(format!(
+                        "C handle type names start with an uppercase letter, such as extern type Db: \"sqlite3\", not {name}"
+                    ));
+                }
+                p.expect(':')?;
+                let c_type = match p.take() {
+                    Some(Token::Text(text))
+                        if !text.trim().is_empty()
+                            && text
+                                .chars()
+                                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ' ') =>
+                    {
+                        text.trim().to_owned()
+                    }
+                    _ => {
+                        return Err(
+                            "expected the C type in quotes, such as extern type Db: \"sqlite3\" for sqlite3 *"
+                                .into(),
+                        )
+                    }
+                };
+                let close = if p.symbol(',') {
+                    if p.word()? != "close" {
+                        return Err(
+                            "expected close = function after the C type, such as extern type Db: \"sqlite3\", close = sqlite3_close"
+                                .into(),
+                        );
+                    }
+                    p.expect('=')?;
+                    Some(p.word()?)
+                } else {
+                    None
+                };
+                if module.functions.contains_key(&name)
+                    || module.constants.contains_key(&name)
+                    || module
+                        .structs
+                        .insert(
+                            name.clone(),
+                            Struct {
+                                public,
+                                fields: vec![("$handle".into(), Type::Int)],
+                                variants: Vec::new(),
+                                generics: Vec::new(),
+                                handle: Some(Handle { c_type, close }),
+                            },
+                        )
+                        .is_some()
+                {
+                    return Err(format!("duplicate declaration {name}"));
+                }
                 p.separator()?;
                 continue;
             }
@@ -4753,7 +4921,7 @@ pub fn encode(module: &Module) -> Vec<u8> {
         .map(|(name, constant)| (name, constant.public, &constant.value))
         .collect();
     format!(
-        "ZAM-IR-35\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
+        "ZAM-IR-36\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
         module.type_names, module.imports, module.functions
     )
     .into_bytes()
@@ -5254,6 +5422,12 @@ impl<'a> Checker<'a> {
             .find(|(name, _)| record_id(name) == id)
             .ok_or_else(|| format!("unknown struct {name}"))?
             .1;
+        if declaration.handle.is_some() {
+            let short = name.rsplit(':').next().unwrap_or(name);
+            return Err(format!(
+                "{short} is a C handle; get one from an extern fn that returns Option[{short}]"
+            ));
+        }
         Ok((id, declaration))
     }
     /// 带着当前局部变量的副本：求类型时要在里面试着检查（匿名函数、match 分支）。
@@ -6610,6 +6784,12 @@ impl<'a> Checker<'a> {
                     );
                 };
                 let ty = self.value_type(arg)?;
+                if holds_handle(ty, self.structs) {
+                    return Err(
+                        "a C handle cannot be copied: two copies would close it twice; pass it as &value to share it"
+                            .into(),
+                    );
+                }
                 match ty {
                     Type::Owned | Type::Record(_) | Type::List(_) | Type::Map(_, _) => {}
                     Type::Int | Type::Float | Type::Bool if self.generic => {
@@ -7484,6 +7664,12 @@ pub fn check(module: &Module, entry: &str) -> Result<(), String> {
     }
     let mut errors = Vec::new();
     for (name, function) in &module.functions {
+        if function.external {
+            if let Err(error) = check_extern_handles(name, function, &module.structs) {
+                let (line, column) = function.position;
+                errors.push(format!("line {line}, column {column}: {name}: {error}"));
+            }
+        }
         if function.builtin || function.external || !function.generics.is_empty() {
             continue;
         }

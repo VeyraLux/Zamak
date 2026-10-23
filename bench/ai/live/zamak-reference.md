@@ -58,6 +58,12 @@ fn main() -> !string:
 - `bytes` holds raw bytes, as in Python: `b"GIF\x89"` (ASCII characters and `\xNN` only), `s.encode()` (UTF-8), `b.decode() -> string!string`, `b.hex() -> string`. Indexing gives an `i64` from 0 to 255; `len`, slices, `push`, `extend`, `in` and `for b in data` work as on lists; writing a value outside 0 to 255 stops the program. `for x in &mut data` is not supported; assign `data[i] = v` instead. Parameters take `&bytes` or `&mut bytes`.
 - `std/bytes`: `bytes.from_hex(&text) -> bytes!string` (pairs of hex digits, spaces allowed between pairs), `bytes.zeros(n) -> bytes`.
 
+## Calling C
+
+- `extern fn name(x: i64, s: &string) -> f64` declares a C function; there is no body. Parameters are `i64`, `f64`, `bool`, `&string`, `&bytes`/`&mut bytes` (C gets a pointer; pass the length separately) or a C handle; results are nothing, `i64`, `f64`, `bool`, `string` or `Option[Handle]`.
+- `extern type Db: "sqlite3", close = sqlite3_close` declares a C handle. It has one owner, moves like a string, can be borrowed as `&Db`, and is closed exactly once when it goes out of scope; it cannot be copied or constructed in Zamak. A C function returning a handle is declared `-> Option[Db]` (NULL is `None`); an output parameter `sqlite3 **` is `&mut Option[Db]`. Use the handle through `match`: `match open(path): Some(db): ...`.
+- `zam.toml` `[native]`: `sources` (C files), `include` (folders), `headers` (such as `["sqlite3.h"]`: Zamak then calls through the library's own prototypes), `libraries`, `library_paths`.
+
 ## Ownership and borrowing
 
 - Assigning or passing a `string`, struct, enum, list or map moves it; using it afterwards is an error. `i64`, `f64` and `bool` are copied.

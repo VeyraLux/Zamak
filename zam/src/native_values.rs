@@ -118,6 +118,21 @@ fn shared(ty: Type, protos: &mut String, defs: &mut String, body: (String, Strin
 fn record(module: &Module, name: &str, protos: &mut String, defs: &mut String) {
     let structure = &module.structs[name];
     let id = record_id(name);
+    // C 句柄：比较指针；检查器不让复制，这里的复制只是兜底；显示成 `Db(<C handle>)`。
+    if structure.handle.is_some() {
+        let short = name.rsplit(':').next().unwrap_or(name);
+        shared(
+            Type::Record(id),
+            protos,
+            defs,
+            (
+                "(void)p; zam_panic_one(\"a C handle cannot be copied\"); exit(1);".into(),
+                "return a->m0 == b->m0;".into(),
+                format!("(void)p; {}", text("out", &format!("{short}(<C handle>)"))),
+            ),
+        );
+        return;
+    }
     let short = name.rsplit(':').next().unwrap_or(name);
     // 泛型实例 `Maybe[Int]` 显示成模板名 `Maybe`，与源码里的写法一致。
     let short = if short.starts_with('(') {

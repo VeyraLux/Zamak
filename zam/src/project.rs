@@ -12,7 +12,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-65");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-66");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -652,6 +652,7 @@ impl Project {
                         .collect(),
                     variants: Vec::new(),
                     generics: Vec::new(),
+                    handle: None,
                 },
             );
         }
@@ -1498,6 +1499,30 @@ impl Project {
         let object_prepare_started = Instant::now();
         let (tool, identity) = native::tool()?;
         let entry = format!("{}:main", self.entry);
+        // `[native] headers`：用到 extern fn 或 C 句柄的模块包含它们，编译时带上各个 include 目录，
+        // 缓存键里加上这些目录里头文件的摘要。
+        let headers: Vec<String> = self
+            .native
+            .iter()
+            .flat_map(|(_, settings)| settings.headers.iter().cloned())
+            .collect();
+        let header_dirs: Vec<PathBuf> = self
+            .native
+            .iter()
+            .flat_map(|(root, settings)| {
+                settings
+                    .include
+                    .iter()
+                    .map(|dir| std::path::absolute(root.join(dir)).unwrap_or(root.join(dir)))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let header_text = if headers.is_empty() {
+            String::new()
+        } else {
+            header_digest(&header_dirs)?
+        };
+        let (headers, header_dirs, header_text) = (&headers, &header_dirs, &header_text);
         // ponytail: 两段式。先把所有模块并行「生成 C + 查缓存」（每模块 3–8ms，忽略不计），
         // 再把 MISS 交给有界工作队列编译。已命中的模块不占编译位，空闲线程立即
         // 领取下一个 MISS，不再等待整批中最慢的模块。
@@ -1516,7 +1541,7 @@ impl Project {
                     .map(|id| {
                         let (linked, entry, identity) = (&linked, &entry, &identity);
                         scope.spawn(move || -> Result<(String, String, Option<Vec<u8>>)> {
-                            let source = native::generate_with(linked, entry, id, tests);
+                            let source = native::generate_with(linked, entry, id, tests, headers);
                             // 调试生成的 C：`ZAMAK_DUMP_C=<目录>` 时把每个模块的 C 源码写出来。
                             if let Some(dir) = env::var_os("ZAMAK_DUMP_C") {
                                 let name = id.replace(['/', ':'], "_");
@@ -1527,6 +1552,7 @@ impl Project {
                             let key = hash(&[
                                 VERSION.as_bytes(),
                                 source.as_bytes(),
+                                header_text.as_bytes(),
                                 identity.as_bytes(),
                                 native::OPTIONS.as_bytes(),
                                 env::consts::OS.as_bytes(),
@@ -1578,7 +1604,11 @@ impl Project {
                                 break;
                             };
                             let (bytes, _) = native_cached(cache, key, "obj", |scratch| {
-                                native::compile(tool, scratch, source)
+                                if header_dirs.is_empty() {
+                                    native::compile(tool, scratch, source)
+                                } else {
+                                    native::compile_with(tool, scratch, source, header_dirs)
+                                }
                             })?;
                             completed.push((*slot, key.clone(), bytes));
                         }

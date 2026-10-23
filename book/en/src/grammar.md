@@ -220,7 +220,7 @@ fn main():
     println(sqrt(16.0))
 ```
 
-`extern fn` declares a C function that you then call by name. The C standard library works with no setup; other libraries go in `zam.toml` under `[native]`, with sources, include directories, and the libraries to link.
+`extern fn` declares a C function that you then call by name. The C standard library works with no setup; other libraries go in `zam.toml` under `[native]`, with sources, headers, and the libraries to link. `extern type Db: "sqlite3", close = sqlite3_close` declares a C handle that is freed when it goes out of scope.
 
 See [Calling C](c-libraries.md).
 

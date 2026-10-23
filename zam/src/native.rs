@@ -5346,11 +5346,17 @@ fn specialization_plan(
 }
 #[cfg(test)]
 fn generate(module: &Module, entry: &str, unit: &str) -> String {
-    generate_with(module, entry, unit, &[])
+    generate_with(module, entry, unit, &[], &[])
 }
 
 /// `tests` 不为空时生成测试程序：入口模块的 C `main` 按第一个参数的名字只运行那一个测试函数。
-pub fn generate_with(module: &Module, entry: &str, unit: &str, tests: &[String]) -> String {
+pub fn generate_with(
+    module: &Module,
+    entry: &str,
+    unit: &str,
+    tests: &[String],
+    headers: &[String],
+) -> String {
     let symbols: BTreeMap<_, _> = module
         .functions
         .keys()
@@ -5392,6 +5398,8 @@ pub fn generate_with(module: &Module, entry: &str, unit: &str, tests: &[String])
         )
     };
     let mut source = RUNTIME.to_owned();
+    // 用到 C 句柄或 extern fn 的目标文件才包含 `[native] headers` 里的头文件。
+    let mut needs_headers = false;
     let mut used_externs = std::collections::BTreeSet::new();
     for function in module.functions.values() {
         if function.generics.is_empty() {
@@ -5595,7 +5603,14 @@ pub fn generate_with(module: &Module, entry: &str, unit: &str, tests: &[String])
         if function.external {
             // 没被调用的 extern fn 不生成，用不到的 C 函数就不用链接。
             if used_externs.contains(&name) {
-                bodies.push_str(&extern_wrapper(&name, function, &declaration));
+                bodies.push_str(&extern_wrapper(
+                    &name,
+                    function,
+                    &declaration,
+                    module,
+                    !headers.is_empty(),
+                ));
+                needs_headers = true;
             }
             continue;
         }
@@ -5810,9 +5825,30 @@ pub fn generate_with(module: &Module, entry: &str, unit: &str, tests: &[String])
         source.push_str(&map_values(*key, *value));
         source.push_str(&map_slots(*key, *value));
     }
+    let mut closers = std::collections::BTreeSet::new();
     for name in &records {
         let structure = &module.structs[name];
         let id = record_id(name);
+        if let Some(handle) = &structure.handle {
+            // C 句柄：非 NULL 时调用 close，之后清零，重复释放也安全。
+            needs_headers = true;
+            let close = match &handle.close {
+                Some(close) => {
+                    if headers.is_empty() && closers.insert(close.clone()) {
+                        source.push_str(&format!("void {close}(void *);\n"));
+                    }
+                    format!(
+                        "if (p->m0) {close}(({})(intptr_t)p->m0); ",
+                        handle_pointer(handle, !headers.is_empty())
+                    )
+                }
+                None => String::new(),
+            };
+            source.push_str(&format!(
+                "static void dropR{id}(R{id} *p) {{ {close}p->m0 = 0; }}\nstatic R{id} takeR{id}(R{id} *p) {{ R{id} v=*p; p->m0 = 0; return v; }}\n"
+            ));
+            continue;
+        }
         source.push_str(&format!("static void dropR{id}(R{id} *p) {{"));
         for (i, (_, ty)) in structure.fields.iter().enumerate() {
             if owned(*ty) {
@@ -5885,6 +5921,13 @@ pub fn generate_with(module: &Module, entry: &str, unit: &str, tests: &[String])
         source.push_str(definition);
     }
     source.push_str(&bodies);
+    if needs_headers && !headers.is_empty() {
+        let includes: String = headers
+            .iter()
+            .map(|header| format!("#include \"{header}\"\n"))
+            .collect();
+        source.insert_str(RUNTIME.len(), &includes);
+    }
     if entry.split_once(':').unwrap().0 == unit && !tests.is_empty() {
         // 测试程序：`程序 模块:test_x` 只运行这一个测试；失败的 assert 与运行时错误都以非零退出。
         source.push_str("int zam_argc;\nchar **zam_argv;\nuint64_t zam_random_state[4];\nint zam_random_seeded;\n");
@@ -5948,50 +5991,109 @@ pub fn generate_with(module: &Module, entry: &str, unit: &str, tests: &[String])
 /// `extern fn` 的包装：先给出 C 函数的原型，再按 Zamak 的调用约定包一层。`&string` 参数复制成
 /// 以 `\0` 结尾的临时 C 字符串（调用后释放），返回的 `const char *` 复制成 Zamak 字符串（NULL 是空串），
 /// C 侧保留它自己的内存。
-fn extern_wrapper(name: &str, function: &crate::compiler::Function, declaration: &str) -> String {
-    let c_name = name.rsplit(':').next().unwrap_or(name);
-    let c_type = |ty: Type| match ty {
-        Type::Int => "int64_t",
-        Type::Float => "double",
-        Type::Bool => "int",
-        Type::Shared => "const char *",
-        Type::Owned => "const char *",
-        _ => "void",
+/// C 句柄在 C 里的指针类型：有库的头文件时用真实类型（`sqlite3 *`），否则用 `void *`。
+fn handle_pointer(handle: &crate::compiler::Handle, headers: bool) -> String {
+    if headers {
+        format!("{} *", handle.c_type)
+    } else {
+        "void *".into()
+    }
+}
+
+/// extern fn 的包装：把 Zamak 的值换成 C 的参数，调用 C 函数，再把结果换回来。
+/// 有 `[native] headers` 时用库自己的原型（C 编译器按真实类型转换 int、size_t 等参数），
+/// 否则按 Zamak 的签名写一个原型。
+fn extern_wrapper(
+    name: &str,
+    function: &crate::compiler::Function,
+    declaration: &str,
+    module: &Module,
+    headers: bool,
+) -> String {
+    use crate::compiler::{option_handle, struct_of};
+    let structs = &module.structs;
+    let handle = |id: u64| {
+        struct_of(id, structs)
+            .and_then(|(_, s)| s.handle.as_ref())
+            .expect("checked C handle")
     };
-    let params: Vec<String> = function
-        .params
-        .iter()
-        .map(|(_, ty)| c_type(*ty).to_owned())
-        .collect();
-    let mut out = format!(
-        "{} {c_name}({});\n{declaration} {{\n",
-        c_type(function.result),
-        if params.is_empty() {
-            "void".into()
-        } else {
-            params.join(", ")
+    let c_name = name.rsplit(':').next().unwrap_or(name);
+    let c_type = |ty: Type| -> String {
+        match ty {
+            Type::Int => "int64_t".into(),
+            Type::Float => "double".into(),
+            Type::Bool => "int".into(),
+            Type::Shared | Type::Owned => "const char *".into(),
+            Type::ListRef(Elem::Byte, false) => "const uint8_t *".into(),
+            Type::ListRef(Elem::Byte, true) => "uint8_t *".into(),
+            Type::RecordRef(id, true) if option_handle(id, structs).is_some() => {
+                format!(
+                    "{}*",
+                    handle_pointer(option_handle(id, structs).expect("guarded"), headers)
+                )
+            }
+            Type::RecordRef(id, _) => handle_pointer(handle(id), headers),
+            Type::Record(id) => {
+                handle_pointer(option_handle(id, structs).expect("checked"), headers)
+            }
+            _ => "void".into(),
         }
-    );
+    };
+    let mut out = String::new();
+    if !headers {
+        let params: Vec<String> = function.params.iter().map(|(_, ty)| c_type(*ty)).collect();
+        out.push_str(&format!(
+            "{} {c_name}({});\n",
+            c_type(function.result),
+            if params.is_empty() {
+                "void".into()
+            } else {
+                params.join(", ")
+            }
+        ));
+    }
+    out.push_str(&format!("{declaration} {{\n"));
     let mut args = Vec::new();
-    let mut temps = Vec::new();
+    // 调用之后要做的事：释放临时 C 字符串、把输出参数写回 Option。
+    let mut after = Vec::new();
     for (i, (_, ty)) in function.params.iter().enumerate() {
-        if *ty == Type::Shared {
-            out.push_str(&format!("char *c{i} = zam_cstr(p{i});\n"));
-            args.push(format!("c{i}"));
-            temps.push(format!("free(c{i});"));
-        } else {
-            args.push(format!("p{i}"));
+        match *ty {
+            Type::Shared => {
+                out.push_str(&format!("char *c{i} = zam_cstr(p{i});\n"));
+                args.push(format!("c{i}"));
+                after.push(format!("free(c{i});"));
+            }
+            Type::ListRef(Elem::Byte, _) => args.push(format!("p{i}->data")),
+            Type::RecordRef(id, true) if option_handle(id, structs).is_some() => {
+                // 输出参数 `&mut Option[Db]`：C 写进一个指针，非 NULL 时成为 Some。原来的值先释放。
+                let pointer = c_type(Type::Record(id));
+                out.push_str(&format!("{pointer} t{i} = NULL;\n"));
+                args.push(format!("&t{i}"));
+                after.push(format!(
+                    "dropR{id}(p{i}); if (t{i}) {{ p{i}->m0 = 0; p{i}->m1.m0 = (int64_t)(intptr_t)t{i}; }} else p{i}->m0 = 1;"
+                ));
+            }
+            Type::RecordRef(id, _) => args.push(format!(
+                "({})(intptr_t)p{i}->m0",
+                c_type(Type::RecordRef(id, false))
+            )),
+            _ => args.push(format!("p{i}")),
         }
     }
     let call = format!("{c_name}({})", args.join(", "));
-    let free = temps.join(" ");
+    let after = after.join(" ");
     out.push_str(&match function.result {
-        Type::Unit => format!("{call};\n{free}\n"),
+        Type::Unit => format!("{call};\n{after}\n"),
         Type::Owned => format!(
-            "const char *r = {call};\nS out = r ? own((const unsigned char *)r, strlen(r)) : own((const unsigned char *)\"\", 0);\n{free}\nreturn out;\n"
+            "const char *r = {call};\nS out = r ? own((const unsigned char *)r, strlen(r)) : own((const unsigned char *)\"\", 0);\n{after}\nreturn out;\n"
         ),
-        Type::Bool => format!("int r = {call} != 0;\n{free}\nreturn r;\n"),
-        result => format!("{} r = {call};\n{free}\nreturn r;\n", c_type(result)),
+        Type::Bool => format!("int r = {call} != 0;\n{after}\nreturn r;\n"),
+        // `Option[Db]`：NULL 是 None，其余是 Some(句柄)。
+        Type::Record(id) => format!(
+            "{} r = {call};\nR{id} out; memset(&out, 0, sizeof out);\nif (r) {{ out.m0 = 0; out.m1.m0 = (int64_t)(intptr_t)r; }} else out.m0 = 1;\n{after}\nreturn out;\n",
+            c_type(Type::Record(id))
+        ),
+        result => format!("{} r = {call};\n{after}\nreturn r;\n", c_type(result)),
     });
     out.push_str("}\n");
     out

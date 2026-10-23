@@ -1,0 +1,53 @@
+use std/bytes
+
+# C 句柄：extern type 声明一个 C 指针类型，close 是释放它的 C 函数。
+# 句柄和字符串一样有唯一的所有者，离开作用域时 Zamak 调用 close，正好一次。
+extern type Counter: "counter", close = counter_free
+
+# C 返回 NULL 时得到 Option.None。
+extern fn counter_new(name: &string) -> Option[Counter]
+# 输出参数：C 把句柄写进 &mut Option[Counter]。
+extern fn counter_open(name: &string, out: &mut Option[Counter]) -> i64
+extern fn counter_add(c: &Counter, amount: i64)
+extern fn counter_value(c: &Counter) -> i64
+# bytes 传给 C 的是指针，长度另外传。
+extern fn counter_name(c: &Counter, buf: &mut bytes, n: i64) -> i64
+extern fn counter_freed() -> i64
+extern fn checksum(data: &bytes, n: i64) -> i64
+
+# 返回之前，made 离开作用域，C 的 counter_free 被调用一次。
+fn total(name: &string) -> i64:
+    let made = counter_new(name)
+
+    match made:
+        Some(c):
+            counter_add(c, 5)
+            counter_add(c, 2)
+            return counter_value(c)
+        None: return -1
+
+fn main():
+    println(total("alpha"))
+    println(total(""))
+    println(counter_freed())
+
+    let mut slot: Option[Counter] = Option.None
+    println(counter_open("beta", &mut slot))
+
+    match slot:
+        Some(c):
+            # C 往缓冲区里写：同一次调用里 buf 被 &mut 借走，长度要先取出来。
+            let size = 16
+            let mut buf = bytes.zeros(size)
+            let n = counter_name(c, &mut buf, size)
+            let name = buf[:n].decode() catch e: "?"
+            println(name)
+        None: println("no counter")
+
+    # 再打开一次：旧的 beta 先被释放，失败时 slot 变成 None。
+    println(counter_open("", &mut slot))
+    println(slot == Option.None)
+    println(counter_freed())
+
+    let data = b"hello"
+    println(checksum(data, len(data)))
