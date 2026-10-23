@@ -12,7 +12,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-71");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-72");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -182,6 +182,7 @@ const STD_SOURCES: &[(&str, &str)] = &[
     ("std/re", include_str!("../std/re.zm")),
     ("std/net", include_str!("../std/net.zm")),
     ("std/http", include_str!("../std/http.zm")),
+    ("std/thread", include_str!("../std/thread.zm")),
 ];
 
 /// Mbed TLS 的源码（vendor/mbedtls，build.rs 压缩后嵌进来）：程序用到 std/net 时解压到缓存编译。
@@ -190,7 +191,11 @@ const MBEDTLS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mbedtls.bin"));
 /// 把 Mbed TLS 解压到缓存目录（按内容哈希区分版本），返回目录与其中的 .c 文件（相对路径）。
 /// 先解压到临时目录再改名，几个 zam 同时构建也不会看到写了一半的文件。
 fn mbedtls_sources() -> Result<(PathBuf, Vec<PathBuf>)> {
-    let digest = hash(&[MBEDTLS]);
+    let digest = hash(&[
+        MBEDTLS,
+        MBEDTLS_CONFIG.as_bytes(),
+        MBEDTLS_THREADING.as_bytes(),
+    ]);
     let dir = cache_dir()
         .join("vendor")
         .join(format!("mbedtls-{:.16}", digest));
@@ -220,6 +225,12 @@ fn mbedtls_sources() -> Result<(PathBuf, Vec<PathBuf>)> {
             fs::write(&path, &archive[*start..start + size])
                 .map_err(|e| format!("{}: {e}", path.display()))?;
         }
+        // 配置在原版之上打开线程安全：先于 include/ 找到的 zamconfig/mbedtls/mbedtls_config.h。
+        let config = scratch.join("zamconfig");
+        fs::create_dir_all(config.join("mbedtls")).map_err(|e| e.to_string())?;
+        fs::write(config.join("mbedtls/mbedtls_config.h"), MBEDTLS_CONFIG)
+            .map_err(|e| e.to_string())?;
+        fs::write(config.join("threading_alt.h"), MBEDTLS_THREADING).map_err(|e| e.to_string())?;
         fs::write(scratch.join(".complete"), b"").map_err(|e| e.to_string())?;
         if fs::rename(&scratch, &dir).is_err() {
             // 另一个 zam 先解压好了：用它的。
@@ -236,6 +247,28 @@ fn mbedtls_sources() -> Result<(PathBuf, Vec<PathBuf>)> {
         .collect();
     Ok((dir, sources))
 }
+
+/// Zamak 的 Mbed TLS 配置：原版配置加上线程安全（std/thread 的线程可以同时用 TLS）。
+/// Windows 用自己的互斥锁（SRW 锁，见 native.rs 的 TLS_PRELUDE），其他平台用 pthread。
+const MBEDTLS_CONFIG: &str = r#"/* Zamak: the stock configuration plus thread safety. */
+#include "../../include/mbedtls/mbedtls_config.h"
+#define MBEDTLS_THREADING_C
+/* Self tests keep an unlocked statistics counter in ecp.c, and nothing calls them. */
+#undef MBEDTLS_SELF_TEST
+#if defined(_WIN32)
+#define MBEDTLS_THREADING_ALT
+#else
+#define MBEDTLS_THREADING_PTHREAD
+#endif
+"#;
+
+/// Windows 上 Mbed TLS 的互斥锁类型：一个 SRW 锁（与指针一样大）。
+const MBEDTLS_THREADING: &str = r#"/* Zamak: a mutex is a Windows SRW lock, set up by mbedtls_threading_set_alt. */
+#ifndef ZAM_THREADING_ALT_H
+#define ZAM_THREADING_ALT_H
+typedef struct mbedtls_threading_mutex_t { void *lock; } mbedtls_threading_mutex_t;
+#endif
+"#;
 
 /// 用 Zamak 写的标准库模块的源码（语言服务器用它补全与悬停）。
 pub fn std_source(id: &str) -> Option<&'static str> {
@@ -758,6 +791,22 @@ impl Project {
                 }
                 linked.functions.insert(format!("{id}:{name}"), function);
             }
+        }
+        // `thread.spawn` 与按标注推断的泛型调用：检查之前改写（见 compiler::rewrite_block）。
+        let names: Vec<String> = linked
+            .functions
+            .iter()
+            .filter(|(_, function)| function.generics.is_empty())
+            .map(|(name, _)| name.clone())
+            .collect();
+        for name in names {
+            let mut body =
+                std::mem::take(&mut linked.functions.get_mut(&name).expect("listed").body);
+            let rewritten = compiler::rewrite_block(&linked.functions, &mut body);
+            linked.functions.get_mut(&name).expect("listed").body = body;
+            rewritten.map_err(|error| {
+                self.located_function(error.replacen(": ", &format!(": {name}: "), 1))
+            })?;
         }
         linked.functions.extend(native::builtin_functions());
         // 泛型函数按类型生成的副本（检查时生成，名字形如 `模块:largest[Int]`）。
@@ -1683,13 +1732,30 @@ impl Project {
                 dir,
                 package::Native {
                     sources,
-                    include: vec![PathBuf::from("include"), PathBuf::from("library")],
+                    include: vec![
+                        PathBuf::from("zamconfig"),
+                        PathBuf::from("include"),
+                        PathBuf::from("library"),
+                    ],
                     headers: Vec::new(),
                     libraries: if cfg!(windows) {
                         vec!["bcrypt".into(), "crypt32".into()]
                     } else {
-                        Vec::new()
+                        vec!["pthread".into()]
                     },
+                    library_paths: Vec::new(),
+                },
+            ));
+        }
+        // std/thread 在 Windows 之外用 pthread。
+        if self.modules.contains_key("std/thread") && !cfg!(windows) {
+            natives.push((
+                cache_dir(),
+                package::Native {
+                    sources: Vec::new(),
+                    include: Vec::new(),
+                    headers: Vec::new(),
+                    libraries: vec!["pthread".into()],
                     library_paths: Vec::new(),
                 },
             ));

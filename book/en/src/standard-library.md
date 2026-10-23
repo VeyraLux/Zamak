@@ -318,6 +318,64 @@ In `std/net`, `conn.start_tls(host)` starts TLS on an open connection as a clien
 
 TLS comes from [Mbed TLS](https://github.com/Mbed-TLS/mbedtls) (Apache-2.0), and `zam` carries its source. The first time a program uses `std/net` or `std/http`, `zam` compiles it into the cache, which usually takes 10 to 20 extra seconds. Later builds reuse it. When you distribute such a program, include the Mbed TLS license.
 
+## Threads and queues: std/thread
+
+`thread.spawn(work, args...)` runs `work` on a new thread, like Python's `executor.submit(work, *args)`. The arguments move to the new thread, so the starting thread can't use them afterward. `join()` waits for the thread to finish and returns its result:
+
+```zamak,ignore
+use std/thread
+
+fn squares(start: i64, stop: i64) -> i64:
+    let mut total = 0
+    for i in range(start, stop):
+        total += i * i
+    total
+
+fn main() -> !string:
+    let mut tasks: [thread.Task[i64]] = []
+    for k in range(4):
+        tasks.push(thread.spawn(squares, k * 1000, (k + 1) * 1000))
+    let mut total = 0
+    for task in &tasks:
+        total += task.join()?
+    println(total)
+```
+
+When `work` returns a value, `spawn` returns a `Task[R]`. Otherwise, it returns a `Thread`. If `work` fails, `join()` fails with the same error. A thread that you don't join is waited for when its handle goes out of scope.
+
+Threads don't share data that can change, so there are no data races. To pass data between threads, use a `Queue[T]`, which works like Python's `queue.Queue`:
+
+| Code | What it does |
+| --- | --- |
+| `let q: thread.Queue[string] = thread.queue()` | Creates a queue. The annotation gives the item type. |
+| `q.put(item)?` | Adds an item and moves it into the queue. Fails if the queue is closed. |
+| `q.get()` | Removes the oldest item, and waits while the queue is empty. Returns `Option.None` once the queue is closed and empty. |
+| `q.close()` | Closes the queue: no more items, and waiting `get` calls wake up. |
+| `q.clone()` | Returns another handle to the same queue, which you can give to another thread. |
+
+```zamak,ignore
+fn produce(q: thread.Queue[string], count: i64) -> !string:
+    for i in range(count):
+        q.put(f"item {i}")?
+    q.close()
+
+fn main() -> !string:
+    let q: thread.Queue[string] = thread.queue()
+    let worker = thread.spawn(produce, q.clone(), 3)
+    while true:
+        match q.get():
+            Some(item): println(item)
+            None: break
+    worker.join()?
+```
+
+Some rules:
+
+- Pass the thread function by name. Its parameters can't be borrows (`&T`), because the new thread can outlive values in the starting thread.
+- A thread function fails with a string error, such as `-> i64!string`.
+- `thread.cpu_count()` returns the number of logical processors. Each thread has its own `random` state, so `random.seed` affects only the thread that calls it.
+- `println` from several threads writes whole lines that don't mix.
+
 ## Hashes and base64: std/hashlib and std/base64
 
 ```zamak
@@ -345,4 +403,5 @@ hello
 - `std/io`, `std/env`, `std/fs`, and `std/path` handle input, arguments, and files; `std/bytes` handles raw bytes.
 - `std/math`, `std/fmt`, `std/time`, and `std/random` handle numbers, formatting, clocks, and randomness.
 - `std/process`, `std/json`, `std/re`, `std/hashlib`, and `std/base64` run programs, read and write JSON, match text, and compute hashes.
+- `std/thread` starts threads with `thread.spawn`, and threads pass data through a `Queue`.
 - Functions that can fail return errors that you handle with `?` or `catch`.

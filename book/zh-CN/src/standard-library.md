@@ -318,6 +318,64 @@ http.serve("0.0.0.0", 8443, hello, cert_file="cert.pem", key_file="key.pem")?
 
 TLS 由 [Mbed TLS](https://github.com/Mbed-TLS/mbedtls)（Apache-2.0）实现，`zam` 自带它的源码。程序第一次用到 `std/net` 或 `std/http` 时，`zam` 把它编译进缓存，要多花一些时间（通常十几秒）；之后直接复用。分发这样的程序时，请附上 Mbed TLS 的许可证。
 
+## 线程与队列：std/thread
+
+`thread.spawn(work, 参数...)` 在新线程里运行 `work`，写法同 Python 的 `executor.submit(work, *args)`。参数按值移交给新线程，之后原来的线程不能再用它们；`join()` 等线程结束并取回返回值：
+
+```zamak,ignore
+use std/thread
+
+fn squares(start: i64, stop: i64) -> i64:
+    let mut total = 0
+    for i in range(start, stop):
+        total += i * i
+    total
+
+fn main() -> !string:
+    let mut tasks: [thread.Task[i64]] = []
+    for k in range(4):
+        tasks.push(thread.spawn(squares, k * 1000, (k + 1) * 1000))
+    let mut total = 0
+    for task in &tasks:
+        total += task.join()?
+    println(total)
+```
+
+`work` 有返回值时 `spawn` 返回 `Task[R]`，没有时返回 `Thread`。`work` 失败时，`join()` 以同样的错误失败。没有 `join` 的线程在句柄离开作用域时等它结束。
+
+线程之间不共享可以修改的数据，所以不会有数据竞争。要传递数据就用队列 `Queue[T]`，它的形状参考 Python 的 `queue.Queue`：
+
+| 写法 | 作用 |
+| --- | --- |
+| `let q: thread.Queue[string] = thread.queue()` | 新建队列，元素类型写在标注里。 |
+| `q.put(item)?` | 放进一个元素，所有权一起移交。队列已关闭时失败。 |
+| `q.get()` | 取出最早的元素；队列空时等待。关闭并取空之后返回 `Option.None`。 |
+| `q.close()` | 关闭队列：不能再放，等待中的 `get` 立即醒来。 |
+| `q.clone()` | 同一个队列的另一个句柄，可以交给别的线程。 |
+
+```zamak,ignore
+fn produce(q: thread.Queue[string], count: i64) -> !string:
+    for i in range(count):
+        q.put(f"item {i}")?
+    q.close()
+
+fn main() -> !string:
+    let q: thread.Queue[string] = thread.queue()
+    let worker = thread.spawn(produce, q.clone(), 3)
+    while true:
+        match q.get():
+            Some(item): println(item)
+            None: break
+    worker.join()?
+```
+
+几点规则：
+
+- 线程函数要直接写函数名，参数不能是借用（`&T`），因为新线程可能比原来线程里的值活得更久。
+- 线程函数的错误要是字符串（`-> i64!string`）。
+- `thread.cpu_count()` 给出逻辑处理器个数。`random` 的状态每个线程一份，`random.seed` 只影响调用它的线程。
+- 多个线程的 `println` 按整行输出，不会互相插进去。
+
 ## 哈希与 base64：std/hashlib 和 std/base64
 
 ```zamak
@@ -345,4 +403,5 @@ hello
 - `std/io`、`std/env`、`std/fs`、`std/path` 处理输入、参数和文件；`std/bytes` 处理原始字节。
 - `std/math`、`std/fmt`、`std/time`、`std/random` 处理数字、格式、时钟和随机数。
 - `std/process`、`std/json`、`std/re`、`std/hashlib`、`std/base64` 运行程序、读写 JSON、匹配文字、计算哈希。
+- `std/thread` 启动线程（`thread.spawn`），线程之间用 `Queue` 传递数据。
 - 可能失败的函数返回错误，用 `?` 或 `catch` 处理。

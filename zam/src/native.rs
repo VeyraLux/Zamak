@@ -28,13 +28,22 @@ const RUNTIME: &str = r#"#if !defined(_WIN32) && !defined(__APPLE__)
 #include <limits.h>
 #include <math.h>
 #include <time.h>
+// 线程局部变量：每个线程各有一份（报错信息缓冲区、随机数状态）。
+#if defined(_MSC_VER)
+#define ZAM_THREAD __declspec(thread)
+#else
+#define ZAM_THREAD _Thread_local
+#endif
+// std/thread 启动第一个线程之前置 1，之后不再改。只在单线程时安全的优化（列表缓冲区的空闲链表、
+// 正则缓存）看到它就不再使用。定义在入口模块的目标文件里。
+extern int zam_threaded;
 // 运行时的报错（下标越界、除以零等）按 ZAMAK_LANG 显示：与编译器一致，设了 zh 就用中文，
 // 不设时跟随系统语言（Unix 看 LC_ALL、LC_MESSAGES、LANG，Windows 再看用户界面语言）。只读一次。
 #ifdef _WIN32
 __declspec(dllimport) unsigned short __stdcall GetUserDefaultUILanguage(void);
 #endif
 static int zam_chinese(void) {
-    static int state = -1;
+    static ZAM_THREAD int state = -1;
     if (state < 0) {
         const char *lang = getenv("ZAMAK_LANG");
         if (!lang || !*lang) lang = getenv("LC_ALL");
@@ -74,6 +83,7 @@ static const char *zam_zh(const char *en) {
         {"pop from empty list", "对空列表调用 pop"},
         {"min() of an empty list", "对空列表调用 min()"},
         {"max() of an empty list", "对空列表调用 max()"},
+        {"cannot start a thread", "无法启动线程"},
         {NULL, NULL},
     };
     int i;
@@ -267,8 +277,19 @@ static int string_compare(S *a, S *b) {
     if (c) return c < 0 ? -1 : 1;
     return a->len < b->len ? -1 : a->len > b->len;
 }
+#ifdef _WIN32
+#define zam_lock_stdout() _lock_file(stdout)
+#define zam_unlock_stdout() _unlock_file(stdout)
+#else
+#define zam_lock_stdout() flockfile(stdout)
+#define zam_unlock_stdout() funlockfile(stdout)
+#endif
 static void print(S *s) {
-    if (!zam_write(stdout, s->data, s->len) || fputc('\n', stdout) == EOF) exit(1);
+    int locked = zam_threaded, ok;
+    if (locked) zam_lock_stdout();
+    ok = zam_write(stdout, s->data, s->len) && fputc('\n', stdout) != EOF;
+    if (locked) zam_unlock_stdout();
+    if (!ok) exit(1);
 }
 // ponytail: 未捕获的错误只写 stderr 并以退出码 1 结束；不做栈回溯，错误值本身就是全部信息。
 static void uncaught_error(S *s) {
@@ -1193,9 +1214,11 @@ static zam_rx *zam_rx_build(S *pattern, int64_t flags, S *error) {
 #define ZRX_CACHE 16
 static struct { S pattern; int64_t flags; zam_rx *rx; } zam_rx_cache[ZRX_CACHE];
 static int zam_rx_cache_next;
+// 启动过线程之后不用缓存（缓存没有锁）：调用方用完后交给 zam_rx_done，不在缓存里的就释放。
 static zam_rx *zam_rx_get(S *pattern, int64_t flags, S *error) {
     int i;
     zam_rx *r;
+    if (zam_threaded) return zam_rx_build(pattern, flags, error);
     for (i = 0; i < ZRX_CACHE; i++) if (zam_rx_cache[i].rx && zam_rx_cache[i].flags == flags && string_equal(&zam_rx_cache[i].pattern, pattern)) return zam_rx_cache[i].rx;
     r = zam_rx_build(pattern, flags, error);
     if (!r) return NULL;
@@ -1203,6 +1226,12 @@ static zam_rx *zam_rx_get(S *pattern, int64_t flags, S *error) {
     if (zam_rx_cache[i].rx) { zam_rx_free(zam_rx_cache[i].rx); drop(&zam_rx_cache[i].pattern); }
     zam_rx_cache[i].pattern = copy(pattern); zam_rx_cache[i].flags = flags; zam_rx_cache[i].rx = r;
     return r;
+}
+static void zam_rx_done(zam_rx *r) {
+    int i;
+    if (!r) return;
+    for (i = 0; i < ZRX_CACHE; i++) if (zam_rx_cache[i].rx == r) return;
+    zam_rx_free(r);
 }
 // ---- 执行 ----
 typedef struct { int *pc; int64_t *caps; int count; int *mark; int stamp; } zam_rx_list;
@@ -1359,6 +1388,7 @@ static F_Ls zam_re_groups(S *pattern, int64_t flags) {
     if (!r) return F_Ls_err(error);
     pushLs(&out, own((const unsigned char *)"", 0));
     for (i = 1; i <= r->groups; i++) pushLs(&out, copy(&r->names[i]));
+    zam_rx_done(r);
     return F_Ls_ok(out);
 }
 // 从第 start 个字符起找匹配，最多 limit 个（0 表示全部）。每个匹配给出 2 × (组数 + 1) 个字符位置：
@@ -1406,18 +1436,20 @@ static F_Li zam_re_find(S *pattern, int64_t flags, S *text, int64_t start, int64
         if (mode != 0) break;
     }
     free(caps); free(vm.stack);
+    zam_rx_done(r);
     return F_Li_ok(out);
 }
 "#;
 const NET_PRELUDE: &str = r#"// std/net 的 C 部分：TCP 连接、监听、收发。std/net（Zamak 写的）用 extern type 把套接字包成句柄，
 // 离开作用域时自动关闭。句柄里存的是“套接字 + 1”，这样 0 一定表示没有套接字。
 // 失败时返回空句柄或 -1，原因放在 zam_net_error() 里。
-static char zam_net_message[256];
+static ZAM_THREAD char zam_net_message[256];
 static void zam_net_fail(const char *what, int code) {
     snprintf(zam_net_message, sizeof zam_net_message, "%s (error %d)", what, code);
 }
 const char *zam_net_error(void) { return zam_net_message; }
 #ifdef _WIN32
+#include <intrin.h>
 // Windows 的 addrinfo：canonname 在 addr 前面（与 POSIX 相反）。调用处都经 void * 转换，
 // 用户的头文件已经引入 winsock2.h 时也不冲突。
 struct zam_addrinfo { int flags, family, socktype, protocol; size_t addrlen; char *canonname; void *addr; struct zam_addrinfo *next; };
@@ -1452,10 +1484,14 @@ typedef uintptr_t zam_sock;
 #define ZAM_SO_SNDTIMEO 0x1005
 static int zam_net_errno(void) { return WSAGetLastError(); }
 static void zam_close_socket(zam_sock s) { closesocket(s); }
+// 标志按原子操作读写：几个线程同时第一次联网时可能都调用一次 WSAStartup，它可以重复调用。
 static int zam_net_ready(void) {
-    static int done;
+    static volatile long done;
     char data[512];
-    if (!done) { if (WSAStartup(0x0202, data) != 0) { zam_net_fail("cannot start Winsock", 0); return 0; } done = 1; }
+    if (!_InterlockedCompareExchange(&done, 0, 0)) {
+        if (WSAStartup(0x0202, data) != 0) { zam_net_fail("cannot start Winsock", 0); return 0; }
+        _InterlockedExchange(&done, 1);
+    }
     return 1;
 }
 static void zam_set_timeout(zam_sock s, double seconds) {
@@ -1487,8 +1523,9 @@ static int zam_net_errno(void) { return errno; }
 static void zam_close_socket(zam_sock s) { close(s); }
 static int zam_net_ready(void) {
     // 对方关闭连接后再写不让进程收到 SIGPIPE 而直接退出，改成返回错误。
-    static int done;
-    if (!done) { signal(SIGPIPE, SIG_IGN); done = 1; }
+    // 标志按原子操作读写，几个线程同时第一次联网时可能都设一次，重复设置没有影响。
+    static volatile long done;
+    if (!__atomic_load_n(&done, __ATOMIC_ACQUIRE)) { signal(SIGPIPE, SIG_IGN); __atomic_store_n(&done, 1, __ATOMIC_RELEASE); }
     return 1;
 }
 static void zam_set_timeout(zam_sock s, double seconds) {
@@ -1606,6 +1643,7 @@ const TLS_PRELUDE: &str = r#"// TLS（Mbed TLS）：在已经连上的 TCP 套�
 #include "mbedtls/pk.h"
 #include "mbedtls/error.h"
 #include "psa/crypto.h"
+#include "mbedtls/threading.h"
 #define ZAM_TLS_SEND_FAILED (-0x004E)
 #define ZAM_TLS_RECV_FAILED (-0x004C)
 typedef struct {
@@ -1617,7 +1655,7 @@ typedef struct {
     mbedtls_ctr_drbg_context drbg;
     void *socket;
 } zam_tls;
-static char zam_tls_message[512];
+static ZAM_THREAD char zam_tls_message[512];
 const char *zam_tls_error(void) { return zam_tls_message; }
 static void zam_tls_fail(const char *what, int rc) {
     char detail[256];
@@ -1674,15 +1712,46 @@ static int zam_tls_roots(mbedtls_x509_crt *ca) {
 #endif
     return loaded;
 }
+// 整个程序只做一次的准备：Windows 上先给 Mbed TLS 装上互斥锁（SRW 锁），再初始化 PSA 加密库。
+// 几个线程同时第一次用 TLS 时，只有一个去做，其余等它做完。
+// mbedtls_ssl_list_ciphersuites 第一次调用时才填好一张静态表（没有锁），也放在这里先调一次。
+static int zam_tls_ready;
+#ifdef _WIN32
+#include <intrin.h>
+#ifdef _WINDOWS_
+typedef SRWLOCK zam_tls_srw;
+#else
+typedef struct { void *p; } zam_tls_srw;
+__declspec(dllimport) void __stdcall AcquireSRWLockExclusive(zam_tls_srw *);
+__declspec(dllimport) void __stdcall ReleaseSRWLockExclusive(zam_tls_srw *);
+#endif
+static void zam_tls_mutex_init(mbedtls_threading_mutex_t *m) { m->lock = NULL; }
+static void zam_tls_mutex_free(mbedtls_threading_mutex_t *m) { (void)m; }
+static int zam_tls_mutex_lock(mbedtls_threading_mutex_t *m) { AcquireSRWLockExclusive((zam_tls_srw *)&m->lock); return 0; }
+static int zam_tls_mutex_unlock(mbedtls_threading_mutex_t *m) { ReleaseSRWLockExclusive((zam_tls_srw *)&m->lock); return 0; }
+static volatile long zam_tls_state; /* 0 还没开始，1 正在准备，2 准备好了 */
+static int zam_tls_setup(void) {
+    if (_InterlockedCompareExchange(&zam_tls_state, 1, 0) == 0) {
+        mbedtls_threading_set_alt(zam_tls_mutex_init, zam_tls_mutex_free, zam_tls_mutex_lock, zam_tls_mutex_unlock);
+        zam_tls_ready = psa_crypto_init() == PSA_SUCCESS;
+        (void)mbedtls_ssl_list_ciphersuites();
+        _InterlockedExchange(&zam_tls_state, 2);
+    } else {
+        while (_InterlockedCompareExchange(&zam_tls_state, 2, 2) != 2) {}
+    }
+    return zam_tls_ready;
+}
+#else
+#include <pthread.h>
+static pthread_once_t zam_tls_once = PTHREAD_ONCE_INIT;
+static void zam_tls_prepare(void) { zam_tls_ready = psa_crypto_init() == PSA_SUCCESS; (void)mbedtls_ssl_list_ciphersuites(); }
+static int zam_tls_setup(void) { pthread_once(&zam_tls_once, zam_tls_prepare); return zam_tls_ready; }
+#endif
 static zam_tls *zam_tls_new(void *socket, int server) {
-    static int ready;
     zam_tls *t = (zam_tls *)calloc(1, sizeof *t);
     int rc;
     if (!t) { snprintf(zam_tls_message, sizeof zam_tls_message, "out of memory"); return NULL; }
-    if (!ready) {
-        if (psa_crypto_init() != PSA_SUCCESS) { snprintf(zam_tls_message, sizeof zam_tls_message, "cannot start the crypto library"); free(t); return NULL; }
-        ready = 1;
-    }
+    if (!zam_tls_setup()) { snprintf(zam_tls_message, sizeof zam_tls_message, "cannot start the crypto library"); free(t); return NULL; }
     t->socket = socket;
     mbedtls_ssl_init(&t->ssl);
     mbedtls_ssl_config_init(&t->conf);
@@ -1789,7 +1858,255 @@ int64_t zam_tls_recv(void *handle, uint8_t *buf, int64_t n) {
     }
 }
 "#;
-const UNIT_PRELUDES: &[(&str, &[&str])] = &[("std/net", &[NET_PRELUDE, TLS_PRELUDE])];
+const THREAD_PRELUDE: &str = r#"// std/thread 的 C 部分：线程的启动、等待与释放，以及线程之间的队列。Windows 用 _beginthreadex、
+// SRW 锁与条件变量，其他平台用 pthread。线程入口与按类型生成的队列函数见 native.rs 的 intrinsic。
+#ifdef _WIN32
+#include <process.h>
+#include <intrin.h>
+#ifdef _WINDOWS_
+typedef SRWLOCK zam_lock_t;
+typedef CONDITION_VARIABLE zam_cond_t;
+#else
+typedef struct { void *p; } zam_lock_t;
+typedef struct { void *p; } zam_cond_t;
+__declspec(dllimport) void __stdcall AcquireSRWLockExclusive(zam_lock_t *);
+__declspec(dllimport) void __stdcall ReleaseSRWLockExclusive(zam_lock_t *);
+__declspec(dllimport) int __stdcall SleepConditionVariableSRW(zam_cond_t *, zam_lock_t *, unsigned long, unsigned long);
+__declspec(dllimport) void __stdcall WakeConditionVariable(zam_cond_t *);
+__declspec(dllimport) void __stdcall WakeAllConditionVariable(zam_cond_t *);
+__declspec(dllimport) unsigned long __stdcall WaitForSingleObject(void *, unsigned long);
+__declspec(dllimport) int __stdcall CloseHandle(void *);
+__declspec(dllimport) unsigned long __stdcall GetActiveProcessorCount(unsigned short);
+#endif
+static void zam_lock_init(zam_lock_t *l) { memset(l, 0, sizeof *l); }
+static void zam_lock_free(zam_lock_t *l) { (void)l; }
+static void zam_lock(zam_lock_t *l) { AcquireSRWLockExclusive(l); }
+static void zam_unlock(zam_lock_t *l) { ReleaseSRWLockExclusive(l); }
+static void zam_cond_init(zam_cond_t *c) { memset(c, 0, sizeof *c); }
+static void zam_cond_free(zam_cond_t *c) { (void)c; }
+static void zam_cond_wait(zam_cond_t *c, zam_lock_t *l) { SleepConditionVariableSRW(c, l, 0xFFFFFFFFu, 0); }
+static void zam_cond_signal(zam_cond_t *c) { WakeConditionVariable(c); }
+static void zam_cond_broadcast(zam_cond_t *c) { WakeAllConditionVariable(c); }
+static void zam_flag_set(volatile long *flag) { _InterlockedExchange(flag, 1); }
+static int zam_flag_get(volatile long *flag) { return _InterlockedCompareExchange(flag, 0, 0) != 0; }
+#else
+#include <pthread.h>
+#include <unistd.h>
+typedef pthread_mutex_t zam_lock_t;
+typedef pthread_cond_t zam_cond_t;
+static void zam_lock_init(zam_lock_t *l) { pthread_mutex_init(l, NULL); }
+static void zam_lock_free(zam_lock_t *l) { pthread_mutex_destroy(l); }
+static void zam_lock(zam_lock_t *l) { pthread_mutex_lock(l); }
+static void zam_unlock(zam_lock_t *l) { pthread_mutex_unlock(l); }
+static void zam_cond_init(zam_cond_t *c) { pthread_cond_init(c, NULL); }
+static void zam_cond_free(zam_cond_t *c) { pthread_cond_destroy(c); }
+static void zam_cond_wait(zam_cond_t *c, zam_lock_t *l) { pthread_cond_wait(c, l); }
+static void zam_cond_signal(zam_cond_t *c) { pthread_cond_signal(c); }
+static void zam_cond_broadcast(zam_cond_t *c) { pthread_cond_broadcast(c); }
+static void zam_flag_set(volatile long *flag) { __atomic_store_n(flag, 1, __ATOMIC_RELEASE); }
+static int zam_flag_get(volatile long *flag) { return __atomic_load_n(flag, __ATOMIC_ACQUIRE) != 0; }
+#endif
+static void zam_thread_alloc_failed(void) { zam_panic_one("allocation failed"); exit(1); }
+// 线程的返回值先复制到堆上，join 时再取走。
+static void *zam_thread_box(const void *value, size_t size) {
+    void *p = malloc(size ? size : 1);
+    if (!p) zam_thread_alloc_failed();
+    memcpy(p, value, size);
+    return p;
+}
+// 一个线程：入口函数与它的参数（job），结束后的返回值或错误。只有句柄的主人（一个 Zamak 值）
+// 会等待、取结果和释放它，所以除了 finished 之外都不需要锁：等待线程结束本身就是同步。
+typedef struct {
+    void (*run)(void *job, void **result, S *error, int *failed);
+    void *job, *result;
+    void (*drop_result)(void *);
+    S error;
+    char *message;
+    int failed, joined;
+    volatile long finished;
+#ifdef _WIN32
+    void *os;
+#else
+    pthread_t os;
+#endif
+} zam_thread;
+#ifdef _WIN32
+static unsigned __stdcall zam_thread_main(void *p) {
+#else
+static void *zam_thread_main(void *p) {
+#endif
+    zam_thread *t = (zam_thread *)p;
+    t->run(t->job, &t->result, &t->error, &t->failed);
+    zam_flag_set(&t->finished);
+    return 0;
+}
+static void *zam_thread_start(void (*run)(void *, void **, S *, int *), void *job, void (*drop_result)(void *)) {
+    zam_thread *t = (zam_thread *)calloc(1, sizeof *t);
+    if (!t) zam_thread_alloc_failed();
+    t->run = run; t->job = job; t->drop_result = drop_result;
+    // 第一个线程启动之前置位：之后各线程都不再用只在单线程时安全的优化。只写这一次，
+    // 已经有别的线程在读它时不能再写（即使写的是同样的值，也算数据竞争）。
+    if (!zam_threaded) zam_threaded = 1;
+#ifdef _WIN32
+    t->os = (void *)_beginthreadex(NULL, 0, zam_thread_main, t, 0, NULL);
+    if (!t->os) { zam_panic_one("cannot start a thread"); exit(1); }
+#else
+    if (pthread_create(&t->os, NULL, zam_thread_main, t) != 0) { zam_panic_one("cannot start a thread"); exit(1); }
+#endif
+    return t;
+}
+static void zam_thread_wait(zam_thread *t) {
+    if (t->joined) return;
+#ifdef _WIN32
+    WaitForSingleObject(t->os, 0xFFFFFFFFu);
+    CloseHandle(t->os);
+#else
+    pthread_join(t->os, NULL);
+#endif
+    t->joined = 1;
+}
+// 等线程结束：成功是 0；入口函数失败时是 -1，错误信息由 zam_thread_error 给出。
+int64_t zam_thread_join(void *handle) {
+    zam_thread *t = (zam_thread *)handle;
+    zam_thread_wait(t);
+    if (!t->failed) return 0;
+    if (!t->message) t->message = zam_cstr(&t->error);
+    return -1;
+}
+const char *zam_thread_error(void *handle) {
+    zam_thread *t = (zam_thread *)handle;
+    return t->message ? t->message : "";
+}
+int zam_thread_alive(void *handle) { return !zam_flag_get(&((zam_thread *)handle)->finished); }
+// 取走返回值（堆上的副本），之后由调用方释放。
+static void *zam_thread_take(void *handle) {
+    zam_thread *t = (zam_thread *)handle;
+    void *result = t->result;
+    t->result = NULL;
+    return result;
+}
+// 句柄离开作用域：没有 join 的线程先等它结束，再释放没取走的返回值与错误。
+void zam_thread_release(void *handle) {
+    zam_thread *t = (zam_thread *)handle;
+    if (!t) return;
+    zam_thread_wait(t);
+    if (t->result) {
+        if (t->drop_result) t->drop_result(t->result);
+        free(t->result);
+    }
+    if (t->failed) drop(&t->error);
+    free(t->message);
+    free(t);
+}
+int64_t zam_thread_cpus(void) {
+#ifdef _WIN32
+    unsigned long n = GetActiveProcessorCount(0xFFFF);
+#else
+    long n = sysconf(_SC_NPROCESSORS_ONLN);
+#endif
+    return n > 0 ? (int64_t)n : 1;
+}
+// 队列：环形缓冲区，每个元素 size 字节（元素在 C 里的值，按值复制进来，所有权一起移交）。
+// 句柄有引用计数，最后一个释放时用 drop 释放没取走的元素。
+typedef struct {
+    zam_lock_t lock;
+    zam_cond_t ready;
+    unsigned char *items;
+    size_t size, head, count, cap;
+    void (*drop)(void *);
+    int closed;
+    int64_t refs;
+} zam_queue;
+static void *zam_queue_new(int64_t size, void (*drop)(void *)) {
+    zam_queue *q = (zam_queue *)calloc(1, sizeof *q);
+    if (!q) zam_thread_alloc_failed();
+    zam_lock_init(&q->lock);
+    zam_cond_init(&q->ready);
+    q->size = (size_t)size;
+    q->drop = drop;
+    q->refs = 1;
+    return q;
+}
+// 放进一个元素；队列已经关闭时由队列释放这个元素，返回 0。
+static int zam_queue_put(void *handle, void *item) {
+    zam_queue *q = (zam_queue *)handle;
+    zam_lock(&q->lock);
+    if (q->closed) {
+        zam_unlock(&q->lock);
+        if (q->drop) q->drop(item);
+        return 0;
+    }
+    if (q->count == q->cap) {
+        size_t cap = q->cap ? q->cap * 2 : 8, i;
+        unsigned char *items = (unsigned char *)malloc(cap * q->size);
+        if (!items) zam_thread_alloc_failed();
+        for (i = 0; i < q->count; i++) memcpy(items + i * q->size, q->items + ((q->head + i) % q->cap) * q->size, q->size);
+        free(q->items);
+        q->items = items; q->cap = cap; q->head = 0;
+    }
+    memcpy(q->items + ((q->head + q->count) % q->cap) * q->size, item, q->size);
+    q->count++;
+    zam_cond_signal(&q->ready);
+    zam_unlock(&q->lock);
+    return 1;
+}
+// 取出最早的元素；队列空时等待。关闭并且取空之后返回 0。
+static int zam_queue_get(void *handle, void *out) {
+    zam_queue *q = (zam_queue *)handle;
+    zam_lock(&q->lock);
+    while (!q->count && !q->closed) zam_cond_wait(&q->ready, &q->lock);
+    if (!q->count) { zam_unlock(&q->lock); return 0; }
+    memcpy(out, q->items + q->head * q->size, q->size);
+    q->head = (q->head + 1) % q->cap;
+    q->count--;
+    zam_unlock(&q->lock);
+    return 1;
+}
+void zam_queue_close(void *handle) {
+    zam_queue *q = (zam_queue *)handle;
+    zam_lock(&q->lock);
+    q->closed = 1;
+    zam_cond_broadcast(&q->ready);
+    zam_unlock(&q->lock);
+}
+int64_t zam_queue_len(void *handle) {
+    zam_queue *q = (zam_queue *)handle;
+    int64_t n;
+    zam_lock(&q->lock);
+    n = (int64_t)q->count;
+    zam_unlock(&q->lock);
+    return n;
+}
+int64_t zam_queue_retain(void *handle, void **out) {
+    zam_queue *q = (zam_queue *)handle;
+    zam_lock(&q->lock);
+    q->refs++;
+    zam_unlock(&q->lock);
+    *out = q;
+    return 0;
+}
+void zam_queue_release(void *handle) {
+    zam_queue *q = (zam_queue *)handle;
+    int last;
+    if (!q) return;
+    zam_lock(&q->lock);
+    last = --q->refs == 0;
+    zam_unlock(&q->lock);
+    if (!last) return;
+    if (q->drop) {
+        size_t i;
+        for (i = 0; i < q->count; i++) q->drop(q->items + ((q->head + i) % q->cap) * q->size);
+    }
+    free(q->items);
+    zam_cond_free(&q->ready);
+    zam_lock_free(&q->lock);
+    free(q);
+}
+"#;
+const UNIT_PRELUDES: &[(&str, &[&str])] = &[
+    ("std/net", &[NET_PRELUDE, TLS_PRELUDE]),
+    ("std/thread", &[THREAD_PRELUDE]),
+];
 /// 只在用到某个标准库模块时才需要的 C 辅助代码：（模块前缀, 代码）。
 const MODULE_PRELUDES: &[(&str, &str)] = &[
     ("std/hashlib:", HASH_PRELUDE),
@@ -1819,9 +2136,9 @@ __declspec(dllimport) int __stdcall MoveFileExW(const wchar_t *, const wchar_t *
 #include <dirent.h>
 #include <unistd.h>
 #endif
-// std/random 的状态：整个程序共用一份，定义在入口模块的目标文件里。
-extern uint64_t zam_random_state[4];
-extern int zam_random_seeded;
+// std/random 的状态：每个线程一份（没调用 random.seed 的线程各自取种子），定义在入口模块的目标文件里。
+extern ZAM_THREAD uint64_t zam_random_state[4];
+extern ZAM_THREAD int zam_random_seeded;
 // std/time：墙上时间（1970 年以来的秒）与单调时间（只用来量间隔）。
 static double zam_time_now(void) {
 #ifdef _WIN32
@@ -3887,6 +4204,7 @@ static void list_empty(void) { zam_panic_one("pop from empty list"); exit(1); }
 static void list_alloc_failed(void) { zam_panic_one("allocation failed"); exit(1); }
 static uint8_t zam_byte(int64_t v) { if (v < 0 || v > 255) { zam_panic_one("byte must be in range(0, 256)"); exit(1); } return (uint8_t)v; }
 // 小列表缓冲区的空闲链表：按 16 字节分级，释放时留给下一次同级分配，最多缓存 32 MB。
+// 启动过线程之后不再存取（链表没有锁），已经缓存的块留在那里。
 // 每块都是 malloc 来的真实内存块，别处直接 free 它也没问题，只是不回到这里。
 // 放进第 k 级的块至少有 16k 字节（按声明大小向下取级），取出时按请求向上取级。
 // AddressSanitizer 构建不缓存，释放后再用之类的错误照常能查出来。
@@ -3905,7 +4223,7 @@ static size_t zam_pool_bytes;
 static void *zam_list_alloc(size_t size) {
     size_t k = (size + 15) / 16;
     void *p;
-    if (k <= ZAM_POOL_CLASSES && zam_pool[k]) {
+    if (k <= ZAM_POOL_CLASSES && !zam_threaded && zam_pool[k]) {
         p = zam_pool[k];
         zam_pool[k] = *(void **)p;
         zam_pool_bytes -= k * 16;
@@ -3918,7 +4236,7 @@ static void *zam_list_alloc(size_t size) {
 static void zam_list_free(void *p, size_t size) {
     size_t k = size / 16;
     if (!p) return;
-    if (k >= 1 && k <= ZAM_POOL_CLASSES && zam_pool_bytes + k * 16 <= ((size_t)32 << 20)) {
+    if (k >= 1 && k <= ZAM_POOL_CLASSES && !zam_threaded && zam_pool_bytes + k * 16 <= ((size_t)32 << 20)) {
         *(void **)p = zam_pool[k];
         zam_pool[k] = p;
         zam_pool_bytes += k * 16;
@@ -7170,6 +7488,11 @@ pub fn generate_with(
             );
             continue;
         }
+        if let Some((helpers, body)) = intrinsic(&name, function, &prefix) {
+            bodies.push_str(&helpers);
+            bodies.push_str(&format!("{declaration} {{\n{body}}}\n"));
+            continue;
+        }
         if function.external {
             // 没被调用的 extern fn 不生成，用不到的 C 函数就不用链接。
             if used_externs.contains(&name) {
@@ -7540,7 +7863,7 @@ pub fn generate_with(
     }
     if entry.split_once(':').unwrap().0 == unit && !tests.is_empty() {
         // 测试程序：`程序 模块:test_x` 只运行这一个测试；失败的 assert 与运行时错误都以非零退出。
-        source.push_str("int zam_argc;\nchar **zam_argv;\nuint64_t zam_random_state[4];\nint zam_random_seeded;\n");
+        source.push_str("int zam_argc;\nchar **zam_argv;\nZAM_THREAD uint64_t zam_random_state[4];\nZAM_THREAD int zam_random_seeded;\nint zam_threaded;\n");
         let mut dispatch = String::new();
         for test in tests {
             let function = &module.functions[test];
@@ -7571,7 +7894,7 @@ pub fn generate_with(
         ));
     } else if entry.split_once(':').unwrap().0 == unit {
         // argv 留给 std/env（Unix）；Windows 下 std/env 改读 GetCommandLineW 以拿到 UTF-8。
-        source.push_str("int zam_argc;\nchar **zam_argv;\nuint64_t zam_random_state[4];\nint zam_random_seeded;\n");
+        source.push_str("int zam_argc;\nchar **zam_argv;\nZAM_THREAD uint64_t zam_random_state[4];\nZAM_THREAD int zam_random_seeded;\nint zam_threaded;\n");
         if let Some(error) = module.functions[entry].error {
             let structure = fallible_name(module.functions[entry].result, Some(error));
             // 未捕获的错误写到 stderr：字符串原样，结构体与枚举按 println 的格式。
@@ -7794,6 +8117,132 @@ fn extern_wrapper(
     });
     out.push_str("}\n");
     out
+}
+
+/// 函数体由生成器按具体类型给出的函数：`thread.spawn` 合成的线程入口，以及 std/thread 里要知道
+/// 元素在 C 里的大小与释放方式的队列函数。返回（函数体之前要定义的辅助代码, 函数体）。
+/// 参数在 C 里叫 p0、p1……；句柄参数 `&QueueHandle` 是结构体指针，句柄在 m0 里。
+fn intrinsic(
+    name: &str,
+    function: &crate::compiler::Function,
+    symbol: &str,
+) -> Option<(String, String)> {
+    let param = |i: usize| function.params[i].1;
+    // 列表参数 `&[T]` / `&mut [T]` 的元素：值的 C 类型、追加函数、释放一个值的语句。
+    let element = |i: usize| match param(i) {
+        Type::ListRef(elem, _) => elem,
+        _ => unreachable!("intrinsic list parameter"),
+    };
+    let dropper = |elem: Elem| -> (String, String) {
+        let ty = ctype(elem.ty());
+        match drop_elem(elem, &format!("({ty} *)p")) {
+            drop if drop.is_empty() => (String::new(), "NULL".into()),
+            drop => (
+                format!("static void {symbol}_drop(void *p) {{ {drop} }}\n"),
+                format!("{symbol}_drop"),
+            ),
+        }
+    };
+    let handle = |i: usize| format!("(void *)(intptr_t)p{i}->m0");
+    if name.starts_with(&format!("{}[", crate::compiler::SPAWN)) {
+        let Type::Func(id) = param(0) else {
+            unreachable!("spawn takes a function value")
+        };
+        let (_, result) = func_sig(id);
+        let error = func_error(id);
+        let count = function.params.len();
+        let fields: String = (1..count)
+            .map(|i| format!(" {} a{i};", ctype(param(i))))
+            .collect();
+        let args: String = (1..count).map(|i| format!(", job.a{i}")).collect();
+        let call = format!("job.f.call(job.f.env{args})");
+        let finish = match (result, error) {
+            (Type::Unit, None) => format!("{call};"),
+            (Type::Unit, Some(_)) => format!(
+                "{} r = {call}; if (!r.ok) {{ *failed = 1; *error = r.error; }}",
+                value_result(id)
+            ),
+            (_, None) => format!(
+                "{} v = {call}; *result = zam_thread_box(&v, sizeof v);",
+                ctype(result)
+            ),
+            (_, Some(_)) => format!(
+                "{} r = {call}; if (!r.ok) {{ *failed = 1; *error = r.error; }} else *result = zam_thread_box(&r.value, sizeof r.value);",
+                value_result(id)
+            ),
+        };
+        let (drop_helper, drop_result) = if result == Type::Unit {
+            (String::new(), "NULL".to_owned())
+        } else {
+            dropper(elem_of(result))
+        };
+        let mut helpers = format!(
+            "struct {symbol}_job {{ F{id} f;{fields} }};\n\
+             static void {symbol}_run(void *p, void **result, S *error, int *failed) {{\n\
+             struct {symbol}_job job = *(struct {symbol}_job *)p;\n\
+             free(p); (void)result; (void)error; (void)failed;\n{finish}\n}}\n"
+        );
+        helpers.push_str(&drop_helper);
+        let moves: String = (1..count).map(|i| format!("j->a{i} = p{i}; ")).collect();
+        let body = format!(
+            "struct {symbol}_job *j = (struct {symbol}_job *)malloc(sizeof *j);\n\
+             {} r;\n\
+             if (!j) zam_thread_alloc_failed();\n\
+             j->f = p0; {moves}\n\
+             memset(&r, 0, sizeof r);\n\
+             r.m0.m1.m0 = (int64_t)(intptr_t)zam_thread_start({symbol}_run, j, {drop_result});\n\
+             return r;\n",
+            ctype(function.result)
+        );
+        return Some((helpers, body));
+    }
+    let template = name.split('[').next().unwrap_or(name);
+    match template {
+        "std/thread:_queue_new" => {
+            let elem = element(0);
+            let Type::RecordRef(option, _) = param(1) else {
+                unreachable!("queue output parameter")
+            };
+            let (helper, drop) = dropper(elem);
+            Some((
+                helper,
+                format!(
+                    "void *q = zam_queue_new((int64_t)sizeof({}), {drop});\n(void)p0;\n\
+                     dropR{option}(p1); p1->m0 = 0; p1->m1.m0 = (int64_t)(intptr_t)q;\n",
+                    ctype(elem.ty())
+                ),
+            ))
+        }
+        "std/thread:_queue_put" => Some((
+            String::new(),
+            format!("return zam_queue_put({}, &p1);\n", handle(0)),
+        )),
+        "std/thread:_queue_get" => {
+            let elem = element(1);
+            Some((
+                String::new(),
+                format!(
+                    "{} v;\nif (!zam_queue_get({}, &v)) return 0;\npush{}(p1, v);\nreturn 1;\n",
+                    ctype(elem.ty()),
+                    handle(0),
+                    list_suffix(elem)
+                ),
+            ))
+        }
+        "std/thread:_task_take" => {
+            let elem = element(1);
+            Some((
+                String::new(),
+                format!(
+                    "{ty} *v = ({ty} *)zam_thread_take({});\nif (v) {{ push{}(p1, *v); free(v); }}\n",
+                    handle(0),
+                    list_suffix(elem),
+                    ty = ctype(elem.ty())
+                ),
+            ))
+        }
+        _ => None,
+    }
 }
 
 fn uses_msvc(tool: &str) -> bool {

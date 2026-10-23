@@ -46,6 +46,13 @@ and this file is the source for the text of each GitHub release.
   (Apache-2.0), which `zam` carries and compiles into the cache the first time a program needs it.
 - `[native]` C sources compile in parallel, and a header's `__FILE__` no longer puts the build
   machine's paths into the program.
+- **Threads.** `std/thread` runs a function on a new thread with `thread.spawn(work, args...)`, in
+  the shape of Python's `executor.submit`. Arguments move to the new thread, and `join()` returns the
+  result (or the function's error). Threads share nothing that can change; `thread.Queue[T]` carries
+  values between them, like Python's `queue.Queue`. `println` writes whole lines from any thread, and
+  TLS works from several threads at once.
+- A generic function whose type parameter appears only in its return type infers it from the
+  annotation: `let q: thread.Queue[i64] = thread.queue()`.
 - A parenthesized value can take a method call: `(a + b).upper()`.
 
 ## 0.1.1
@@ -216,6 +223,11 @@ this preview.
   `listener.accept_tls(cert_file, key_file)`。TLS 来自 Mbed TLS 3.6（Apache-2.0），`zam` 自带源码，
   程序第一次用到时编译进缓存。
 - `[native]` 的 C 源码并行编译；头文件里的 `__FILE__` 不再把构建机器的路径带进程序。
+- **线程。** `std/thread` 用 `thread.spawn(work, 参数...)` 在新线程里运行函数，写法参考 Python 的
+  `executor.submit`。参数移交给新线程，`join()` 取回返回值（或函数的错误）。线程之间不共享可以修改的数据，
+  用 `thread.Queue[T]` 传递值，形状参考 Python 的 `queue.Queue`。任何线程的 `println` 都按整行输出，
+  TLS 可以在多个线程里同时用。
+- 类型参数只出现在返回类型里的泛型函数，按标注推断：`let q: thread.Queue[i64] = thread.queue()`。
 - 括号里的值也能接方法调用：`(a + b).upper()`。
 
 ## 0.1.1（中文）

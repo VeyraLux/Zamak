@@ -1,0 +1,46 @@
+# 队列：几个工作线程从 jobs 里取任务，把结果放进 results。主线程放完任务就关闭 jobs，
+# 工作线程取空之后自然结束。队列的元素可以是任何值，这里是结构体。
+use std/thread
+
+struct Job:
+    id: i64
+    text: string
+
+struct Done:
+    id: i64
+    words: i64
+
+fn worker(jobs: thread.Queue[Job], results: thread.Queue[Done]) -> !string:
+    while true:
+        match jobs.get():
+            Some(job): results.put(Done(id: job.id, words: len(job.text.split(" "))))?
+            None: break
+
+fn main() -> !string:
+    let jobs: thread.Queue[Job] = thread.queue()
+    let results: thread.Queue[Done] = thread.queue()
+    let mut workers: [thread.Thread] = []
+
+    for _ in range(3):
+        workers.push(thread.spawn(worker, jobs.clone(), results.clone()))
+
+    let lines: [string] = ["the quick brown fox", "jumps over", "the lazy dog", "a", "threads share nothing but queues"]
+
+    for i, line in &lines:
+        jobs.put(Job(id: i, text: copy(line)))?
+
+    jobs.close()
+
+    for w in &workers:
+        w.join()?
+
+    results.close()
+    let mut counts: [i64] = [0, 0, 0, 0, 0]
+
+    while true:
+        match results.get():
+            Some(done): counts[done.id] = done.words
+            None: break
+
+    for i, line in &lines:
+        println(f"{counts[i]} words: {line}")

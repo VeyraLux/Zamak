@@ -1,0 +1,145 @@
+# 线程与队列。thread.spawn(work, a, b) 在新线程里运行 work(a, b)：参数按值移交给新线程，
+# 两个线程之间不共享可以修改的数据。线程之间传递数据用 Queue（形状参考 Python 的 queue.Queue）。
+#
+#     let t = thread.spawn(square, 7)
+#     println(t.join()?)
+#
+# work 有返回值时 spawn 返回 Task[R]，没有时返回 Thread；join() 等线程结束并取回结果，
+# work 失败时 join 也失败。没有 join 的线程在句柄离开作用域时等它结束。
+
+extern type ThreadHandle: "void", close = zam_thread_release
+extern type QueueHandle: "void", close = zam_queue_release
+
+extern fn zam_thread_join(t: &ThreadHandle) -> i64
+extern fn zam_thread_error(t: &ThreadHandle) -> string
+extern fn zam_thread_alive(t: &ThreadHandle) -> bool
+extern fn zam_thread_cpus() -> i64
+extern fn zam_queue_retain(q: &QueueHandle, out: &mut Option[QueueHandle]) -> i64
+extern fn zam_queue_close(q: &QueueHandle)
+extern fn zam_queue_len(q: &QueueHandle) -> i64
+
+# spawn(work, 参数...)：编译器按 work 的签名检查参数并生成线程入口（见 compiler::rewrite_block），
+# 这里的签名只是占位。
+pub fn spawn(work: fn() -> bool) -> bool:
+    false
+
+# 没有返回值的函数所在的线程。
+pub struct Thread:
+    handle: Option[ThreadHandle]
+
+    # 等线程结束。线程里的函数失败时，join 以同样的错误失败。
+    pub fn join(&self) -> !string:
+        match self.handle:
+            Some(t):
+                if zam_thread_join(t) < 0:
+                    fail zam_thread_error(t)
+            None: pass
+
+    # 线程还在运行时是 true。
+    pub fn is_alive(&self) -> bool:
+        match self.handle:
+            Some(t): zam_thread_alive(t)
+            None: false
+
+# 有返回值的函数所在的线程：join() 取回返回值。
+pub struct Task[R]:
+    handle: Option[ThreadHandle]
+
+    # 等线程结束并取回返回值。线程里的函数失败时，join 以同样的错误失败。返回值只能取一次。
+    pub fn join(&self) -> R!string:
+        let mut value: [R] = []
+
+        match self.handle:
+            Some(t):
+                if zam_thread_join(t) < 0:
+                    fail zam_thread_error(t)
+
+                _task_take(t, &mut value)
+            None: pass
+
+        if len(value) == 0:
+            fail "this thread was already joined"
+
+        value.pop()
+
+    # 线程还在运行时是 true。
+    pub fn is_alive(&self) -> bool:
+        match self.handle:
+            Some(t): zam_thread_alive(t)
+            None: false
+
+# 线程之间传递数据的队列：put 放进去（移交所有权），get 按放入的顺序取出。
+# 同一个队列可以有多个句柄（clone），分给不同的线程；最后一个句柄释放时，没取走的元素一起释放。
+pub struct Queue[T]:
+    handle: Option[QueueHandle]
+
+    # 放进一个元素。队列已经关闭时失败。
+    pub fn put(&self, item: T) -> !string:
+        let mut done = false
+
+        match self.handle:
+            Some(q): done = _queue_put(q, item)
+            None: pass
+
+        if not done:
+            fail "the queue is closed"
+
+    # 取出最早放进去的元素；队列空时等待。队列关闭并且取空之后返回 None。
+    pub fn get(&self) -> Option[T]:
+        let mut item: [T] = []
+
+        match self.handle:
+            Some(q): _queue_get(q, &mut item)
+            None: pass
+
+        if len(item) == 0:
+            return Option.None
+
+        Option.Some(item.pop())
+
+    # 关闭队列：之后不能再 put，get 取完剩下的元素后返回 None。等待中的 get 立即醒来。
+    pub fn close(&self):
+        match self.handle:
+            Some(q): zam_queue_close(q)
+            None: pass
+
+    # 队列里现有的元素个数。
+    pub fn len(&self) -> i64:
+        match self.handle:
+            Some(q): zam_queue_len(q)
+            None: 0
+
+    # 同一个队列的另一个句柄，可以移交给别的线程。
+    pub fn clone(&self) -> Queue[T]:
+        let mut handle: Option[QueueHandle] = Option.None
+
+        match self.handle:
+            Some(q): zam_queue_retain(q, &mut handle)
+            None: pass
+
+        Queue(handle=handle)
+
+# 新建一个空队列。元素类型写在变量的类型标注里：let q: thread.Queue[string] = thread.queue()
+pub fn queue[T]() -> Queue[T]:
+    let kind: [T] = []
+    let mut handle: Option[QueueHandle] = Option.None
+    _queue_new(&kind, &mut handle)
+    Queue(handle=handle)
+
+# 这台机器的逻辑处理器个数，可以用来决定开几个线程。
+pub fn cpu_count() -> i64:
+    zam_thread_cpus()
+
+# 下面几个函数的函数体由编译器按类型参数生成（见 native.rs 的 intrinsic）：它们要知道 T 在 C 里的大小
+# 与释放方式。这里的函数体只是占位。
+fn _queue_new[T](kind: &[T], out: &mut Option[QueueHandle]):
+    pass
+
+fn _queue_put[T](q: &QueueHandle, item: T) -> bool:
+    false
+
+fn _queue_get[T](q: &QueueHandle, into: &mut [T]) -> bool:
+    false
+
+fn _task_take[R](t: &ThreadHandle, into: &mut [R]):
+    pass

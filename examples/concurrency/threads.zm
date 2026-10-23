@@ -1,0 +1,28 @@
+# 线程：thread.spawn(work, 参数...) 在新线程里运行 work，参数按值移交过去；join() 等它结束并取回结果。
+# 这里把 1 到 4000 万的平方和分成几段，交给几个线程同时算。
+use std/thread
+
+fn squares(start: i64, stop: i64) -> i64:
+    let mut total = 0
+
+    for i in range(start, stop):
+        total += i * i % 1000
+
+    total
+
+fn main() -> !string:
+    let n = 40_000_000
+    let parts = 4
+    let size = n // parts
+    let mut tasks: [thread.Task[i64]] = []
+
+    for k in range(parts):
+        tasks.push(thread.spawn(squares, k * size + 1, (k + 1) * size + 1))
+
+    let mut total = 0
+
+    for task in &tasks:
+        total += task.join()?
+
+    println(f"{parts} threads: {total}")
+    println(f"one thread: {squares(1, n + 1)}")

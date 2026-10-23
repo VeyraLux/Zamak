@@ -245,7 +245,7 @@ See [diagnostic codes](book/en/src/appendix-diagnostics.md) and the [agent workf
 
 ## Current limitations
 
-No threads yet, and no REPL. C functions take numbers, booleans, strings, `bytes` buffers, and C handles declared with `extern type`; pass other structs and callbacks through a small C wrapper. `zam check` reports a diagnostic for anything unsupported instead of compiling it.
+No REPL yet. C functions take numbers, booleans, strings, `bytes` buffers, and C handles declared with `extern type`; pass other structs and callbacks through a small C wrapper. `zam check` reports a diagnostic for anything unsupported instead of compiling it.
 
 ## Editor and agent support
 

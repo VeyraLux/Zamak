@@ -150,7 +150,7 @@ fn main():
 2.5
 ```
 
-You don't name the type at the call; Zamak infers `T` from the arguments. It then compiles a separate version of the function for each type, so generic code runs as fast as code written for one type. The compiler checks the body for each type you use, so calling `largest` on a type that doesn't support `>` is a compile-time error.
+You don't name the type at the call; Zamak infers `T` from the arguments. When `T` appears only in the return type, Zamak infers it from the annotation of the variable that takes the result: `let b: Box[i64] = empty()`. It then compiles a separate version of the function for each type, so generic code runs as fast as code written for one type. The compiler checks the body for each type you use, so calling `largest` on a type that doesn't support `>` is a compile-time error.
 
 ## Functions as values
 

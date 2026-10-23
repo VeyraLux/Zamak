@@ -1215,6 +1215,11 @@ static PARAMS: std::sync::RwLock<BTreeSet<u64>> = std::sync::RwLock::new(BTreeSe
 /// 类型里还有没换成具体类型的类型参数（泛型模板里的类型）。
 pub fn mentions_param(ty: Type) -> bool {
     let params = PARAMS.read().expect("type parameters");
+    mentions_any(ty, &params)
+}
+
+/// 类型里是否用到 `params` 中的某个类型参数。
+fn mentions_any(ty: Type, params: &BTreeSet<u64>) -> bool {
     fn walk(ty: Type, params: &BTreeSet<u64>) -> bool {
         match ty {
             Type::Record(id) | Type::RecordRef(id, _) => {
@@ -1233,7 +1238,7 @@ pub fn mentions_param(ty: Type) -> bool {
             _ => false,
         }
     }
-    walk(ty, &params)
+    walk(ty, params)
 }
 
 /// 已生成的泛型函数副本：名字 → 函数。链接时放进函数表。
@@ -1472,6 +1477,18 @@ pub fn instance_with(
     actuals: &[Option<Type>],
     late: &dyn Fn(usize, Vec<Type>) -> Option<Type>,
 ) -> Result<String, String> {
+    instance_full(functions, name, actuals, late, None)
+}
+
+/// 同 `instance_with`；`expected` 是调用处期望的结果类型（`let q: Queue[i64] = queue()` 的标注），
+/// 用来推断只出现在返回类型里的类型参数。
+fn instance_full(
+    functions: &BTreeMap<String, Function>,
+    name: &str,
+    actuals: &[Option<Type>],
+    late: &dyn Fn(usize, Vec<Type>) -> Option<Type>,
+    expected: Option<Type>,
+) -> Result<String, String> {
     let Some(template) = functions.get(name).filter(|f| !f.generics.is_empty()) else {
         return Ok(name.to_owned());
     };
@@ -1500,11 +1517,14 @@ pub fn instance_with(
             unify(*pattern, actual, &params, &mut map);
         }
     }
+    if let Some(expected) = expected {
+        unify(template.result, expected, &params, &mut map);
+    }
     let mut types = Vec::new();
     for generic in &template.generics {
         let ty = map.get(&type_param(generic)).ok_or_else(|| {
             let short = name.split_once(':').map_or(name, |(_, n)| n);
-            format!("cannot infer {generic} for {short}: {generic} must appear in a parameter type")
+            format!("cannot infer {generic} for {short}: {generic} must appear in a parameter type, or in the type annotation of the variable that takes the result, such as let x: Box[i64] = {short}()")
         })?;
         if matches!(ty, Type::ArrayInt(_)) {
             return Err(format!(
@@ -1551,11 +1571,307 @@ pub fn instance_with(
         *error = substitute(*error, &map)?;
     }
     substitute_block(&mut function.body, &map)?;
+    // 副本里的 `thread.spawn` 与按标注推断的调用：类型参数换成具体类型之后才能改写。
+    rewrite_block(functions, &mut function.body)?;
     INSTANCES
         .write()
         .expect("instance table")
         .insert(instance.clone(), function);
     Ok(instance)
+}
+
+/// 代码块里的每个表达式（含嵌套的代码块、`catch` 块与匿名函数体），子表达式先于外层。
+pub fn visit_exprs_mut(
+    block: &mut Block,
+    visit: &mut dyn FnMut(&mut Expr) -> Result<(), String>,
+) -> Result<(), String> {
+    for (instruction, position) in block {
+        visit_instruction_mut(instruction, visit).map_err(|error| at_position(error, *position))?;
+    }
+    Ok(())
+}
+
+/// 报错还没带位置时加上语句的位置（最内层的语句先加，外层看到已有位置就不再加）。
+fn at_position(error: String, (line, column): SourcePosition) -> String {
+    if error.starts_with("line ") {
+        error
+    } else {
+        format!("line {line}, column {column}: {error}")
+    }
+}
+
+fn visit_instruction_mut(
+    instruction: &mut Instruction,
+    visit: &mut dyn FnMut(&mut Expr) -> Result<(), String>,
+) -> Result<(), String> {
+    match instruction {
+        Instruction::Let(_, _, _, value)
+        | Instruction::Assign(_, value)
+        | Instruction::AssignField(_, _, value)
+        | Instruction::Print(value)
+        | Instruction::Call(value)
+        | Instruction::Fail(value)
+        | Instruction::Return(Some(value))
+        | Instruction::Unpack(_, _, value) => visit_expr_mut(value, visit),
+        Instruction::AssignIndex(_, index, value)
+        | Instruction::AssignIndexField(_, index, _, value) => {
+            visit_expr_mut(index, visit)?;
+            visit_expr_mut(value, visit)
+        }
+        Instruction::If(condition, yes, no) => {
+            visit_expr_mut(condition, visit)?;
+            visit_exprs_mut(yes, visit)?;
+            visit_exprs_mut(no, visit)
+        }
+        Instruction::While(condition, body) => {
+            visit_expr_mut(condition, visit)?;
+            visit_exprs_mut(body, visit)
+        }
+        Instruction::For(_, start, end, body) => {
+            visit_expr_mut(start, visit)?;
+            visit_expr_mut(end, visit)?;
+            visit_exprs_mut(body, visit)
+        }
+        Instruction::Each(_, _, _, _, body) => visit_exprs_mut(body, visit),
+        Instruction::Match(value, arms) => {
+            visit_expr_mut(value, visit)?;
+            for (_, body) in arms {
+                visit_exprs_mut(body, visit)?;
+            }
+            Ok(())
+        }
+        Instruction::Return(None) | Instruction::Break | Instruction::Continue => Ok(()),
+    }
+}
+
+fn visit_expr_mut(
+    expr: &mut Expr,
+    visit: &mut dyn FnMut(&mut Expr) -> Result<(), String>,
+) -> Result<(), String> {
+    match expr {
+        Expr::Record(_, fields) => {
+            for (_, value) in fields {
+                visit_expr_mut(value, visit)?;
+            }
+        }
+        Expr::Format(items)
+        | Expr::Call(_, items)
+        | Expr::Apply(_, items)
+        | Expr::Method(_, _, items)
+        | Expr::Array(items)
+        | Expr::Tuple(items)
+        | Expr::SetLit(items)
+        | Expr::Variant(_, _, items) => {
+            for item in items {
+                visit_expr_mut(item, visit)?;
+            }
+        }
+        Expr::Formatted(inner, _)
+        | Expr::Try(inner)
+        | Expr::ByteLen(inner)
+        | Expr::CharLen(inner)
+        | Expr::Unary(_, inner)
+        | Expr::Index(_, inner)
+        | Expr::IndexField(_, inner, _)
+        | Expr::BorrowIndex(_, inner, _, _) => visit_expr_mut(inner, visit)?,
+        Expr::Catch(inner, _, block) => {
+            visit_expr_mut(inner, visit)?;
+            visit_exprs_mut(block, visit)?;
+        }
+        Expr::StringEqual(left, right) | Expr::Binary(_, left, right) => {
+            visit_expr_mut(left, visit)?;
+            visit_expr_mut(right, visit)?;
+        }
+        Expr::ElementMethod(_, index, _, _, args) => {
+            visit_expr_mut(index, visit)?;
+            for arg in args {
+                visit_expr_mut(arg, visit)?;
+            }
+        }
+        Expr::Chain(receiver, _, args) | Expr::Invoke(receiver, args) => {
+            visit_expr_mut(receiver, visit)?;
+            for arg in args {
+                visit_expr_mut(arg, visit)?;
+            }
+        }
+        Expr::MapLit(pairs) => {
+            for (key, value) in pairs {
+                visit_expr_mut(key, visit)?;
+                visit_expr_mut(value, visit)?;
+            }
+        }
+        Expr::Lambda(_, _, body) => visit_exprs_mut(body, visit)?,
+        Expr::If(condition, yes, no) => {
+            visit_expr_mut(condition, visit)?;
+            visit_expr_mut(yes, visit)?;
+            visit_expr_mut(no, visit)?;
+        }
+        Expr::Match(value, arms) => {
+            visit_expr_mut(value, visit)?;
+            for (_, arm) in arms {
+                visit_expr_mut(arm, visit)?;
+            }
+        }
+        Expr::Field(..)
+        | Expr::Text(_)
+        | Expr::Variable(_)
+        | Expr::Borrow(..)
+        | Expr::Int(_)
+        | Expr::Float(_)
+        | Expr::Bool(_)
+        | Expr::FnRef(_) => {}
+    }
+    visit(expr)
+}
+
+/// `thread.spawn` 的占位声明；调用在检查之前改写成按函数签名合成的 `std/thread:spawn[编号]`。
+pub const SPAWN: &str = "std/thread:spawn";
+
+/// 检查之前的改写（链接时与生成泛型副本时执行，可以反复执行）：
+/// 1. `thread.spawn(work, a, b)` → `std/thread:spawn[编号](work, a, b)`：按 `work` 的签名合成一个函数，
+///    参数按值移交给新线程，返回 `Thread`（work 没有返回值）或 `Task[R]`。函数体由原生后端生成。
+/// 2. `let x: 标注 = f(...)`，f 的某个类型参数只出现在返回类型里：按标注推断类型参数，改成调用副本。
+pub fn rewrite_block(
+    functions: &BTreeMap<String, Function>,
+    block: &mut Block,
+) -> Result<(), String> {
+    for (instruction, position) in block.iter_mut() {
+        rewrite_let(functions, instruction).map_err(|error| at_position(error, *position))?;
+    }
+    visit_exprs_mut(block, &mut |expr| rewrite_spawn(functions, expr))
+}
+
+fn rewrite_let(
+    functions: &BTreeMap<String, Function>,
+    instruction: &mut Instruction,
+) -> Result<(), String> {
+    match instruction {
+        Instruction::Let(_, _, Some(annotation), value) => {
+            let call = match value {
+                Expr::Try(inner) | Expr::Catch(inner, _, _) => inner.as_mut(),
+                other => other,
+            };
+            let Expr::Call(name, args) = call else {
+                return Ok(());
+            };
+            let Some(template) = functions
+                .get(name.as_str())
+                .filter(|f| !f.generics.is_empty())
+            else {
+                return Ok(());
+            };
+            let params: BTreeSet<u64> = template.generics.iter().map(|g| type_param(g)).collect();
+            // 每个类型参数都出现在参数里时照常按实参推断（检查时才知道实参的类型）。
+            let hidden = params.iter().any(|param| {
+                !template
+                    .params
+                    .iter()
+                    .any(|(_, ty)| mentions_any(*ty, &BTreeSet::from([*param])))
+            });
+            if !hidden {
+                return Ok(());
+            }
+            let actuals = vec![None; args.len()];
+            *name = instance_full(functions, name, &actuals, &|_, _| None, Some(*annotation))?;
+            Ok(())
+        }
+        Instruction::If(_, yes, no) => {
+            for (instruction, position) in yes.iter_mut().chain(no.iter_mut()) {
+                rewrite_let(functions, instruction)
+                    .map_err(|error| at_position(error, *position))?;
+            }
+            Ok(())
+        }
+        Instruction::While(_, body)
+        | Instruction::For(_, _, _, body)
+        | Instruction::Each(_, _, _, _, body) => {
+            for (instruction, position) in body.iter_mut() {
+                rewrite_let(functions, instruction)
+                    .map_err(|error| at_position(error, *position))?;
+            }
+            Ok(())
+        }
+        Instruction::Match(_, arms) => {
+            for (_, body) in arms {
+                for (instruction, position) in body.iter_mut() {
+                    rewrite_let(functions, instruction)
+                        .map_err(|error| at_position(error, *position))?;
+                }
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn rewrite_spawn(functions: &BTreeMap<String, Function>, expr: &mut Expr) -> Result<(), String> {
+    let Expr::Call(name, args) = expr else {
+        return Ok(());
+    };
+    if name != SPAWN {
+        return Ok(());
+    }
+    let Some(Expr::FnRef(target)) = args.first() else {
+        return Err("thread.spawn takes the name of a function, then its arguments, such as thread.spawn(work, 1)".into());
+    };
+    let short = target.rsplit(':').next().unwrap_or(target).to_owned();
+    let function = functions
+        .get(target.as_str())
+        .ok_or_else(|| format!("unknown function {short}"))?;
+    if !function.generics.is_empty() {
+        return Err(format!(
+            "thread.spawn needs a function that isn't generic; {short} has type parameters"
+        ));
+    }
+    if let Some((param, _)) = function.params.iter().find(|(_, ty)| ty.is_reference()) {
+        return Err(format!(
+            "{short} borrows its parameter {param}; a thread function takes its arguments by value, because the new thread can outlive the values of the thread that starts it"
+        ));
+    }
+    if function.error.is_some_and(|error| error != Type::Owned) {
+        return Err(format!(
+            "{short} fails with a struct or enum; a thread function fails with a string, such as -> i64!string"
+        ));
+    }
+    if args.len() - 1 != function.params.len() {
+        return Err(format!(
+            "argument count mismatch: {short} takes {} arguments",
+            function.params.len()
+        ));
+    }
+    let types: Vec<Type> = function.params.iter().map(|(_, ty)| *ty).collect();
+    let id = func_type_full(types.clone(), function.result, function.error);
+    let result = if function.result == Type::Unit {
+        Type::Record(record_id("std/thread:Thread"))
+    } else {
+        Type::Record(struct_instance("std/thread:Task", vec![function.result]))
+    };
+    let spawn = format!("{SPAWN}[{id}]");
+    let mut instances = INSTANCES.write().expect("instance table");
+    instances.entry(spawn.clone()).or_insert_with(|| Function {
+        public: true,
+        params: std::iter::once(("f".to_owned(), Type::Func(id)))
+            .chain(
+                types
+                    .iter()
+                    .enumerate()
+                    .map(|(i, ty)| (format!("a{i}"), *ty)),
+            )
+            .collect(),
+        result,
+        error: None,
+        body: Vec::new(),
+        position: (1, 1),
+        builtin: true,
+        generics: Vec::new(),
+        external: false,
+        wrapping: false,
+        defaults: Vec::new(),
+        dispatch: false,
+        bounds: Vec::new(),
+    });
+    *name = spawn;
+    Ok(())
 }
 
 #[derive(Clone, Debug)]

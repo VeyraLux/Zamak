@@ -49,4 +49,4 @@ Each popular language asks you to give something up, and Zamak is designed so th
 
 ## When to choose something else
 
-Zamak is young. It doesn't support threads yet, and its package ecosystem is just starting. For production services, large existing codebases, or work that depends on mature libraries, use an established language today, and try Zamak for command-line tools, data processing, learning, and code that AI agents write.
+Zamak is young. Its package ecosystem is just starting. For production services, large existing codebases, or work that depends on mature libraries, use an established language today, and try Zamak for command-line tools, data processing, learning, and code that AI agents write.

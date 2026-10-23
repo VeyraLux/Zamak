@@ -92,13 +92,17 @@ HTTP/1.1 404 Not Found\nContent-Length: 20\nConnection: close\ncontent-type: app
     );
 }
 
-#[test]
-fn tls_server_and_client_talk_over_loopback() {
-    // TLS 握手要两边交替收发，单线程做不到：服务端与客户端各是一个 Zamak 进程，共用缓存，
-    // Mbed TLS 只编译一次。服务端把端口写到 stderr（不经缓冲），客户端用 SSL_CERT_FILE 信任测试证书。
+/// TLS 握手要两边交替收发，单线程做不到：服务端与客户端各是一个 Zamak 进程，共用缓存，
+/// Mbed TLS 只编译一次。服务端把端口写到 stderr（不经缓冲），客户端用 SSL_CERT_FILE 信任测试证书。
+/// `server` 拿到证书与私钥的路径，`client` 拿到端口，各自给出程序源码。返回两边的输出。
+fn tls_pair(
+    name: &str,
+    server: impl Fn(&str, &str) -> String,
+    client: impl Fn(&str) -> String,
+) -> (std::process::Output, std::process::Output) {
     use std::io::BufRead;
     use std::process::{Command, Stdio};
-    let case = Case::new("net", "tls");
+    let case = Case::new("net", name);
     let fixture = |name: &str| {
         std::path::absolute(format!("tests/fixtures/tls/{name}"))
             .unwrap()
@@ -119,16 +123,11 @@ fn tls_server_and_client_talk_over_loopback() {
             .env("SSL_CERT_FILE", &cert);
         command
     };
-    let mut server = zam(
-        "server.zm",
-        format!(
-            "use std/http\nuse std/io\nuse std/net\n\nfn hello(req: &http.Request) -> http.Response:\n    http.respond(200, f\"secure {{req.path}}\")\n\nfn main() -> !string:\n    let listener = net.listen(\"127.0.0.1\", 0)?\n    io.eprintln(f\"port {{listener.port()}}\")\n    http.serve_one(listener, hello, cert_file=\"{cert}\", key_file=\"{key}\")?\n    let conn = listener.accept_tls(\"{cert}\", \"{key}\")?\n    conn.send(conn.recv()?)?\n    listener.accept_tls(\"{cert}\", \"{key}\") catch e:\n        println(\"refused\")\n"
-        ),
-    )
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped())
-    .spawn()
-    .unwrap();
+    let mut server = zam("server.zm", server(&cert, &key))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
     let mut port = String::new();
     let mut log = String::new();
     for line in std::io::BufReader::new(server.stderr.take().unwrap()).lines() {
@@ -146,26 +145,64 @@ fn tls_server_and_client_talk_over_loopback() {
         let _ = server.wait();
         panic!("the server did not start:\n{log}");
     }
-    let client = zam(
-        "client.zm",
-        format!(
-            "use std/http\nuse std/net\n\nfn main() -> !string:\n    let r = http.get(\"https://localhost:{port}/hi\")?\n    println(f\"{{r.status}} {{r.text()?}}\")\n    let mut conn = net.connect(\"127.0.0.1\", {port})?\n    conn.start_tls(\"127.0.0.1\")?\n    conn.send(b\"ping\")?\n    println(conn.recv()?)\n    let mut other = net.connect(\"127.0.0.1\", {port})?\n    other.start_tls(\"example.com\") catch e:\n        println(e)\n"
-        ),
-    )
-    .output()
-    .unwrap();
+    let client = zam("client.zm", client(&port)).output().unwrap();
+    // 客户端没按预期连上来（比如没编译过）时服务端还在等连接：连上去再断开，让它的 accept 出错退出。
+    // 只杀 `zam run` 没用：程序是它的子进程，还占着输出管道，读输出会一直等下去。
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let mut waited = 0;
     while server.try_wait().unwrap().is_none() {
-        if std::time::Instant::now() > deadline {
-            let _ = server.kill();
-            break;
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the server did not finish; the client said:\n{}",
+            String::from_utf8_lossy(&client.stderr)
+        );
+        waited += 1;
+        if waited > 40 {
+            let _ = std::net::TcpStream::connect(format!("127.0.0.1:{port}"));
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
-    let served = server.wait_with_output().unwrap();
+    (client, server.wait_with_output().unwrap())
+}
+
+#[test]
+fn tls_server_and_client_talk_over_loopback() {
+    let (client, served) = tls_pair(
+        "tls",
+        |cert, key| {
+            format!(
+                "use std/http\nuse std/io\nuse std/net\n\nfn hello(req: &http.Request) -> http.Response:\n    http.respond(200, f\"secure {{req.path}}\")\n\nfn main() -> !string:\n    let listener = net.listen(\"127.0.0.1\", 0)?\n    io.eprintln(f\"port {{listener.port()}}\")\n    http.serve_one(listener, hello, cert_file=\"{cert}\", key_file=\"{key}\")?\n    let conn = listener.accept_tls(\"{cert}\", \"{key}\")?\n    conn.send(conn.recv()?)?\n    listener.accept_tls(\"{cert}\", \"{key}\") catch e:\n        println(\"refused\")\n"
+            )
+        },
+        |port| {
+            format!(
+                "use std/http\nuse std/net\n\nfn main() -> !string:\n    let r = http.get(\"https://localhost:{port}/hi\")?\n    println(f\"{{r.status}} {{r.text()?}}\")\n    let mut conn = net.connect(\"127.0.0.1\", {port})?\n    conn.start_tls(\"127.0.0.1\")?\n    conn.send(b\"ping\")?\n    println(conn.recv()?)\n    let mut other = net.connect(\"127.0.0.1\", {port})?\n    other.start_tls(\"example.com\") catch e:\n        println(e)\n"
+            )
+        },
+    );
     assert_eq!(
         stdout(&client),
         "200 secure /hi\nb\"ping\"\ncannot start TLS with example.com: the server's certificate is not trusted: The certificate Common Name (CN) does not match with the expected CN\n"
     );
     assert_eq!(stdout(&served), "refused\n");
+}
+
+#[test]
+fn threads_make_https_requests_at_the_same_time() {
+    // 几个线程同时第一次用 TLS：Mbed TLS 的一次性准备与 PSA 加密库都要经得起并发。
+    let (client, served) = tls_pair(
+        "tls-threads",
+        |cert, key| {
+            format!(
+                "use std/http\nuse std/io\nuse std/net\n\nfn hello(req: &http.Request) -> http.Response:\n    http.respond(200, f\"page {{req.path}}\")\n\nfn main() -> !string:\n    let listener = net.listen(\"127.0.0.1\", 0)?\n    io.eprintln(f\"port {{listener.port()}}\")\n    for _ in range(4):\n        http.serve_one(listener, hello, cert_file=\"{cert}\", key_file=\"{key}\")?\n    println(\"served 4\")\n"
+            )
+        },
+        |port| {
+            format!(
+                "use std/http\nuse std/thread\n\nfn fetch(url: string) -> string!string:\n    let r = http.get(url)?\n    r.text()?\n\nfn main() -> !string:\n    let mut tasks: [thread.Task[string]] = []\n    for i in range(4):\n        tasks.push(thread.spawn(fetch, f\"https://localhost:{port}/n{{i}}\"))\n    for t in &tasks:\n        println(t.join()?)\n"
+            )
+        },
+    );
+    assert_eq!(stdout(&client), "page /n0\npage /n1\npage /n2\npage /n3\n");
+    assert_eq!(stdout(&served), "served 4\n");
 }

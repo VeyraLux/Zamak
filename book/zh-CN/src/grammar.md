@@ -259,6 +259,7 @@ fn main():
 | `std/json` | 解析与生成 JSON |
 | `std/net`、`std/http` | TCP 连接与监听；HTTP 客户端与服务端 |
 | `std/re` | 正则表达式 |
+| `std/thread` | 线程（`spawn`、`join`）与线程之间的队列 |
 | `std/hashlib`、`std/base64` | SHA-256、SHA-1、MD5、HMAC，base64 |
 
 不用导入的 Python 内置：`len`、`abs`、`min`、`max`、`sum`、`sorted`、`str`、`int`、`float`、`print`、`println`。
@@ -267,7 +268,6 @@ fn main():
 
 ## 目前不支持
 
-- 线程与并发
 - 宏
 - 类继承
 - 泛型特化、类型级编程
