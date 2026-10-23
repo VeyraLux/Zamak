@@ -12,7 +12,7 @@ This benchmark runs the same seven programs in Zamak, C, Rust, Go, Java, Node.js
 - **Which Zamak build**: a **release build**, `zam/target/release/zam.exe`, from `cargo build --release --locked`. Build it before benchmarking, so the binary matches the source you are testing; a debug build is several times slower and must not be used for these tables. Every run records the compiler version and the git commit in `results.json` (`versions.zam`, `versions.zam_commit`), so a number can be traced back to the code that produced it.
 - **Builds**: Zamak with the GCC back end (`CC=gcc`, the same C compiler as the C baseline) and a fresh cache, so builds are cold. C with `gcc -O2`, Rust with `rustc -C opt-level=3`, Go with `go build`, and Java with `javac`. Node.js and Python run the source directly.
 - **Matched-flag controls**: Zamak's back end adds `-funroll-loops` on top of `-O2`, while the C baseline gets plain `-O2`. `c-unroll` rebuilds the same C sources with `gcc -O2 -funroll-loops`, so the difference between `c` and `c-unroll` is the cost of that one flag and the difference between `zamak` and `c-unroll` is closer to the effect of Zamak's code generation itself. `c-arena` compiles `programs/c/<task>_arena.c`, which only exists for `binarytrees`: it does the same tree work but allocates nodes from one contiguous block instead of calling `malloc` per node, matching the buffer-reuse strategy the Zamak version happens to have. Both controls are comparison runs: they are recorded in `results.json` but not counted in the headline table.
-- **Measurements**: two clocks, because they answer different questions. The **outer** time is the median wall-clock time of 5 runs (10 for `hello`; 1 for Python on the long programs, 3 on `wordfreq`) measured around the process, so it includes startup, dynamic linking, and exit: that is what a user feels. The **inner** time is measured by each program around its compute loop and printed to stderr as `TIME <ms>`, so it excludes startup entirely. Both are recorded, as `run_s` and `inner_s`; `inner_s` is `null` where a program does not report it. All seven programs now emit `TIME`; `hello` trivially does not, because it has no compute loop.
+- **Measurements**: two clocks, because they answer different questions. The **outer** time is the median wall-clock time of 5 runs (10 for `hello`; 1 for Python on the long programs, 3 on `wordfreq`) measured around the process, so it includes startup, dynamic linking, and exit: that is what a user feels. The **inner** time is measured by each program around its compute loop and printed to stderr as `TIME <ms>`, so it excludes startup entirely. Both are recorded, as `run_s` and `inner_s`; `inner_s` is `null` where a program does not report it. Zamak and C emit `TIME` on all six compute programs; the other languages emit it on `n-body` only, so their other rows have `inner_s: null`.
 - **Fairness notes**: Rust and Go wrap on integer overflow in these builds, and C doesn't check it; Zamak checks overflow and bounds by default. Zamak's range analysis removes checks it can prove redundant, and its 32-bit division fast path makes `primes` faster than the plain C version. One Zamak program opts out: the spectral-norm function `a(i, j)` is marked `@wrapping`, which turns off overflow checks in that function only (bounds stay checked). Without it, spectral-norm takes about 375 ms, about twice as long as C.
 
 ```sh
@@ -33,7 +33,7 @@ The programs themselves are in [programs/](programs), one file per language per 
 
 ## Results (2026-10-21)
 
-Windows 10, zam 0.1.1 (GCC back end), GCC 16.1.0, rustc 1.99.0, Go 1.26.4, OpenJDK 11.0.28, Node.js 26.3.0, Python 3.11.9. Every program now reports its own compute time, and both C controls ran in the same batch as everything else.
+Windows 10, zam 0.1.1 (GCC back end), GCC 16.1.0, rustc 1.99.0, Go 1.26.4, OpenJDK 11.0.28, Node.js 26.3.0, Python 3.11.9. Zamak and C report their own compute time on every program, the other languages on n-body only, and both C controls ran in the same batch as everything else.
 
 | Measurement | Zamak | C | C `-funroll-loops` | C arena | Rust | Go | Java | Node.js | Python |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -41,7 +41,7 @@ Windows 10, zam 0.1.1 (GCC back end), GCC 16.1.0, rustc 1.99.0, Go 1.26.4, OpenJ
 | spectral-norm | 207 ms | 201 ms | 220 ms | — | 217 ms | 286 ms | 732 ms | 510 ms | 47.91 s |
 | fannkuch-redux | 209 ms | 213 ms | 229 ms | — | 221 ms | 257 ms | 453 ms | 371 ms | 13.96 s |
 | binary-trees | 322 ms | 1.04 s | 1.07 s | **63 ms** | 1.13 s | 584 ms | 455 ms | 426 ms | 2.41 s |
-| primes | 291 ms | 628 ms | 681 ms | — | 239 ms | 639 ms | 946 ms | 379 ms | 11.34 s |
+| primes | 290 ms | 628 ms | 681 ms | — | 239 ms | 639 ms | 946 ms | 379 ms | 11.34 s |
 | word frequency | 158 ms | 165 ms | 168 ms | — | 191 ms | 213 ms | 997 ms | 1.04 s | 819 ms |
 
 A dash means that control has no variant for that program. `c-arena` is only written for `binarytrees`, which is the one program where the allocation strategy is the question.

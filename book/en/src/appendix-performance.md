@@ -12,7 +12,7 @@ The repository's [comparison benchmark](https://github.com/VeyraLux/Zamak/tree/m
 | spectral-norm | 207 | 201 | 217 | 286 | 732 | 510 | 47,910 |
 | fannkuch-redux | 209 | 213 | 221 | 257 | 453 | 371 | 13,960 |
 | binary-trees | 322 | 1,040 | 1,130 | 584 | 455 | 426 | 2,410 |
-| primes | 291 | 628 | 239 | 639 | 946 | 379 | 11,340 |
+| primes | 290 | 628 | 239 | 639 | 946 | 379 | 11,340 |
 | word frequency | 158 | 165 | 191 | 213 | 997 | 1,040 | 819 |
 
 Read the table with these caveats:
