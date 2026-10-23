@@ -183,7 +183,7 @@ fn compound_values_copy_compare_and_print() {
             "only support == and !=",
         ),
         (
-            "let p = P(x: 1)\n    let q = p\n    println(p == q)",
+            "let p = (1, \"a\")\n    let q = p\n    println(p.0)",
             "use after move: p",
         ),
         (
@@ -243,7 +243,7 @@ fn struct_and_enum_methods() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("private method Point.bonus"), "{stderr}");
-    let header = "struct V:\n    x: i64\n\n    fn new(x: i64) -> V: V(x: x)\n\n    fn get(&self) -> i64: self.x\n\n    fn bump(&mut self): self.x += 1\n\n    fn take(self) -> i64: self.x\n\n    fn check(&self) -> i64!string: self.x\n\n";
+    let header = "struct V:\n    x: i64\n    name: string\n\n    fn new(x: i64) -> V: V(x: x, name: \"v\")\n\n    fn get(&self) -> i64: self.x\n\n    fn bump(&mut self): self.x += 1\n\n    fn take(self) -> i64: self.x\n\n    fn check(&self) -> i64!string: self.x\n\n";
     for (body, message) in [
         (
             "let v = V.new(1)\n    v.bump()",

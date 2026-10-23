@@ -39,6 +39,7 @@
 - [Modules and packages](modules.md)
 - [Call C code](c-libraries.md)
 - [Standard library tour](standard-library.md)
+- [Windows and controls](gui.md)
 
 # Tools
 

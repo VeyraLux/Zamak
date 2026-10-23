@@ -33,6 +33,7 @@ Zamak keeps Python's names and rules wherever it can. This appendix lists what s
 | `lambda x: x * 2` | `fn(x): x * 2` | |
 | `import math` | `use std/math` | |
 | `import requests`, `socket`, `http.server` | `use std/http`, `std/net` | `http.get(url)`, `http.post(url, body)`, and `http.serve` for servers, with HTTPS. |
+| `import tkinter` | `use std/ui` | `ui.window`, `ui.button`, `app.on_click(button, f)`, `app.run(window, state)`; native controls. |
 | `import threading`, `queue`, `concurrent.futures` | `use std/thread` | `thread.spawn(f, x)`, then `t.join()?`; `thread.Queue[T]`. |
 | `import re`, `json`, `subprocess`, `hashlib`, `base64` | `use std/re`, `std/json`, `std/process`, `std/hashlib`, `std/base64` | Same function names; `re` has no backreferences or lookaround. |
 | `r"\d+"`, `"""..."""` | The same | A triple-quoted string must fit on one line for now. |

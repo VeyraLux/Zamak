@@ -260,6 +260,7 @@ See [Calling C](c-libraries.md).
 | `std/net`, `std/http` | TCP connections and listeners; HTTP client and server |
 | `std/re` | Regular expressions |
 | `std/thread` | Threads (`spawn`, `join`) and queues between them |
+| `std/ui` | Windows with native controls; see [Windows and controls](gui.md) |
 | `std/hashlib`, `std/base64` | SHA-256, SHA-1, MD5, HMAC; base64 |
 
 Python builtins available without an import: `len`, `abs`, `min`, `max`, `sum`, `sorted`, `str`, `int`, `float`, `print`, `println`.

@@ -260,6 +260,7 @@ fn main():
 | `std/net`、`std/http` | TCP 连接与监听；HTTP 客户端与服务端 |
 | `std/re` | 正则表达式 |
 | `std/thread` | 线程（`spawn`、`join`）与线程之间的队列 |
+| `std/ui` | 原生控件的窗口程序，见[窗口程序](gui.md) |
 | `std/hashlib`、`std/base64` | SHA-256、SHA-1、MD5、HMAC，base64 |
 
 不用导入的 Python 内置：`len`、`abs`、`min`、`max`、`sum`、`sorted`、`str`、`int`、`float`、`print`、`println`。

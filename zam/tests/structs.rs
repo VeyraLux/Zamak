@@ -122,7 +122,7 @@ fn struct_declarations_and_rejections() {
         "fn take(p: Missing): pass\nfn main(): pass",
         "struct Person: pass\nfn take() -> &Person: pass\nfn main(): pass",
         "struct Person: pass\nfn make() -> Person: return 1\nfn main(): pass",
-        "struct Person: pass\nfn take(p: Person): pass\nfn main():\n    let p = Person()\n    take(p)\n    take(p)",
+        "struct Person:\n    name: string\nfn take(p: Person): pass\nfn main():\n    let p = Person(name: \"a\")\n    take(p)\n    take(p)",
         "struct Person: pass\nstruct Other: pass\nfn take(p: Person): pass\nfn main(): take(Other())",
         "struct Person: pass\nfn main(): let p: Missing = Person()",
     ] {
@@ -146,10 +146,10 @@ fn struct_declarations_and_rejections() {
     for source in [
         "struct A:\n    b: B\nstruct B:\n    a: A\nfn main(): pass",
         "struct A:\n    b: Missing\nfn main(): pass",
-        "struct B: pass\nstruct A:\n    b: B\nfn main():\n    let a = A(b: B())\n    let b = a.b",
-        "struct B: pass\nstruct A:\n    b: B\nfn main():\n    let a = A(b: B())\n    println(a.b < a.b)",
-        "struct B: pass\nstruct A:\n    b: B\nfn main():\n    let a = A(b: B())\n    println(a == 1)",
-        "struct B: pass\nstruct A:\n    b: B\nfn main():\n    let mut a = A(b: B())\n    a.b = a.b",
+        "struct B:\n    s: string\nstruct A:\n    b: B\nfn main():\n    let a = A(b: B(s: \"x\"))\n    let b = a.b",
+        "struct B:\n    s: string\nstruct A:\n    b: B\nfn main():\n    let a = A(b: B(s: \"x\"))\n    println(a.b < a.b)",
+        "struct B:\n    s: string\nstruct A:\n    b: B\nfn main():\n    let a = A(b: B(s: \"x\"))\n    println(a == 1)",
+        "struct B:\n    s: string\nstruct A:\n    b: B\nfn main():\n    let mut a = A(b: B(s: \"x\"))\n    a.b = a.b",
     ] {
         fs::write(&path, source).unwrap();
         let output = Command::new(env!("CARGO_BIN_EXE_zam"))

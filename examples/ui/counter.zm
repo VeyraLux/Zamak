@@ -1,0 +1,24 @@
+# 窗口程序：点按钮计数。控件用 ui.label、ui.button 等创建，排进 column 里；
+# 程序状态（Counter）在 run 时交给界面，回调 clicked 收到 &mut Counter。
+use std/ui
+
+struct Counter:
+    count: i64
+    label: ui.Label
+
+fn clicked(app: &mut Counter):
+    app.count += 1
+    app.label.set_text(f"clicked {app.count} times")
+
+fn main():
+    let window = ui.window("Counter", 320, 160)
+    let label = ui.label("not clicked yet")
+    let button = ui.button("Click me")
+    let column = ui.column()
+    column.add(label)
+    column.add(button)
+    window.set_child(column)
+
+    let app: ui.App[Counter] = ui.app()
+    app.on_click(button, clicked)
+    app.run(window, Counter(count: 0, label: label))

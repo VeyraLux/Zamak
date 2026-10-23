@@ -12,7 +12,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-72");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-73");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -183,24 +183,32 @@ const STD_SOURCES: &[(&str, &str)] = &[
     ("std/net", include_str!("../std/net.zm")),
     ("std/http", include_str!("../std/http.zm")),
     ("std/thread", include_str!("../std/thread.zm")),
+    ("std/ui", include_str!("../std/ui.zm")),
 ];
 
 /// Mbed TLS 的源码（vendor/mbedtls，build.rs 压缩后嵌进来）：程序用到 std/net 时解压到缓存编译。
 const MBEDTLS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mbedtls.bin"));
 
-/// 把 Mbed TLS 解压到缓存目录（按内容哈希区分版本），返回目录与其中的 .c 文件（相对路径）。
-/// 先解压到临时目录再改名，几个 zam 同时构建也不会看到写了一半的文件。
-fn mbedtls_sources() -> Result<(PathBuf, Vec<PathBuf>)> {
-    let digest = hash(&[
-        MBEDTLS,
-        MBEDTLS_CONFIG.as_bytes(),
-        MBEDTLS_THREADING.as_bytes(),
-    ]);
+/// 把嵌进来的第三方源码包解压到缓存目录（按内容哈希区分版本），返回目录与包里的文件名。
+/// `extra` 是 zam 自己补上的文件（相对路径, 内容），一起计入哈希。先解压到临时目录再改名，
+/// 几个 zam 同时构建也不会看到写了一半的文件。
+fn unpack_vendor(
+    packed: &[u8],
+    folder: &str,
+    label: &str,
+    extra: &[(&str, &str)],
+) -> Result<(PathBuf, Vec<String>)> {
+    let mut parts: Vec<&[u8]> = vec![packed];
+    for (name, text) in extra {
+        parts.push(name.as_bytes());
+        parts.push(text.as_bytes());
+    }
+    let digest = hash(&parts);
     let dir = cache_dir()
         .join("vendor")
-        .join(format!("mbedtls-{:.16}", digest));
-    let archive = miniz_oxide::inflate::decompress_to_vec(MBEDTLS)
-        .map_err(|_| "the embedded Mbed TLS archive is corrupt")?;
+        .join(format!("{folder}-{:.16}", digest));
+    let corrupt = || format!("the embedded {label} archive is corrupt");
+    let archive = miniz_oxide::inflate::decompress_to_vec(packed).map_err(|_| corrupt())?;
     let mut files = Vec::new();
     let mut at = 0;
     while at < archive.len() {
@@ -208,42 +216,147 @@ fn mbedtls_sources() -> Result<(PathBuf, Vec<PathBuf>)> {
             + archive[at..]
                 .iter()
                 .position(|b| *b == 0)
-                .ok_or("corrupt Mbed TLS archive")?;
+                .ok_or_else(corrupt)?;
         let name = String::from_utf8_lossy(&archive[at..end]).to_string();
-        let size =
-            u32::from_le_bytes(archive[end + 1..end + 5].try_into().expect("four bytes")) as usize;
+        let size_bytes = archive.get(end + 1..end + 5).ok_or_else(corrupt)?;
+        let size = u32::from_le_bytes(size_bytes.try_into().expect("four bytes")) as usize;
         files.push((name, end + 5, size));
         at = end + 5 + size;
     }
     if !dir.join(".complete").exists() {
         let scratch = dir.with_extension(format!("tmp-{}", std::process::id()));
         let _ = fs::remove_dir_all(&scratch);
-        for (name, start, size) in &files {
+        let contents = files
+            .iter()
+            .map(|(name, start, size)| (name.as_str(), &archive[*start..start + size]))
+            .chain(extra.iter().map(|(name, text)| (*name, text.as_bytes())));
+        for (name, bytes) in contents {
             let path = scratch.join(name);
             fs::create_dir_all(path.parent().expect("vendor files are in folders"))
                 .map_err(|e| format!("{}: {e}", path.display()))?;
-            fs::write(&path, &archive[*start..start + size])
-                .map_err(|e| format!("{}: {e}", path.display()))?;
+            fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
         }
-        // 配置在原版之上打开线程安全：先于 include/ 找到的 zamconfig/mbedtls/mbedtls_config.h。
-        let config = scratch.join("zamconfig");
-        fs::create_dir_all(config.join("mbedtls")).map_err(|e| e.to_string())?;
-        fs::write(config.join("mbedtls/mbedtls_config.h"), MBEDTLS_CONFIG)
-            .map_err(|e| e.to_string())?;
-        fs::write(config.join("threading_alt.h"), MBEDTLS_THREADING).map_err(|e| e.to_string())?;
         fs::write(scratch.join(".complete"), b"").map_err(|e| e.to_string())?;
         if fs::rename(&scratch, &dir).is_err() {
             // 另一个 zam 先解压好了：用它的。
             let _ = fs::remove_dir_all(&scratch);
             if !dir.join(".complete").exists() {
-                return Err(format!("cannot unpack Mbed TLS into {}", dir.display()));
+                return Err(format!("cannot unpack {label} into {}", dir.display()));
             }
         }
     }
+    Ok((dir, files.into_iter().map(|(name, _, _)| name).collect()))
+}
+
+/// libui-ng 的源码（vendor/libui-ng）：程序用到 std/ui 时解压到缓存编译。
+const LIBUI: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libui.bin"));
+
+/// libui-ng 按静态库编进程序：common/ 加上本平台的实现（Windows 是 C++，macOS 是 Objective-C，
+/// 其他是用 GTK 3 的 C）。`msvc` 表示用 MSVC 编译与链接。
+fn libui_native(msvc: bool) -> Result<(PathBuf, package::Native)> {
+    let (dir, files) = unpack_vendor(LIBUI, "libui-ng", "libui-ng", &[])?;
+    let (platform, extension) = if cfg!(windows) {
+        ("windows/", ".cpp")
+    } else if cfg!(target_os = "macos") {
+        ("darwin/", ".m")
+    } else {
+        ("unix/", ".c")
+    };
     let sources = files
         .iter()
-        .filter(|(name, _, _)| name.starts_with("library/") && name.ends_with(".c"))
-        .map(|(name, _, _)| PathBuf::from(name))
+        .filter(|name| {
+            (name.starts_with("common/") && name.ends_with(".c"))
+                || (name.starts_with(platform) && name.ends_with(extension))
+        })
+        .map(PathBuf::from)
+        .collect();
+    let mut native = package::Native {
+        sources,
+        include: vec![
+            PathBuf::from("."),
+            PathBuf::from("common"),
+            PathBuf::from(platform),
+        ],
+        flags: vec!["-D_UI_STATIC".into()],
+        ..Default::default()
+    };
+    if cfg!(windows) {
+        if !msvc {
+            return Err(
+                "std/ui on Windows builds with MSVC (Visual Studio Build Tools); MinGW cannot embed the Common Controls manifest yet"
+                    .into(),
+            );
+        }
+        native.flags.push("/bigobj".into());
+        native.libraries = [
+            "user32",
+            "kernel32",
+            "gdi32",
+            "comctl32",
+            "uxtheme",
+            "msimg32",
+            "comdlg32",
+            "d2d1",
+            "dwrite",
+            "ole32",
+            "oleaut32",
+            "oleacc",
+            "uuid",
+            "windowscodecs",
+        ]
+        .map(String::from)
+        .to_vec();
+        // 原生控件要 Common Controls 6：把 libui 的清单嵌进程序。
+        native.link_args = vec![
+            "/MANIFEST:EMBED".into(),
+            format!(
+                "/MANIFESTINPUT:{}",
+                dir.join("windows").join("libui.manifest").display()
+            ),
+        ];
+    } else if cfg!(target_os = "macos") {
+        native.libraries = vec!["objc".into()];
+        native.link_args = ["-framework", "Foundation", "-framework", "AppKit"]
+            .map(String::from)
+            .to_vec();
+    } else {
+        let gtk = |what: &str| -> Result<Vec<String>> {
+            let output = std::process::Command::new("pkg-config")
+                .args([what, "gtk+-3.0"])
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .ok_or(
+                    "std/ui needs GTK 3 and pkg-config; install them, such as sudo apt install libgtk-3-dev pkg-config",
+                )?;
+            Ok(String::from_utf8_lossy(&output.stdout)
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect())
+        };
+        native.flags.extend(gtk("--cflags")?);
+        native.link_args = gtk("--libs")?;
+        native.libraries = vec!["m".into(), "dl".into()];
+    }
+    Ok((dir, native))
+}
+
+/// Mbed TLS：解压后返回目录与 library/ 下的 .c 文件。配置在原版之上打开线程安全：
+/// 先于 include/ 找到的 zamconfig/mbedtls/mbedtls_config.h。
+fn mbedtls_sources() -> Result<(PathBuf, Vec<PathBuf>)> {
+    let (dir, files) = unpack_vendor(
+        MBEDTLS,
+        "mbedtls",
+        "Mbed TLS",
+        &[
+            ("zamconfig/mbedtls/mbedtls_config.h", MBEDTLS_CONFIG),
+            ("zamconfig/threading_alt.h", MBEDTLS_THREADING),
+        ],
+    )?;
+    let sources = files
+        .iter()
+        .filter(|name| name.starts_with("library/") && name.ends_with(".c"))
+        .map(PathBuf::from)
         .collect();
     Ok((dir, sources))
 }
@@ -856,6 +969,7 @@ impl Project {
             instance.generics.clear();
             linked.structs.insert(name, instance);
         }
+        compiler::note_plain(&linked.structs);
         Ok(linked)
     }
 
@@ -1747,6 +1861,9 @@ impl Project {
                     ..Default::default()
                 },
             ));
+        }
+        if self.modules.contains_key("std/ui") {
+            natives.push(libui_native(native::uses_msvc(&tool))?);
         }
         // std/thread 在 Windows 之外用 pthread。
         if self.modules.contains_key("std/thread") && !cfg!(windows) {

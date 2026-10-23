@@ -92,3 +92,65 @@ fn main():
     assert!(invoke("check").status.success());
     fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn plain_structs_enums_and_tuples_are_copied() {
+    // 只含数字、布尔值与这类值的类型赋值时复制，原来的变量照样能用；含字符串的照旧移动。
+    let root = std::env::temp_dir().join(format!("zam-plain-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("main.zm");
+    fs::write(
+        &path,
+        r#"struct P:
+    x: i64
+    y: f64
+
+enum Dir:
+    Up
+    Step(n: i64)
+
+struct Holder:
+    p: P
+    d: Dir
+
+fn show(p: P):
+    println(p)
+
+fn main():
+    let a = P(x: 1, y: 2.5)
+    let b = a
+    show(a)
+    println(b)
+    let h = Holder(p: a, d: Dir.Step(3))
+    let c = h.p
+    let d = h.d
+    println(c)
+    println(d)
+    println(h)
+    let ps = [a, b]
+    println(ps)
+    let t = (1, true)
+    let (n, ok) = t
+    println(t.0 + n)
+    println(ok)
+"#,
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_zam"))
+        .arg("run")
+        .arg(&path)
+        .env("ZAMAK_CACHE_DIR", root.join("cache"))
+        .env("ZAMAK_LANG", "en")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "P(x: 1, y: 2.5)\nP(x: 1, y: 2.5)\nP(x: 1, y: 2.5)\nDir.Step(3)\nHolder(p: P(x: 1, y: 2.5), d: Dir.Step(3))\n[P(x: 1, y: 2.5), P(x: 1, y: 2.5)]\n2\ntrue\n"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}

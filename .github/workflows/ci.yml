@@ -17,8 +17,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: 格式检查
         run: cargo fmt --manifest-path zam/Cargo.toml -- --check
+      # std/ui 在 Linux 上用 GTK 3；没有显示器，界面测试跑在 xvfb 的虚拟显示上。
+      - name: 界面依赖（Linux）
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev xvfb
       - name: 集成回归
-        run: cargo test --manifest-path zam/Cargo.toml --locked
+        run: ${{ runner.os == 'Linux' && 'xvfb-run -a ' || '' }}cargo test --manifest-path zam/Cargo.toml --locked
       - name: 严格 lint
         run: cargo clippy --manifest-path zam/Cargo.toml --all-targets --locked -- -D warnings
 

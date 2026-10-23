@@ -57,6 +57,19 @@ and this file is the source for the text of each GitHub release.
   `let names = ["Ada", "Grace"]` is a `[string]`.
 - `[native]` compiles C++ (`.cpp`, `.cc`, `.cxx`) and, on macOS, Objective-C (`.m`) files as well as C,
   and links the C++ runtime when it needs to. `frameworks = ["Foundation"]` links macOS frameworks.
+- A struct, enum, or tuple that holds only numbers, booleans, function values, and other such types
+  is copied on assignment, like a number, so the old variable stays usable: `let b = a` with
+  `a: Point`.
+- **Windows and controls.** `std/ui` builds desktop programs with each system's native controls
+  (Win32, AppKit, GTK 3): windows, labels, buttons, entries, text areas, check boxes, drop-down lists,
+  option buttons, sliders, spin boxes, progress bars, columns, rows, forms, grids, groups, tabs, and
+  file and message dialogs. The program's state is a struct passed to `app.run`, and handlers such as
+  `app.on_click(button, clicked)` receive it as `&mut`. It is built on libui-ng (MIT), which `zam`
+  carries and compiles into the cache the first time a program needs it.
+- `kept fn(...)` marks a parameter whose function is stored for later, so it only takes functions
+  that don't use local variables.
+- A generic method of a struct that isn't generic, such as `fn add[C: Control](&self, child: &C)`,
+  now infers its type parameters.
 - A parenthesized value can take a method call: `(a + b).upper()`.
 
 ## 0.1.1
@@ -235,6 +248,14 @@ this preview.
 - 字符串、浮点数、布尔值、结构体或列表组成的列表字面量不再需要标注：`let names = ["Ada", "Grace"]` 是 `[string]`。
 - `[native]` 除了 C，还编译 C++（`.cpp`、`.cc`、`.cxx`）与 macOS 上的 Objective-C（`.m`），需要时链接 C++ 运行库；
   `frameworks = ["Foundation"]` 链接 macOS 的 framework。
+- 只含数字、布尔值、函数值与这类类型的结构体、枚举和元组，赋值时像数字一样复制，原来的变量还能用：
+  `a: Point` 时 `let b = a` 之后 `a` 照样可用。
+- **窗口程序。** `std/ui` 用各系统的原生控件（Win32、AppKit、GTK 3）写桌面程序：窗口、标签、按钮、输入框、
+  多行文本框、复选框、下拉框、单选按钮、滑块、数字框、进度条，纵向、横向、表单、网格、分组、选项卡布局，
+  以及文件与消息对话框。程序状态是交给 `app.run` 的结构体，`app.on_click(button, clicked)` 这样的回调
+  以 `&mut` 收到它。底层是 libui-ng（MIT），`zam` 自带源码，程序第一次用到时编译进缓存。
+- `kept fn(...)` 标出函数会被保存下来的参数，它只收不用局部变量的函数。
+- 非泛型结构体的泛型方法（如 `fn add[C: Control](&self, child: &C)`）现在能推断类型参数。
 - 括号里的值也能接方法调用：`(a + b).upper()`。
 
 ## 0.1.1（中文）

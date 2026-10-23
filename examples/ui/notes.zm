@@ -1,0 +1,59 @@
+# 一个小记事本：表单、下拉框、复选框、多行文本框、文件对话框与消息框。
+# 回调都收到 &mut Notes，经状态里存的控件句柄读写界面。
+use std/fs
+use std/ui
+
+struct Notes:
+    window: ui.Window
+    title: ui.Entry
+    kind: ui.Choice
+    pinned: ui.Checkbox
+    body: ui.TextArea
+    status: ui.Label
+    saved: i64
+
+fn save(n: &mut Notes):
+    let kinds: [string] = ["Idea", "Task", "Journal"]
+    let pin = if n.pinned.checked(): " (pinned)" else: ""
+    let text = f"# {n.title.text()}{pin}\n{kinds[n.kind.selected()]}\n\n{n.body.text()}\n"
+
+    match n.window.save_file():
+        Some(path):
+            fs.write(path, text) catch e:
+                n.window.error("Cannot save", e)
+                return
+            n.saved += 1
+            n.status.set_text(f"saved {n.saved} times, last to {path}")
+        None: n.status.set_text("not saved")
+
+fn typed(n: &mut Notes):
+    n.status.set_text(f"{len(n.body.text())} characters")
+
+fn main():
+    let window = ui.window("Notes", 480, 360)
+    let title = ui.entry("Untitled")
+    let kind = ui.choice(["Idea", "Task", "Journal"])
+    let pinned = ui.checkbox("Pin this note")
+    let body = ui.text_area()
+    let status = ui.label("0 characters")
+    let save_button = ui.button("Save…")
+
+    let form = ui.form()
+    form.add("Title", title)
+    form.add("Kind", kind)
+    form.add("", pinned)
+
+    let bottom = ui.row()
+    bottom.add(status, stretchy=true)
+    bottom.add(save_button)
+
+    let column = ui.column()
+    column.add(form)
+    column.add(body, stretchy=true)
+    column.add(bottom)
+    window.set_child(column)
+
+    let app: ui.App[Notes] = ui.app()
+    app.on_click(save_button, save)
+    app.on_change(body, typed)
+    app.run(window, Notes(window: window, title: title, kind: kind, pinned: pinned, body: body, status: status, saved: 0))

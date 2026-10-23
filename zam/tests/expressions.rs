@@ -369,7 +369,7 @@ fn tuples_and_multiple_returns() {
             "use after move: s",
         ),
         (
-            "let t = (1, 2)\n    let (a, b) = t\n    println(t.0)",
+            "let t = (1, \"x\")\n    let (a, b) = t\n    println(t.0)",
             "use after move: t",
         ),
         (

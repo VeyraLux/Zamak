@@ -232,6 +232,16 @@ fn main():
 
 Recursion works the same way as any other call: the arguments are checked against the function's own parameter types, and the result has its declared type. A nested function can still use the variables around it, so a recursive helper may read them too. It cannot call a function declared after it, so order the helpers you need from the top down.
 
+## Functions that are kept
+
+A parameter of a function type, such as `f: fn(i64) -> i64`, accepts any function, including an anonymous function that uses the caller's local variables. Such a function can only be called or passed on, because the variables it uses belong to the caller. When a library keeps a function to call later, such as a button's handler, it marks the parameter with `kept`:
+
+```zamak,ignore
+fn on_click(button: &Button, handler: kept fn(&mut State)):
+```
+
+A `kept` parameter takes a named function or an anonymous function that doesn't use local variables, and the function can be stored in a struct field. Passing a function that uses local variables is a compile-time error.
+
 ## Summary
 
 - Parameters can have defaults (`port: i64 = 80`), and calls can pass arguments by name (`connect(host, timeout=1.5)`).

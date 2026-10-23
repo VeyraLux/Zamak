@@ -2106,7 +2106,228 @@ void zam_queue_release(void *handle) {
 const UNIT_PRELUDES: &[(&str, &[&str])] = &[
     ("std/net", &[NET_PRELUDE, TLS_PRELUDE]),
     ("std/thread", &[THREAD_PRELUDE]),
+    ("std/ui", &[UI_PRELUDE]),
 ];
+const UI_PRELUDE: &str = r#"// std/ui 的 C 部分：libui-ng 的薄包装。控件在 Zamak 里是整数句柄（控件指针），归父容器所有，
+// 窗口关闭时一起销毁，所以句柄本身不释放。App 持有程序状态（按值复制进来的 T）与回调：
+// 回调是不捕获局部变量的 Zamak 函数值，经按 T 生成的调用器（见 native.rs 的 intrinsic）调用。
+// 状态在 run 期间放在 run 的栈帧里（按 T 生成的 _run），回调拿到的是它的地址。
+#define _UI_STATIC
+#include "ui.h"
+static char zam_ui_failure[512];
+const char *zam_ui_error(void) { return zam_ui_failure; }
+// 界面只能在一个线程（通常是主线程）里用：第一次用时初始化。
+int64_t zam_ui_start(void) {
+    static int ready;
+    uiInitOptions options;
+    const char *error;
+    if (ready) return 0;
+    memset(&options, 0, sizeof options);
+    error = uiInit(&options);
+    if (error) {
+        snprintf(zam_ui_failure, sizeof zam_ui_failure, "cannot start the user interface: %s", error);
+        uiFreeInitError(error);
+        return -1;
+    }
+    ready = 1;
+    return 0;
+}
+// 创建控件之前确保界面已初始化；没有图形界面可用（比如没有显示器）时说明原因并退出。
+static void zam_ui_need(void) {
+    if (zam_ui_start() < 0) { fflush(stdout); fprintf(stderr, "zam: %s\n", zam_ui_failure); exit(1); }
+}
+#define ZAM_UI(h) ((void *)(intptr_t)(h))
+#define ZAM_UI_ID(p) ((int64_t)(intptr_t)(p))
+// libui 返回的文字要用 uiFreeText 释放：先复制到这个缓冲区（Zamak 立即再复制一份），再释放。
+static char *zam_ui_text;
+static const char *zam_ui_keep(char *text) {
+    size_t n = text ? strlen(text) : 0;
+    free(zam_ui_text);
+    zam_ui_text = (char *)malloc(n + 1);
+    if (!zam_ui_text) { zam_panic_one("allocation failed"); exit(1); }
+    if (n) memcpy(zam_ui_text, text, n);
+    zam_ui_text[n] = 0;
+    if (text) uiFreeText(text);
+    return zam_ui_text;
+}
+// ---- 所有控件 ----
+void zam_ui_show(int64_t c) { uiControlShow(uiControl(ZAM_UI(c))); }
+void zam_ui_hide(int64_t c) { uiControlHide(uiControl(ZAM_UI(c))); }
+void zam_ui_enable(int64_t c) { uiControlEnable(uiControl(ZAM_UI(c))); }
+void zam_ui_disable(int64_t c) { uiControlDisable(uiControl(ZAM_UI(c))); }
+int zam_ui_visible(int64_t c) { return uiControlVisible(uiControl(ZAM_UI(c))); }
+int zam_ui_enabled(int64_t c) { return uiControlEnabled(uiControl(ZAM_UI(c))); }
+// ---- 窗口 ----
+int64_t zam_ui_window(const char *title, int64_t width, int64_t height, int menubar) { zam_ui_need(); return ZAM_UI_ID(uiNewWindow(title, (int)width, (int)height, menubar)); }
+void zam_ui_window_set_child(int64_t w, int64_t child) { uiWindowSetChild(uiWindow(ZAM_UI(w)), uiControl(ZAM_UI(child))); }
+void zam_ui_window_set_title(int64_t w, const char *title) { uiWindowSetTitle(uiWindow(ZAM_UI(w)), title); }
+const char *zam_ui_window_title(int64_t w) { return zam_ui_keep(uiWindowTitle(uiWindow(ZAM_UI(w)))); }
+void zam_ui_window_set_margined(int64_t w, int on) { uiWindowSetMargined(uiWindow(ZAM_UI(w)), on); }
+void zam_ui_window_set_size(int64_t w, int64_t width, int64_t height) { uiWindowSetContentSize(uiWindow(ZAM_UI(w)), (int)width, (int)height); }
+// ---- 布局 ----
+int64_t zam_ui_box(int vertical) { zam_ui_need(); return ZAM_UI_ID(vertical ? uiNewVerticalBox() : uiNewHorizontalBox()); }
+void zam_ui_box_add(int64_t b, int64_t child, int stretchy) { uiBoxAppend(uiBox(ZAM_UI(b)), uiControl(ZAM_UI(child)), stretchy); }
+void zam_ui_box_set_padded(int64_t b, int on) { uiBoxSetPadded(uiBox(ZAM_UI(b)), on); }
+int64_t zam_ui_group(const char *title) { zam_ui_need(); return ZAM_UI_ID(uiNewGroup(title)); }
+void zam_ui_group_set_child(int64_t g, int64_t child) { uiGroupSetChild(uiGroup(ZAM_UI(g)), uiControl(ZAM_UI(child))); }
+void zam_ui_group_set_margined(int64_t g, int on) { uiGroupSetMargined(uiGroup(ZAM_UI(g)), on); }
+int64_t zam_ui_tabs(void) { zam_ui_need(); return ZAM_UI_ID(uiNewTab()); }
+void zam_ui_tabs_add(int64_t t, const char *name, int64_t child) {
+    uiTab *tab = uiTab(ZAM_UI(t));
+    uiTabAppend(tab, name, uiControl(ZAM_UI(child)));
+    uiTabSetMargined(tab, uiTabNumPages(tab) - 1, 1);
+}
+int64_t zam_ui_form(void) { zam_ui_need(); uiForm *f = uiNewForm(); uiFormSetPadded(f, 1); return ZAM_UI_ID(f); }
+void zam_ui_form_add(int64_t f, const char *label, int64_t child, int stretchy) { uiFormAppend(uiForm(ZAM_UI(f)), label, uiControl(ZAM_UI(child)), stretchy); }
+int64_t zam_ui_grid(void) { zam_ui_need(); uiGrid *g = uiNewGrid(); uiGridSetPadded(g, 1); return ZAM_UI_ID(g); }
+void zam_ui_grid_add(int64_t g, int64_t child, int64_t column, int64_t row, int64_t width, int64_t height, int expand) {
+    uiGridAppend(uiGrid(ZAM_UI(g)), uiControl(ZAM_UI(child)), (int)column, (int)row, (int)width, (int)height,
+        expand, uiAlignFill, expand, uiAlignFill);
+}
+int64_t zam_ui_separator(int vertical) { zam_ui_need(); return ZAM_UI_ID(vertical ? uiNewVerticalSeparator() : uiNewHorizontalSeparator()); }
+// ---- 文字与按钮 ----
+int64_t zam_ui_label(const char *text) { zam_ui_need(); return ZAM_UI_ID(uiNewLabel(text)); }
+void zam_ui_label_set_text(int64_t l, const char *text) { uiLabelSetText(uiLabel(ZAM_UI(l)), text); }
+const char *zam_ui_label_text(int64_t l) { return zam_ui_keep(uiLabelText(uiLabel(ZAM_UI(l)))); }
+int64_t zam_ui_button(const char *text) { zam_ui_need(); return ZAM_UI_ID(uiNewButton(text)); }
+void zam_ui_button_set_text(int64_t b, const char *text) { uiButtonSetText(uiButton(ZAM_UI(b)), text); }
+const char *zam_ui_button_text(int64_t b) { return zam_ui_keep(uiButtonText(uiButton(ZAM_UI(b)))); }
+// 单行输入框：kind 0 普通，1 密码，2 搜索。
+int64_t zam_ui_entry(int64_t kind) {
+    zam_ui_need();
+    return ZAM_UI_ID(kind == 1 ? uiNewPasswordEntry() : kind == 2 ? uiNewSearchEntry() : uiNewEntry());
+}
+const char *zam_ui_entry_text(int64_t e) { return zam_ui_keep(uiEntryText(uiEntry(ZAM_UI(e)))); }
+void zam_ui_entry_set_text(int64_t e, const char *text) { uiEntrySetText(uiEntry(ZAM_UI(e)), text); }
+void zam_ui_entry_set_read_only(int64_t e, int on) { uiEntrySetReadOnly(uiEntry(ZAM_UI(e)), on); }
+int64_t zam_ui_text_area(int wrap) { zam_ui_need(); return ZAM_UI_ID(wrap ? uiNewMultilineEntry() : uiNewNonWrappingMultilineEntry()); }
+const char *zam_ui_text_area_text(int64_t e) { return zam_ui_keep(uiMultilineEntryText(uiMultilineEntry(ZAM_UI(e)))); }
+void zam_ui_text_area_set_text(int64_t e, const char *text) { uiMultilineEntrySetText(uiMultilineEntry(ZAM_UI(e)), text); }
+void zam_ui_text_area_append(int64_t e, const char *text) { uiMultilineEntryAppend(uiMultilineEntry(ZAM_UI(e)), text); }
+void zam_ui_text_area_set_read_only(int64_t e, int on) { uiMultilineEntrySetReadOnly(uiMultilineEntry(ZAM_UI(e)), on); }
+// ---- 选择 ----
+int64_t zam_ui_checkbox(const char *text) { zam_ui_need(); return ZAM_UI_ID(uiNewCheckbox(text)); }
+int zam_ui_checkbox_checked(int64_t c) { return uiCheckboxChecked(uiCheckbox(ZAM_UI(c))); }
+void zam_ui_checkbox_set_checked(int64_t c, int on) { uiCheckboxSetChecked(uiCheckbox(ZAM_UI(c)), on); }
+int64_t zam_ui_slider(int64_t low, int64_t high) { zam_ui_need(); return ZAM_UI_ID(uiNewSlider((int)low, (int)high)); }
+int64_t zam_ui_slider_value(int64_t s) { return uiSliderValue(uiSlider(ZAM_UI(s))); }
+void zam_ui_slider_set_value(int64_t s, int64_t v) { uiSliderSetValue(uiSlider(ZAM_UI(s)), (int)v); }
+int64_t zam_ui_spinbox(int64_t low, int64_t high) { zam_ui_need(); return ZAM_UI_ID(uiNewSpinbox((int)low, (int)high)); }
+int64_t zam_ui_spinbox_value(int64_t s) { return uiSpinboxValue(uiSpinbox(ZAM_UI(s))); }
+void zam_ui_spinbox_set_value(int64_t s, int64_t v) { uiSpinboxSetValue(uiSpinbox(ZAM_UI(s)), (int)v); }
+int64_t zam_ui_progress(void) { zam_ui_need(); return ZAM_UI_ID(uiNewProgressBar()); }
+void zam_ui_progress_set_value(int64_t p, int64_t v) { uiProgressBarSetValue(uiProgressBar(ZAM_UI(p)), (int)v); }
+int64_t zam_ui_progress_value(int64_t p) { return uiProgressBarValue(uiProgressBar(ZAM_UI(p))); }
+int64_t zam_ui_choice(void) { zam_ui_need(); return ZAM_UI_ID(uiNewCombobox()); }
+void zam_ui_choice_add(int64_t c, const char *text) { uiComboboxAppend(uiCombobox(ZAM_UI(c)), text); }
+int64_t zam_ui_choice_selected(int64_t c) { return uiComboboxSelected(uiCombobox(ZAM_UI(c))); }
+void zam_ui_choice_set_selected(int64_t c, int64_t i) { uiComboboxSetSelected(uiCombobox(ZAM_UI(c)), (int)i); }
+int64_t zam_ui_radio(void) { zam_ui_need(); return ZAM_UI_ID(uiNewRadioButtons()); }
+void zam_ui_radio_add(int64_t r, const char *text) { uiRadioButtonsAppend(uiRadioButtons(ZAM_UI(r)), text); }
+int64_t zam_ui_radio_selected(int64_t r) { return uiRadioButtonsSelected(uiRadioButtons(ZAM_UI(r))); }
+void zam_ui_radio_set_selected(int64_t r, int64_t i) { uiRadioButtonsSetSelected(uiRadioButtons(ZAM_UI(r)), (int)i); }
+// ---- 对话框 ----
+void zam_ui_message(int64_t w, const char *title, const char *text, int error) {
+    if (error) uiMsgBoxError(uiWindow(ZAM_UI(w)), title, text);
+    else uiMsgBox(uiWindow(ZAM_UI(w)), title, text);
+}
+// 文件对话框：取消时返回空字符串。kind 0 打开文件，1 保存文件，2 打开文件夹。
+const char *zam_ui_pick(int64_t w, int64_t kind) {
+    uiWindow *window = uiWindow(ZAM_UI(w));
+    return zam_ui_keep(kind == 1 ? uiSaveFile(window) : kind == 2 ? uiOpenFolder(window) : uiOpenFile(window));
+}
+// ---- 程序状态与回调 ----
+// 一个回调：Zamak 的函数值（{call, env}，按字节保存）与按 T 生成的调用器。
+typedef struct zam_ui_handler {
+    struct zam_ui_app *app;
+    void (*invoke)(void *function, void *state);
+    unsigned char function[2 * sizeof(void *)];
+    struct zam_ui_handler *next;
+} zam_ui_handler;
+typedef struct zam_ui_app {
+    void *state;
+    zam_ui_handler *handlers;
+    int64_t window;
+    zam_ui_handler *closing;
+} zam_ui_app;
+int64_t zam_ui_app_new(void **out) {
+    zam_ui_app *app;
+    zam_ui_need();
+    app = (zam_ui_app *)calloc(1, sizeof *app);
+    if (!app) { zam_panic_one("allocation failed"); exit(1); }
+    *out = app;
+    return 0;
+}
+// App 离开作用域：释放回调。回调只在 run 里被调用，run 返回后不会再被调用。
+void zam_ui_app_release(void *handle) {
+    zam_ui_app *app = (zam_ui_app *)handle;
+    zam_ui_handler *h, *next;
+    if (!app) return;
+    for (h = app->handlers; h; h = next) { next = h->next; free(h); }
+    free(app);
+}
+static void zam_ui_call(zam_ui_handler *h) { if (h->app->state) h->invoke(h->function, h->app->state); }
+static void zam_ui_on_button(uiButton *b, void *data) { (void)b; zam_ui_call((zam_ui_handler *)data); }
+static void zam_ui_on_entry(uiEntry *e, void *data) { (void)e; zam_ui_call((zam_ui_handler *)data); }
+static void zam_ui_on_text_area(uiMultilineEntry *e, void *data) { (void)e; zam_ui_call((zam_ui_handler *)data); }
+static void zam_ui_on_checkbox(uiCheckbox *c, void *data) { (void)c; zam_ui_call((zam_ui_handler *)data); }
+static void zam_ui_on_slider(uiSlider *s, void *data) { (void)s; zam_ui_call((zam_ui_handler *)data); }
+static void zam_ui_on_spinbox(uiSpinbox *s, void *data) { (void)s; zam_ui_call((zam_ui_handler *)data); }
+static void zam_ui_on_choice(uiCombobox *c, void *data) { (void)c; zam_ui_call((zam_ui_handler *)data); }
+static void zam_ui_on_radio(uiRadioButtons *r, void *data) { (void)r; zam_ui_call((zam_ui_handler *)data); }
+static int zam_ui_on_timer(void *data) { zam_ui_call((zam_ui_handler *)data); return 1; }
+// 回调的种类，与 std/ui.zm 里的常量一致。
+enum { ZAM_UI_CLICK, ZAM_UI_TEXT, ZAM_UI_TEXT_AREA, ZAM_UI_TOGGLE, ZAM_UI_SLIDE, ZAM_UI_SPIN, ZAM_UI_CHOOSE, ZAM_UI_RADIO, ZAM_UI_TIMER, ZAM_UI_CLOSE };
+static void zam_ui_connect(void *handle, int64_t kind, int64_t control, const void *function, size_t size, void (*invoke)(void *, void *)) {
+    zam_ui_app *app = (zam_ui_app *)handle;
+    zam_ui_handler *h = (zam_ui_handler *)calloc(1, sizeof *h);
+    void *c = ZAM_UI(control);
+    if (!h || size > sizeof h->function) { zam_panic_one("allocation failed"); exit(1); }
+    h->app = app; h->invoke = invoke;
+    memcpy(h->function, function, size);
+    h->next = app->handlers; app->handlers = h;
+    switch (kind) {
+    case ZAM_UI_CLICK: uiButtonOnClicked(uiButton(c), zam_ui_on_button, h); break;
+    case ZAM_UI_TEXT: uiEntryOnChanged(uiEntry(c), zam_ui_on_entry, h); break;
+    case ZAM_UI_TEXT_AREA: uiMultilineEntryOnChanged(uiMultilineEntry(c), zam_ui_on_text_area, h); break;
+    case ZAM_UI_TOGGLE: uiCheckboxOnToggled(uiCheckbox(c), zam_ui_on_checkbox, h); break;
+    case ZAM_UI_SLIDE: uiSliderOnChanged(uiSlider(c), zam_ui_on_slider, h); break;
+    case ZAM_UI_SPIN: uiSpinboxOnChanged(uiSpinbox(c), zam_ui_on_spinbox, h); break;
+    case ZAM_UI_CHOOSE: uiComboboxOnSelected(uiCombobox(c), zam_ui_on_choice, h); break;
+    case ZAM_UI_RADIO: uiRadioButtonsOnSelected(uiRadioButtons(c), zam_ui_on_radio, h); break;
+    case ZAM_UI_TIMER: uiTimer((int)control, zam_ui_on_timer, h); break;
+    case ZAM_UI_CLOSE: app->closing = h; break;
+    }
+}
+// 关窗口就结束：先调用 on_close 的回调（如果有），再退出主循环。窗口由 libui 销毁。
+static int zam_ui_on_closing(uiWindow *w, void *data) {
+    zam_ui_app *app = (zam_ui_app *)data;
+    (void)w;
+    if (app->closing) zam_ui_call(app->closing);
+    app->window = 0;
+    uiQuit();
+    return 1;
+}
+static int zam_ui_on_should_quit(void *data) {
+    zam_ui_app *app = (zam_ui_app *)data;
+    if (app->window) { uiControlDestroy(uiControl(ZAM_UI(app->window))); app->window = 0; }
+    return 1;
+}
+// 显示窗口并运行主循环，直到窗口关闭或调用 ui.quit()。state 指向 run 栈帧里的状态。
+static void zam_ui_run(void *handle, int64_t window, void *state) {
+    zam_ui_app *app = (zam_ui_app *)handle;
+    app->state = state;
+    app->window = window;
+    uiWindowOnClosing(uiWindow(ZAM_UI(window)), zam_ui_on_closing, app);
+    uiOnShouldQuit(zam_ui_on_should_quit, app);
+    uiControlShow(uiControl(ZAM_UI(window)));
+    uiMain();
+    // ui.quit() 结束的主循环：窗口还在，销毁它。
+    if (app->window) { uiControlDestroy(uiControl(ZAM_UI(app->window))); app->window = 0; }
+    app->state = NULL;
+}
+void zam_ui_quit(void) { uiQuit(); }
+"#;
 /// 只在用到某个标准库模块时才需要的 C 辅助代码：（模块前缀, 代码）。
 const MODULE_PRELUDES: &[(&str, &str)] = &[
     ("std/hashlib:", HASH_PRELUDE),
@@ -5341,7 +5562,8 @@ impl<'a> Generator<'a> {
     }
     /// 把已生成的 owned 值移交出去（实参、字段、返回值）；标量原样返回。
     fn moved(&self, value: &str, ty: Type) -> String {
-        if owned(ty) {
+        // 纯数据的结构体与枚举按值复制，原来的变量不清零。
+        if owned(ty) && !by_value(ty) {
             format!("{}(&{value})", take_fn(ty))
         } else {
             value.to_owned()
@@ -5481,7 +5703,10 @@ impl<'a> Generator<'a> {
                 local
             }
             Expr::Field(local, field) => self.scalar(&self.field(local, field), self.ty(expr)),
-            Expr::Variable(name) if aggregate(self.locals[name].1) => {
+            // 移走结构体、列表、字典；纯数据的结构体与枚举按值复制，原变量不清零（走下面的分支）。
+            Expr::Variable(name)
+                if aggregate(self.locals[name].1) && !by_value(self.locals[name].1) =>
+            {
                 let ty = self.locals[name].1;
                 let local = self.scalar(&format!("take{}({})", ctype(ty), self.pointer(name)), ty);
                 self.owners.push((local.clone(), ty));
@@ -6315,8 +6540,8 @@ impl<'a> Generator<'a> {
                 .module
                 .functions
                 .iter()
-                .find(|(fname, _)| fname.ends_with(&format!(".{method}")))
-                .is_some_and(|(_, function)| {
+                .filter(|(fname, _)| fname.ends_with(&format!(".{method}")))
+                .any(|(_, function)| {
                     function
                         .generics
                         .iter()
@@ -6326,7 +6551,9 @@ impl<'a> Generator<'a> {
                 args.iter()
                     .map(|arg| match arg {
                         Expr::Lambda(..) => None,
-                        _ => self.ty(arg).into(),
+                        // 关键字实参（`stretchy=true`）在归位之前不参与推断，和检查器一致。
+                        _ if crate::compiler::keyword_arg(arg).is_some() => None,
+                        _ => self.value_type(arg).into(),
                     })
                     .collect()
             } else {
@@ -8242,6 +8469,28 @@ fn intrinsic(
                 ),
             ))
         }
+        // 运行主循环：状态 p2 留在这个栈帧里，回调经指针读写它，结束后原样返回。
+        "std/ui:_run" => Some((
+            String::new(),
+            format!("zam_ui_run({}, p1, &p2);\nreturn p2;\n", handle(0)),
+        )),
+        // 回调：保存函数值，按 T 生成调用器，把 C 里存的状态当成 &mut T 交给它。
+        "std/ui:_connect" => {
+            let Type::Func(id) = param(3) else {
+                unreachable!("kept handler")
+            };
+            let (params, _) = func_sig(id);
+            let state = ctype(params[0]);
+            Some((
+                format!(
+                    "static void {symbol}_invoke(void *f, void *state) {{ F{id} *g = (F{id} *)f; g->call(g->env, ({state})state); }}\n"
+                ),
+                format!(
+                    "zam_ui_connect({}, p1, p2, &p3, sizeof p3, {symbol}_invoke);\n",
+                    handle(0)
+                ),
+            ))
+        }
         "std/thread:_task_take" => {
             let elem = element(1);
             Some((
@@ -8258,7 +8507,7 @@ fn intrinsic(
     }
 }
 
-fn uses_msvc(tool: &str) -> bool {
+pub fn uses_msvc(tool: &str) -> bool {
     cfg!(windows)
         && Path::new(tool)
             .extension()

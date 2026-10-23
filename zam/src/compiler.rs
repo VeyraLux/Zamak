@@ -262,7 +262,11 @@ pub fn record_method_with<'f>(
     let owner = template.as_ref().unwrap_or(owner);
     let name = format!("{owner}.{method}");
     let short = owner.rsplit(':').next().unwrap_or(owner);
-    if template.is_some() && functions.contains_key(&name) {
+    // 方法自己有类型参数（`fn add[C: Control](&self, child: &C)`）时，接收者不是泛型实例也要生成副本。
+    let generic_method = functions
+        .get(&name)
+        .is_some_and(|function| !function.generics.is_empty());
+    if (template.is_some() || generic_method) && functions.contains_key(&name) {
         // 实参按位置跟在接收者后面（`self` 是第一项），所以补一个 `None` 占位。
         let mut types = vec![Some(Type::Record(id))];
         types.extend(actuals.iter().copied());
@@ -328,12 +332,54 @@ pub fn method_args(
 /// 所以不在函数表里，检查器与生成器按名字特判。
 pub const COPY: &str = "std/core:copy";
 
-/// 按值复制、不需要释放的值：数字、布尔与函数值。
+/// 按值复制、不需要释放的值：数字、布尔、函数值，以及只由它们组成的结构体与枚举（见 `note_plain`）。
 pub fn copied(ty: Type) -> bool {
-    matches!(
-        ty,
-        Type::Int | Type::Float | Type::Bool | Type::Func(_) | Type::FuncRef(_)
-    )
+    match ty {
+        Type::Int | Type::Float | Type::Bool | Type::Func(_) | Type::FuncRef(_) => true,
+        Type::Record(id) => plain(id),
+        _ => false,
+    }
+}
+
+/// 纯数据的结构体与枚举：字段（枚举是各变体的载荷）都是数字、布尔、函数值或别的纯数据类型，
+/// 不是 C 句柄、不是接口。它们没有要释放的东西，赋值、传参时复制一份，原来的变量照样能用，
+/// 就像数字一样（界面的控件句柄、`Point(x, y)` 都是这样）。链接时按结构体表算出来。
+static PLAIN: std::sync::RwLock<BTreeSet<u64>> = std::sync::RwLock::new(BTreeSet::new());
+
+pub fn plain(id: u64) -> bool {
+    PLAIN.read().expect("plain types").contains(&id)
+}
+
+/// 按链接后的结构体表重新算纯数据类型（取不动点：字段是结构体时要先知道它是不是纯数据）。
+pub fn note_plain(structs: &BTreeMap<String, Struct>) {
+    let mut found: BTreeSet<u64> = BTreeSet::new();
+    loop {
+        let before = found.len();
+        for (name, structure) in structs {
+            let id = record_id(name);
+            if found.contains(&id)
+                || !structure.generics.is_empty()
+                || structure.handle.is_some()
+                || structure.interface
+            {
+                continue;
+            }
+            // 枚举的载荷也在 fields 里（variants 只记各变体在其中的位置）。
+            let fields = structure.fields.iter().map(|(_, ty)| *ty);
+            let simple = |ty: Type| match ty {
+                Type::Int | Type::Float | Type::Bool | Type::Func(_) => true,
+                Type::Record(other) => found.contains(&other),
+                _ => false,
+            };
+            if fields.clone().all(simple) {
+                found.insert(id);
+            }
+        }
+        if found.len() == before {
+            break;
+        }
+    }
+    *PLAIN.write().expect("plain types") = found;
 }
 
 /// 闭包看见的外层局部变量：owned 的值变成借用，数字、布尔与函数照旧（读写的都是外层变量本身）。
@@ -4385,7 +4431,15 @@ impl Parser {
                         return Err("self can only be the first parameter of a method declared inside a struct or enum".into());
                     }
                     self.expect(':')?;
+                    // `handler: kept fn(i64)`：函数会被保存下来（比如界面的回调），只收不捕获局部变量的
+                    // 函数，与能存进字段的函数值一样。`kept` 后面不是 fn 时它只是普通的名字。
+                    let kept = self.peek() == Some(&Token::Word("kept".into()))
+                        && self.tokens.get(self.position + 1) == Some(&Token::Word("fn".into()));
+                    if kept {
+                        self.take();
+                    }
                     let ty = match self.ty()? {
+                        Type::Func(id) if kept => Type::Func(id),
                         // 参数位置的函数类型可以接收闭包，按借用对待。
                         Type::Func(id) => Type::FuncRef(id),
                         ty => ty,
@@ -6174,6 +6228,14 @@ impl<'a> Checker<'a> {
         // 方法自己的类型参数（`fn map[U](&self, f: fn(T) -> U) -> Box[U]`）要从实参推断；
         // 没写参数类型的匿名函数在这里还看不出来，先当作未知。
         let actuals: Vec<Option<Type>> = args.iter().map(|arg| self.value_type(arg).ok()).collect();
+        // 实参已经被移走时先报这个：否则泛型方法会报“推断不出类型参数”，让人摸不着头脑。
+        for arg in args {
+            if let Err(error) = self.value_type(arg) {
+                if error.starts_with("use after move") {
+                    return Err(error);
+                }
+            }
+        }
         let Some((name, callee)) =
             record_method_with(self.structs, self.functions, ty, method, &actuals)?
         else {
@@ -7264,10 +7326,12 @@ impl<'a> Checker<'a> {
                 if self.ty(expr)? != expected {
                     return Err("field type mismatch".into());
                 }
-                if matches!(
-                    expected,
-                    Type::Owned | Type::Record(_) | Type::List(_) | Type::Map(_, _)
-                ) {
+                if !copied(expected)
+                    && matches!(
+                        expected,
+                        Type::Owned | Type::Record(_) | Type::List(_) | Type::Map(_, _)
+                    )
+                {
                     return Err("owned field moves are not supported; move the whole struct".into());
                 }
                 Ok(())
@@ -7282,6 +7346,9 @@ impl<'a> Checker<'a> {
                 }
                 if ty != expected {
                     return Err("struct type mismatch".into());
+                }
+                if copied(ty) {
+                    return Ok(());
                 }
                 if loans.contains_key(name) {
                     return Err("borrow conflict".into());

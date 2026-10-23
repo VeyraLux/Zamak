@@ -92,7 +92,7 @@ fn main():
 [1, 2, 3, 6]
 ```
 
-## Numbers and booleans are copied
+## Numbers, booleans, and plain structs are copied
 
 `i64`, `f64`, and `bool` values are small, so assigning them copies the value. Both variables stay usable:
 
@@ -106,6 +106,27 @@ fn main():
 ```text
 20
 ```
+
+The same goes for a struct, enum, or tuple that holds only numbers, booleans, and other such values. It owns nothing that needs freeing, so a copy costs no more than copying its fields:
+
+```zamak
+struct Point:
+    x: f64
+    y: f64
+
+fn main():
+    let a = Point(x: 1.0, y: 2.0)
+    let b = a
+    println(a)
+    println(b)
+```
+
+```text
+Point(x: 1.0, y: 2.0)
+Point(x: 1.0, y: 2.0)
+```
+
+As soon as a struct has a string, list, map, or another field that owns memory, assigning it moves it again.
 
 ## Make an explicit copy
 
@@ -184,5 +205,5 @@ So an assignment in Zamak doesn't give two names for the same data, as in Python
 
 - Every string, list, map, struct, and enum has one owner, and it's freed when the owner's block ends.
 - Assigning or passing such a value moves it; using the old name afterwards is an error.
-- Numbers and booleans are copied.
+- Numbers, booleans, and structs that hold only such values are copied.
 - `copy(&x)` makes an explicit deep copy.

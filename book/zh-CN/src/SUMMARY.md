@@ -39,6 +39,7 @@
 - [模块与包](modules.md)
 - [调用 C 代码](c-libraries.md)
 - [标准库速览](standard-library.md)
+- [窗口程序](gui.md)
 
 # 工具
 

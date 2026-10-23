@@ -1,0 +1,565 @@
+# 窗口程序：原生控件（Windows、macOS、Linux 各用系统自己的），底层是 libui-ng。
+#
+#     struct Counter:
+#         count: i64
+#         label: ui.Label
+#
+#     fn clicked(app: &mut Counter):
+#         app.count += 1
+#         app.label.set_text(f"clicked {app.count} times")
+#
+#     fn main():
+#         let window = ui.window("Counter", 320, 200)
+#         let label = ui.label("not clicked yet")
+#         let button = ui.button("Click me")
+#         let column = ui.column()
+#         column.add(label)
+#         column.add(button)
+#         window.set_child(column)
+#         let app: ui.App[Counter] = ui.app()
+#         app.on_click(button, clicked)
+#         app.run(window, Counter(count: 0, label: label))
+#
+# 控件用小写的函数创建（ui.window、ui.button……），得到的值是指向控件的句柄：控件归父容器所有，
+# 窗口关闭时一起销毁。ui.app() 得到的程序先登记回调，run 时交给它程序状态；回调是具名函数
+# （或不用局部变量的匿名函数），收到 &mut 状态。界面只能在主线程里用。
+
+extern type AppHandle: "void", close = zam_ui_app_release
+
+extern fn zam_ui_show(c: i64)
+extern fn zam_ui_hide(c: i64)
+extern fn zam_ui_enable(c: i64)
+extern fn zam_ui_disable(c: i64)
+extern fn zam_ui_visible(c: i64) -> bool
+extern fn zam_ui_enabled(c: i64) -> bool
+extern fn zam_ui_window(title: &string, width: i64, height: i64, menubar: bool) -> i64
+extern fn zam_ui_window_set_child(w: i64, child: i64)
+extern fn zam_ui_window_set_title(w: i64, title: &string)
+extern fn zam_ui_window_title(w: i64) -> string
+extern fn zam_ui_window_set_margined(w: i64, on: bool)
+extern fn zam_ui_window_set_size(w: i64, width: i64, height: i64)
+extern fn zam_ui_box(vertical: bool) -> i64
+extern fn zam_ui_box_add(b: i64, child: i64, stretchy: bool)
+extern fn zam_ui_box_set_padded(b: i64, on: bool)
+extern fn zam_ui_group(title: &string) -> i64
+extern fn zam_ui_group_set_child(g: i64, child: i64)
+extern fn zam_ui_group_set_margined(g: i64, on: bool)
+extern fn zam_ui_tabs() -> i64
+extern fn zam_ui_tabs_add(t: i64, name: &string, child: i64)
+extern fn zam_ui_form() -> i64
+extern fn zam_ui_form_add(f: i64, label: &string, child: i64, stretchy: bool)
+extern fn zam_ui_grid() -> i64
+extern fn zam_ui_grid_add(g: i64, child: i64, column: i64, row: i64, width: i64, height: i64, expand: bool)
+extern fn zam_ui_separator(vertical: bool) -> i64
+extern fn zam_ui_label(text: &string) -> i64
+extern fn zam_ui_label_set_text(l: i64, text: &string)
+extern fn zam_ui_label_text(l: i64) -> string
+extern fn zam_ui_button(text: &string) -> i64
+extern fn zam_ui_button_set_text(b: i64, text: &string)
+extern fn zam_ui_button_text(b: i64) -> string
+extern fn zam_ui_entry(kind: i64) -> i64
+extern fn zam_ui_entry_text(e: i64) -> string
+extern fn zam_ui_entry_set_text(e: i64, text: &string)
+extern fn zam_ui_entry_set_read_only(e: i64, on: bool)
+extern fn zam_ui_text_area(wrap: bool) -> i64
+extern fn zam_ui_text_area_text(e: i64) -> string
+extern fn zam_ui_text_area_set_text(e: i64, text: &string)
+extern fn zam_ui_text_area_append(e: i64, text: &string)
+extern fn zam_ui_text_area_set_read_only(e: i64, on: bool)
+extern fn zam_ui_checkbox(text: &string) -> i64
+extern fn zam_ui_checkbox_checked(c: i64) -> bool
+extern fn zam_ui_checkbox_set_checked(c: i64, on: bool)
+extern fn zam_ui_slider(low: i64, high: i64) -> i64
+extern fn zam_ui_slider_value(s: i64) -> i64
+extern fn zam_ui_slider_set_value(s: i64, value: i64)
+extern fn zam_ui_spinbox(low: i64, high: i64) -> i64
+extern fn zam_ui_spinbox_value(s: i64) -> i64
+extern fn zam_ui_spinbox_set_value(s: i64, value: i64)
+extern fn zam_ui_progress() -> i64
+extern fn zam_ui_progress_value(p: i64) -> i64
+extern fn zam_ui_progress_set_value(p: i64, value: i64)
+extern fn zam_ui_choice() -> i64
+extern fn zam_ui_choice_add(c: i64, text: &string)
+extern fn zam_ui_choice_selected(c: i64) -> i64
+extern fn zam_ui_choice_set_selected(c: i64, index: i64)
+extern fn zam_ui_radio() -> i64
+extern fn zam_ui_radio_add(r: i64, text: &string)
+extern fn zam_ui_radio_selected(r: i64) -> i64
+extern fn zam_ui_radio_set_selected(r: i64, index: i64)
+extern fn zam_ui_message(w: i64, title: &string, text: &string, error: bool)
+extern fn zam_ui_pick(w: i64, kind: i64) -> string
+extern fn zam_ui_app_new(out: &mut Option[AppHandle]) -> i64
+extern fn zam_ui_quit()
+
+# 回调的种类，与 C 部分的枚举一致。
+const CLICK = 0
+const TEXT = 1
+const TEXT_AREA = 2
+const TOGGLE = 3
+const SLIDE = 4
+const SPIN = 5
+const CHOOSE = 6
+const RADIO = 7
+const TIMER = 8
+const CLOSE = 9
+
+# 所有控件：能放进窗口与容器。
+pub interface Control:
+    fn handle(&self) -> i64
+
+# 内容会变化、能用 app.on_change 接收变化的控件。
+pub interface Changing:
+    fn handle(&self) -> i64
+    fn change_kind(&self) -> i64
+
+# ---- 窗口 ----
+
+pub struct Window:
+    id: i64
+
+    pub fn handle(&self) -> i64:
+        self.id
+
+    # 窗口的内容：一个控件，通常是 column、row、grid 之类的容器。
+    pub fn set_child[C: Control](&self, child: &C):
+        zam_ui_window_set_child(self.id, child.handle())
+
+    pub fn set_title(&self, title: &string):
+        zam_ui_window_set_title(self.id, title)
+
+    pub fn title(&self) -> string:
+        zam_ui_window_title(self.id)
+
+    # 内容四周留出边距（默认留）。
+    pub fn set_margined(&self, on: bool):
+        zam_ui_window_set_margined(self.id, on)
+
+    pub fn set_size(&self, width: i64, height: i64):
+        zam_ui_window_set_size(self.id, width, height)
+
+    # 弹出消息框，等用户关掉。
+    pub fn message(&self, title: &string, text: &string):
+        zam_ui_message(self.id, title, text, false)
+
+    # 弹出错误消息框。
+    pub fn error(&self, title: &string, text: &string):
+        zam_ui_message(self.id, title, text, true)
+
+    # 选择要打开的文件；用户取消时返回 None。
+    pub fn open_file(&self) -> Option[string]:
+        picked(zam_ui_pick(self.id, 0))
+
+    # 选择保存到哪个文件；用户取消时返回 None。
+    pub fn save_file(&self) -> Option[string]:
+        picked(zam_ui_pick(self.id, 1))
+
+    # 选择一个文件夹；用户取消时返回 None。
+    pub fn open_folder(&self) -> Option[string]:
+        picked(zam_ui_pick(self.id, 2))
+
+fn picked(path: string) -> Option[string]:
+    if path == "":
+        return Option.None
+
+    Option.Some(path)
+
+# 新窗口：标题与内容区的宽、高（像素）。
+pub fn window(title: &string, width: i64, height: i64) -> Window:
+    let w = Window(id: zam_ui_window(title, width, height, false))
+    w.set_margined(true)
+    w
+
+# ---- 布局 ----
+
+# 从上到下排列控件。
+pub struct Column:
+    id: i64
+
+    pub fn handle(&self) -> i64:
+        self.id
+
+    # 加一个控件；stretchy 为 true 时它分走多余的空间。
+    pub fn add[C: Control](&self, child: &C, stretchy: bool = false):
+        zam_ui_box_add(self.id, child.handle(), stretchy)
+
+    pub fn set_padded(&self, on: bool):
+        zam_ui_box_set_padded(self.id, on)
+
+pub fn column() -> Column:
+    let c = Column(id: zam_ui_box(true))
+    c.set_padded(true)
+    c
+
+# 从左到右排列控件。
+pub struct Row:
+    id: i64
+
+    pub fn handle(&self) -> i64:
+        self.id
+
+    # 加一个控件；stretchy 为 true 时它分走多余的空间。
+    pub fn add[C: Control](&self, child: &C, stretchy: bool = false):
+        zam_ui_box_add(self.id, child.handle(), stretchy)
+
+    pub fn set_padded(&self, on: bool):
+        zam_ui_box_set_padded(self.id, on)
+
+pub fn row() -> Row:
+    let r = Row(id: zam_ui_box(false))
+    r.set_padded(true)
+    r
+
+# 带标题的框，里面放一个控件。
+pub struct Group:
+    id: i64
+
+    pub fn handle(&self) -> i64:
+        self.id
+
+    pub fn set_child[C: Control](&self, child: &C):
+        zam_ui_group_set_child(self.id, child.handle())
+
+pub fn group(title: &string) -> Group:
+    let g = Group(id: zam_ui_group(title))
+    zam_ui_group_set_margined(g.id, true)
+    g
+
+# 选项卡：每页一个控件。
+pub struct Tabs:
+    id: i64
+
+    pub fn handle(&self) -> i64:
+        self.id
+
+    pub fn add[C: Control](&self, name: &string, child: &C):
+        zam_ui_tabs_add(self.id, name, child.handle())
+
+pub fn tabs() -> Tabs:
+    Tabs(id: zam_ui_tabs())
+
+# 表单：左边是说明文字，右边是控件，一行一项。
+pub struct Form:
+    id: i64
+
+    pub fn handle(&self) -> i64:
+        self.id
+
+    pub fn add[C: Control](&self, label: &string, child: &C, stretchy: bool = false):
+        zam_ui_form_add(self.id, label, child.handle(), stretchy)
+
+pub fn form() -> Form:
+    Form(id: zam_ui_form())
+
+# 网格：控件放在第 column 列、第 row 行（从 0 数），可以跨 width 列、height 行。
+pub struct Grid:
+    id: i64
+
+    pub fn handle(&self) -> i64:
+        self.id
+
+    pub fn add[C: Control](&self, child: &C, column: i64, row: i64, width: i64 = 1, height: i64 = 1, expand: bool = false):
+        zam_ui_grid_add(self.id, child.handle(), column, row, width, height, expand)
+
+pub fn grid() -> Grid:
+    Grid(id: zam_ui_grid())
+
+# 分隔线：在 column 里用横线，在 row 里用竖线（vertical=true）。
+pub struct Separator:
+    id: i64
+
+    pub fn handle(&self) -> i64:
+        self.id
+
+pub fn separator(vertical: bool = false) -> Separator:
+    Separator(id: zam_ui_separator(vertical))
+
+# ---- 文字与按钮 ----
+
+pub struct Label:
+    id: i64
+
+    pub fn handle(&self) -> i64:
+        self.id
+
+    pub fn text(&self) -> string:
+        zam_ui_label_text(self.id)
+
+    pub fn set_text(&self, text: &string):
+        zam_ui_label_set_text(self.id, text)
+
+pub fn label(text: &string) -> Label:
+    Label(id: zam_ui_label(text))
+
+pub struct Button:
+    id: i64
+
+    pub fn handle(&self) -> i64:
+        self.id
+
+    pub fn text(&self) -> string:
+        zam_ui_button_text(self.id)
+
+    pub fn set_text(&self, text: &string):
+        zam_ui_button_set_text(self.id, text)
+
+pub fn button(text: &string) -> Button:
+    Button(id: zam_ui_button(text))
+
+# 单行输入框。
+pub struct Entry:
+    id: i64
+
+    pub fn handle(&self) -> i64:
+        self.id
+
+    pub fn change_kind(&self) -> i64:
+        TEXT
+
+    pub fn text(&self) -> string:
+        zam_ui_entry_text(self.id)
+
+    pub fn set_text(&self, text: &string):
+        zam_ui_entry_set_text(self.id, text)
+
+    pub fn set_read_only(&self, on: bool):
+        zam_ui_entry_set_read_only(self.id, on)
+
+pub fn entry(text: &string = "") -> Entry:
+    let e = Entry(id: zam_ui_entry(0))
+    e.set_text(text)
+    e
+
+# 输入密码：显示成圆点。
+pub fn password() -> Entry:
+    Entry(id: zam_ui_entry(1))
+
+# 多行文本框。wrap 为 false 时长行不折行，出现横向滚动条。
+pub struct TextArea:
+    id: i64
+
+    pub fn handle(&self) -> i64:
+        self.id
+
+    pub fn change_kind(&self) -> i64:
+        TEXT_AREA
+
+    pub fn text(&self) -> string:
+        zam_ui_text_area_text(self.id)
+
+    pub fn set_text(&self, text: &string):
+        zam_ui_text_area_set_text(self.id, text)
+
+    pub fn append(&self, text: &string):
+        zam_ui_text_area_append(self.id, text)
+
+    pub fn set_read_only(&self, on: bool):
+        zam_ui_text_area_set_read_only(self.id, on)
+
+pub fn text_area(wrap: bool = true) -> TextArea:
+    TextArea(id: zam_ui_text_area(wrap))
+
+# ---- 选择 ----
+
+pub struct Checkbox:
+    id: i64
+
+    pub fn handle(&self) -> i64:
+        self.id
+
+    pub fn change_kind(&self) -> i64:
+        TOGGLE
+
+    pub fn checked(&self) -> bool:
+        zam_ui_checkbox_checked(self.id)
+
+    pub fn set_checked(&self, on: bool):
+        zam_ui_checkbox_set_checked(self.id, on)
+
+pub fn checkbox(text: &string, checked: bool = false) -> Checkbox:
+    let c = Checkbox(id: zam_ui_checkbox(text))
+    c.set_checked(checked)
+    c
+
+# 滑块：取 low 到 high 之间的整数。
+pub struct Slider:
+    id: i64
+
+    pub fn handle(&self) -> i64:
+        self.id
+
+    pub fn change_kind(&self) -> i64:
+        SLIDE
+
+    pub fn value(&self) -> i64:
+        zam_ui_slider_value(self.id)
+
+    pub fn set_value(&self, value: i64):
+        zam_ui_slider_set_value(self.id, value)
+
+pub fn slider(low: i64, high: i64) -> Slider:
+    Slider(id: zam_ui_slider(low, high))
+
+# 数字输入框：带上下箭头，取 low 到 high 之间的整数。
+pub struct Spinbox:
+    id: i64
+
+    pub fn handle(&self) -> i64:
+        self.id
+
+    pub fn change_kind(&self) -> i64:
+        SPIN
+
+    pub fn value(&self) -> i64:
+        zam_ui_spinbox_value(self.id)
+
+    pub fn set_value(&self, value: i64):
+        zam_ui_spinbox_set_value(self.id, value)
+
+pub fn spinbox(low: i64, high: i64) -> Spinbox:
+    Spinbox(id: zam_ui_spinbox(low, high))
+
+# 进度条：0 到 100；-1 表示不确定的进度（来回滚动）。
+pub struct Progress:
+    id: i64
+
+    pub fn handle(&self) -> i64:
+        self.id
+
+    pub fn value(&self) -> i64:
+        zam_ui_progress_value(self.id)
+
+    pub fn set_value(&self, value: i64):
+        zam_ui_progress_set_value(self.id, value)
+
+pub fn progress() -> Progress:
+    Progress(id: zam_ui_progress())
+
+# 下拉选择框，一开始选中第一项。selected() 是选中项的下标，没有选中时是 -1。
+pub struct Choice:
+    id: i64
+
+    pub fn handle(&self) -> i64:
+        self.id
+
+    pub fn change_kind(&self) -> i64:
+        CHOOSE
+
+    pub fn add(&self, text: &string):
+        zam_ui_choice_add(self.id, text)
+
+    pub fn selected(&self) -> i64:
+        zam_ui_choice_selected(self.id)
+
+    pub fn set_selected(&self, index: i64):
+        zam_ui_choice_set_selected(self.id, index)
+
+pub fn choice(items: &[string]) -> Choice:
+    let c = Choice(id: zam_ui_choice())
+
+    for item in items:
+        c.add(item)
+
+    if len(items) > 0:
+        c.set_selected(0)
+
+    c
+
+# 一组单选按钮。selected() 是选中项的下标，没有选中时是 -1。
+pub struct Radio:
+    id: i64
+
+    pub fn handle(&self) -> i64:
+        self.id
+
+    pub fn change_kind(&self) -> i64:
+        RADIO
+
+    pub fn add(&self, text: &string):
+        zam_ui_radio_add(self.id, text)
+
+    pub fn selected(&self) -> i64:
+        zam_ui_radio_selected(self.id)
+
+    pub fn set_selected(&self, index: i64):
+        zam_ui_radio_set_selected(self.id, index)
+
+pub fn radio(items: &[string]) -> Radio:
+    let r = Radio(id: zam_ui_radio())
+
+    for item in items:
+        r.add(item)
+
+    r
+
+# ---- 所有控件都能用 ----
+
+pub fn show[C: Control](control: &C):
+    zam_ui_show(control.handle())
+
+pub fn hide[C: Control](control: &C):
+    zam_ui_hide(control.handle())
+
+pub fn set_enabled[C: Control](control: &C, on: bool):
+    if on:
+        zam_ui_enable(control.handle())
+    else:
+        zam_ui_disable(control.handle())
+
+pub fn is_visible[C: Control](control: &C) -> bool:
+    zam_ui_visible(control.handle())
+
+pub fn is_enabled[C: Control](control: &C) -> bool:
+    zam_ui_enabled(control.handle())
+
+# ---- 程序状态与回调 ----
+
+# 程序：把控件的事件交给回调，回调收到 &mut T（run 时交进来的状态）。
+pub struct App[T]:
+    handle: Option[AppHandle]
+
+    # 点按钮时调用 handler。
+    pub fn on_click(&self, button: &Button, handler: kept fn(&mut T)):
+        self.connect(CLICK, button.id, handler)
+
+    # 控件的内容变了（输入、勾选、拖动、选择）时调用 handler。
+    pub fn on_change[C: Changing](&self, control: &C, handler: kept fn(&mut T)):
+        self.connect(control.change_kind(), control.handle(), handler)
+
+    # 窗口关闭之前调用 handler。
+    pub fn on_close(&self, handler: kept fn(&mut T)):
+        self.connect(CLOSE, 0, handler)
+
+    # 每隔 milliseconds 毫秒调用一次 handler。
+    pub fn every(&self, milliseconds: i64, handler: kept fn(&mut T)):
+        self.connect(TIMER, milliseconds, handler)
+
+    # 显示窗口，处理事件，直到窗口关闭或调用 ui.quit()。state 在此期间交给回调读写，结束后返回。
+    pub fn run(&self, window: &Window, state: T) -> T:
+        match self.handle:
+            Some(h): return _run(h, window.id, state)
+            None: pass
+
+        state
+
+    fn connect(&self, kind: i64, control: i64, handler: kept fn(&mut T)):
+        match self.handle:
+            Some(h): _connect(h, kind, control, handler)
+            None: pass
+
+# 新程序。状态的类型写在变量的标注里：let app: ui.App[Counter] = ui.app()
+pub fn app[T]() -> App[T]:
+    let mut handle: Option[AppHandle] = Option.None
+    zam_ui_app_new(&mut handle)
+    App(handle=handle)
+
+# 结束 run 的主循环，关掉窗口。
+pub fn quit():
+    zam_ui_quit()
+
+# 下面两个函数的函数体由编译器按 T 生成（见 native.rs 的 intrinsic）：它们要知道怎样把 &mut T
+# 交给回调。这里的函数体只是占位。
+fn _run[T](app: &AppHandle, window: i64, state: T) -> T:
+    state
+
+fn _connect[T](app: &AppHandle, kind: i64, control: i64, handler: kept fn(&mut T)):
+    pass
