@@ -118,6 +118,20 @@ fn shared(ty: Type, protos: &mut String, defs: &mut String, body: (String, Strin
 fn record(module: &Module, name: &str, protos: &mut String, defs: &mut String) {
     let structure = &module.structs[name];
     let id = record_id(name);
+    // 接口值：显示里面的具体值；相等是同一个值；检查器不让复制，这里的复制只是兜底。
+    if structure.interface {
+        shared(
+            Type::Record(id),
+            protos,
+            defs,
+            (
+                "(void)p; zam_panic_one(\"an interface value cannot be copied\"); exit(1);".into(),
+                "return a->data == b->data;".into(),
+                "if (p->data) p->vt->show(out, p->data);".into(),
+            ),
+        );
+        return;
+    }
     // C 句柄：比较指针；检查器不让复制，这里的复制只是兜底；显示成 `Db(<C handle>)`。
     if structure.handle.is_some() {
         let short = name.rsplit(':').next().unwrap_or(name);

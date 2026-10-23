@@ -3135,6 +3135,8 @@ pub fn builtin_functions() -> impl Iterator<Item = (String, crate::compiler::Fun
                 external: false,
                 wrapping: false,
                 defaults: Vec::new(),
+                dispatch: false,
+                bounds: Vec::new(),
             },
         )
     })
@@ -3175,6 +3177,8 @@ struct Generator<'a> {
     // 函数里定义的 fn：自己的（源码名字, 生成的 C 函数名, 函数类型编号）。函数体里调用自己
     // （递归）时直接调这个静态函数，不经过局部变量。
     own: Option<(String, String, u64)>,
+    // 用到的装箱：（接口, 具体类型）。模块里为每一对生成虚表与装箱函数。
+    boxes: std::collections::BTreeSet<(u64, u64)>,
 }
 /// 用到的容器：`(元素, None)` 是列表，`(键, Some(值))` 是字典。
 type Containers = std::collections::BTreeSet<(Elem, Option<Elem>)>;
@@ -3754,6 +3758,7 @@ impl<'a> Generator<'a> {
             lifted: Vec::new(),
             prefix: String::new(),
             own: None,
+            boxes: Default::default(),
         }
     }
     /// 匿名函数捕获的外层变量：函数体里用到、又是当前局部变量的名字。
@@ -3933,6 +3938,7 @@ impl<'a> Generator<'a> {
         self.containers.extend(g.containers);
         self.values |= g.values;
         self.records.extend(g.records);
+        self.boxes.extend(g.boxes);
         self.funcs.extend(g.funcs);
         self.lifted.extend(g.lifted);
         self.lifted.push((name.clone(), definition));
@@ -4310,6 +4316,7 @@ impl<'a> Generator<'a> {
                     lifted: Vec::new(),
                     prefix: String::new(),
                     own: None,
+                    boxes: Default::default(),
                 }
                 .ty(value)
             }
@@ -4503,6 +4510,24 @@ impl<'a> Generator<'a> {
     }
     /// 按目标类型生成值：列表字面量只有知道目标类型才能和定长数组区分开。
     fn expr_as(&mut self, expr: &Expr, ty: Type) -> String {
+        // 期望接口值、给的是具体类型：把值移到堆上，配上这个具体类型的虚表。
+        if let Type::Record(interface) = ty {
+            if self.is_interface(interface) {
+                if let Some(Type::Record(concrete)) = self.known_type(expr) {
+                    if concrete != interface {
+                        let value = self.expr_as(expr, Type::Record(concrete));
+                        let value = self.moved(&value, Type::Record(concrete));
+                        self.boxes.insert((interface, concrete));
+                        self.records.insert(interface);
+                        self.records.insert(concrete);
+                        self.values = true;
+                        let local = self.scalar(&format!("box{interface}_{concrete}({value})"), ty);
+                        self.owners.push((local.clone(), ty));
+                        return local;
+                    }
+                }
+            }
+        }
         match (expr, ty) {
             (Expr::Array(values), Type::List(elem)) => {
                 let local = self.scalar("{0}", ty);
@@ -4658,6 +4683,9 @@ impl<'a> Generator<'a> {
     }
     /// 容器元素的指针：区间分析证明列表下标在范围内时直接取，否则经过带检查的 `at`
     /// （负下标换算与越界报错都在里面）。
+    fn is_interface(&self, id: u64) -> bool {
+        crate::compiler::struct_of(id, &self.module.structs).is_some_and(|(_, s)| s.interface)
+    }
     fn slot(&self, container: Type, pointer: &str, key: &str, index: &Expr) -> String {
         if matches!(container, Type::List(_)) && self.proofs.list_index(index) {
             format!("(&({pointer})->data[{key}])")
@@ -6549,6 +6577,24 @@ pub fn generate_with(
     };
     let mut records = std::collections::BTreeSet::new();
     let mut needed = std::collections::BTreeSet::new();
+    // 装箱时为具体类型生成转发函数，要调用它与接口同名的方法：程序里有接口时把这些方法的原型都带上。
+    let dispatched: std::collections::BTreeSet<&str> = module
+        .functions
+        .iter()
+        .filter(|(_, f)| f.dispatch)
+        .filter_map(|(name, _)| name.rsplit_once('.').map(|(_, m)| m))
+        .collect();
+    for (name, function) in &module.functions {
+        if !function.dispatch
+            && !function.builtin
+            && function.generics.is_empty()
+            && name
+                .rsplit_once('.')
+                .is_some_and(|(owner, m)| owner.contains(':') && dispatched.contains(m))
+        {
+            needed.insert(name.clone());
+        }
+    }
     for (name, function) in &module.functions {
         if name.split_once(':').unwrap().0 == unit && function.generics.is_empty() {
             needed.insert(name.clone());
@@ -6691,6 +6737,7 @@ pub fn generate_with(
     let mut bodies = String::new();
     let mut funcs = std::collections::BTreeSet::new();
     let mut lifted: Vec<(String, String)> = Vec::new();
+    let mut boxes: std::collections::BTreeSet<(u64, u64)> = std::collections::BTreeSet::new();
     for name in &needed {
         let function = &module.functions[name];
         for ty in function
@@ -6727,6 +6774,21 @@ pub fn generate_with(
         } else {
             signature(&name)
         };
+        if function.dispatch {
+            let method = name.rsplit('.').next().unwrap_or(&name);
+            let args: String = (1..function.params.len())
+                .map(|i| format!(", p{i}"))
+                .collect();
+            let call = format!("p0->vt->m_{method}(p0->data{args})");
+            bodies.push_str(
+                &if function.result == Type::Unit && function.error.is_none() {
+                    format!("{declaration} {{ {call}; }}\n")
+                } else {
+                    format!("{declaration} {{ return {call}; }}\n")
+                },
+            );
+            continue;
+        }
         if function.external {
             // 没被调用的 extern fn 不生成，用不到的 C 函数就不用链接。
             if used_externs.contains(&name) {
@@ -6764,6 +6826,7 @@ pub fn generate_with(
             lifted: Vec::new(),
             prefix,
             own: None,
+            boxes: Default::default(),
         };
         for (i, (param, ty)) in function.params.iter().enumerate() {
             let local = format!("p{i}");
@@ -6789,6 +6852,11 @@ pub fn generate_with(
             records.insert(record_name(id));
         }
         funcs.extend(g.funcs);
+        for (interface, concrete) in &g.boxes {
+            records.insert(record_name(*interface));
+            records.insert(record_name(*concrete));
+        }
+        boxes.extend(g.boxes);
         for (key, definition) in g.lifted {
             if !lifted.iter().any(|(other, _)| *other == key) {
                 lifted.push((key, definition));
@@ -6903,6 +6971,12 @@ pub fn generate_with(
     for name in &records {
         let structure = &module.structs[name];
         let id = record_id(name);
+        if structure.interface {
+            source.push_str(&format!(
+                "struct R{id} {{ void *data; const struct V{id} *vt; }};\n"
+            ));
+            continue;
+        }
         source.push_str(&format!(
             "struct R{id} {{ {} }};\n",
             if structure.fields.is_empty() {
@@ -6920,6 +6994,12 @@ pub fn generate_with(
     }
     for (key, value) in &maps {
         source.push_str(&map_helpers(MAP_ENTRY, *key, *value));
+    }
+    // 接口的虚表：方法的返回类型可以是还没定义完的结果结构体（函数指针只要声明）。
+    for name in &records {
+        if module.structs[name].interface {
+            source.push_str(&vtable_definition(module, record_id(name)));
+        }
     }
     for name in &records {
         let id = record_id(name);
@@ -6959,6 +7039,13 @@ pub fn generate_with(
     for name in &records {
         let structure = &module.structs[name];
         let id = record_id(name);
+        if structure.interface {
+            // 接口值：经虚表释放里面的具体值（连同它占的堆内存）。
+            source.push_str(&format!(
+                "static void dropR{id}(R{id} *p) {{ if (p->data) p->vt->drop(p->data); p->data = NULL; p->vt = NULL; }}\nstatic R{id} takeR{id}(R{id} *p) {{ R{id} v=*p; p->data = NULL; p->vt = NULL; return v; }}\n"
+            ));
+            continue;
+        }
         if let Some(handle) = &structure.handle {
             // C 句柄：非 NULL 时调用 close，之后清零，重复释放也安全。
             needs_headers = true;
@@ -7052,6 +7139,9 @@ pub fn generate_with(
             source.push_str(&format!("{};\n", signature(name)));
         }
     }
+    for (interface, concrete) in &boxes {
+        source.push_str(&box_definition(module, &symbols, *interface, *concrete));
+    }
     source.push_str(&specialized_decls);
     for (_, definition) in &lifted {
         source.push_str(definition);
@@ -7136,6 +7226,93 @@ fn handle_pointer(handle: &crate::compiler::Handle, headers: bool) -> String {
     }
 }
 
+/// 接口的分派方法：（方法名, 声明），按方法名排序；虚表里的顺序就是这个顺序。
+fn dispatch_methods(module: &Module, interface: u64) -> Vec<(String, &crate::compiler::Function)> {
+    let mut methods = crate::compiler::interface_methods(&module.functions, interface);
+    methods.sort_by(|a, b| a.0.cmp(&b.0));
+    methods
+}
+/// 方法在 C 里的返回类型：会失败时是结果结构体。
+fn method_result(function: &crate::compiler::Function) -> String {
+    if function.error.is_some() {
+        fallible_name(function.result, function.error)
+    } else {
+        ctype(function.result)
+    }
+}
+/// 接口的虚表：释放、显示，以及每个方法（第一个参数是数据指针）。
+fn vtable_definition(module: &Module, interface: u64) -> String {
+    let mut slots = vec![
+        "void (*drop)(void *);".to_owned(),
+        "void (*show)(S *, void *);".to_owned(),
+    ];
+    for (method, function) in dispatch_methods(module, interface) {
+        let params: String = function.params[1..]
+            .iter()
+            .map(|(_, ty)| format!(", {}", ctype(*ty)))
+            .collect();
+        slots.push(format!(
+            "{} (*m_{method})(void *{params});",
+            method_result(function)
+        ));
+    }
+    format!("struct V{interface} {{ {} }};\n", slots.join(" "))
+}
+/// 把具体类型 `concrete` 装进接口值的代码：转发方法的小函数、虚表、装箱函数。
+fn box_definition(
+    module: &Module,
+    symbols: &BTreeMap<String, String>,
+    interface: u64,
+    concrete: u64,
+) -> String {
+    let mut out = format!(
+        "static void boxdrop{interface}_{concrete}(void *p) {{ dropR{concrete}((R{concrete} *)p); free(p); }}\n\
+static void boxshow{interface}_{concrete}(S *out, void *p) {{ showR{concrete}(out, (R{concrete} *)p); }}\n"
+    );
+    let mut slots = vec![
+        format!("boxdrop{interface}_{concrete}"),
+        format!("boxshow{interface}_{concrete}"),
+    ];
+    for (method, function) in dispatch_methods(module, interface) {
+        let target = module
+            .functions
+            .iter()
+            .find(|(name, f)| {
+                !f.dispatch
+                    && f.generics.is_empty()
+                    && name
+                        .rsplit_once('.')
+                        .is_some_and(|(owner, m)| m == method && record_id(owner) == concrete)
+            })
+            .map(|(name, _)| symbols[name].clone())
+            .expect("checked interface method");
+        let params: Vec<String> = function.params[1..]
+            .iter()
+            .enumerate()
+            .map(|(i, (_, ty))| format!("{} a{i}", ctype(*ty)))
+            .collect();
+        let args: String = (0..params.len()).map(|i| format!(", a{i}")).collect();
+        let call = format!("{target}((R{concrete} *)self{args})");
+        let body = if function.result == Type::Unit && function.error.is_none() {
+            format!("{call};")
+        } else {
+            format!("return {call};")
+        };
+        let name = format!("boxm{interface}_{concrete}_{method}");
+        out.push_str(&format!(
+            "static {} {name}(void *self{}) {{ {body} }}\n",
+            method_result(function),
+            params.iter().map(|p| format!(", {p}")).collect::<String>()
+        ));
+        slots.push(name);
+    }
+    out.push_str(&format!(
+        "static const struct V{interface} boxvt{interface}_{concrete} = {{ {} }};\n\
+static R{interface} box{interface}_{concrete}(R{concrete} v) {{ R{interface} out; R{concrete} *p = (R{concrete} *)malloc(sizeof *p); if (!p) {{ fputs(\"zam: allocation failed\\n\", stderr); exit(1); }} *p = v; out.data = p; out.vt = &boxvt{interface}_{concrete}; return out; }}\n",
+        slots.join(", ")
+    ));
+    out
+}
 /// extern fn 的包装：把 Zamak 的值换成 C 的参数，调用 C 函数，再把结果换回来。
 /// 有 `[native] headers` 时用库自己的原型（C 编译器按真实类型转换 int、size_t 等参数），
 /// 否则按 Zamak 的签名写一个原型。

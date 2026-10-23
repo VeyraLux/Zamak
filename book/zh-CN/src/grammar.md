@@ -105,6 +105,20 @@ fn main():
 
 详见[结构体与方法](structs.md)。
 
+## 接口
+
+```zamak,ignore
+interface Shape:
+    fn area(&self) -> f64
+
+fn total[T: Shape](items: &[T]) -> f64:   # 约束：每种类型各生成一份
+    ...
+
+let shapes: [Shape] = [Circle(r=1.0), Square(side=2.0)]   # 接口值：按类型分派
+```
+
+有接口里全部方法的类型自动满足它。详见[结构体与方法](structs.md)。
+
 ## 枚举与 match
 
 ```zamak
@@ -255,7 +269,7 @@ fn main():
 - 线程与并发
 - 网络
 - 宏
-- trait / 接口 / 继承
+- 类继承
 - 泛型特化、类型级编程
 - 借用跨函数返回（要靠返回值移交所有权）
 

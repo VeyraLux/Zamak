@@ -167,7 +167,7 @@ Write the type with its parameter, as in `Stack[string]`. Annotate the variable 
 
 ## Compared with object-oriented languages
 
-If you've written Python, Java, or C++, you might wonder whether Zamak is object-oriented. Zamak has structs and methods, so you can keep data together with the functions that work on it. It doesn't have class inheritance or interfaces.
+If you've written Python, Java, or C++, you might wonder whether Zamak is object-oriented. Zamak has structs and methods, so you can keep data together with the functions that work on it. It doesn't have class inheritance, but it has interfaces; see the next section.
 
 In an object-oriented language, "several kinds of animal that each make a different sound" is usually a base class with a few subclasses. In Zamak, you list the cases in an [enum](enums.md) and handle each one with `match` in a method:
 
@@ -208,10 +208,57 @@ fn main():
 42
 ```
 
+## Interfaces
+
+An interface lists methods. Any type that has those methods, with the same names, parameters, and results, satisfies the interface automatically; you don't declare that it does. You can use an interface in two ways:
+
+```zamak
+interface Shape:
+    fn area(&self) -> f64
+    fn name(&self) -> string
+
+struct Circle:
+    r: f64
+
+    fn area(&self) -> f64: 3.0 * self.r * self.r
+    fn name(&self) -> string: "circle"
+
+struct Square:
+    side: f64
+
+    fn area(&self) -> f64: self.side * self.side
+    fn name(&self) -> string: "square"
+
+fn total[T: Shape](items: &[T]) -> f64:
+    let mut sum = 0.0
+    for item in items:
+        sum += item.area()
+    sum
+
+fn main():
+    let shapes: [Shape] = [Circle(r=1.0), Square(side=2.0)]
+    for s in shapes:
+        println(f"{s.name()}: {s.area()}")
+    let squares: [Square] = [Square(side=1.0), Square(side=3.0)]
+    println(total(squares))
+```
+
+```text
+circle: 3.0
+square: 4.0
+10.0
+```
+
+- **As a type**: a `[Shape]` list can hold values of different types, and each method call goes to the right type, like an interface in Go or Java. The value moves into the interface value and is freed with it.
+- **As a bound**: `T` in `fn total[T: Shape]` can be any type that satisfies `Shape`. Each type gets its own copy of the code, so calls have no dispatch cost. When a type lacks a method, the compiler names the missing method.
+- Interface methods take `&self` or `&mut self` first and have no body.
+- Interface values can't be copied; borrow them to share them: `&Shape`, `&[Shape]`.
+
 ## Summary
 
 - `struct Name:` declares fields one per line; `Name(field: value, ...)` creates a value.
 - Methods go inside the struct and take `&self`, `&mut self`, or `self`. A function without `self` is called on the type.
 - A struct owns its fields; lists of structs are read and changed through `items[i].field`.
 - `struct Name[T]:` declares a generic struct.
-- There is no class inheritance and no interfaces: use an enum with `match` for variants, and a field of function type for pluggable behavior.
+- There is no class inheritance: use an enum with `match` for variants, and a field of function type or an interface for pluggable behavior.
+- `interface Name:` lists methods, and any type with those methods satisfies it. Use an interface as a type (`[Shape]`) or as a bound on a type parameter (`[T: Shape]`).

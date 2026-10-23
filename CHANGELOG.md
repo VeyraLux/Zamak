@@ -33,6 +33,10 @@ and this file is the source for the text of each GitHub release.
 - **Raw and triple-quoted strings**: `r"\d+"`, `"""say "hi" now"""`, and `r"""{"a": 1}"""`, plus the
   `\uXXXX` and `\UXXXXXXXX` escapes.
 - Parts of the standard library are now written in Zamak and compiled with your program.
+- **Interfaces.** `interface Shape:` lists methods, and any type with those methods satisfies it,
+  with no `impl` to write. Use it as a type to keep values of different types in one list
+  (`[Shape]`, calls dispatch to each value), or as a bound on a type parameter
+  (`fn total[T: Shape]`, compiled once per type).
 
 ## 0.1.1
 
@@ -192,6 +196,9 @@ this preview.
 - **原始字符串与三引号字符串**：`r"\d+"`、`"""say "hi" now"""`、`r"""{"a": 1}"""`，以及 `\uXXXX`、
   `\UXXXXXXXX` 转义。
 - 标准库的一部分改用 Zamak 编写，和你的程序一起编译。
+- **接口。** `interface Shape:` 列出方法，有这些方法的类型自动满足它，不用写 `impl`。接口可以当类型，
+  把不同类型的值放进同一个列表（`[Shape]`，调用时按各自的类型分派），也可以约束类型参数
+  （`fn total[T: Shape]`，每种类型各生成一份代码）。
 
 ## 0.1.1（中文）
 

@@ -1188,6 +1188,8 @@ mod tests {
             external: false,
             wrapping: false,
             defaults: Vec::new(),
+            dispatch: false,
+            bounds: Vec::new(),
         }
     }
     fn binary(op: &str, a: Expr, b: Expr) -> Expr {

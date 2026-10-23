@@ -74,7 +74,7 @@
         },
         {
           "name": "keyword.other.zamak",
-          "match": "\\b(?:fn|pub|extern|use|struct|enum|const|let|mut|fail)\\b"
+          "match": "\\b(?:fn|pub|extern|use|struct|enum|interface|const|let|mut|fail)\\b"
         },
         {
           "name": "variable.language.self.zamak",
@@ -107,6 +107,10 @@
         {
           "name": "entity.name.type.zamak",
           "match": "(?<=\\bstruct\\s+)[A-Za-z_][A-Za-z0-9_]*"
+        },
+        {
+          "name": "entity.name.type.zamak",
+          "match": "(?<=\\binterface\\s+)[A-Za-z_][A-Za-z0-9_]*"
         },
         {
           "name": "entity.name.namespace.zamak",

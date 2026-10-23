@@ -12,7 +12,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-68");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-69");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -667,7 +667,7 @@ impl Project {
             for (name, function) in &input.module.functions {
                 let mut function = function.clone();
                 let position = function.position;
-                for (_, ty) in &mut function.params {
+                for (_, ty) in function.params.iter_mut().chain(function.bounds.iter_mut()) {
                     self.resolve_type(id, ty)
                         .map_err(|error| self.located(id, position, error))?;
                 }
@@ -719,6 +719,7 @@ impl Project {
                     variants: Vec::new(),
                     generics: Vec::new(),
                     handle: None,
+                    interface: false,
                 },
             );
         }

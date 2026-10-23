@@ -105,6 +105,20 @@ Methods live in the struct's indented block; the first parameter is `&self`, `&m
 
 See [Structs and methods](structs.md).
 
+## Interfaces
+
+```zamak,ignore
+interface Shape:
+    fn area(&self) -> f64
+
+fn total[T: Shape](items: &[T]) -> f64:   # bound: one copy per type
+    ...
+
+let shapes: [Shape] = [Circle(r=1.0), Square(side=2.0)]   # interface values: dispatch by type
+```
+
+Any type with all of an interface's methods satisfies it. See [Structs and methods](structs.md).
+
 ## Enums and match
 
 ```zamak
@@ -255,7 +269,7 @@ See [Standard library](standard-library.md).
 - Threads and concurrency
 - Networking
 - Macros
-- Traits, interfaces, inheritance
+- Class inheritance
 - Generic specialization, type-level programming
 - Returning a borrow from a function (return the value instead)
 

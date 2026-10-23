@@ -151,6 +151,7 @@ fn head(line: &str) -> Option<(&'static str, String)> {
     let (kind, rest) = [
         ("fn", "fn "),
         ("struct", "struct "),
+        ("struct", "interface "),
         // `extern type Db: "sqlite3"`：C 句柄，按结构体对待。
         ("struct", "type "),
         ("enum", "enum "),

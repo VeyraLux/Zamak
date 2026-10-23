@@ -19,6 +19,7 @@ Zamak keeps Python's names and rules wherever it can. This appendix lists what s
 | --- | --- | --- |
 | `def area(w, h):` | `fn area(w: f64, h: f64) -> f64:` | Types let the compiler check every call. |
 | `x = 1` | `let x = 1` or `let mut x = 1` | `mut` marks what can change. |
+| `class Shape(Protocol):`, abstract base classes | `interface Shape:` listing the methods | Any type with the methods satisfies it; no inheritance. |
 | `class Point:` with `__init__` | `struct Point:` with fields, `Point(x: 1, y: 2)` | Fields are declared once; no constructor to write. |
 | `def norm(self):` | `fn norm(&self) -> f64:` | `&self`, `&mut self`, or `self` says how the method uses the value. |
 | `None` | `Option.None`, with type `Option[T]` | A missing value can't be used by accident. |

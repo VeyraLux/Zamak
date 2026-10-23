@@ -216,6 +216,16 @@ struct Point:
         self.x += d
 ```
 
+## Interfaces
+
+```
+interface Shape:
+    fn area(&self) -> f64
+    fn name(&self) -> string
+```
+
+Any struct or enum with these methods (same parameters and results) satisfies `Shape`; there is no `impl` declaration. Use an interface as a type for values of different types: `let shapes: [Shape] = [Circle(r=1.0), Square(side=2.0)]`, `fn biggest(shapes: &[Shape])`, struct fields and return types; calls dispatch to each value's own method, and `&mut self` methods work through it. Or use it as a bound: `fn total[T: Shape](items: &[T]) -> f64` (one copy per type; a missing method is a compile error). Interface methods take `&self` or `&mut self` and have no body. Interface values cannot be copied (borrow them) or built directly (`Shape()` is an error).
+
 ## Tuples
 
 - Type `(i64, string)`, value `(3, "three")`, items `t.0`, `t.1`. A function returns several values as a tuple: `fn divmod(a: i64, b: i64) -> (i64, i64): (a // b, a % b)`.

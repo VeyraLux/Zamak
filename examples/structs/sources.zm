@@ -1,0 +1,57 @@
+# 接口值当字段、当返回值；接口方法也可以失败。泛型约束 [T: Source] 也接受接口类型本身。
+interface Source:
+    fn read(&mut self) -> string!string
+    fn label(&self) -> string
+
+struct Fixed:
+    items: [string]
+
+    fn read(&mut self) -> string!string:
+        if len(self.items) == 0:
+            fail "empty"
+
+        self.items.pop()
+
+    fn label(&self) -> string: "fixed"
+
+struct Counter:
+    n: i64
+
+    fn read(&mut self) -> string!string:
+        self.n += 1
+        str(self.n)
+
+    fn label(&self) -> string: f"counter at {self.n}"
+
+struct Pipeline:
+    name: string
+    input: Source
+
+fn pick(fixed: bool) -> Source:
+    if fixed:
+        return Fixed(items=["b", "a"])
+
+    Counter(n=10)
+
+fn drain[T: Source](source: &mut T, times: i64) -> [string]:
+    let mut out: [string] = []
+
+    for i in range(times):
+        let value = source.read() catch e:
+            out.push(f"<{e}>")
+            continue
+
+        out.push(value)
+
+    out
+
+fn main() -> !string:
+    let mut p = Pipeline(name="demo", input=pick(true))
+    println(p.input.read()?)
+    println(p.input.label())
+    let mut counter = pick(false)
+    println(drain(&mut counter, 3))
+    println(counter.label())
+    let mut fixed = Fixed(items=["x"])
+    println(drain(&mut fixed, 2))
+    println(p)

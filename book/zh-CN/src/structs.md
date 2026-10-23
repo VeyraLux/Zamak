@@ -167,7 +167,7 @@ first
 
 ## 和面向对象语言比较
 
-如果你写过 Python、Java 或 C++，可能想知道 Zamak 算不算面向对象。Zamak 有结构体和方法，能把数据和操作它的函数放在一起；但没有类继承，也没有接口。
+如果你写过 Python、Java 或 C++，可能想知道 Zamak 算不算面向对象。Zamak 有结构体和方法，能把数据和操作它的函数放在一起；没有类继承，但有接口（见下一节）。
 
 在面向对象语言里，「几种动物都会叫，叫声各不相同」通常写成一个父类加几个子类。在 Zamak 里，用[枚举](enums.md)列出所有情况，在方法里用 `match` 分别处理：
 
@@ -208,10 +208,57 @@ fn main():
 42
 ```
 
+## 接口
+
+接口列出一组方法。一个类型只要有这些方法（名字、参数和返回值都一样），就自动满足这个接口，不用写“实现了”。接口有两种用法：
+
+```zamak
+interface Shape:
+    fn area(&self) -> f64
+    fn name(&self) -> string
+
+struct Circle:
+    r: f64
+
+    fn area(&self) -> f64: 3.0 * self.r * self.r
+    fn name(&self) -> string: "circle"
+
+struct Square:
+    side: f64
+
+    fn area(&self) -> f64: self.side * self.side
+    fn name(&self) -> string: "square"
+
+fn total[T: Shape](items: &[T]) -> f64:
+    let mut sum = 0.0
+    for item in items:
+        sum += item.area()
+    sum
+
+fn main():
+    let shapes: [Shape] = [Circle(r=1.0), Square(side=2.0)]
+    for s in shapes:
+        println(f"{s.name()}: {s.area()}")
+    let squares: [Square] = [Square(side=1.0), Square(side=3.0)]
+    println(total(squares))
+```
+
+```text
+circle: 3.0
+square: 4.0
+10.0
+```
+
+- **接口当类型**：`[Shape]` 里可以放不同类型的值，调用方法时按各自的类型分派，和 Go 的接口、Java 的接口变量一样。值被移进接口值里，接口值离开作用域时一起释放。
+- **接口当约束**：`fn total[T: Shape]` 的 `T` 可以是任何满足 `Shape` 的类型。每种类型各生成一份代码，调用没有分派的开销；类型缺方法时编译器会指出缺的是哪一个。
+- 接口里的方法第一个参数是 `&self` 或 `&mut self`，没有函数体。
+- 接口值不能复制，要共用就借用：`&Shape`、`&[Shape]`。
+
 ## 小结
 
 - `struct Name:` 每行声明一个字段；`Name(field: value, ...)` 创建值。
 - 方法写在结构体里，第一个参数是 `&self`、`&mut self` 或 `self`。没有 `self` 的函数在类型上调用。
 - 结构体拥有它的字段；结构体列表通过 `items[i].field` 读写。
 - `struct Name[T]:` 声明泛型结构体。
-- 没有类继承和接口：几种变体用枚举加 `match`，可替换的行为用函数类型的字段。
+- 没有类继承：几种变体用枚举加 `match`，可替换的行为用函数类型的字段或接口。
+- `interface Name:` 列出方法；有这些方法的类型自动满足它。接口可以当类型（`[Shape]`），也可以约束类型参数（`[T: Shape]`）。

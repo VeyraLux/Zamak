@@ -1,0 +1,57 @@
+# 接口：列出一组方法。有这些方法的类型自动满足它，不用声明“实现了”。
+interface Shape:
+    fn area(&self) -> f64
+    fn name(&self) -> string
+    fn grow(&mut self, by: f64)
+
+struct Circle:
+    r: f64
+
+    fn area(&self) -> f64: 3.0 * self.r * self.r
+    fn name(&self) -> string: "circle"
+    fn grow(&mut self, by: f64): self.r += by
+
+struct Label:
+    text: string
+    size: f64
+
+    fn area(&self) -> f64: self.size * len(self.text)
+    fn name(&self) -> string: f"label {self.text}"
+    fn grow(&mut self, by: f64): self.size += by
+
+# 接口当类型：同一个列表里放不同类型的值，调用时按各自的方法分派。
+fn biggest(shapes: &[Shape]) -> string:
+    let mut best = ""
+    let mut most = -1.0
+
+    for s in shapes:
+        if s.area() > most:
+            most = s.area()
+            best = s.name()
+
+    best
+
+# 接口当约束：T 可以是任何满足 Shape 的类型，每种类型各生成一份代码，没有分派的开销。
+fn total[T: Shape](items: &[T]) -> f64:
+    let mut sum = 0.0
+
+    for item in items:
+        sum += item.area()
+
+    sum
+
+fn main():
+    let mut shapes: [Shape] = [Circle(r=1.0), Label(text="hi", size=2.0)]
+    shapes.push(Circle(r=0.5))
+
+    for s in shapes:
+        println(f"{s.name()}: {s.area()}")
+
+    println(biggest(shapes))
+    shapes[1].grow(10.0)
+    println(shapes[1].area())
+    println(shapes)
+
+    let circles: [Circle] = [Circle(r=1.0), Circle(r=2.0)]
+    println(total(circles))
+    println(total(shapes))

@@ -19,6 +19,7 @@ Zamak 尽可能沿用 Python 的名字和规则。这篇附录列出哪些与 Py
 | --- | --- | --- |
 | `def area(w, h):` | `fn area(w: f64, h: f64) -> f64:` | 有了类型，编译器能检查每一次调用。 |
 | `x = 1` | `let x = 1` 或 `let mut x = 1` | `mut` 标出会改变的值。 |
+| `class Shape(Protocol):`、抽象基类 | `interface Shape:` 列出方法 | 有这些方法的类型自动满足，不用继承。 |
 | `class Point:` 加 `__init__` | `struct Point:` 列出字段，`Point(x: 1, y: 2)` | 字段只声明一次，不用写构造函数。 |
 | `def norm(self):` | `fn norm(&self) -> f64:` | `&self`、`&mut self` 或 `self` 说明方法怎样使用这个值。 |
 | `None` | `Option.None`，类型是 `Option[T]` | 不存在的值不会被误用。 |

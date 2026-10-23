@@ -1081,6 +1081,11 @@ pub struct Function {
     // 参数的默认值（`timeout: f64 = 5.0`），与 params 一一对应；没有默认值的函数是空表。
     // 默认值只能是常量或 `Option.None`，调用时由 `bind_args` 填进没写的位置。
     pub defaults: Vec<Option<Expr>>,
+    // 接口里声明的方法（`interface Shape: fn area(&self) -> f64`）：没有函数体，对接口值调用时
+    // 经虚表分派到具体类型的同名方法。
+    pub dispatch: bool,
+    // 类型参数的接口约束（`fn total[T: Shape]`）：（类型参数, 接口类型）。实例化时检查。
+    pub bounds: Vec<(String, Type)>,
 }
 
 /// 关键字实参 `timeout=2.0` 在归位之前的写法：`Call("$kw:timeout", [值])`。
@@ -1513,6 +1518,21 @@ pub fn instance_with(
         }
         types.push(format!("{ty:?}"));
     }
+    for (generic, bound) in &template.bounds {
+        let actual = map
+            .get(&type_param(generic))
+            .copied()
+            .expect("inferred above");
+        let Type::Record(interface) = bound else {
+            continue;
+        };
+        if let Err(error) = implements(functions, actual, *interface) {
+            let short = name.split_once(':').map_or(name, |(_, n)| n);
+            return Err(format!(
+                "{short} needs {generic} to satisfy the bound: {error}"
+            ));
+        }
+    }
     let instance = format!("{name}[{}]", types.join(", "));
     if INSTANCES
         .read()
@@ -1551,6 +1571,8 @@ pub struct Struct {
     // `extern type Db: "sqlite3", close = sqlite3_close`：C 句柄。唯一的字段 `$handle` 存指针，
     // 释放时调用 close；不能在 Zamak 里构造或复制，只能由 extern fn 返回。
     pub handle: Option<Handle>,
+    // `interface Shape:`：接口。没有字段；它的值在 C 里是（数据指针, 虚表指针），方法是分派函数。
+    pub interface: bool,
 }
 
 /// C 句柄类型的 C 侧描述。
@@ -1560,6 +1582,117 @@ pub struct Handle {
     pub c_type: String,
     // 释放句柄的 C 函数；没有时 Zamak 不负责释放（例如 stdout 这类借来的句柄）。
     pub close: Option<String>,
+}
+
+/// 方法表里的拥有者：`mod:Shape.area` → `mod:Shape`。
+fn method_owner(name: &str) -> Option<(&str, &str)> {
+    let (owner, method) = name.rsplit_once('.')?;
+    owner.contains(':').then_some((owner, method))
+}
+
+/// 接口的分派方法：（方法名, 声明）。
+pub fn interface_methods(
+    functions: &BTreeMap<String, Function>,
+    interface: u64,
+) -> Vec<(String, &Function)> {
+    functions
+        .iter()
+        .filter(|(_, f)| f.dispatch)
+        .filter_map(|(name, f)| {
+            let (owner, method) = method_owner(name)?;
+            (record_id(owner) == interface).then(|| (method.to_owned(), f))
+        })
+        .collect()
+}
+
+/// 结构体编号 → 名字：检查开始时登记，实例化时报错要用（那里只拿得到函数表）。
+static RECORD_NAMES: std::sync::RwLock<BTreeMap<u64, String>> =
+    std::sync::RwLock::new(BTreeMap::new());
+
+fn remember_records(structs: &BTreeMap<String, Struct>) {
+    let mut names = RECORD_NAMES.write().expect("record names");
+    for name in structs.keys() {
+        let short = name.rsplit(':').next().unwrap_or(name);
+        names.insert(record_id(name), short.to_owned());
+    }
+}
+
+/// 显示用的类型名。
+fn shown_type(functions: &BTreeMap<String, Function>, ty: Type) -> String {
+    if let Type::Record(id) = ty {
+        if let Some(name) = RECORD_NAMES.read().expect("record names").get(&id) {
+            return name.clone();
+        }
+    }
+    match ty {
+        Type::Int => "i64".into(),
+        Type::Float => "f64".into(),
+        Type::Bool => "bool".into(),
+        Type::Owned => "string".into(),
+        Type::Record(id) => functions
+            .keys()
+            .filter_map(|name| method_owner(name))
+            .find(|(owner, _)| record_id(owner) == id)
+            .map(|(owner, _)| owner.rsplit(':').next().unwrap_or(owner).to_owned())
+            .unwrap_or_else(|| "this type".into()),
+        _ => "this type".into(),
+    }
+}
+
+/// `actual` 有没有接口 `interface` 的每个方法，而且参数、返回值、错误类型都一样。
+/// 接口方法收 `&mut self` 时，具体类型的方法收 `&self` 或 `&mut self` 都可以；收 `&self` 时只能是 `&self`。
+pub fn implements(
+    functions: &BTreeMap<String, Function>,
+    actual: Type,
+    interface: u64,
+) -> Result<(), String> {
+    let wanted = interface_methods(functions, interface);
+    let iface = shown_type(functions, Type::Record(interface));
+    if actual == Type::Record(interface) {
+        return Ok(());
+    }
+    let shown = shown_type(functions, actual);
+    let Type::Record(id) = actual else {
+        return Err(format!(
+            "{shown} has no methods, so it does not satisfy {iface}"
+        ));
+    };
+    for (method, required) in wanted {
+        let found = functions.iter().find(|(name, f)| {
+            !f.dispatch
+                && f.generics.is_empty()
+                && method_owner(name)
+                    .is_some_and(|(owner, m)| m == method && record_id(owner) == id)
+        });
+        let Some((_, found)) = found else {
+            return Err(format!(
+                "{shown} does not satisfy {iface}: it has no method {method}"
+            ));
+        };
+        let self_ok = match (
+            required.params[0].1,
+            found.params.first().map(|(n, t)| (n.as_str(), *t)),
+        ) {
+            (Type::RecordRef(_, wants_mut), Some(("self", Type::RecordRef(_, has_mut)))) => {
+                wants_mut || !has_mut
+            }
+            _ => false,
+        };
+        let same = self_ok
+            && required.params.len() == found.params.len()
+            && required.params[1..]
+                .iter()
+                .zip(&found.params[1..])
+                .all(|((_, a), (_, b))| a == b)
+            && required.result == found.result
+            && required.error == found.error;
+        if !same {
+            return Err(format!(
+                "{shown}.{method} has a different signature from {iface}.{method}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// 类型里是否含有 C 句柄（直接是句柄，或字段、元素里有）：这样的值不能复制。
@@ -1575,6 +1708,34 @@ pub fn holds_handle(ty: Type, structs: &BTreeMap<String, Struct>) -> bool {
                     return false;
                 };
                 structure.handle.is_some()
+                    || structure
+                        .fields
+                        .iter()
+                        .any(|(_, field)| walk(*field, structs, seen))
+            }
+            Type::List(elem) | Type::ListRef(elem, _) => walk(elem.ty(), structs, seen),
+            Type::Map(key, value) | Type::MapRef(key, value, _) => {
+                walk(key.ty(), structs, seen) || walk(value.ty(), structs, seen)
+            }
+            _ => false,
+        }
+    }
+    walk(ty, structs, &mut BTreeSet::new())
+}
+
+/// 类型里是否含有接口值。
+pub fn holds_interface(ty: Type, structs: &BTreeMap<String, Struct>) -> bool {
+    fn walk(ty: Type, structs: &BTreeMap<String, Struct>, seen: &mut BTreeSet<u64>) -> bool {
+        match ty {
+            Type::Record(id) | Type::RecordRef(id, _) => {
+                if !seen.insert(id) {
+                    return false;
+                }
+                let Some((_, structure)) = structs.iter().find(|(name, _)| record_id(name) == id)
+                else {
+                    return false;
+                };
+                structure.interface
                     || structure
                         .fields
                         .iter()
@@ -1797,6 +1958,7 @@ pub fn option() -> Struct {
         variants: vec![("Some".into(), 1, 1), ("None".into(), 2, 0)],
         generics: vec!["T".into()],
         handle: None,
+        interface: false,
     }
 }
 
@@ -2621,6 +2783,8 @@ struct Parser {
     defaults: Vec<Option<Expr>>,
     // 已声明的常量：参数默认值可以用它们。
     constants: BTreeMap<String, Constant>,
+    // 刚解析的类型参数上的接口约束（`[T: Shape]`）。
+    bounds: Vec<(String, Type)>,
 }
 
 /// match 的一个分支：枚举变体、字面量（`1 | 2`、`"a"`、`true`）或 `_`。
@@ -3787,10 +3951,14 @@ impl Parser {
             }
             generics.push(generic);
         }
+        let bounds = std::mem::take(&mut self.bounds);
         let outer = std::mem::replace(&mut self.type_params, generics.clone());
         let parsed = self.function_rest(public, start, imports, owner, name, generics);
         self.type_params = outer;
-        parsed
+        parsed.map(|(name, mut function)| {
+            function.bounds = bounds;
+            (name, function)
+        })
     }
     /// 函数名（与类型参数）之后：参数表、返回类型与函数体。
     fn function_rest(
@@ -3822,6 +3990,8 @@ impl Parser {
                 external: false,
                 wrapping: false,
                 defaults,
+                dispatch: false,
+                bounds: Vec::new(),
             },
         ))
     }
@@ -3870,6 +4040,8 @@ impl Parser {
                 external: true,
                 wrapping: false,
                 defaults,
+                dispatch: false,
+                bounds: Vec::new(),
             },
         ))
     }
@@ -3956,6 +4128,7 @@ impl Parser {
     /// 名字后面的 `[T, U]`：类型参数列表，没有时为空。
     fn generics(&mut self) -> Result<Vec<String>, String> {
         let mut generics = Vec::new();
+        self.bounds.clear();
         if self.symbol('[') {
             loop {
                 let generic = self.word()?;
@@ -3966,6 +4139,16 @@ impl Parser {
                 }
                 if generics.contains(&generic) {
                     return Err(format!("duplicate type parameter {generic}"));
+                }
+                // `T: Shape`：T 要有 Shape 的全部方法。
+                if self.symbol(':') {
+                    let bound = self.ty()?;
+                    if !matches!(bound, Type::Record(_)) {
+                        return Err(format!(
+                            "a bound names an interface, such as {generic}: Shape"
+                        ));
+                    }
+                    self.bounds.push((generic.clone(), bound));
                 }
                 generics.push(generic);
                 if self.symbol(']') {
@@ -4102,6 +4285,7 @@ impl Parser {
                         text: Vec::new(),
                         defaults: Vec::new(),
                         constants: self.constants.clone(),
+                        bounds: Vec::new(),
                     };
                     let expr = inner
                         .expr()
@@ -4831,6 +5015,7 @@ pub fn parse(source: &str) -> Result<Module, String> {
         text: source.lines().map(str::to_owned).collect(),
         defaults: Vec::new(),
         constants: BTreeMap::new(),
+        bounds: Vec::new(),
     };
     let result = (|| {
         let mut module = Module {
@@ -4919,6 +5104,95 @@ pub fn parse(source: &str) -> Result<Module, String> {
                 p.separator()?;
                 continue;
             }
+            // `interface Shape:` 下面每行一个方法签名（没有函数体）。有这些方法的类型自动满足它，
+            // 不用声明；接口既能约束类型参数（`fn total[T: Shape]`），也能当类型存放不同的值。
+            if p.keyword("interface") {
+                let name = p.word()?;
+                if !name.starts_with(char::is_uppercase) {
+                    return Err(
+                        "interface names must start with an uppercase letter, such as Shape".into(),
+                    );
+                }
+                if p.peek() == Some(&Token::Symbol('[')) {
+                    return Err(format!("interface {name} cannot have type parameters yet"));
+                }
+                p.colon("interface")?;
+                if p.peek() != Some(&Token::Newline) {
+                    return Err(format!("interface {name} lists its methods on indented lines, such as fn area(&self) -> f64"));
+                }
+                p.take();
+                p.indent("interface")?;
+                let mut methods = Vec::new();
+                loop {
+                    if matches!(p.peek(), Some(Token::Dedent) | None) {
+                        p.take();
+                        break;
+                    }
+                    let at = p.at();
+                    if !p.keyword("fn") {
+                        return Err(format!("interface {name} contains only method signatures, such as fn area(&self) -> f64"));
+                    }
+                    let method = p.word()?;
+                    let (params, result, error) = p.signature(Some(&name))?;
+                    p.take_defaults(params.len());
+                    match params.first() {
+                        Some((first, Type::RecordRef(_, _))) if first == "self" => {}
+                        _ => {
+                            return Err(format!(
+                                "interface method {name}.{method} takes &self or &mut self first"
+                            ))
+                        }
+                    }
+                    if p.symbol(':') {
+                        return Err(format!(
+                            "interface method {name}.{method} has no body; the types that have this method provide it"
+                        ));
+                    }
+                    methods.push((
+                        format!("{name}.{method}"),
+                        Function {
+                            public,
+                            params,
+                            result,
+                            error,
+                            body: Vec::new(),
+                            position: at,
+                            builtin: false,
+                            generics: Vec::new(),
+                            external: false,
+                            wrapping: false,
+                            defaults: Vec::new(),
+                            dispatch: true,
+                            bounds: Vec::new(),
+                        },
+                    ));
+                    p.separator()?;
+                }
+                if methods.is_empty() {
+                    return Err(format!("interface {name} needs at least one method"));
+                }
+                if module.functions.contains_key(&name)
+                    || module.constants.contains_key(&name)
+                    || module
+                        .structs
+                        .insert(
+                            name.clone(),
+                            Struct {
+                                public,
+                                fields: Vec::new(),
+                                variants: Vec::new(),
+                                generics: Vec::new(),
+                                handle: None,
+                                interface: true,
+                            },
+                        )
+                        .is_some()
+                {
+                    return Err(format!("duplicate declaration {name}"));
+                }
+                add_methods(&mut module, methods)?;
+                continue;
+            }
             if p.keyword("struct") {
                 let name = p.word()?;
                 if matches!(name.as_str(), "string" | "i64" | "f64" | "bool") {
@@ -4987,6 +5261,7 @@ pub fn parse(source: &str) -> Result<Module, String> {
                                 variants: Vec::new(),
                                 generics,
                                 handle: None,
+                                interface: false,
                             },
                         )
                         .is_some()
@@ -5081,6 +5356,7 @@ pub fn parse(source: &str) -> Result<Module, String> {
                                 variants,
                                 generics,
                                 handle: None,
+                                interface: false,
                             },
                         )
                         .is_some()
@@ -5146,6 +5422,7 @@ pub fn parse(source: &str) -> Result<Module, String> {
                                 variants: Vec::new(),
                                 generics: Vec::new(),
                                 handle: Some(Handle { c_type, close }),
+                                interface: false,
                             },
                         )
                         .is_some()
@@ -5205,7 +5482,7 @@ pub fn encode(module: &Module) -> Vec<u8> {
         .map(|(name, constant)| (name, constant.public, &constant.value))
         .collect();
     format!(
-        "ZAM-IR-37\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
+        "ZAM-IR-38\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
         module.type_names, module.imports, module.functions
     )
     .into_bytes()
@@ -5706,6 +5983,12 @@ impl<'a> Checker<'a> {
             .find(|(name, _)| record_id(name) == id)
             .ok_or_else(|| format!("unknown struct {name}"))?
             .1;
+        if declaration.interface {
+            let short = name.rsplit(':').next().unwrap_or(name);
+            return Err(format!(
+                "{short} is an interface; build a value of a type that has its methods"
+            ));
+        }
         if declaration.handle.is_some() {
             let short = name.rsplit(':').next().unwrap_or(name);
             return Err(format!(
@@ -6299,6 +6582,17 @@ impl<'a> Checker<'a> {
         if let Some(call) = self.string_call(expr)? {
             return self.expr(&call, expected, loans);
         }
+        // 期望接口值的位置给了具体类型的值：按具体类型检查（值被移进接口值），生成器负责装箱。
+        if let Type::Record(interface) = expected {
+            if struct_of(interface, self.structs).is_some_and(|(_, s)| s.interface) {
+                if let Ok(Type::Record(concrete)) = self.ty(expr) {
+                    if concrete != interface {
+                        implements(self.functions, Type::Record(concrete), interface)?;
+                        return self.expr(expr, Type::Record(concrete), loans);
+                    }
+                }
+            }
+        }
         // 期望 f64 的位置给整数（`let x: f64 = 1`、`area(2)`）：与 Python 一样当小数用。
         // C 侧这些位置都是赋值、带原型的参数、return 或字段初始化，int64_t 自动转成 double。
         if expected == Type::Float && matches!(self.ty(expr), Ok(Type::Int)) {
@@ -6425,6 +6719,8 @@ impl<'a> Checker<'a> {
                     external: false,
                     wrapping: false,
                     defaults: Vec::new(),
+                    dispatch: false,
+                    bounds: Vec::new(),
                 };
                 self.call("this function value", &callee, args, expected, &mut frame)
             }
@@ -7085,6 +7381,12 @@ impl<'a> Checker<'a> {
                     );
                 };
                 let ty = self.value_type(arg)?;
+                if holds_interface(ty, self.structs) {
+                    return Err(
+                        "an interface value cannot be copied: the value inside may not be copyable; pass it as &value to share it"
+                            .into(),
+                    );
+                }
                 if holds_handle(ty, self.structs) {
                     return Err(
                         "a C handle cannot be copied: two copies would close it twice; pass it as &value to share it"
@@ -7296,6 +7598,8 @@ impl<'a> Checker<'a> {
             external: false,
             wrapping: false,
             defaults: Vec::new(),
+            dispatch: false,
+            bounds: Vec::new(),
         };
         self.call(&label, &callee, args, expected, loans)?;
         Ok(Some((label, error, result)))
@@ -7329,6 +7633,8 @@ impl<'a> Checker<'a> {
             external: false,
             wrapping: false,
             defaults: Vec::new(),
+            dispatch: false,
+            bounds: Vec::new(),
         };
         self.call(path, &callee, args, expected, loans)
     }
@@ -7968,6 +8274,7 @@ pub fn check(module: &Module, entry: &str) -> Result<(), String> {
             return Err("main must have no parameters or return value".into());
         }
     }
+    remember_records(&module.structs);
     let mut errors = Vec::new();
     for (name, function) in &module.functions {
         // 默认值在声明处就核对类型：没有调用用到它时也能发现写错。
@@ -7996,7 +8303,11 @@ pub fn check(module: &Module, entry: &str) -> Result<(), String> {
                 errors.push(format!("line {line}, column {column}: {name}: {error}"));
             }
         }
-        if function.builtin || function.external || !function.generics.is_empty() {
+        if function.builtin
+            || function.external
+            || function.dispatch
+            || !function.generics.is_empty()
+        {
             continue;
         }
         let mut checker = Checker {
