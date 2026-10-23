@@ -1,0 +1,37 @@
+# 运行其他程序，形状照 Python 的 subprocess 模块。
+# 参数列表的第一项是程序（在 PATH 里找），其余原样传给它，不经过 shell。
+use std/_process
+
+# process.run 的结果：退出码，以及程序写到标准输出和标准错误的文字。
+pub struct Completed:
+    code: i64
+    stdout: string
+    stderr: string
+
+# 运行程序并等它结束。input 写进程序的标准输入；capture 为 false 时输出直接显示在终端，
+# stdout 与 stderr 为空。程序找不到或启动不了时返回错误；程序自己失败看 code。
+pub fn run(args: &[string], input: &string = "", capture: bool = true) -> Completed!string:
+    let mut parts = _process.run(args, input, capture)?
+    let stderr = parts.pop()
+    let stdout = parts.pop()
+    let code = int(parts.pop())?
+    Completed(code=code, stdout=stdout, stderr=stderr)
+
+# 运行程序，输入输出都用当前终端，返回退出码。
+pub fn call(args: &[string]) -> i64!string:
+    let result = run(args, capture=false)?
+    result.code
+
+# 运行程序并返回它的标准输出；退出码不是 0 时返回错误，错误里带上标准错误的内容。
+pub fn check_output(args: &[string], input: &string = "") -> string!string:
+    let result = run(args, input)?
+
+    if result.code != 0:
+        let detail = result.stderr.trim()
+
+        if detail == "":
+            fail f"{args[0]} exited with code {result.code}"
+
+        fail f"{args[0]} exited with code {result.code}: {detail}"
+
+    copy(&result.stdout)

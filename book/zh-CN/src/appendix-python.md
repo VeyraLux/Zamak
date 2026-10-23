@@ -31,6 +31,8 @@ Zamak 尽可能沿用 Python 的名字和规则。这篇附录列出哪些与 Py
 | `{"a": 1}` | `{"a": 1}`；空字典：`let m: {string: i64} = {}` | 键是 `i64` 或 `string`。 |
 | `lambda x: x * 2` | `fn(x): x * 2` | |
 | `import math` | `use std/math` | |
+| `import re`、`json`、`subprocess`、`hashlib`、`base64` | `use std/re`、`std/json`、`std/process`、`std/hashlib`、`std/base64` | 函数名同 Python；`re` 不支持反向引用与环视。 |
+| `r"\d+"`、`"""..."""` | 相同 | 三引号字符串目前要写在同一行。 |
 | `{1, 2}`、`set()` | `{1, 2}`；空集合：`let s: {i64} = {}` | 值是 `i64` 或 `string`。 |
 | `def f(x, n=1)`、`f(x, n=2)` | `fn f(x: i64, n: i64 = 1)`、`f(x, n=2)` | 默认值只能是常量。 |
 | `b"\x00"`、`s.encode()`、`b.decode()` | 写法相同，类型叫 `bytes` | 下标读出 0–255 的整数。 |

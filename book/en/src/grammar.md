@@ -241,6 +241,10 @@ See [Calling C](c-libraries.md).
 | `std/time` | Current time, monotonic clock, sleep, ISO format |
 | `std/random` | Integers, floats, seeding |
 | `std/fmt` | Fixed decimal places |
+| `std/process` | Run other programs, read their output and exit code |
+| `std/json` | Parse and write JSON |
+| `std/re` | Regular expressions |
+| `std/hashlib`, `std/base64` | SHA-256, SHA-1, MD5, HMAC; base64 |
 
 Python builtins available without an import: `len`, `abs`, `min`, `max`, `sum`, `sorted`, `str`, `int`, `float`, `print`, `println`.
 

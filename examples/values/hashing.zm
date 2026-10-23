@@ -1,0 +1,14 @@
+# 哈希与 base64：std/hashlib 与 std/base64，函数名同 Python。
+use std/hashlib
+use std/base64
+
+fn main() -> !string:
+    let data = "hello".encode()
+    println(hashlib.sha256(data).hex())
+    println(hashlib.md5(data).hex())
+    println(hashlib.hmac_sha256(b"secret", data).hex())
+
+    let encoded = base64.b64encode(data)
+    println(encoded)
+    println(base64.b64decode(encoded)?.decode()?)
+    println(base64.urlsafe_b64encode(b"\xfb\xff"))

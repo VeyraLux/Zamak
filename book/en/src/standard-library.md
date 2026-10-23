@@ -191,9 +191,105 @@ b"\x00\x00\x00\x00"
 | `bytes.zeros(n)` | `n` zero bytes. |
 | `fs.read_bytes(p)`, `fs.write_bytes(p, data)`, `fs.append_bytes(p, data)` | Read and write files as bytes. |
 
+## Run other programs: std/process
+
+`std/process` follows Python's `subprocess`. The first item of the argument list is the program, found on `PATH`; the rest go to it as they are, with no shell:
+
+```zamak,ignore
+use std/process
+
+fn main() -> !string:
+    let result = process.run(["git", "status", "--short"])?
+    println(result.code)
+    println(result.stdout)
+    let version = process.check_output(["git", "--version"])?
+    println(version.trim())
+    process.call(["git", "log", "-1"])?
+```
+
+| Function | What it does |
+| --- | --- |
+| `process.run(args, input="", capture=true)` | Runs the program and waits. Returns a `Completed` with `code`, `stdout`, and `stderr`. |
+| `process.check_output(args, input="")` | Returns standard output. Returns an error with the standard error text when the exit code isn't 0. |
+| `process.call(args)` | Uses the current terminal for input and output, and returns the exit code. |
+
+A program that can't be found returns an error. On Windows, run `.bat` and `.cmd` scripts through `cmd /c`, as in Python.
+
+## JSON: std/json
+
+`json.loads` parses text into a `Json` value, and `json.dumps` writes a `Json` value as text. The accessors can fail, so you can chain them with `?`:
+
+```zamak
+use std/json
+
+fn main() -> !string:
+    let user = json.loads(r"""{"name": "Ada", "langs": ["Zamak", "C"]}""")?
+    println(user.get("name")?.as_str()?)
+    println(user.get("langs")?.item(0)?.as_str()?)
+    println(json.dumps(user))
+```
+
+```text
+Ada
+Zamak
+{"name": "Ada", "langs": ["Zamak", "C"]}
+```
+
+- `Json` is an enum with `Null`, `Bool`, `Number`, `Str`, `Array`, and `Object`. You can build values directly, such as `json.Json.Number(1.0)`.
+- Accessors: `get(key)`, `item(index)`, `as_str()`, `as_f64()`, `as_i64()`, `as_bool()`, `is_null()`, `len()`, and `keys()`.
+- Numbers are stored as `f64`, and whole numbers are written without a decimal point. `json.dumps(value, indent=2)` writes one item per line.
+
+## Regular expressions: std/re
+
+The functions in `std/re` have the same names and parameters as Python's `re`, and positions count characters. Write patterns as raw strings, `r"..."`, because they have many backslashes:
+
+```zamak
+use std/re
+
+fn main() -> !string:
+    let text = "order 12, order 345"
+    println(re.findall(r"\d+", text)?)
+    println(re.sub(r"order (\d+)", r"#\1", text)?)
+    match re.search(r"(?P<id>\d{3})", text)?:
+        Some(m): println(m.named("id")?)
+        None: println("none")
+```
+
+```text
+["12", "345"]
+#12, #345
+345
+```
+
+- Functions: `search`, `match`, `fullmatch`, `findall`, `finditer`, `sub`, `split`, `escape`, and `compile`. Flags: `re.IGNORECASE`, `re.MULTILINE`, and `re.DOTALL`, or `(?i)` at the start of the pattern.
+- A `Match` has `group(i)`, `named(name)`, `groups()`, `start(i)`, and `end(i)`.
+- Matching takes time linear in the length of the text, so a badly written pattern can't hang your program. In exchange, backreferences such as `\1` and lookaround such as `(?=...)` aren't supported and report an error.
+
+## Hashes and base64: std/hashlib and std/base64
+
+```zamak
+use std/hashlib
+use std/base64
+
+fn main() -> !string:
+    let data = "hello".encode()
+    println(hashlib.sha256(data).hex())
+    println(base64.b64encode(data))
+    println(base64.b64decode("aGVsbG8=")?.decode()?)
+```
+
+```text
+2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+aGVsbG8=
+hello
+```
+
+`std/hashlib` has `sha256`, `sha1`, `md5`, and `hmac_sha256(key, data)`, which return `bytes`. `std/base64` has `b64encode`, `b64decode`, and the URL-safe `urlsafe_b64encode` and `urlsafe_b64decode`.
+
 ## Summary
 
 - Built-in functions such as `len`, `int`, and `sorted` need no import.
 - `std/io`, `std/env`, `std/fs`, and `std/path` handle input, arguments, and files; `std/bytes` handles raw bytes.
 - `std/math`, `std/fmt`, `std/time`, and `std/random` handle numbers, formatting, clocks, and randomness.
+- `std/process`, `std/json`, `std/re`, `std/hashlib`, and `std/base64` run programs, read and write JSON, match text, and compute hashes.
 - Functions that can fail return errors that you handle with `?` or `catch`.

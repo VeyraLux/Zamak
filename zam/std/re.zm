@@ -1,0 +1,247 @@
+# 正则表达式，接口照 Python 的 re 模块，位置按字符计算。
+# 引擎保证匹配时间与文本长度成线性关系（同 Go 的 regexp、RE2）：一个写坏的表达式不会让程序卡死。
+# 代价是不支持反向引用（\1）和环视（(?=...)、(?<=...)），写了会报错。
+# 表达式里的反斜杠很多，用原始字符串写最方便：r"\d+"。
+use std/_re
+
+pub const IGNORECASE = 1
+pub const MULTILINE = 2
+pub const DOTALL = 4
+
+# 一次匹配。第 0 组是整个匹配，之后是各个括号分组；没参与匹配的组是空串，位置是 -1。
+pub struct Match:
+    spans: [i64]
+    texts: [string]
+    names: {string: i64}
+
+    # 第 index 组匹配到的文字。
+    pub fn group(&self, index: i64 = 0) -> string:
+        copy(&self.texts[index])
+
+    # 命名分组 (?P<name>...) 匹配到的文字。
+    pub fn named(&self, name: &string) -> string!string:
+        if name not in self.names:
+            fail f"no group named {name}"
+
+        copy(&self.texts[self.names[name]])
+
+    # 除第 0 组以外的各组文字。
+    pub fn groups(&self) -> [string]:
+        self.texts[1:]
+
+    pub fn start(&self, index: i64 = 0) -> i64:
+        self.spans[2 * index]
+
+    pub fn end(&self, index: i64 = 0) -> i64:
+        self.spans[2 * index + 1]
+
+# 编译好的表达式：同一个表达式要反复用时写起来短一些（引擎本身也会缓存最近用过的表达式）。
+pub struct Pattern:
+    pattern: string
+    flags: i64
+
+    pub fn search(&self, text: &string) -> Option[Match]!string:
+        first(self.pattern, text, self.flags, 0)?
+
+    pub fn match(&self, text: &string) -> Option[Match]!string:
+        first(self.pattern, text, self.flags, 1)?
+
+    pub fn fullmatch(&self, text: &string) -> Option[Match]!string:
+        first(self.pattern, text, self.flags, 2)?
+
+    pub fn findall(&self, text: &string) -> [string]!string:
+        findall(self.pattern, text, self.flags)?
+
+    pub fn finditer(&self, text: &string) -> [Match]!string:
+        finditer(self.pattern, text, self.flags)?
+
+    pub fn sub(&self, repl: &string, text: &string, count: i64 = 0) -> string!string:
+        sub(self.pattern, repl, text, count, self.flags)?
+
+    pub fn split(&self, text: &string, maxsplit: i64 = 0) -> [string]!string:
+        split(self.pattern, text, maxsplit, self.flags)?
+
+# 检查表达式并编译。写错时返回错误，错误里带着出错的位置。
+pub fn compile(pattern: &string, flags: i64 = 0) -> Pattern!string:
+    _re.groups(pattern, flags)?
+    Pattern(pattern=pattern, flags=flags)
+
+# 在文字里找第一个匹配。
+pub fn search(pattern: &string, text: &string, flags: i64 = 0) -> Option[Match]!string:
+    first(pattern, text, flags, 0)?
+
+# 只在文字开头匹配。
+pub fn match(pattern: &string, text: &string, flags: i64 = 0) -> Option[Match]!string:
+    first(pattern, text, flags, 1)?
+
+# 整段文字都要匹配。
+pub fn fullmatch(pattern: &string, text: &string, flags: i64 = 0) -> Option[Match]!string:
+    first(pattern, text, flags, 2)?
+
+# 所有不重叠的匹配：没有分组时是整个匹配的文字；有分组时是第 1 组的文字。
+# 要拿到所有分组，用 finditer。
+pub fn findall(pattern: &string, text: &string, flags: i64 = 0) -> [string]!string:
+    let mut out: [string] = []
+
+    for m in finditer(pattern, text, flags)?:
+        out.push(m.group(if len(m.texts) > 1: 1 else: 0))
+
+    out
+
+# 所有不重叠的匹配，按出现的顺序。
+pub fn finditer(pattern: &string, text: &string, flags: i64 = 0) -> [Match]!string:
+    let names = _re.groups(pattern, flags)?
+    let spans = _re.find(pattern, flags, text, 0, 0, 0)?
+    let width = 2 * len(names)
+    let mut out: [Match] = []
+    let mut at = 0
+
+    while at < len(spans):
+        out.push(build(text, names, spans, at))
+        at += width
+
+    out
+
+# 把匹配换成 repl。repl 里 \1、\g<1>、\g<name> 是分组的文字，\\ 是反斜杠，\n、\t 是换行与制表符。
+# count 大于 0 时最多换 count 处。
+pub fn sub(pattern: &string, repl: &string, text: &string, count: i64 = 0, flags: i64 = 0) -> string!string:
+    let matches = finditer(pattern, text, flags)?
+    let mut out: [string] = []
+    let mut last = 0
+    let mut done = 0
+
+    for m in matches:
+        if count > 0 and done == count:
+            break
+
+        out.push(text[last:m.start()])
+        out.push(expand(m, repl)?)
+        last = m.end()
+        done += 1
+
+    out.push(text[last:])
+    "".join(out)
+
+# 按匹配切开文字。表达式里有分组时，分组的文字也放进结果（同 Python）。maxsplit 大于 0 时最多切这么多次。
+pub fn split(pattern: &string, text: &string, maxsplit: i64 = 0, flags: i64 = 0) -> [string]!string:
+    let matches = finditer(pattern, text, flags)?
+    let mut out: [string] = []
+    let mut last = 0
+    let mut done = 0
+
+    for m in matches:
+        if maxsplit > 0 and done == maxsplit:
+            break
+
+        out.push(text[last:m.start()])
+
+        for g in m.groups():
+            out.push(g)
+
+        last = m.end()
+        done += 1
+
+    out.push(text[last:])
+    out
+
+# 给表达式里有特殊含义的字符加上反斜杠，让文字按原样匹配。
+pub fn escape(text: &string) -> string:
+    let special = r".^$*+?{}[]\|()-#&~"
+    let mut out: [string] = []
+
+    for ch in text:
+        if ch in special:
+            out.push("\\")
+
+        out.push(ch)
+
+    "".join(out)
+
+fn first(pattern: &string, text: &string, flags: i64, mode: i64) -> Option[Match]!string:
+    let names = _re.groups(pattern, flags)?
+    let spans = _re.find(pattern, flags, text, 0, mode, 1)?
+
+    if len(spans) == 0:
+        return Option.None
+
+    Option.Some(build(text, names, spans, 0))
+
+fn build(text: &string, names: &[string], spans: &[i64], from: i64) -> Match:
+    let mut own: [i64] = []
+    let mut texts: [string] = []
+    let mut index: {string: i64} = {}
+
+    for g in range(len(names)):
+        let s = spans[from + 2 * g]
+        let e = spans[from + 2 * g + 1]
+        own.push(s)
+        own.push(e)
+        texts.push(if s < 0: "" else: text[s:e])
+
+        if names[g] != "":
+            index[names[g]] = g
+
+    Match(spans=own, texts=texts, names=index)
+
+fn expand(m: &Match, repl: &string) -> string!string:
+    let chars = repl.chars()
+    let mut out: [string] = []
+    let mut i = 0
+
+    while i < len(chars):
+        let ch = copy(&chars[i])
+        i += 1
+
+        if ch != "\\":
+            out.push(ch)
+            continue
+
+        if i >= len(chars):
+            fail "the replacement ends with a backslash"
+
+        let next = copy(&chars[i])
+        i += 1
+
+        if next == "\\":
+            out.push("\\")
+        elif next == "n":
+            out.push("\n")
+        elif next == "t":
+            out.push("\t")
+        elif next >= "0" and next <= "9":
+            let mut number = int(next)?
+
+            if i < len(chars) and chars[i] >= "0" and chars[i] <= "9":
+                number = number * 10 + int(copy(&chars[i]))?
+                i += 1
+
+            out.push(group_text(m, number)?)
+        elif next == "g" and i < len(chars) and chars[i] == "<":
+            let mut name: [string] = []
+            i += 1
+
+            while i < len(chars) and chars[i] != ">":
+                name.push(copy(&chars[i]))
+                i += 1
+
+            if i >= len(chars):
+                fail "missing > after \\g< in the replacement"
+
+            i += 1
+            let key = "".join(name)
+            let number = int(key) catch e: -1
+
+            if number >= 0:
+                out.push(group_text(m, number)?)
+            else:
+                out.push(m.named(key)?)
+        else:
+            fail f"bad escape \\{next} in the replacement"
+
+    "".join(out)
+
+fn group_text(m: &Match, number: i64) -> string!string:
+    if number >= len(m.texts):
+        fail f"invalid group reference {number} in the replacement"
+
+    m.group(number)

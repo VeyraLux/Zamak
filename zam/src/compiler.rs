@@ -2055,10 +2055,25 @@ fn lex(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>, bool), String> 
                     if raw_bytes {
                         *tokens.last_mut().expect("checked") = Token::Word("$bytes".into());
                     }
+                    // `r"..."` 是原始字符串（同 Python）：反斜杠原样保留，也不做插值，写正则和 JSON 方便。
+                    let raw = i >= 1
+                        && chars[i - 1] == 'r'
+                        && (i < 2 || !(chars[i - 2].is_alphanumeric() || chars[i - 2] == '_'))
+                        && tokens.last() == Some(&Token::Word("r".into()));
+                    if raw {
+                        *tokens.last_mut().expect("checked") = Token::Word("$raw".into());
+                    }
                     let mut text = String::new();
-                    let mut j = i + 1;
+                    // `"""..."""`：三引号字符串，里面可以直接写 `"`（同 Python）。目前要写在同一行。
+                    let triple = at(i + 1) == Some('"') && at(i + 2) == Some('"');
+                    let mut j = if triple { i + 3 } else { i + 1 };
                     loop {
                         match at(j) {
+                            None if triple => {
+                                return Err(error(
+                                    "a triple-quoted string must end on the same line for now; write line breaks as \\n",
+                                ))
+                            }
                             None => {
                                 return Err(error(if last {
                                     "unterminated string literal"
@@ -2066,7 +2081,25 @@ fn lex(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>, bool), String> 
                                     "newline in string literal"
                                 }))
                             }
+                            Some('"') if triple => {
+                                if at(j + 1) == Some('"') && at(j + 2) == Some('"') {
+                                    j += 2;
+                                    break;
+                                }
+                                text.push('"');
+                                j += 1;
+                            }
                             Some('"') => break,
+                            // 原始字符串里 `\"` 也不结束字符串，两个字符都保留（同 Python）。
+                            Some('\\') if raw => {
+                                text.push('\\');
+                                if let Some(next) = at(j + 1) {
+                                    text.push(next);
+                                    j += 2;
+                                } else {
+                                    j += 1;
+                                }
+                            }
                             Some('\\') if at(j + 1) == Some('x') => {
                                 // `\xNN`：码点 U+00NN（与 Python 相同）；bytes 字面量里就是那个字节。
                                 let digits: String = (j + 2..j + 4).filter_map(at).collect();
@@ -2078,6 +2111,27 @@ fn lex(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>, bool), String> 
                                     })?;
                                 text.push(char::from_u32(value).expect("below 256"));
                                 j += 4;
+                            }
+                            Some('\\') if matches!(at(j + 1), Some('u' | 'U')) => {
+                                // `\uXXXX`、`\UXXXXXXXX`：Unicode 码点（与 Python 相同）；bytes 字面量里没有。
+                                let width = if at(j + 1) == Some('u') { 4 } else { 8 };
+                                if raw_bytes {
+                                    return Err(error(
+                                        "bytes literals take \\xNN escapes, not \\u; use \"...\".encode() for Unicode text",
+                                    ));
+                                }
+                                let digits: String =
+                                    (j + 2..j + 2 + width).filter_map(at).collect();
+                                let value = u32::from_str_radix(&digits, 16)
+                                    .ok()
+                                    .filter(|_| digits.len() == width)
+                                    .ok_or_else(|| {
+                                        error("\\u takes four hex digits and \\U eight, such as \\u00e9 or \\U0001f600")
+                                    })?;
+                                text.push(char::from_u32(value).ok_or_else(|| {
+                                    error("this \\u escape is not a valid Unicode character")
+                                })?);
+                                j += 2 + width;
                             }
                             Some('\\') => {
                                 text.push(match at(j + 1) {
@@ -3426,6 +3480,24 @@ impl Parser {
             && matches!(self.tokens.get(self.position + 1), Some(Token::Text(_)))
         {
             self.take();
+        }
+        // `r"..."`：原始字符串，文字原样，不做插值。
+        if self.peek() == Some(&Token::Word("$raw".into())) {
+            if let Some(Token::Text(text)) = self.tokens.get(self.position + 1).cloned() {
+                self.take();
+                self.take();
+                let value = Expr::Text(text);
+                if self.member_follows() {
+                    self.take();
+                    let method = self.member()?;
+                    if !self.symbol('(') {
+                        return Err(format!("expected ( after .{method}"));
+                    }
+                    let args = self.arguments()?;
+                    return self.after_call(Expr::Chain(Box::new(value), method, args));
+                }
+                return Ok(value);
+            }
         }
         // `b"..."`：每个字节写成两位十六进制交给 `std/core:bytes_literal`，不做插值。
         if self.peek() == Some(&Token::Word("$bytes".into())) {

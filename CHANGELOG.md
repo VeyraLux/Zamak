@@ -26,6 +26,13 @@ and this file is the source for the text of each GitHub release.
   a mutable default. Methods take keyword arguments, and `Point(x=1, y=2)` builds a struct.
 - **Sets.** `{1, 2, 3}` has the type `{i64}`, with `add`, `remove`, `in`, `union`,
   `intersection`, `difference`, `issubset`, and `sorted(s)`.
+- **New standard library modules**, named as in Python: `std/process` (run programs and read their
+  output), `std/json` (`loads`, `dumps`), `std/re` (regular expressions on a linear-time engine,
+  so no pattern can hang a program; no backreferences or lookaround), `std/hashlib` (SHA-256,
+  SHA-1, MD5, HMAC-SHA256), and `std/base64`.
+- **Raw and triple-quoted strings**: `r"\d+"`, `"""say "hi" now"""`, and `r"""{"a": 1}"""`, plus the
+  `\uXXXX` and `\UXXXXXXXX` escapes.
+- Parts of the standard library are now written in Zamak and compiled with your program.
 
 ## 0.1.1
 
@@ -179,6 +186,12 @@ this preview.
   方法也能用关键字实参，结构体可以写 `Point(x=1, y=2)`。
 - **集合。** `{1, 2, 3}` 的类型是 `{i64}`，支持 `add`、`remove`、`in`、`union`、`intersection`、
   `difference`、`issubset` 和 `sorted(s)`。
+- **新的标准库模块**，名字同 Python：`std/process`（运行程序、读取输出）、`std/json`（`loads`、`dumps`）、
+  `std/re`（正则表达式，线性时间引擎，任何表达式都不会让程序卡死；不支持反向引用与环视）、
+  `std/hashlib`（SHA-256、SHA-1、MD5、HMAC-SHA256）和 `std/base64`。
+- **原始字符串与三引号字符串**：`r"\d+"`、`"""say "hi" now"""`、`r"""{"a": 1}"""`，以及 `\uXXXX`、
+  `\UXXXXXXXX` 转义。
+- 标准库的一部分改用 Zamak 编写，和你的程序一起编译。
 
 ## 0.1.1（中文）
 

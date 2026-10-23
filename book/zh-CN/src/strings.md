@@ -22,7 +22,25 @@ Two
 lines
 ```
 
-转义序列有 `\n`（换行）、`\r`（回车）、`\t`（制表符）、`\"` 和 `\\`。
+转义序列有 `\n`（换行）、`\r`（回车）、`\t`（制表符）、`\0`、`\"`、`\\`，以及按码点写字符的 `\xNN`、`\uXXXX` 和 `\UXXXXXXXX`，与 Python 相同。
+
+写正则表达式、Windows 路径或 JSON 时，反斜杠和引号会很多。这时用原始字符串和三引号字符串：
+
+```zamak
+fn main():
+    println(r"C:\new\{folder}")
+    println("""say "hi" to {1 + 1} people""")
+    println(r"""{"name": "Ada"}""")
+```
+
+```text
+C:\new\{folder}
+say "hi" to 2 people
+{"name": "Ada"}
+```
+
+- `r"..."` 是原始字符串：反斜杠原样保留，也不做插值。
+- `"""..."""` 里可以直接写双引号；`r"""..."""` 两样都有。三引号字符串目前要写在同一行里。
 
 ## 插值
 

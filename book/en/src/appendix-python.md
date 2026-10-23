@@ -31,6 +31,8 @@ Zamak keeps Python's names and rules wherever it can. This appendix lists what s
 | `{"a": 1}` | `{"a": 1}`; empty: `let m: {string: i64} = {}` | Keys are `i64` or `string`. |
 | `lambda x: x * 2` | `fn(x): x * 2` | |
 | `import math` | `use std/math` | |
+| `import re`, `json`, `subprocess`, `hashlib`, `base64` | `use std/re`, `std/json`, `std/process`, `std/hashlib`, `std/base64` | Same function names; `re` has no backreferences or lookaround. |
+| `r"\d+"`, `"""..."""` | The same | A triple-quoted string must fit on one line for now. |
 | `{1, 2}`, `set()` | `{1, 2}`; an empty set: `let s: {i64} = {}` | Values are `i64` or `string`. |
 | `def f(x, n=1)`, `f(x, n=2)` | `fn f(x: i64, n: i64 = 1)`, `f(x, n=2)` | A default value is a constant. |
 | `b"\x00"`, `s.encode()`, `b.decode()` | The same, and the type is `bytes` | Indexing gives an integer from 0 to 255. |

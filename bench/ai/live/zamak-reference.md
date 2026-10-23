@@ -53,6 +53,17 @@ fn main() -> !string:
 - A borrowed string is copied automatically where an owned string is needed: `return ch`, `out.push(w)` inside `for w in words`.
 - `for ch in s:` loops over the characters (each `ch` is a one-character string); `for i, ch in s:` also gives the position.
 
+## String literals
+
+Escapes: `\n \r \t \0 \" \\`, `\xNN`, `\uXXXX`, `\UXXXXXXXX`. `r"C:\dir\{x}"` is a raw string (no escapes, no interpolation). `"""say "hi" {n}"""` may contain double quotes; `r"""{"a": 1}"""` is both (handy for JSON). Triple-quoted strings must fit on one line for now. Ordinary strings interpolate `{...}`, so a literal brace is `{{` or `}}`.
+
+## More standard library
+
+- `std/process` (like `subprocess`, no shell; first item is the program): `process.run(args, input="", capture=true) -> Completed!string` with fields `code`, `stdout`, `stderr`; `process.check_output(args, input="") -> string!string` (error when the exit code is not 0); `process.call(args) -> i64!string` (inherits the terminal).
+- `std/json`: `json.loads(&text) -> Json!string`, `json.dumps(&value, indent=0) -> string`. `Json` is an enum `Null | Bool(bool) | Number(f64) | Str(string) | Array([Json]) | Object({string: Json})` (write `json.Json.Number(1.0)`). Accessors return copies and can fail, so chain with `?`: `doc.get("user")?.get("name")?.as_str()?`; also `item(i)`, `as_f64()`, `as_i64()`, `as_bool()`, `is_null()`, `len()`, `keys()`.
+- `std/re` (Python names, positions in characters, linear-time engine, no backreferences or lookaround): `re.search/match/fullmatch(pattern, text, flags=0) -> Option[Match]!string`, `re.findall(...) -> [string]!string` (whole matches, or group 1 when the pattern has groups), `re.finditer(...) -> [Match]!string`, `re.sub(pattern, repl, text, count=0, flags=0)` (`\1`, `\g<name>` in repl), `re.split(pattern, text, maxsplit=0, flags=0)`, `re.escape(text)`, `re.compile(pattern, flags=0) -> Pattern!string` with the same methods. Flags `re.IGNORECASE`, `re.MULTILINE`, `re.DOTALL` or `(?i)`. `Match`: `group(i=0)`, `named(name)?`, `groups()`, `start(i=0)`, `end(i=0)`. Use `match re.search(...)?: Some(m): ... None: ...`.
+- `std/hashlib`: `sha256`, `sha1`, `md5(&bytes) -> bytes`, `hmac_sha256(&key, &data) -> bytes`; call `.hex()` for text. `std/base64`: `b64encode(&bytes) -> string`, `b64decode(&text) -> bytes!string`, `urlsafe_b64encode`, `urlsafe_b64decode`.
+
 ## Bytes
 
 - `bytes` holds raw bytes, as in Python: `b"GIF\x89"` (ASCII characters and `\xNN` only), `s.encode()` (UTF-8), `b.decode() -> string!string`, `b.hex() -> string`. Indexing gives an `i64` from 0 to 255; `len`, slices, `push`, `extend`, `in` and `for b in data` work as on lists; writing a value outside 0 to 255 stops the program. `for x in &mut data` is not supported; assign `data[i] = v` instead. Parameters take `&bytes` or `&mut bytes`.

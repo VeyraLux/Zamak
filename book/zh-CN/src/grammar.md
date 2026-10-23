@@ -241,6 +241,10 @@ fn main():
 | `std/time` | 当前时间、单调时钟、休眠、ISO 格式 |
 | `std/random` | 整数、浮点、设置种子 |
 | `std/fmt` | 保留小数位 |
+| `std/process` | 运行其他程序，取得输出与退出码 |
+| `std/json` | 解析与生成 JSON |
+| `std/re` | 正则表达式 |
+| `std/hashlib`、`std/base64` | SHA-256、SHA-1、MD5、HMAC，base64 |
 
 不用导入的 Python 内置：`len`、`abs`、`min`、`max`、`sum`、`sorted`、`str`、`int`、`float`、`print`、`println`。
 

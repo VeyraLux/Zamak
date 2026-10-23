@@ -191,9 +191,105 @@ b"\x00\x00\x00\x00"
 | `bytes.zeros(n)` | n 个零字节。 |
 | `fs.read_bytes(p)`、`fs.write_bytes(p, data)`、`fs.append_bytes(p, data)` | 按字节读写文件。 |
 
+## 运行其他程序：std/process
+
+`std/process` 的形状照 Python 的 `subprocess`。参数列表的第一项是程序（在 `PATH` 里找），其余原样传给它，不经过 shell：
+
+```zamak,ignore
+use std/process
+
+fn main() -> !string:
+    let result = process.run(["git", "status", "--short"])?
+    println(result.code)
+    println(result.stdout)
+    let version = process.check_output(["git", "--version"])?
+    println(version.trim())
+    process.call(["git", "log", "-1"])?
+```
+
+| 函数 | 作用 |
+| --- | --- |
+| `process.run(args, input="", capture=true)` | 运行并等待，返回 `Completed`：`code`、`stdout`、`stderr`。 |
+| `process.check_output(args, input="")` | 返回标准输出；退出码不是 0 时返回错误，错误里带标准错误的内容。 |
+| `process.call(args)` | 输入输出都用当前终端，返回退出码。 |
+
+程序找不到时返回错误。在 Windows 上，`.bat` 和 `.cmd` 脚本要经过 `cmd /c` 运行（同 Python）。
+
+## JSON：std/json
+
+`json.loads` 把文字解析成 `Json`，`json.dumps` 把 `Json` 写成文字。取值的方法都可能失败，可以用 `?` 一路接下去：
+
+```zamak
+use std/json
+
+fn main() -> !string:
+    let user = json.loads(r"""{"name": "Ada", "langs": ["Zamak", "C"]}""")?
+    println(user.get("name")?.as_str()?)
+    println(user.get("langs")?.item(0)?.as_str()?)
+    println(json.dumps(user))
+```
+
+```text
+Ada
+Zamak
+{"name": "Ada", "langs": ["Zamak", "C"]}
+```
+
+- `Json` 是枚举：`Null`、`Bool`、`Number`、`Str`、`Array`、`Object`，可以直接构造，例如 `json.Json.Number(1.0)`。
+- 取值：`get(key)`、`item(index)`、`as_str()`、`as_f64()`、`as_i64()`、`as_bool()`、`is_null()`、`len()`、`keys()`。
+- 数字按 `f64` 保存；整数值输出时不带小数点。`json.dumps(value, indent=2)` 分行缩进。
+
+## 正则表达式：std/re
+
+`std/re` 的函数与 Python 的 `re` 同名同参数，位置按字符计算。表达式里反斜杠多，用原始字符串 `r"..."` 写：
+
+```zamak
+use std/re
+
+fn main() -> !string:
+    let text = "order 12, order 345"
+    println(re.findall(r"\d+", text)?)
+    println(re.sub(r"order (\d+)", r"#\1", text)?)
+    match re.search(r"(?P<id>\d{3})", text)?:
+        Some(m): println(m.named("id")?)
+        None: println("none")
+```
+
+```text
+["12", "345"]
+#12, #345
+345
+```
+
+- 函数：`search`、`match`、`fullmatch`、`findall`、`finditer`、`sub`、`split`、`escape`、`compile`；标志 `re.IGNORECASE`、`re.MULTILINE`、`re.DOTALL`，也可以在表达式开头写 `(?i)`。
+- 匹配结果 `Match`：`group(i)`、`named(name)`、`groups()`、`start(i)`、`end(i)`。
+- 匹配时间与文字长度成线性关系，写坏的表达式也不会让程序卡死。代价是不支持反向引用 `\1` 和环视 `(?=...)`，写了会报错。
+
+## 哈希与 base64：std/hashlib 和 std/base64
+
+```zamak
+use std/hashlib
+use std/base64
+
+fn main() -> !string:
+    let data = "hello".encode()
+    println(hashlib.sha256(data).hex())
+    println(base64.b64encode(data))
+    println(base64.b64decode("aGVsbG8=")?.decode()?)
+```
+
+```text
+2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+aGVsbG8=
+hello
+```
+
+`std/hashlib` 有 `sha256`、`sha1`、`md5` 和 `hmac_sha256(key, data)`，结果是 `bytes`。`std/base64` 有 `b64encode`、`b64decode` 和 URL 安全的 `urlsafe_b64encode`、`urlsafe_b64decode`。
+
 ## 小结
 
 - `len`、`int`、`sorted` 这样的内置函数不用导入。
 - `std/io`、`std/env`、`std/fs`、`std/path` 处理输入、参数和文件；`std/bytes` 处理原始字节。
 - `std/math`、`std/fmt`、`std/time`、`std/random` 处理数字、格式、时钟和随机数。
+- `std/process`、`std/json`、`std/re`、`std/hashlib`、`std/base64` 运行程序、读写 JSON、匹配文字、计算哈希。
 - 可能失败的函数返回错误，用 `?` 或 `catch` 处理。

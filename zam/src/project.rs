@@ -12,7 +12,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-67");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-68");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -174,6 +174,54 @@ fn is_identifier(text: &str, slash: bool) -> bool {
 
 type Parse = fn(&str) -> std::result::Result<compiler::Module, String>;
 
+/// 用 Zamak 写的标准库模块：源码编进编译器，被 `use` 时像普通模块一样加载（模块 id 就是
+/// `std/<名字>`）。它们可以再 `use` C 实现的内部模块，例如 `std/_process`。
+const STD_SOURCES: &[(&str, &str)] = &[
+    ("std/process", include_str!("../std/process.zm")),
+    ("std/json", include_str!("../std/json.zm")),
+    ("std/re", include_str!("../std/re.zm")),
+];
+
+/// 用 Zamak 写的标准库模块的源码（语言服务器用它补全与悬停）。
+pub fn std_source(id: &str) -> Option<&'static str> {
+    STD_SOURCES
+        .iter()
+        .find(|(name, _)| *name == id)
+        .map(|(_, source)| *source)
+}
+
+/// 把被导入的 Zamak 标准库模块加进来，直到不再出现新的（标准库模块之间也可以互相导入）。
+fn add_std_sources(modules: &mut BTreeMap<String, Input>, parse: Parse) -> Result<()> {
+    loop {
+        let wanted: BTreeSet<String> = modules
+            .values()
+            .flat_map(|input| input.module.imports.iter().cloned())
+            .filter(|import| !modules.contains_key(import))
+            .collect();
+        let mut added = false;
+        for (id, source) in STD_SOURCES {
+            if !wanted.contains(*id) {
+                continue;
+            }
+            let path = PathBuf::from(format!("<{id}>.zm"));
+            let module = parse(source).map_err(|e| format!("{}: {e}", path.display()))?;
+            modules.insert(
+                (*id).to_owned(),
+                Input {
+                    source: (*source).to_owned(),
+                    module,
+                    path,
+                    package: Some("std".into()),
+                },
+            );
+            added = true;
+        }
+        if !added {
+            return Ok(());
+        }
+    }
+}
+
 fn scan(
     dir: &Path,
     base: &Path,
@@ -300,20 +348,24 @@ impl Project {
         if is_source(input) {
             let source = read_source(input).map_err(|e| e.to_string())?;
             let module = parse(&source).map_err(|e| format!("{}: {e}", input.display()))?;
+            let mut modules = BTreeMap::from([(
+                "main".into(),
+                Input {
+                    source,
+                    module,
+                    path: input.to_path_buf(),
+                    package: None,
+                },
+            )]);
+            if dependencies.is_some() {
+                add_std_sources(&mut modules, parse)?;
+            }
             return Ok(Self {
                 name: "main".into(),
                 root: input.parent().unwrap_or(Path::new(".")).into(),
                 entry: "main".into(),
                 single: true,
-                modules: BTreeMap::from([(
-                    "main".into(),
-                    Input {
-                        source,
-                        module,
-                        path: input.to_path_buf(),
-                        package: None,
-                    },
-                )]),
+                modules,
                 native: Vec::new(),
                 library: false,
                 version: None,
@@ -383,6 +435,7 @@ impl Project {
                 load_package(dependency, package, &mut modules, parse)?;
                 native.push((package.dir.clone(), package.manifest.native.clone()));
             }
+            add_std_sources(&mut modules, parse)?;
         }
         Ok(Self {
             name,
@@ -424,6 +477,11 @@ impl Project {
                         | "time"
                         | "random"
                         | "path"
+                        | "hashlib"
+                        | "base64"
+                        | "process"
+                        | "json"
+                        | "re"
                 )
             {
                 return Err(format!(
@@ -437,7 +495,7 @@ impl Project {
         } else {
             (module, call)
         };
-        if target.starts_with("std/") {
+        if target.starts_with("std/") && !self.modules.contains_key(target) {
             let qualified = format!("{target}:{name}");
             return if native::builtin(&qualified).is_some() {
                 Ok(qualified)
@@ -530,6 +588,10 @@ impl Project {
                         | "std/fmt"
                         | "std/string"
                         | "std/bytes"
+                        | "std/hashlib"
+                        | "std/base64"
+                        | "std/_process"
+                        | "std/_re"
                         | "std/fs"
                         | "std/env"
                         | "std/math"

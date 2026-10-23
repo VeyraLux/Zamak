@@ -22,7 +22,25 @@ Two
 lines
 ```
 
-The escapes are `\n` (newline), `\r` (carriage return), `\t` (tab), `\"`, and `\\`.
+The escapes are `\n` (newline), `\r` (carriage return), `\t` (tab), `\0`, `\"`, and `\\`, plus `\xNN`, `\uXXXX`, and `\UXXXXXXXX` for a character by its code point, as in Python.
+
+Regular expressions, Windows paths, and JSON have many backslashes and quotes. Use raw and triple-quoted strings for them:
+
+```zamak
+fn main():
+    println(r"C:\new\{folder}")
+    println("""say "hi" to {1 + 1} people""")
+    println(r"""{"name": "Ada"}""")
+```
+
+```text
+C:\new\{folder}
+say "hi" to 2 people
+{"name": "Ada"}
+```
+
+- `r"..."` is a raw string: backslashes stay as written, and there is no interpolation.
+- `"""..."""` can contain double quotes, and `r"""..."""` combines both. For now, a triple-quoted string must fit on one line.
 
 ## Interpolation
 

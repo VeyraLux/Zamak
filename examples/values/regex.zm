@@ -1,0 +1,20 @@
+# 正则表达式：写法同 Python 的 re，用原始字符串 r"..." 写表达式。
+use std/re
+
+fn main() -> !string:
+    let log = "2026-10-23 ERROR disk full\n2026-10-24 INFO ok\n2026-10-25 ERROR fan"
+
+    for m in re.finditer(r"^(?P<date>[\d-]+) ERROR (.+)$", log, re.MULTILINE)?:
+        let date = m.named("date")?
+        println(f"{date}: {m.group(2)}")
+
+    println(re.findall(r"\d{4}", log)?)
+    println(re.sub(r"(\d+)-(\d+)-(\d+)", r"\3/\2/\1", "on 2026-10-23")?)
+    println(re.split(r"\s*;\s*", "a ; b;c")?)
+
+    match re.fullmatch(r"[\w.]+@[\w.]+", "ada@example.com")?:
+        Some(m): println(f"email {m.group()}")
+        None: println("not an email")
+
+    let words = re.compile(r"\b\w{5,}\b", re.IGNORECASE)?
+    println(words.findall("Zamak reads like Python")?)

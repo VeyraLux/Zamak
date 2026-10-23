@@ -400,6 +400,1022 @@ static void print_f64(double value) {
 
 // 标准库里需要平台能力的函数共用的 C 辅助代码；某个目标文件只要用到任一内建函数就整段发射一次。
 // Windows 不引入 <windows.h>（太重且宏会撞名），只声明用到的三个 kernel32 函数。
+const HASH_PRELUDE: &str = r#"// std/hashlib：SHA-256、SHA-1、MD5 与 HMAC-SHA256，按 FIPS 180-4、RFC 1321、RFC 2104 实现。
+// 消息补位后逐块处理，`zam_hash_byte` 给出补位后的第 at 个字节（big 为真时长度按大端写）。
+static uint8_t zam_hash_byte(const uint8_t *p, size_t n, size_t at, size_t total, int big) {
+    uint64_t bits = (uint64_t)n * 8;
+    if (at < n) return p[at];
+    if (at == n) return 0x80;
+    if (at >= total - 8) {
+        size_t j = at - (total - 8);
+        return (uint8_t)(big ? bits >> (8 * (7 - j)) : bits >> (8 * j));
+    }
+    return 0;
+}
+static size_t zam_hash_total(size_t n) { return ((n + 9 + 63) / 64) * 64; }
+#define ZAM_ROTR(x, n) (((x) >> (n)) | ((x) << (32 - (n))))
+#define ZAM_ROTL(x, n) (((x) << (n)) | ((x) >> (32 - (n))))
+static void zam_sha256(const uint8_t *p, size_t n, uint8_t out[32]) {
+    static const uint32_t k[64] = {
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2};
+    uint32_t h[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+    size_t total = zam_hash_total(n), off, i;
+    for (off = 0; off < total; off += 64) {
+        uint32_t w[64], a, b, c, d, e, f, g, hh;
+        for (i = 0; i < 16; i++) {
+            w[i] = (uint32_t)zam_hash_byte(p, n, off + 4 * i, total, 1) << 24 | (uint32_t)zam_hash_byte(p, n, off + 4 * i + 1, total, 1) << 16
+                 | (uint32_t)zam_hash_byte(p, n, off + 4 * i + 2, total, 1) << 8 | zam_hash_byte(p, n, off + 4 * i + 3, total, 1);
+        }
+        for (i = 16; i < 64; i++) {
+            uint32_t s0 = ZAM_ROTR(w[i - 15], 7) ^ ZAM_ROTR(w[i - 15], 18) ^ (w[i - 15] >> 3);
+            uint32_t s1 = ZAM_ROTR(w[i - 2], 17) ^ ZAM_ROTR(w[i - 2], 19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+        }
+        a = h[0]; b = h[1]; c = h[2]; d = h[3]; e = h[4]; f = h[5]; g = h[6]; hh = h[7];
+        for (i = 0; i < 64; i++) {
+            uint32_t t1 = hh + (ZAM_ROTR(e, 6) ^ ZAM_ROTR(e, 11) ^ ZAM_ROTR(e, 25)) + ((e & f) ^ (~e & g)) + k[i] + w[i];
+            uint32_t t2 = (ZAM_ROTR(a, 2) ^ ZAM_ROTR(a, 13) ^ ZAM_ROTR(a, 22)) + ((a & b) ^ (a & c) ^ (b & c));
+            hh = g; g = f; f = e; e = d + t1; d = c; c = b; b = a; a = t1 + t2;
+        }
+        h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e; h[5] += f; h[6] += g; h[7] += hh;
+    }
+    for (i = 0; i < 32; i++) out[i] = (uint8_t)(h[i / 4] >> (24 - 8 * (i % 4)));
+}
+static void zam_sha1(const uint8_t *p, size_t n, uint8_t out[20]) {
+    uint32_t h[5] = {0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0};
+    size_t total = zam_hash_total(n), off, i;
+    for (off = 0; off < total; off += 64) {
+        uint32_t w[80], a, b, c, d, e;
+        for (i = 0; i < 16; i++) {
+            w[i] = (uint32_t)zam_hash_byte(p, n, off + 4 * i, total, 1) << 24 | (uint32_t)zam_hash_byte(p, n, off + 4 * i + 1, total, 1) << 16
+                 | (uint32_t)zam_hash_byte(p, n, off + 4 * i + 2, total, 1) << 8 | zam_hash_byte(p, n, off + 4 * i + 3, total, 1);
+        }
+        for (i = 16; i < 80; i++) w[i] = ZAM_ROTL(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+        a = h[0]; b = h[1]; c = h[2]; d = h[3]; e = h[4];
+        for (i = 0; i < 80; i++) {
+            uint32_t f, k, t;
+            if (i < 20) { f = (b & c) | (~b & d); k = 0x5a827999; }
+            else if (i < 40) { f = b ^ c ^ d; k = 0x6ed9eba1; }
+            else if (i < 60) { f = (b & c) | (b & d) | (c & d); k = 0x8f1bbcdc; }
+            else { f = b ^ c ^ d; k = 0xca62c1d6; }
+            t = ZAM_ROTL(a, 5) + f + e + k + w[i];
+            e = d; d = c; c = ZAM_ROTL(b, 30); b = a; a = t;
+        }
+        h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e;
+    }
+    for (i = 0; i < 20; i++) out[i] = (uint8_t)(h[i / 4] >> (24 - 8 * (i % 4)));
+}
+static void zam_md5(const uint8_t *p, size_t n, uint8_t out[16]) {
+    static const uint32_t k[64] = {
+        0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
+        0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,
+        0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
+        0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed, 0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a,
+        0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c, 0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70,
+        0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
+        0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
+        0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391};
+    static const uint32_t s[64] = {
+        7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+        5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
+        4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+        6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21};
+    uint32_t h[4] = {0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476};
+    size_t total = zam_hash_total(n), off, i;
+    for (off = 0; off < total; off += 64) {
+        uint32_t m[16], a = h[0], b = h[1], c = h[2], d = h[3];
+        for (i = 0; i < 16; i++) {
+            m[i] = (uint32_t)zam_hash_byte(p, n, off + 4 * i, total, 0) | (uint32_t)zam_hash_byte(p, n, off + 4 * i + 1, total, 0) << 8
+                 | (uint32_t)zam_hash_byte(p, n, off + 4 * i + 2, total, 0) << 16 | (uint32_t)zam_hash_byte(p, n, off + 4 * i + 3, total, 0) << 24;
+        }
+        for (i = 0; i < 64; i++) {
+            uint32_t f, g, t;
+            if (i < 16) { f = (b & c) | (~b & d); g = (uint32_t)i; }
+            else if (i < 32) { f = (d & b) | (~d & c); g = (uint32_t)(5 * i + 1) % 16; }
+            else if (i < 48) { f = b ^ c ^ d; g = (uint32_t)(3 * i + 5) % 16; }
+            else { f = c ^ (b | ~d); g = (uint32_t)(7 * i) % 16; }
+            t = d; d = c; c = b;
+            f = f + a + k[i] + m[g];
+            b = b + ZAM_ROTL(f, s[i]);
+            a = t;
+        }
+        h[0] += a; h[1] += b; h[2] += c; h[3] += d;
+    }
+    for (i = 0; i < 16; i++) out[i] = (uint8_t)(h[i / 4] >> (8 * (i % 4)));
+}
+static void zam_hmac_sha256(const uint8_t *key, size_t kn, const uint8_t *msg, size_t mn, uint8_t out[32]) {
+    uint8_t k[64], inner[32], *buf;
+    size_t i;
+    memset(k, 0, sizeof k);
+    if (kn > 64) zam_sha256(key, kn, k); else if (kn) memcpy(k, key, kn);
+    if (mn > SIZE_MAX - 64) zam_alloc_failed();
+    buf = (uint8_t *)malloc(64 + (mn > 32 ? mn : 32));
+    if (!buf) zam_alloc_failed();
+    for (i = 0; i < 64; i++) buf[i] = k[i] ^ 0x36;
+    if (mn) memcpy(buf + 64, msg, mn);
+    zam_sha256(buf, 64 + mn, inner);
+    for (i = 0; i < 64; i++) buf[i] = k[i] ^ 0x5c;
+    memcpy(buf + 64, inner, 32);
+    zam_sha256(buf, 96, out);
+    free(buf);
+}
+static Ly zam_digest_bytes(const uint8_t *digest, size_t n) { Ly out = {0}; reserveLy(&out, n); memcpy(out.data, digest, n); out.len = n; return out; }
+"#;
+const BASE64_PRELUDE: &str = r#"// std/base64：RFC 4648。解码时跳过空白；其他字符或补位不对返回错误（同 Python 的 binascii.Error）。
+static S zam_b64encode(Ly *p, int url) {
+    const char *alphabet = url ? "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_" : "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t n = p->len, i, o = 0, size;
+    unsigned char *q;
+    S s;
+    if (n > (SIZE_MAX - 3) / 4 * 3) zam_alloc_failed();
+    size = (n + 2) / 3 * 4;
+    q = (unsigned char *)malloc(size ? size : 1);
+    if (!q) zam_alloc_failed();
+    for (i = 0; i + 2 < n; i += 3) {
+        uint32_t v = (uint32_t)p->data[i] << 16 | (uint32_t)p->data[i + 1] << 8 | p->data[i + 2];
+        q[o++] = (unsigned char)alphabet[v >> 18]; q[o++] = (unsigned char)alphabet[(v >> 12) & 63];
+        q[o++] = (unsigned char)alphabet[(v >> 6) & 63]; q[o++] = (unsigned char)alphabet[v & 63];
+    }
+    if (i < n) {
+        uint32_t v = (uint32_t)p->data[i] << 16 | (i + 1 < n ? (uint32_t)p->data[i + 1] << 8 : 0);
+        q[o++] = (unsigned char)alphabet[v >> 18]; q[o++] = (unsigned char)alphabet[(v >> 12) & 63];
+        q[o++] = i + 1 < n ? (unsigned char)alphabet[(v >> 6) & 63] : '=';
+        q[o++] = '=';
+    }
+    s.data = q; s.len = o; s.chars = o;
+    return s;
+}
+static F_Ly zam_b64decode(S *text, int url) {
+    Ly out = {0};
+    uint32_t v = 0;
+    size_t i, count = 0, pad = 0;
+    for (i = 0; i < text->len; i++) {
+        unsigned char c = text->data[i];
+        int d;
+        if (c == ' ' || c == '\n' || c == '\r' || c == '\t') continue;
+        if (c == '=') { pad++; continue; }
+        if (pad) { dropLy(&out); return F_Ly_err(zam_message("invalid base64: data after padding", NULL)); }
+        d = c >= 'A' && c <= 'Z' ? c - 'A' : c >= 'a' && c <= 'z' ? c - 'a' + 26 : c >= '0' && c <= '9' ? c - '0' + 52
+          : c == (url ? '-' : '+') ? 62 : c == (url ? '_' : '/') ? 63 : -1;
+        if (d < 0) { S at = from_int((int64_t)i); S message = zam_message("invalid base64 character at position ", &at); drop(&at); dropLy(&out); return F_Ly_err(message); }
+        v = v << 6 | (uint32_t)d;
+        if (++count % 4 == 0) { pushLy(&out, (v >> 16) & 255); pushLy(&out, (v >> 8) & 255); pushLy(&out, v & 255); v = 0; }
+    }
+    if (count % 4 == 1 || (count + pad) % 4 != 0 || pad > 2) { dropLy(&out); return F_Ly_err(zam_message("invalid base64: incorrect padding", NULL)); }
+    if (count % 4 == 2) pushLy(&out, (v >> 4) & 255);
+    if (count % 4 == 3) { pushLy(&out, (v >> 10) & 255); pushLy(&out, (v >> 2) & 255); }
+    return F_Ly_ok(out);
+}
+"#;
+const PROCESS_PRELUDE: &str = r#"// std/_process：启动程序、等它结束、收集输出。std/process（Zamak 写的）在它上面包出 run、call、
+// check_output。输出先写进临时文件再读回，不用管道，不会因为两个管道都写满而互相等待。
+// 返回 [退出码, stdout, stderr]；被信号结束时退出码是负的信号编号（同 Python）。
+#ifdef _WIN32
+typedef struct { unsigned long cb; wchar_t *reserved, *desktop, *title; unsigned long x, y, xsize, ysize, xchars, ychars, fill, flags; unsigned short show, reserved2_size; unsigned char *reserved2; void *in, *out, *err; } zam_startup;
+typedef struct { void *process, *thread; unsigned long pid, tid; } zam_procinfo;
+typedef struct { unsigned long length; void *descriptor; int inherit; } zam_security;
+#ifndef _WINDOWS_
+__declspec(dllimport) int __stdcall CreateProcessW(const wchar_t *, wchar_t *, void *, void *, int, unsigned long, void *, const wchar_t *, void *, void *);
+__declspec(dllimport) unsigned long __stdcall WaitForSingleObject(void *, unsigned long);
+__declspec(dllimport) int __stdcall GetExitCodeProcess(void *, unsigned long *);
+__declspec(dllimport) int __stdcall CloseHandle(void *);
+__declspec(dllimport) void *__stdcall GetStdHandle(unsigned long);
+__declspec(dllimport) unsigned long __stdcall GetTempPathW(unsigned long, wchar_t *);
+__declspec(dllimport) unsigned int __stdcall GetTempFileNameW(const wchar_t *, const wchar_t *, unsigned int, wchar_t *);
+__declspec(dllimport) void *__stdcall CreateFileW(const wchar_t *, unsigned long, unsigned long, void *, unsigned long, unsigned long, void *);
+__declspec(dllimport) int __stdcall ReadFile(void *, void *, unsigned long, unsigned long *, void *);
+__declspec(dllimport) int __stdcall WriteFile(void *, const void *, unsigned long, unsigned long *, void *);
+__declspec(dllimport) unsigned long __stdcall SetFilePointer(void *, long, long *, unsigned long);
+__declspec(dllimport) unsigned long __stdcall GetLastError(void);
+#endif
+// 可被子进程继承、关闭时自动删除的临时文件。
+static void *zam_temp_handle(void) {
+    wchar_t dir[300], name[300];
+    zam_security sa;
+    void *h;
+    unsigned long n = GetTempPathW(260, dir);
+    sa.length = sizeof sa; sa.descriptor = NULL; sa.inherit = 1;
+    if (!n || n > 260 || !GetTempFileNameW(dir, L"zam", 0, name)) return NULL;
+    h = CreateFileW(name, 0xC0000000UL, 7, (void *)&sa, 2, 0x100 | 0x04000000, NULL);
+    return h == (void *)(intptr_t)-1 ? NULL : h;
+}
+static S zam_handle_text(void *h) {
+    unsigned char *buf = NULL;
+    size_t len = 0, cap = 0;
+    unsigned long got;
+    S text;
+    SetFilePointer(h, 0, NULL, 0);
+    for (;;) {
+        if (len == cap) {
+            unsigned char *grown;
+            cap = cap ? cap * 2 : 4096;
+            grown = (unsigned char *)realloc(buf, cap);
+            if (!grown) zam_alloc_failed();
+            buf = grown;
+        }
+        if (!ReadFile(h, buf + len, (unsigned long)(cap - len), &got, NULL) || !got) break;
+        len += got;
+    }
+    CloseHandle(h);
+    text = own(buf ? buf : (const unsigned char *)"", len);
+    free(buf);
+    return text;
+}
+static void zam_line_push(S *line, const char *p, size_t n) {
+    unsigned char *grown = (unsigned char *)realloc(line->data, line->len + n + 1);
+    if (!grown) zam_alloc_failed();
+    line->data = grown;
+    memcpy(line->data + line->len, p, n);
+    line->len += n;
+}
+// 按 CommandLineToArgvW 的规则给参数加引号：程序看到的参数和列表里的一模一样。
+static void zam_line_arg(S *line, S *arg) {
+    size_t i, j, slashes;
+    int quote = !arg->len;
+    for (i = 0; i < arg->len; i++) if (arg->data[i] == ' ' || arg->data[i] == '\t' || arg->data[i] == '\n' || arg->data[i] == '\v' || arg->data[i] == '"') quote = 1;
+    if (!quote) { zam_line_push(line, (const char *)arg->data, arg->len); return; }
+    zam_line_push(line, "\"", 1);
+    for (i = 0; i < arg->len; i++) {
+        slashes = 0;
+        while (i < arg->len && arg->data[i] == '\\') { slashes++; i++; }
+        if (i == arg->len) { for (j = 0; j < slashes * 2; j++) zam_line_push(line, "\\", 1); break; }
+        if (arg->data[i] == '"') { for (j = 0; j < slashes * 2 + 1; j++) zam_line_push(line, "\\", 1); }
+        else for (j = 0; j < slashes; j++) zam_line_push(line, "\\", 1);
+        zam_line_push(line, (const char *)&arg->data[i], 1);
+    }
+    zam_line_push(line, "\"", 1);
+}
+static F_Ls zam_process_run(Ls *args, S *input, int capture) {
+    S line = {0};
+    wchar_t *wide;
+    void *files[3] = {NULL, NULL, NULL};
+    zam_startup si;
+    zam_procinfo pi;
+    unsigned long code = 0;
+    size_t i;
+    int started;
+    Ls out = {0};
+    if (!args->len) return F_Ls_err(zam_message("process: the argument list is empty; put the program first", NULL));
+    for (i = 0; i < args->len; i++) {
+        if (i) zam_line_push(&line, " ", 1);
+        zam_line_arg(&line, &args->data[i]);
+    }
+    wide = zam_path(&line);
+    drop(&line);
+    if (!wide) return F_Ls_err(zam_message("process: an argument contains a NUL character", NULL));
+    memset(&si, 0, sizeof si);
+    si.cb = sizeof si;
+    if (input->len || capture) {
+        si.flags = 0x100;
+        si.in = GetStdHandle((unsigned long)-10);
+        si.out = GetStdHandle((unsigned long)-11);
+        si.err = GetStdHandle((unsigned long)-12);
+    }
+    if (input->len) {
+        unsigned long done;
+        files[0] = zam_temp_handle();
+        if (files[0] && WriteFile(files[0], input->data, (unsigned long)input->len, &done, NULL)) { SetFilePointer(files[0], 0, NULL, 0); si.in = files[0]; }
+    }
+    if (capture) {
+        files[1] = zam_temp_handle(); files[2] = zam_temp_handle();
+        if (files[1]) si.out = files[1];
+        if (files[2]) si.err = files[2];
+    }
+    fflush(stdout); fflush(stderr);
+    started = CreateProcessW(NULL, wide, NULL, NULL, 1, 0, NULL, NULL, (void *)&si, (void *)&pi);
+    free(wide);
+    if (!started) {
+        unsigned long error = GetLastError();
+        S program = copy(&args->data[0]), number = from_int((int64_t)error), message;
+        for (i = 0; i < 3; i++) if (files[i]) CloseHandle(files[i]);
+        message = cat(zam_message("cannot run ", &program), own((const unsigned char *)(error == 2 ? ": program not found" : ": Windows error "), error == 2 ? 19 : 16));
+        if (error != 2) message = cat(message, copy(&number));
+        drop(&program); drop(&number);
+        return F_Ls_err(message);
+    }
+    WaitForSingleObject(pi.process, 0xFFFFFFFFUL);
+    GetExitCodeProcess(pi.process, &code);
+    CloseHandle(pi.process); CloseHandle(pi.thread);
+    if (files[0]) CloseHandle(files[0]);
+    pushLs(&out, from_int((int64_t)(int)code));
+    pushLs(&out, files[1] ? zam_handle_text(files[1]) : own((const unsigned char *)"", 0));
+    pushLs(&out, files[2] ? zam_handle_text(files[2]) : own((const unsigned char *)"", 0));
+    return F_Ls_ok(out);
+}
+#else
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <errno.h>
+extern char **environ;
+// 打开后立刻删除的临时文件：只剩文件描述符，进程结束时自动回收。
+static int zam_temp_fd(void) {
+    char name[] = "/tmp/zamak-XXXXXX";
+    int fd = mkstemp(name);
+    if (fd >= 0) unlink(name);
+    return fd;
+}
+static S zam_fd_text(int fd) {
+    S text;
+    FILE *f;
+    if (lseek(fd, 0, SEEK_SET) < 0 || !(f = fdopen(fd, "rb"))) { close(fd); return own((const unsigned char *)"", 0); }
+    if (!zam_read_all(f, &text)) text = own((const unsigned char *)"", 0);
+    fclose(f);
+    return text;
+}
+static F_Ls zam_process_run(Ls *args, S *input, int capture) {
+    char **argv;
+    size_t i;
+    pid_t pid;
+    int status = 0, error, fds[3] = {-1, -1, -1};
+    int64_t code;
+    posix_spawn_file_actions_t actions;
+    Ls out = {0};
+    if (!args->len) return F_Ls_err(zam_message("process: the argument list is empty; put the program first", NULL));
+    argv = (char **)malloc((args->len + 1) * sizeof *argv);
+    if (!argv) zam_alloc_failed();
+    for (i = 0; i < args->len; i++) argv[i] = zam_cstr(&args->data[i]);
+    argv[args->len] = NULL;
+    posix_spawn_file_actions_init(&actions);
+    if (input->len && (fds[0] = zam_temp_fd()) >= 0) {
+        size_t done = 0;
+        while (done < input->len) {
+            ssize_t n = write(fds[0], input->data + done, input->len - done);
+            if (n <= 0) break;
+            done += (size_t)n;
+        }
+        lseek(fds[0], 0, SEEK_SET);
+        posix_spawn_file_actions_adddup2(&actions, fds[0], 0);
+    }
+    if (capture) {
+        if ((fds[1] = zam_temp_fd()) >= 0) posix_spawn_file_actions_adddup2(&actions, fds[1], 1);
+        if ((fds[2] = zam_temp_fd()) >= 0) posix_spawn_file_actions_adddup2(&actions, fds[2], 2);
+    }
+    fflush(stdout); fflush(stderr);
+    error = posix_spawnp(&pid, argv[0], &actions, NULL, argv, environ);
+    posix_spawn_file_actions_destroy(&actions);
+    if (!error) while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+    for (i = 0; i < args->len; i++) free(argv[i]);
+    free(argv);
+    if (fds[0] >= 0) close(fds[0]);
+    if (error) {
+        S program = copy(&args->data[0]);
+        const char *reason = error == ENOENT ? ": program not found" : strerror(error);
+        S message = cat(zam_message("cannot run ", &program), own((const unsigned char *)reason, strlen(reason)));
+        drop(&program);
+        if (fds[1] >= 0) close(fds[1]);
+        if (fds[2] >= 0) close(fds[2]);
+        return F_Ls_err(message);
+    }
+    code = WIFEXITED(status) ? WEXITSTATUS(status) : WIFSIGNALED(status) ? -(int64_t)WTERMSIG(status) : -1;
+    pushLs(&out, from_int(code));
+    pushLs(&out, fds[1] >= 0 ? zam_fd_text(fds[1]) : own((const unsigned char *)"", 0));
+    pushLs(&out, fds[2] >= 0 ? zam_fd_text(fds[2]) : own((const unsigned char *)"", 0));
+    return F_Ls_ok(out);
+}
+#endif
+"#;
+const REGEX_PRELUDE: &str = r#"// std/_re：正则表达式引擎（Pike VM，同 RE2/Go 的做法）。匹配时间与文本长度成线性关系，
+// 不会因为回溯卡死；代价是没有反向引用和环视。语法照 Python 的 re，按码点匹配。
+// 解析成语法树（节点存在数组里、用下标互相引用），再编译成指令；执行时多条线程同步前进，
+// 优先级高的线程先匹配，得到与回溯引擎相同的“最左、按优先级”结果。
+enum { ZRX_CHAR, ZRX_ANY, ZRX_ANYNL, ZRX_CLASS, ZRX_SPLIT, ZRX_JMP, ZRX_SAVE, ZRX_MATCH, ZRX_BOL, ZRX_EOL, ZRX_BEGIN, ZRX_END, ZRX_WORDB, ZRX_NWORDB };
+enum { ZRN_CHAR, ZRN_ANY, ZRN_CLASS, ZRN_CAT, ZRN_ALT, ZRN_REPEAT, ZRN_GROUP, ZRN_EMPTY, ZRN_ASSERT };
+// 类里的预定义集合用负数表示：\d \w \s 与它们的补集。
+#define ZRX_DIGIT (-1)
+#define ZRX_WORD (-2)
+#define ZRX_SPACE (-3)
+#define ZRX_NDIGIT (-4)
+#define ZRX_NWORD (-5)
+#define ZRX_NSPACE (-6)
+#define ZRX_LIMIT 100000
+typedef struct { int op; int64_t c; int x, y; } zam_rx_inst;
+typedef struct { int64_t lo, hi; } zam_rx_range;
+typedef struct { int start, count, negate; } zam_rx_class;
+typedef struct { int kind; int64_t c; int a, b, min, max, greedy; } zam_rx_node;
+typedef struct {
+    zam_rx_inst *code; int n, cap;
+    zam_rx_range *ranges; int nr, rcap;
+    zam_rx_class *classes; int nc, ccap;
+    zam_rx_node *nodes; int nn, ncap;
+    S *names; int groups;
+    int icase, multiline, dotall;
+    const unsigned char *p; size_t len, at;
+    const char *error;
+} zam_rx;
+static void *zam_rx_grow(void *p, int *cap, int need, size_t size) {
+    if (need <= *cap) return p;
+    *cap = *cap ? *cap * 2 : 16;
+    if (*cap < need) *cap = need;
+    p = realloc(p, (size_t)*cap * size);
+    if (!p) zam_alloc_failed();
+    return p;
+}
+static int zam_rx_node_new(zam_rx *r, int kind) {
+    zam_rx_node *n;
+    r->nodes = (zam_rx_node *)zam_rx_grow(r->nodes, &r->ncap, r->nn + 1, sizeof *r->nodes);
+    n = &r->nodes[r->nn];
+    memset(n, 0, sizeof *n);
+    n->kind = kind; n->a = n->b = -1;
+    return r->nn++;
+}
+static void zam_rx_range_add(zam_rx *r, int64_t lo, int64_t hi) {
+    r->ranges = (zam_rx_range *)zam_rx_grow(r->ranges, &r->rcap, r->nr + 1, sizeof *r->ranges);
+    r->ranges[r->nr].lo = lo; r->ranges[r->nr].hi = hi; r->nr++;
+}
+static int zam_rx_class_new(zam_rx *r, int negate) {
+    r->classes = (zam_rx_class *)zam_rx_grow(r->classes, &r->ccap, r->nc + 1, sizeof *r->classes);
+    r->classes[r->nc].start = r->nr; r->classes[r->nc].count = 0; r->classes[r->nc].negate = negate;
+    return r->nc++;
+}
+static int zam_rx_space(int64_t c) { return c == ' ' || (c >= 9 && c <= 13) || c == 0x1c || c == 0x1d || c == 0x1e || c == 0x1f || c == 0x85 || c == 0xa0 || c == 0x1680 || (c >= 0x2000 && c <= 0x200a) || c == 0x2028 || c == 0x2029 || c == 0x202f || c == 0x205f || c == 0x3000; }
+// \w：ASCII 字母数字与下划线；ASCII 以外除了空白与常见标点区都算（中文、带音标的字母等）。
+static int zam_rx_word(int64_t c) {
+    if (c < 128) return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+    if (zam_rx_space(c)) return 0;
+    if ((c >= 0x2000 && c <= 0x206f) || (c >= 0x3000 && c <= 0x303f) || (c >= 0xff00 && c <= 0xff0f) || (c >= 0xff1a && c <= 0xff20) || (c >= 0xff3b && c <= 0xff40) || (c >= 0xff5b && c <= 0xff65) || c == 0xa1 || c == 0xa7 || c == 0xab || c == 0xb6 || c == 0xb7 || c == 0xbb || c == 0xbf || c == 0xd7 || c == 0xf7) return 0;
+    return 1;
+}
+static int64_t zam_rx_fold(int64_t c) { return c >= 'A' && c <= 'Z' ? c + 32 : c; }
+static int zam_rx_in_class(zam_rx *r, int k, int64_t c) {
+    zam_rx_class *cls = &r->classes[k];
+    int i, hit = 0;
+    for (i = 0; i < cls->count && !hit; i++) {
+        zam_rx_range *g = &r->ranges[cls->start + i];
+        switch (g->lo) {
+        case ZRX_DIGIT: hit = c >= '0' && c <= '9'; break;
+        case ZRX_WORD: hit = zam_rx_word(c); break;
+        case ZRX_SPACE: hit = zam_rx_space(c); break;
+        case ZRX_NDIGIT: hit = !(c >= '0' && c <= '9'); break;
+        case ZRX_NWORD: hit = !zam_rx_word(c); break;
+        case ZRX_NSPACE: hit = !zam_rx_space(c); break;
+        default:
+            hit = c >= g->lo && c <= g->hi;
+            if (!hit && r->icase) {
+                int64_t f = zam_rx_fold(c), u = f >= 'a' && f <= 'z' ? f - 32 : f;
+                hit = (f >= g->lo && f <= g->hi) || (u >= g->lo && u <= g->hi);
+            }
+        }
+    }
+    return hit != cls->negate;
+}
+// ---- 解析 ----
+static int64_t zam_rx_next(zam_rx *r) {
+    int64_t c;
+    size_t n;
+    if (r->at >= r->len) return -1;
+    n = zam_utf8_next(r->p + r->at, r->len - r->at, &c);
+    if (!n) { c = r->p[r->at]; n = 1; }
+    r->at += n;
+    return c;
+}
+static int64_t zam_rx_peek(zam_rx *r) { size_t at = r->at; int64_t c = zam_rx_next(r); r->at = at; return c; }
+static int zam_rx_hex(zam_rx *r, int width, int64_t *out) {
+    int i;
+    *out = 0;
+    for (i = 0; i < width; i++) {
+        int64_t c = zam_rx_next(r);
+        int d = c >= '0' && c <= '9' ? (int)(c - '0') : c >= 'a' && c <= 'f' ? (int)(c - 'a' + 10) : c >= 'A' && c <= 'F' ? (int)(c - 'A' + 10) : -1;
+        if (d < 0) return 0;
+        *out = *out * 16 + d;
+    }
+    return 1;
+}
+// 转义：返回字符（>= 0），或预定义集合（负数）；`*assert` 置成断言的指令号。
+static int64_t zam_rx_escape(zam_rx *r, int *assert, int in_class) {
+    int64_t c = zam_rx_next(r), v;
+    *assert = -1;
+    switch (c) {
+    case -1: r->error = "the pattern ends with a backslash"; return 0;
+    case 'd': return ZRX_DIGIT;
+    case 'w': return ZRX_WORD;
+    case 's': return ZRX_SPACE;
+    case 'D': return ZRX_NDIGIT;
+    case 'W': return ZRX_NWORD;
+    case 'S': return ZRX_NSPACE;
+    case 'n': return '\n';
+    case 't': return '\t';
+    case 'r': return '\r';
+    case 'f': return '\f';
+    case 'v': return '\v';
+    case 'a': return 7;
+    case '0': return 0;
+    case 'b': if (in_class) return 8; *assert = ZRX_WORDB; return 0;
+    case 'B': if (!in_class) { *assert = ZRX_NWORDB; return 0; } break;
+    case 'A': if (!in_class) { *assert = ZRX_BEGIN; return 0; } break;
+    case 'Z': if (!in_class) { *assert = ZRX_END; return 0; } break;
+    case 'x': if (zam_rx_hex(r, 2, &v)) return v; r->error = "\\x takes two hex digits"; return 0;
+    case 'u': if (zam_rx_hex(r, 4, &v)) return v; r->error = "\\u takes four hex digits"; return 0;
+    case 'U': if (zam_rx_hex(r, 8, &v)) return v; r->error = "\\U takes eight hex digits"; return 0;
+    }
+    if (c >= '1' && c <= '9') { r->error = "backreferences such as \\1 are not supported; Zamak matches in linear time"; return 0; }
+    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) { r->error = "unknown escape in the pattern"; return 0; }
+    return c;
+}
+static void zam_rx_class_item(zam_rx *r, int64_t lo, int64_t hi) {
+    zam_rx_range_add(r, lo, hi);
+    r->classes[r->nc - 1].count++;
+}
+static int zam_rx_parse_class(zam_rx *r) {
+    int negate = 0, k, first = 1, assert;
+    if (zam_rx_peek(r) == '^') { zam_rx_next(r); negate = 1; }
+    k = zam_rx_class_new(r, negate);
+    for (;;) {
+        int64_t c = zam_rx_next(r), lo, hi;
+        if (c == -1) { r->error = "missing ] at the end of a character class"; return k; }
+        if (c == ']' && !first) break;
+        first = 0;
+        lo = c;
+        if (c == '\\') {
+            lo = zam_rx_escape(r, &assert, 1);
+            if (r->error) return k;
+            if (lo < 0) { zam_rx_class_item(r, lo, lo); continue; }
+        }
+        hi = lo;
+        if (zam_rx_peek(r) == '-') {
+            size_t save = r->at;
+            int64_t d;
+            zam_rx_next(r);
+            d = zam_rx_next(r);
+            if (d == ']' || d == -1) { r->at = save; }
+            else {
+                if (d == '\\') { d = zam_rx_escape(r, &assert, 1); if (r->error) return k; if (d < 0) { r->error = "a range cannot end with \\d, \\w or \\s"; return k; } }
+                if (d < lo) { r->error = "bad character range in a class"; return k; }
+                hi = d;
+            }
+        }
+        zam_rx_class_item(r, lo, hi);
+    }
+    return k;
+}
+static int zam_rx_alt(zam_rx *r, int depth);
+static int zam_rx_atom(zam_rx *r, int depth) {
+    int64_t c = zam_rx_next(r);
+    int node, assert;
+    switch (c) {
+    case '(': {
+        int group = -1, inner;
+        S name = {0};
+        if (zam_rx_peek(r) == '?') {
+            zam_rx_next(r);
+            c = zam_rx_next(r);
+            if (c == ':') group = -1;
+            else if (c == 'P' || c == '<') {
+                size_t start;
+                if (c == 'P' && zam_rx_next(r) != '<') { r->error = "named groups are written (?P<name>...)"; return -1; }
+                start = r->at;
+                while (zam_rx_peek(r) != '>' && zam_rx_peek(r) != -1) zam_rx_next(r);
+                if (zam_rx_next(r) != '>' || r->at - 1 == start) { r->error = "a group name must end with >"; return -1; }
+                name = own(r->p + start, r->at - 1 - start);
+                group = ++r->groups;
+            } else if (c == 'i' || c == 'm' || c == 's') {
+                // 行内标志 (?i) (?m) (?s)，作用于整个表达式（同 Python 的要求：写在开头）。
+                for (;;) {
+                    if (c == 'i') r->icase = 1; else if (c == 'm') r->multiline = 1; else if (c == 's') r->dotall = 1;
+                    else if (c == ')') return zam_rx_node_new(r, ZRN_EMPTY);
+                    else { r->error = "unknown flag in (?...)"; return -1; }
+                    c = zam_rx_next(r);
+                }
+            } else { r->error = "lookahead, lookbehind and other (?...) groups are not supported"; return -1; }
+        } else group = ++r->groups;
+        if (group > 0) {
+            r->names = (S *)realloc(r->names, (size_t)(group + 1) * sizeof(S));
+            if (!r->names) zam_alloc_failed();
+            r->names[group] = name;
+        }
+        inner = zam_rx_alt(r, depth + 1);
+        if (r->error) return -1;
+        if (zam_rx_next(r) != ')') { r->error = "missing ) to close a group"; return -1; }
+        if (group < 0) return inner;
+        node = zam_rx_node_new(r, ZRN_GROUP);
+        r->nodes[node].a = inner; r->nodes[node].c = group;
+        return node;
+    }
+    case '[':
+        node = zam_rx_node_new(r, ZRN_CLASS);
+        r->nodes[node].c = zam_rx_parse_class(r);
+        return node;
+    case '.': return zam_rx_node_new(r, ZRN_ANY);
+    case '^': node = zam_rx_node_new(r, ZRN_ASSERT); r->nodes[node].c = ZRX_BOL; return node;
+    case '$': node = zam_rx_node_new(r, ZRN_ASSERT); r->nodes[node].c = ZRX_EOL; return node;
+    case '\\':
+        c = zam_rx_escape(r, &assert, 0);
+        if (r->error) return -1;
+        if (assert >= 0) { node = zam_rx_node_new(r, ZRN_ASSERT); r->nodes[node].c = assert; return node; }
+        if (c < 0) {
+            node = zam_rx_node_new(r, ZRN_CLASS);
+            r->nodes[node].c = zam_rx_class_new(r, 0);
+            zam_rx_class_item(r, c, c);
+            return node;
+        }
+        break;
+    case '*': case '+': case '?': r->error = "nothing to repeat before *, + or ?"; return -1;
+    }
+    node = zam_rx_node_new(r, ZRN_CHAR);
+    r->nodes[node].c = c;
+    return node;
+}
+// `{m}`、`{m,}`、`{m,n}`；写法不对时 `{` 是普通字符（同 Python）。
+static int zam_rx_braces(zam_rx *r, int *min, int *max) {
+    size_t save = r->at;
+    int64_t c;
+    int value = -1, low;
+    zam_rx_next(r);
+    while ((c = zam_rx_peek(r)) >= '0' && c <= '9') { zam_rx_next(r); value = (value < 0 ? 0 : value) * 10 + (int)(c - '0'); if (value > 1000) { r->error = "a repeat count is limited to 1000"; return 0; } }
+    low = value;
+    if (zam_rx_peek(r) == '}') { zam_rx_next(r); if (low < 0) { r->at = save; return 0; } *min = *max = low; return 1; }
+    if (zam_rx_peek(r) != ',') { r->at = save; return 0; }
+    zam_rx_next(r);
+    value = -1;
+    while ((c = zam_rx_peek(r)) >= '0' && c <= '9') { zam_rx_next(r); value = (value < 0 ? 0 : value) * 10 + (int)(c - '0'); if (value > 1000) { r->error = "a repeat count is limited to 1000"; return 0; } }
+    if (zam_rx_peek(r) != '}') { r->at = save; return 0; }
+    zam_rx_next(r);
+    *min = low < 0 ? 0 : low;
+    *max = value;
+    if (value >= 0 && value < *min) { r->error = "a repeat range must not go down, as in {3,1}"; return 0; }
+    return 1;
+}
+static int zam_rx_repeat(zam_rx *r, int depth) {
+    int node = zam_rx_atom(r, depth), repeated = 0;
+    for (;;) {
+        int64_t c = zam_rx_peek(r);
+        int min, max, rep;
+        if (r->error) return -1;
+        if (c == '*') { zam_rx_next(r); min = 0; max = -1; }
+        else if (c == '+') { zam_rx_next(r); min = 1; max = -1; }
+        else if (c == '?') { zam_rx_next(r); min = 0; max = 1; }
+        else if (c == '{') { if (!zam_rx_braces(r, &min, &max)) { if (r->error) return -1; return node; } }
+        else return node;
+        if (repeated) { r->error = "multiple repeat, such as a**"; return -1; }
+        if (r->nodes[node].kind == ZRN_ASSERT || r->nodes[node].kind == ZRN_EMPTY) { r->error = "nothing to repeat"; return -1; }
+        repeated = 1;
+        rep = zam_rx_node_new(r, ZRN_REPEAT);
+        r->nodes[rep].a = node; r->nodes[rep].min = min; r->nodes[rep].max = max; r->nodes[rep].greedy = 1;
+        if (zam_rx_peek(r) == '?') { zam_rx_next(r); r->nodes[rep].greedy = 0; }
+        node = rep;
+    }
+}
+static int zam_rx_cat(zam_rx *r, int depth) {
+    int node = -1;
+    for (;;) {
+        int64_t c = zam_rx_peek(r);
+        int next, cat;
+        if (c == -1 || c == '|' || (c == ')' && depth > 0)) break;
+        if (c == ')') { r->error = "unbalanced ) in the pattern"; return -1; }
+        next = zam_rx_repeat(r, depth);
+        if (r->error) return -1;
+        if (node < 0) { node = next; continue; }
+        cat = zam_rx_node_new(r, ZRN_CAT);
+        r->nodes[cat].a = node; r->nodes[cat].b = next;
+        node = cat;
+    }
+    return node < 0 ? zam_rx_node_new(r, ZRN_EMPTY) : node;
+}
+static int zam_rx_alt(zam_rx *r, int depth) {
+    int node;
+    if (depth > 200) { r->error = "groups are nested too deeply"; return -1; }
+    node = zam_rx_cat(r, depth);
+    while (!r->error && zam_rx_peek(r) == '|') {
+        int alt, right;
+        zam_rx_next(r);
+        right = zam_rx_cat(r, depth);
+        alt = zam_rx_node_new(r, ZRN_ALT);
+        r->nodes[alt].a = node; r->nodes[alt].b = right;
+        node = alt;
+    }
+    return node;
+}
+// ---- 编译 ----
+static int zam_rx_emit(zam_rx *r, int op, int64_t c, int x, int y) {
+    if (r->n >= ZRX_LIMIT) { r->error = "the regular expression is too large"; return r->n; }
+    r->code = (zam_rx_inst *)zam_rx_grow(r->code, &r->cap, r->n + 1, sizeof *r->code);
+    r->code[r->n].op = op; r->code[r->n].c = c; r->code[r->n].x = x; r->code[r->n].y = y;
+    return r->n++;
+}
+static void zam_rx_compile(zam_rx *r, int k) {
+    zam_rx_node node = r->nodes[k];
+    int split, i;
+    if (r->error) return;
+    switch (node.kind) {
+    case ZRN_CHAR: zam_rx_emit(r, ZRX_CHAR, node.c, 0, 0); break;
+    case ZRN_ANY: zam_rx_emit(r, r->dotall ? ZRX_ANYNL : ZRX_ANY, 0, 0, 0); break;
+    case ZRN_CLASS: zam_rx_emit(r, ZRX_CLASS, 0, (int)node.c, 0); break;
+    case ZRN_ASSERT: zam_rx_emit(r, (int)node.c, 0, 0, 0); break;
+    case ZRN_EMPTY: break;
+    case ZRN_CAT: zam_rx_compile(r, node.a); zam_rx_compile(r, node.b); break;
+    case ZRN_GROUP:
+        zam_rx_emit(r, ZRX_SAVE, 0, 2 * (int)node.c, 0);
+        zam_rx_compile(r, node.a);
+        zam_rx_emit(r, ZRX_SAVE, 0, 2 * (int)node.c + 1, 0);
+        break;
+    case ZRN_ALT: {
+        int jump;
+        split = zam_rx_emit(r, ZRX_SPLIT, 0, 0, 0);
+        r->code[split].x = r->n;
+        zam_rx_compile(r, node.a);
+        jump = zam_rx_emit(r, ZRX_JMP, 0, 0, 0);
+        if (r->error) return;
+        r->code[split].y = r->n;
+        zam_rx_compile(r, node.b);
+        if (r->error) return;
+        r->code[jump].x = r->n;
+        break;
+    }
+    case ZRN_REPEAT:
+        for (i = 0; i < node.min && !r->error; i++) zam_rx_compile(r, node.a);
+        if (node.max < 0) {
+            // 循环：SPLIT 优先走（贪婪）进入循环体，或者优先离开（非贪婪）。
+            split = zam_rx_emit(r, ZRX_SPLIT, 0, 0, 0);
+            zam_rx_compile(r, node.a);
+            zam_rx_emit(r, ZRX_JMP, 0, split, 0);
+            if (r->error) return;
+            if (node.greedy) { r->code[split].x = split + 1; r->code[split].y = r->n; }
+            else { r->code[split].x = r->n; r->code[split].y = split + 1; }
+        } else {
+            int *exits = (int *)malloc(sizeof(int) * (size_t)(node.max - node.min + 1)), count = 0, j;
+            if (!exits) zam_alloc_failed();
+            for (i = node.min; i < node.max && !r->error; i++) {
+                split = zam_rx_emit(r, ZRX_SPLIT, 0, 0, 0);
+                exits[count++] = split;
+                zam_rx_compile(r, node.a);
+            }
+            for (j = 0; j < count && !r->error; j++) {
+                if (node.greedy) { r->code[exits[j]].x = exits[j] + 1; r->code[exits[j]].y = r->n; }
+                else { r->code[exits[j]].x = r->n; r->code[exits[j]].y = exits[j] + 1; }
+            }
+            free(exits);
+        }
+        break;
+    }
+}
+static void zam_rx_free(zam_rx *r) {
+    int i;
+    if (!r) return;
+    for (i = 1; i <= r->groups; i++) if (r->names) drop(&r->names[i]);
+    free(r->names); free(r->code); free(r->ranges); free(r->classes); free(r->nodes);
+    free(r);
+}
+// 1 = IGNORECASE，2 = MULTILINE，4 = DOTALL（与 std/re 的常量一致）。
+static zam_rx *zam_rx_build(S *pattern, int64_t flags, S *error) {
+    zam_rx *r = (zam_rx *)calloc(1, sizeof *r);
+    int root;
+    if (!r) zam_alloc_failed();
+    r->p = pattern->data; r->len = pattern->len;
+    r->icase = (flags & 1) != 0; r->multiline = (flags & 2) != 0; r->dotall = (flags & 4) != 0;
+    r->names = (S *)calloc(1, sizeof(S));
+    if (!r->names) zam_alloc_failed();
+    root = zam_rx_alt(r, 0);
+    if (!r->error && r->at < r->len) r->error = "unbalanced ) in the pattern";
+    if (!r->error) {
+        zam_rx_emit(r, ZRX_SAVE, 0, 0, 0);
+        zam_rx_compile(r, root);
+        zam_rx_emit(r, ZRX_SAVE, 0, 1, 0);
+        zam_rx_emit(r, ZRX_MATCH, 0, 0, 0);
+    }
+    if (r->error) {
+        S at = from_int((int64_t)r->at);
+        *error = cat(cat(zam_message("invalid regular expression at position ", &at), own((const unsigned char *)": ", 2)), own((const unsigned char *)r->error, strlen(r->error)));
+        drop(&at);
+        zam_rx_free(r);
+        return NULL;
+    }
+    free(r->nodes); r->nodes = NULL;
+    return r;
+}
+// 编译结果缓存：同一个表达式反复使用时不重新编译（同 Python 的 re 缓存）。
+#define ZRX_CACHE 16
+static struct { S pattern; int64_t flags; zam_rx *rx; } zam_rx_cache[ZRX_CACHE];
+static int zam_rx_cache_next;
+static zam_rx *zam_rx_get(S *pattern, int64_t flags, S *error) {
+    int i;
+    zam_rx *r;
+    for (i = 0; i < ZRX_CACHE; i++) if (zam_rx_cache[i].rx && zam_rx_cache[i].flags == flags && string_equal(&zam_rx_cache[i].pattern, pattern)) return zam_rx_cache[i].rx;
+    r = zam_rx_build(pattern, flags, error);
+    if (!r) return NULL;
+    i = zam_rx_cache_next; zam_rx_cache_next = (zam_rx_cache_next + 1) % ZRX_CACHE;
+    if (zam_rx_cache[i].rx) { zam_rx_free(zam_rx_cache[i].rx); drop(&zam_rx_cache[i].pattern); }
+    zam_rx_cache[i].pattern = copy(pattern); zam_rx_cache[i].flags = flags; zam_rx_cache[i].rx = r;
+    return r;
+}
+// ---- 执行 ----
+typedef struct { int *pc; int64_t *caps; int count; int *mark; int stamp; } zam_rx_list;
+typedef struct { int pc, slot; int64_t old; } zam_rx_step;
+typedef struct { zam_rx *r; int ncap; zam_rx_step *stack; int top, scap; } zam_rx_vm;
+static int zam_rx_assert(zam_rx *r, int op, const unsigned char *p, size_t len, size_t at, int64_t prev, int64_t cur) {
+    switch (op) {
+    case ZRX_BOL: return at == 0 || (r->multiline && prev == '\n');
+    case ZRX_EOL: return at == len || (cur == '\n' && (r->multiline || at + 1 == len));
+    case ZRX_BEGIN: return at == 0;
+    case ZRX_END: return at == len;
+    case ZRX_WORDB: return (prev >= 0 && zam_rx_word(prev)) != (cur >= 0 && zam_rx_word(cur));
+    case ZRX_NWORDB: return (prev >= 0 && zam_rx_word(prev)) == (cur >= 0 && zam_rx_word(cur));
+    }
+    (void)p;
+    return 0;
+}
+static void zam_rx_push(zam_rx_vm *vm, int pc, int slot, int64_t old) {
+    vm->stack = (zam_rx_step *)zam_rx_grow(vm->stack, &vm->scap, vm->top + 1, sizeof *vm->stack);
+    vm->stack[vm->top].pc = pc; vm->stack[vm->top].slot = slot; vm->stack[vm->top].old = old; vm->top++;
+}
+// 从 pc 出发沿着不消耗字符的指令展开，把停在消耗字符或 MATCH 处的线程按优先级加进列表。
+static void zam_rx_add(zam_rx_vm *vm, zam_rx_list *list, int pc0, int64_t *caps, const unsigned char *p, size_t len, size_t at, int64_t prev, int64_t cur) {
+    zam_rx *r = vm->r;
+    zam_rx_push(vm, pc0, -1, 0);
+    while (vm->top) {
+        zam_rx_step step = vm->stack[--vm->top];
+        zam_rx_inst *in;
+        if (step.slot >= 0) { caps[step.slot] = step.old; continue; }
+        if (list->mark[step.pc] == list->stamp) continue;
+        list->mark[step.pc] = list->stamp;
+        in = &r->code[step.pc];
+        switch (in->op) {
+        case ZRX_JMP: zam_rx_push(vm, in->x, -1, 0); break;
+        case ZRX_SPLIT: zam_rx_push(vm, in->y, -1, 0); zam_rx_push(vm, in->x, -1, 0); break;
+        case ZRX_SAVE:
+            zam_rx_push(vm, 0, in->x, caps[in->x]);
+            caps[in->x] = (int64_t)at;
+            zam_rx_push(vm, step.pc + 1, -1, 0);
+            break;
+        case ZRX_BOL: case ZRX_EOL: case ZRX_BEGIN: case ZRX_END: case ZRX_WORDB: case ZRX_NWORDB:
+            if (zam_rx_assert(r, in->op, p, len, at, prev, cur)) zam_rx_push(vm, step.pc + 1, -1, 0);
+            break;
+        default:
+            list->pc[list->count] = step.pc;
+            memcpy(list->caps + (size_t)list->count * vm->ncap, caps, sizeof(int64_t) * (size_t)vm->ncap);
+            list->count++;
+        }
+    }
+}
+static int zam_rx_consumes(zam_rx *r, zam_rx_inst *in, int64_t c) {
+    if (c < 0) return 0;
+    switch (in->op) {
+    case ZRX_CHAR: return in->c == c || (r->icase && zam_rx_fold(in->c) == zam_rx_fold(c));
+    case ZRX_ANY: return c != '\n';
+    case ZRX_ANYNL: return 1;
+    case ZRX_CLASS: return zam_rx_in_class(r, in->x, c);
+    }
+    return 0;
+}
+// 从字节位置 start 起找一次匹配；mode 0 = 任意位置，1 = 只在 start，2 = 从 start 到结尾整段。
+// 线程以“待展开”的形式进入下一轮：到那时才知道当前字符，断言（\b、$）才判断得了。
+// 找到时把各组的字节位置写进 out（没参与匹配的组是 -1），返回 1。
+static int zam_rx_run(zam_rx_vm *vm, const unsigned char *p, size_t len, size_t start, int mode, int64_t *out) {
+    zam_rx *r = vm->r;
+    int n = r->n, ncap = vm->ncap, matched = 0, i;
+    int *pend_pc = (int *)malloc(sizeof(int) * (size_t)n), *next_pc = (int *)malloc(sizeof(int) * (size_t)n), *swap_pc;
+    int64_t *pend_caps = (int64_t *)malloc(sizeof(int64_t) * (size_t)n * (size_t)ncap);
+    int64_t *next_caps = (int64_t *)malloc(sizeof(int64_t) * (size_t)n * (size_t)ncap), *swap_caps;
+    int64_t *caps = (int64_t *)malloc(sizeof(int64_t) * (size_t)ncap), prev = -1, cur;
+    int pending = 0, next;
+    zam_rx_list list;
+    size_t at = start, step;
+    list.pc = (int *)malloc(sizeof(int) * (size_t)n);
+    list.caps = (int64_t *)malloc(sizeof(int64_t) * (size_t)n * (size_t)ncap);
+    list.mark = (int *)calloc((size_t)n, sizeof(int));
+    list.stamp = 0;
+    if (!pend_pc || !next_pc || !pend_caps || !next_caps || !caps || !list.pc || !list.caps || !list.mark) zam_alloc_failed();
+    if (start > 0) {
+        size_t back = start - 1;
+        while (back > 0 && (p[back] & 0xC0) == 0x80) back--;
+        if (!zam_utf8_next(p + back, len - back, &prev)) prev = p[start - 1];
+    }
+    for (;;) {
+        step = 0;
+        cur = -1;
+        if (at < len) {
+            step = zam_utf8_next(p + at, len - at, &cur);
+            if (!step) { cur = p[at]; step = 1; }
+        }
+        // 展开：先是上一轮留下的线程（按优先级），最后是从这里新起的一条（优先级最低）。
+        list.count = 0;
+        list.stamp++;
+        for (i = 0; i < pending; i++) {
+            memcpy(caps, pend_caps + (size_t)i * ncap, sizeof(int64_t) * (size_t)ncap);
+            zam_rx_add(vm, &list, pend_pc[i], caps, p, len, at, prev, cur);
+        }
+        if (!matched && (mode == 0 || at == start)) {
+            for (i = 0; i < ncap; i++) caps[i] = -1;
+            zam_rx_add(vm, &list, 0, caps, p, len, at, prev, cur);
+        }
+        // 这里一条线程也没有（比如开头的 \b 在这个位置不成立）：还没找到时继续往后扫。
+        if (!list.count) {
+            if (matched || mode != 0 || at >= len) break;
+            pending = 0;
+            prev = cur;
+            at += step;
+            continue;
+        }
+        next = 0;
+        for (i = 0; i < list.count; i++) {
+            zam_rx_inst *in = &r->code[list.pc[i]];
+            int64_t *tc = list.caps + (size_t)i * ncap;
+            if (in->op == ZRX_MATCH) {
+                if (mode == 2 && at != len) continue;
+                memcpy(out, tc, sizeof(int64_t) * (size_t)ncap);
+                matched = 1;
+                break;
+            }
+            if (zam_rx_consumes(r, in, cur)) {
+                next_pc[next] = list.pc[i] + 1;
+                memcpy(next_caps + (size_t)next * ncap, tc, sizeof(int64_t) * (size_t)ncap);
+                next++;
+            }
+        }
+        if (at >= len || (!next && (matched || mode != 0))) break;
+        swap_pc = pend_pc; pend_pc = next_pc; next_pc = swap_pc;
+        swap_caps = pend_caps; pend_caps = next_caps; next_caps = swap_caps;
+        pending = next;
+        prev = cur;
+        at += step;
+    }
+    free(pend_pc); free(next_pc); free(pend_caps); free(next_caps); free(caps);
+    free(list.pc); free(list.caps); free(list.mark);
+    return matched;
+}
+// 字节位置 [from, to) 里有几个字符。
+static int64_t zam_rx_chars(const unsigned char *p, size_t from, size_t to) {
+    int64_t count = 0;
+    while (from < to) {
+        int64_t c;
+        size_t n = zam_utf8_next(p + from, to - from, &c);
+        from += n ? n : 1;
+        count++;
+    }
+    return count;
+}
+// 各组的名字：下标 0 是整个匹配（空名字），没有名字的组也是空名字。
+static F_Ls zam_re_groups(S *pattern, int64_t flags) {
+    S error;
+    zam_rx *r = zam_rx_get(pattern, flags, &error);
+    Ls out = {0};
+    int i;
+    if (!r) return F_Ls_err(error);
+    pushLs(&out, own((const unsigned char *)"", 0));
+    for (i = 1; i <= r->groups; i++) pushLs(&out, copy(&r->names[i]));
+    return F_Ls_ok(out);
+}
+// 从第 start 个字符起找匹配，最多 limit 个（0 表示全部）。每个匹配给出 2 × (组数 + 1) 个字符位置：
+// 各组的开始与结束，没参与匹配的组是 -1。空匹配的规则同 Python 3.7：紧跟在空匹配后面的位置上
+// 不再接受空匹配。
+static F_Li zam_re_find(S *pattern, int64_t flags, S *text, int64_t start, int64_t mode, int64_t limit) {
+    S error;
+    zam_rx *r = zam_rx_get(pattern, flags, &error);
+    zam_rx_vm vm;
+    Li out = {0};
+    int64_t *caps, count = 0, char_at = 0, prev_end = -1;
+    size_t at = 0, scan = 0;
+    int prev_empty = 0, i;
+    if (!r) return F_Li_err(error);
+    vm.r = r; vm.ncap = 2 * (r->groups + 1); vm.stack = NULL; vm.top = 0; vm.scap = 0;
+    caps = (int64_t *)malloc(sizeof(int64_t) * (size_t)vm.ncap);
+    if (!caps) zam_alloc_failed();
+    if (start < 0) start = 0;
+    while (at < text->len && char_at < start) {
+        int64_t c;
+        size_t n = zam_utf8_next(text->data + at, text->len - at, &c);
+        at += n ? n : 1;
+        char_at++;
+    }
+    scan = at;
+    while (at <= text->len && (limit <= 0 || count < limit)) {
+        int64_t base;
+        if (!zam_rx_run(&vm, text->data, text->len, at, (int)mode, caps)) break;
+        if (caps[0] == caps[1] && prev_empty && caps[0] == prev_end) {
+            int64_t c;
+            size_t n;
+            if (at >= text->len) break;
+            n = zam_utf8_next(text->data + at, text->len - at, &c);
+            at += n ? n : 1;
+            continue;
+        }
+        char_at += zam_rx_chars(text->data, scan, (size_t)caps[0]);
+        scan = (size_t)caps[0];
+        base = char_at;
+        for (i = 0; i < vm.ncap; i++) pushLi(&out, caps[i] < 0 ? -1 : base + zam_rx_chars(text->data, (size_t)caps[0], (size_t)caps[i]));
+        count++;
+        prev_empty = caps[0] == caps[1];
+        prev_end = caps[1];
+        at = (size_t)caps[1];
+        if (mode != 0) break;
+    }
+    free(caps); free(vm.stack);
+    return F_Li_ok(out);
+}
+"#;
+/// 只在用到某个标准库模块时才需要的 C 辅助代码：（模块前缀, 代码）。
+const MODULE_PRELUDES: &[(&str, &str)] = &[
+    ("std/hashlib:", HASH_PRELUDE),
+    ("std/base64:", BASE64_PRELUDE),
+    ("std/_process:", PROCESS_PRELUDE),
+    ("std/_re:", REGEX_PRELUDE),
+];
 const STD_PRELUDE: &str = r#"#ifdef _WIN32
 __declspec(dllimport) wchar_t *__stdcall GetCommandLineW(void);
 __declspec(dllimport) int __stdcall MultiByteToWideChar(unsigned int, unsigned long, const char *, int, wchar_t *, int);
@@ -1823,6 +2839,83 @@ return own(text, n);"#,
         result: Type::List(Elem::Int),
         fallible: false,
         body: "Li out = {0}; size_t i; for (i = 0; i < p0->len; i++) pushLi(&out, p0->data[i]); return out;",
+    },
+    Builtin {
+        name: "std/_re:groups",
+        params: &[Type::Shared, Type::Int],
+        result: Type::List(Elem::Str),
+        fallible: true,
+        body: "return zam_re_groups(p0, p1);",
+    },
+    Builtin {
+        name: "std/_re:find",
+        params: &[Type::Shared, Type::Int, Type::Shared, Type::Int, Type::Int, Type::Int],
+        result: Type::List(Elem::Int),
+        fallible: true,
+        body: "return zam_re_find(p0, p1, p2, p3, p4, p5);",
+    },
+    Builtin {
+        name: "std/_process:run",
+        params: &[Type::ListRef(Elem::Str, false), Type::Shared, Type::Bool],
+        result: Type::List(Elem::Str),
+        fallible: true,
+        body: "return zam_process_run(p0, p1, p2);",
+    },
+    Builtin {
+        name: "std/base64:b64encode",
+        params: &[Type::ListRef(Elem::Byte, false)],
+        result: Type::Owned,
+        fallible: false,
+        body: "return zam_b64encode(p0, 0);",
+    },
+    Builtin {
+        name: "std/base64:urlsafe_b64encode",
+        params: &[Type::ListRef(Elem::Byte, false)],
+        result: Type::Owned,
+        fallible: false,
+        body: "return zam_b64encode(p0, 1);",
+    },
+    Builtin {
+        name: "std/base64:b64decode",
+        params: &[Type::Shared],
+        result: Type::List(Elem::Byte),
+        fallible: true,
+        body: "return zam_b64decode(p0, 0);",
+    },
+    Builtin {
+        name: "std/base64:urlsafe_b64decode",
+        params: &[Type::Shared],
+        result: Type::List(Elem::Byte),
+        fallible: true,
+        body: "return zam_b64decode(p0, 1);",
+    },
+    Builtin {
+        name: "std/hashlib:sha256",
+        params: &[Type::ListRef(Elem::Byte, false)],
+        result: Type::List(Elem::Byte),
+        fallible: false,
+        body: "uint8_t d[32]; zam_sha256(p0->data, p0->len, d); return zam_digest_bytes(d, 32);",
+    },
+    Builtin {
+        name: "std/hashlib:sha1",
+        params: &[Type::ListRef(Elem::Byte, false)],
+        result: Type::List(Elem::Byte),
+        fallible: false,
+        body: "uint8_t d[20]; zam_sha1(p0->data, p0->len, d); return zam_digest_bytes(d, 20);",
+    },
+    Builtin {
+        name: "std/hashlib:md5",
+        params: &[Type::ListRef(Elem::Byte, false)],
+        result: Type::List(Elem::Byte),
+        fallible: false,
+        body: "uint8_t d[16]; zam_md5(p0->data, p0->len, d); return zam_digest_bytes(d, 16);",
+    },
+    Builtin {
+        name: "std/hashlib:hmac_sha256",
+        params: &[Type::ListRef(Elem::Byte, false), Type::ListRef(Elem::Byte, false)],
+        result: Type::List(Elem::Byte),
+        fallible: false,
+        body: "uint8_t d[32]; zam_hmac_sha256(p0->data, p0->len, p1->data, p1->len, d); return zam_digest_bytes(d, 32);",
     },
     Builtin {
         name: "std/core:bytes_literal",
@@ -5516,7 +6609,7 @@ pub fn generate_with(
                             .iter()
                             .filter(|(name, function)| {
                                 (name.ends_with(&suffix) || name.contains(&instance))
-                                    && !name.starts_with("std/")
+                                    && !function.builtin
                                     && function.generics.is_empty()
                             })
                             .map(|(name, _)| name.clone()),
@@ -5938,11 +7031,17 @@ pub fn generate_with(
         ));
     }
     let mut prelude = false;
+    let mut module_preludes = std::collections::BTreeSet::new();
     for name in &needed {
         if let Some(builtin) = builtin(name) {
             if !prelude {
                 source.push_str(STD_PRELUDE);
                 prelude = true;
+            }
+            for (prefix, code) in MODULE_PRELUDES {
+                if name.starts_with(prefix) && module_preludes.insert(*prefix) {
+                    source.push_str(code);
+                }
             }
             source.push_str(&format!(
                 "static {} {{\n{}\n}}\n",

@@ -674,11 +674,16 @@ fn show(ty: compiler::Type) -> String {
 }
 
 const STD_MODULES: &[&str] = &[
-    "io", "fmt", "string", "bytes", "fs", "env", "math", "time", "random", "path",
+    "io", "fmt", "string", "bytes", "fs", "env", "math", "time", "random", "path", "hashlib",
+    "base64", "process", "json", "re",
 ];
 
 /// 项目里另一个模块的源码（打开的文档优先），按 `use` 的路径找：`modules 目录/路径.zm`。
 fn module_source(context: &Context, path: &str) -> Option<(PathBuf, String)> {
+    // 用 Zamak 写的标准库模块（std/json、std/re……）：源码在编译器里，没有文件。
+    if let Some(source) = project::std_source(path) {
+        return Some((PathBuf::from(format!("<{path}>.zm")), source.to_owned()));
+    }
     let root = project_input(&context.path);
     let base = if root.is_dir() {
         let manifest = std::fs::read_to_string(root.join("zam.toml")).ok()?;
@@ -777,7 +782,8 @@ fn member_items(context: &Context, owner: &str) -> Vec<Value> {
                     items.push(item(constant, CONSTANT, "f64"));
                 }
             }
-        } else if let Some((_, text)) = module_source(context, path) {
+        }
+        if let Some((_, text)) = module_source(context, path) {
             for declaration in declarations(&text) {
                 if text
                     .lines()
@@ -1480,7 +1486,9 @@ fn definition(context: &Context) -> Value {
     };
     if let Some(owner) = owner {
         if let Some(path) = imports(context.text).get(&owner) {
-            if let Some((file, text)) = module_source(context, path) {
+            if let Some((file, text)) =
+                module_source(context, path).filter(|(file, _)| file.exists())
+            {
                 if let Some(declaration) = declarations(&text).into_iter().find(|d| d.name == name)
                 {
                     return location(&path_to_uri(&file), declaration.line, &text, &name);
@@ -1504,7 +1512,7 @@ fn definition(context: &Context) -> Value {
         return location(context.uri, declaration.line, context.text, &name);
     }
     if let Some(path) = imports(context.text).get(&name) {
-        if let Some((file, _)) = module_source(context, path) {
+        if let Some((file, _)) = module_source(context, path).filter(|(file, _)| file.exists()) {
             return json!({ "uri": path_to_uri(&file), "range": range(0, 0, 0, 0) });
         }
     }

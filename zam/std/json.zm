@@ -1,0 +1,415 @@
+# JSON 读写，接口照 Python 的 json 模块：loads 把文字变成 Json，dumps 把 Json 变成文字。
+# 数字一律按 f64 保存（同 JavaScript）；整数值输出时不带小数点。
+use std/math
+use std/string
+
+# 一个 JSON 值。对象的键保持出现的顺序。
+pub enum Json:
+    Null
+    Bool(value: bool)
+    Number(value: f64)
+    Str(value: string)
+    Array(items: [Json])
+    Object(fields: {string: Json})
+
+    # 对象里键为 key 的值（副本）。不是对象或没有这个键时返回错误。
+    pub fn get(&self, key: &string) -> Json!string:
+        match self:
+            Object(fields):
+                if key in fields:
+                    return copy(&fields[key])
+
+                fail f"no key {key} in the JSON object"
+            _: fail f"cannot read key {key}: the JSON value is not an object"
+
+    # 数组里第 index 项（副本），负数从末尾数。
+    pub fn item(&self, index: i64) -> Json!string:
+        match self:
+            Array(items):
+                let at = if index < 0: index + len(items) else: index
+
+                if at < 0 or at >= len(items):
+                    fail f"index {index} is out of range for a JSON array of {len(items)} items"
+
+                return copy(&items[at])
+            _: fail f"cannot read item {index}: the JSON value is not an array"
+
+    pub fn as_str(&self) -> string!string:
+        match self:
+            Str(value): return value
+            _: fail "the JSON value is not a string"
+
+    pub fn as_f64(&self) -> f64!string:
+        match self:
+            Number(value): return value
+            _: fail "the JSON value is not a number"
+
+    # 整数：数字有小数部分时返回错误。
+    pub fn as_i64(&self) -> i64!string:
+        match self:
+            Number(value):
+                if value != math.floor(value) or math.abs(value) > 9007199254740992.0:
+                    fail f"the JSON number {value} is not an integer"
+
+                return i64(value)
+            _: fail "the JSON value is not a number"
+
+    pub fn as_bool(&self) -> bool!string:
+        match self:
+            Bool(value): return value
+            _: fail "the JSON value is not true or false"
+
+    pub fn is_null(&self) -> bool:
+        match self:
+            Null: true
+            _: false
+
+    # 数组的项数或对象的键数；其他值是 0。
+    pub fn len(&self) -> i64:
+        match self:
+            Array(items): len(items)
+            Object(fields): len(fields)
+            _: 0
+
+    # 对象的键，按出现的顺序；不是对象时是空列表。
+    pub fn keys(&self) -> [string]:
+        match self:
+            Object(fields): fields.keys()
+            _: []
+
+# 把文字解析成 Json。格式不对时返回错误，错误里带着出错的字节位置。
+pub fn loads(text: &string) -> Json!string:
+    let mut reader = Reader(data=text.encode(), pos=0)
+    let value = reader.value()?
+    reader.skip_space()
+
+    if reader.pos < len(reader.data):
+        fail reader.message("extra data after the value")
+
+    value
+
+# 把 Json 写成文字。indent 大于 0 时分行缩进；否则写成一行，分隔符是 ", " 和 ": "（同 Python）。
+pub fn dumps(value: &Json, indent: i64 = 0) -> string:
+    let mut out: [string] = []
+    write(value, indent, 0, &mut out)
+    "".join(out)
+
+struct Reader:
+    data: bytes
+    pos: i64
+
+    fn peek(&self) -> i64:
+        if self.pos < len(self.data):
+            return self.data[self.pos]
+
+        -1
+
+    fn message(&self, what: &string) -> string:
+        f"invalid JSON at position {self.pos}: {what}"
+
+    fn skip_space(&mut self):
+        while self.pos < len(self.data):
+            let c = self.data[self.pos]
+
+            if c != ' ' and c != '\t' and c != '\n' and c != '\r':
+                break
+
+            self.pos += 1
+
+    fn value(&mut self) -> Json!string:
+        self.skip_space()
+        let c = self.peek()
+
+        if c == '{':
+            return self.object()?
+
+        if c == '[':
+            return self.array()?
+
+        if c == '"':
+            return Json.Str(self.text()?)
+
+        if c == 't':
+            self.word("true")?
+            return Json.Bool(true)
+
+        if c == 'f':
+            self.word("false")?
+            return Json.Bool(false)
+
+        if c == 'n':
+            self.word("null")?
+            return Json.Null
+
+        if c == '-' or (c >= '0' and c <= '9'):
+            return Json.Number(self.number()?)
+
+        if c == -1:
+            fail self.message("expected a value, found the end of the text")
+
+        fail self.message("expected a value")
+
+    fn word(&mut self, word: &string) -> !string:
+        for ch in word.encode():
+            if self.peek() != ch:
+                fail self.message(f"expected {word}")
+
+            self.pos += 1
+
+    fn digits(&mut self) -> i64:
+        let start = self.pos
+
+        while self.peek() >= '0' and self.peek() <= '9':
+            self.pos += 1
+
+        self.pos - start
+
+    # 数字的写法严格按 JSON：没有前导零、没有 +、小数点和指数后面都要有数字。
+    fn number(&mut self) -> f64!string:
+        let start = self.pos
+
+        if self.peek() == '-':
+            self.pos += 1
+
+        if self.peek() == '0':
+            self.pos += 1
+        elif self.digits() == 0:
+            fail self.message("expected a digit")
+
+        if self.peek() == '.':
+            self.pos += 1
+
+            if self.digits() == 0:
+                fail self.message("expected a digit after the decimal point")
+
+        if self.peek() == 'e' or self.peek() == 'E':
+            self.pos += 1
+
+            if self.peek() == '+' or self.peek() == '-':
+                self.pos += 1
+
+            if self.digits() == 0:
+                fail self.message("expected a digit in the exponent")
+
+        let text = self.data[start:self.pos].decode()?
+        float(text)?
+
+    fn hex4(&mut self) -> i64!string:
+        let mut value = 0
+
+        for i in range(4):
+            let c = self.peek()
+            let digit = if c >= '0' and c <= '9': c - '0' elif c >= 'a' and c <= 'f': c - 'a' + 10 elif c >= 'A' and c <= 'F': c - 'A' + 10 else: -1
+
+            if digit < 0:
+                fail self.message("expected four hex digits after \\u")
+
+            value = value * 16 + digit
+            self.pos += 1
+
+        value
+
+    fn text(&mut self) -> string!string:
+        self.pos += 1
+        let mut out: bytes = []
+
+        while true:
+            let c = self.peek()
+
+            if c == -1:
+                fail self.message("unterminated string")
+
+            if c < 32:
+                fail self.message("control character in a string")
+
+            self.pos += 1
+
+            if c == '"':
+                break
+
+            if c != '\\':
+                out.push(c)
+                continue
+
+            let escape = self.peek()
+            self.pos += 1
+
+            match escape:
+                '"': out.push('"')
+                '\\': out.push('\\')
+                '/': out.push('/')
+                'b': out.push(8)
+                'f': out.push(12)
+                'n': out.push('\n')
+                'r': out.push('\r')
+                't': out.push('\t')
+                'u':
+                    let mut code = self.hex4()?
+
+                    # 代理对：高位后面跟着 \u 低位，合成一个码点；落单的代理换成 U+FFFD。
+                    if code >= 0xD800 and code <= 0xDBFF and self.peek() == '\\':
+                        let saved = self.pos
+                        self.pos += 1
+
+                        if self.peek() == 'u':
+                            self.pos += 1
+                            let low = self.hex4()?
+
+                            if low >= 0xDC00 and low <= 0xDFFF:
+                                code = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00)
+                            else:
+                                self.pos = saved
+                        else:
+                            self.pos = saved
+
+                    if code >= 0xD800 and code <= 0xDFFF:
+                        code = 0xFFFD
+
+                    out.extend(string.from_code(code).encode())
+                _: fail self.message("invalid escape in a string")
+
+        out.decode()?
+
+    fn array(&mut self) -> Json!string:
+        self.pos += 1
+        let mut items: [Json] = []
+        self.skip_space()
+
+        if self.peek() == ']':
+            self.pos += 1
+            return Json.Array(items)
+
+        while true:
+            items.push(self.value()?)
+            self.skip_space()
+            let c = self.peek()
+
+            if c == ']':
+                self.pos += 1
+                break
+
+            if c != ',':
+                fail self.message("expected , or ] in an array")
+
+            self.pos += 1
+
+        Json.Array(items)
+
+    fn object(&mut self) -> Json!string:
+        self.pos += 1
+        let mut fields: {string: Json} = {}
+        self.skip_space()
+
+        if self.peek() == '}':
+            self.pos += 1
+            return Json.Object(fields)
+
+        while true:
+            self.skip_space()
+
+            if self.peek() != '"':
+                fail self.message("expected a string key in an object")
+
+            let key = self.text()?
+            self.skip_space()
+
+            if self.peek() != ':':
+                fail self.message("expected : after an object key")
+
+            self.pos += 1
+            fields[key] = self.value()?
+            self.skip_space()
+            let c = self.peek()
+
+            if c == '}':
+                self.pos += 1
+                break
+
+            if c != ',':
+                fail self.message("expected , or }} in an object")
+
+            self.pos += 1
+
+        Json.Object(fields)
+
+fn number_text(n: f64) -> string:
+    if math.is_nan(n) or n == math.inf or n == -math.inf:
+        return "null"
+
+    if n == math.floor(n) and math.abs(n) < 9007199254740992.0:
+        return str(i64(n))
+
+    str(n)
+
+fn quote(s: &string) -> string:
+    let mut out: bytes = b"\""
+
+    for c in s.encode():
+        if c == '"':
+            out.extend(b"\\\"")
+        elif c == '\\':
+            out.extend(b"\\\\")
+        elif c == '\n':
+            out.extend(b"\\n")
+        elif c == '\r':
+            out.extend(b"\\r")
+        elif c == '\t':
+            out.extend(b"\\t")
+        elif c < 32:
+            # 其他控制字符写成 \u00XX。
+            let low = c % 16
+            out.extend(b"\\u00")
+            out.push(if c < 16: '0' else: '1')
+            out.push(if low < 10: '0' + low else: 'a' + low - 10)
+        else:
+            out.push(c)
+
+    out.push('"')
+    out.decode() catch e: ""
+
+fn newline(indent: i64, depth: i64, out: &mut [string]):
+    if indent > 0:
+        out.push("\n" + " ".repeat(indent * depth))
+
+fn write(value: &Json, indent: i64, depth: i64, out: &mut [string]):
+    match value:
+        Null: out.push("null")
+        Bool(b): out.push(if b: "true" else: "false")
+        Number(n): out.push(number_text(n))
+        Str(s): out.push(quote(s))
+        Array(items):
+            if len(items) == 0:
+                out.push("[]")
+                return
+
+            out.push("[")
+
+            for i, item in items:
+                if i > 0:
+                    out.push(if indent > 0: "," else: ", ")
+
+                newline(indent, depth + 1, out)
+                write(item, indent, depth + 1, out)
+
+            newline(indent, depth, out)
+            out.push("]")
+        Object(fields):
+            if len(fields) == 0:
+                out.push("{{}}")
+                return
+
+            out.push("{{")
+            let mut first = true
+
+            for key, item in fields:
+                if not first:
+                    out.push(if indent > 0: "," else: ", ")
+
+                first = false
+                newline(indent, depth + 1, out)
+                out.push(quote(key))
+                out.push(": ")
+                write(item, indent, depth + 1, out)
+
+            newline(indent, depth, out)
+            out.push("}}")
