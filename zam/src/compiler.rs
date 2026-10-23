@@ -3577,7 +3577,8 @@ impl Parser {
                 return Ok(Expr::Tuple(items));
             }
             self.expect(')')?;
-            return Ok(expr);
+            // `(a + b).upper()`：括号里的值也能接方法调用、`?` 和 `catch`。
+            return self.after_call(expr);
         }
         // 与 Python 相同，`**` 比单目 `-`、`~` 结合得紧：`-2 ** 2` 是 `-(2 ** 2)`。
         if self.symbol('-') {

@@ -32,6 +32,7 @@ Zamak keeps Python's names and rules wherever it can. This appendix lists what s
 | `{"a": 1}` | `{"a": 1}`; empty: `let m: {string: i64} = {}` | Keys are `i64` or `string`. |
 | `lambda x: x * 2` | `fn(x): x * 2` | |
 | `import math` | `use std/math` | |
+| `import requests`, `socket`, `http.server` | `use std/http`, `std/net` | `http.get(url)`, `http.post(url, body)`, and `http.serve` for servers; no HTTPS yet. |
 | `import re`, `json`, `subprocess`, `hashlib`, `base64` | `use std/re`, `std/json`, `std/process`, `std/hashlib`, `std/base64` | Same function names; `re` has no backreferences or lookaround. |
 | `r"\d+"`, `"""..."""` | The same | A triple-quoted string must fit on one line for now. |
 | `{1, 2}`, `set()` | `{1, 2}`; an empty set: `let s: {i64} = {}` | Values are `i64` or `string`. |
@@ -47,7 +48,7 @@ Zamak keeps Python's names and rules wherever it can. This appendix lists what s
 
 ## Not available yet
 
-Zamak doesn't have classes with inheritance, decorators other than `@wrapping`, generators, `async`, threads, or networking. Default values must be constants, and `*args` and `**kwargs` aren't supported.
+Zamak doesn't have classes with inheritance, decorators other than `@wrapping`, generators, `async`, or threads, and networking is HTTP only (no HTTPS yet). Default values must be constants, and `*args` and `**kwargs` aren't supported.
 
 ## A program side by side
 

@@ -12,7 +12,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-69");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-70");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -180,6 +180,8 @@ const STD_SOURCES: &[(&str, &str)] = &[
     ("std/process", include_str!("../std/process.zm")),
     ("std/json", include_str!("../std/json.zm")),
     ("std/re", include_str!("../std/re.zm")),
+    ("std/net", include_str!("../std/net.zm")),
+    ("std/http", include_str!("../std/http.zm")),
 ];
 
 /// 用 Zamak 写的标准库模块的源码（语言服务器用它补全与悬停）。
@@ -482,6 +484,8 @@ impl Project {
                         | "process"
                         | "json"
                         | "re"
+                        | "net"
+                        | "http"
                 )
             {
                 return Err(format!(

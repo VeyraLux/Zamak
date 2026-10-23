@@ -1,0 +1,26 @@
+# HTTP 服务端与 TCP：在同一个程序里起服务端、用客户端连上去，不需要网络环境。
+# 平时写服务端直接用 http.serve(host, port, handle)，它会一直处理请求。
+use std/http
+use std/json
+use std/net
+
+fn handle(req: &http.Request) -> http.Response:
+    if req.path == "/echo":
+        let text = req.text() catch e: "?"
+        return http.respond(200, f"{req.method} {req.query} {text}")
+
+    let mut fields: {string: json.Json} = {}
+    fields["path"] = json.Json.Str(copy(&req.path))
+    http.respond_json(404, json.Json.Object(fields))
+
+# 单线程也能测：客户端先连上、把请求写进内核缓冲区，服务端再接受、处理、回写。
+fn exchange(listener: &net.Listener, request: &string) -> string!string:
+    let client = net.connect("127.0.0.1", listener.port())?
+    client.send(request.encode())?
+    http.serve_one(listener, handle)?
+    client.recv_all()?.decode()?
+
+fn main() -> !string:
+    let listener = net.listen("127.0.0.1", 0)?
+    println(exchange(listener, "POST /echo?x=1 HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello")?)
+    println(exchange(listener, "GET /missing HTTP/1.1\r\nHost: a\r\n\r\n")?)

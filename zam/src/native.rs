@@ -1409,6 +1409,195 @@ static F_Li zam_re_find(S *pattern, int64_t flags, S *text, int64_t start, int64
     return F_Li_ok(out);
 }
 "#;
+const NET_PRELUDE: &str = r#"// std/net 的 C 部分：TCP 连接、监听、收发。std/net（Zamak 写的）用 extern type 把套接字包成句柄，
+// 离开作用域时自动关闭。句柄里存的是“套接字 + 1”，这样 0 一定表示没有套接字。
+// 失败时返回空句柄或 -1，原因放在 zam_net_error() 里。
+static char zam_net_message[256];
+static void zam_net_fail(const char *what, int code) {
+    snprintf(zam_net_message, sizeof zam_net_message, "%s (error %d)", what, code);
+}
+const char *zam_net_error(void) { return zam_net_message; }
+#ifdef _WIN32
+// Windows 的 addrinfo：canonname 在 addr 前面（与 POSIX 相反）。调用处都经 void * 转换，
+// 用户的头文件已经引入 winsock2.h 时也不冲突。
+struct zam_addrinfo { int flags, family, socktype, protocol; size_t addrlen; char *canonname; void *addr; struct zam_addrinfo *next; };
+#ifndef _WINSOCK2API_
+__declspec(dllimport) int __stdcall WSAStartup(unsigned short, void *);
+__declspec(dllimport) uintptr_t __stdcall socket(int, int, int);
+__declspec(dllimport) int __stdcall connect(uintptr_t, const void *, int);
+__declspec(dllimport) int __stdcall bind(uintptr_t, const void *, int);
+__declspec(dllimport) int __stdcall listen(uintptr_t, int);
+__declspec(dllimport) uintptr_t __stdcall accept(uintptr_t, void *, int *);
+__declspec(dllimport) int __stdcall send(uintptr_t, const char *, int, int);
+__declspec(dllimport) int __stdcall recv(uintptr_t, char *, int, int);
+__declspec(dllimport) int __stdcall closesocket(uintptr_t);
+__declspec(dllimport) int __stdcall setsockopt(uintptr_t, int, int, const char *, int);
+__declspec(dllimport) int __stdcall getsockname(uintptr_t, void *, int *);
+__declspec(dllimport) int __stdcall getaddrinfo(const char *, const char *, const void *, struct zam_addrinfo **);
+__declspec(dllimport) void __stdcall freeaddrinfo(struct zam_addrinfo *);
+__declspec(dllimport) int __stdcall WSAGetLastError(void);
+#endif
+#define zam_ai struct zam_addrinfo
+#define zam_ai_addr(a) ((a)->addr)
+#define zam_ai_next(a) ((a)->next)
+#define zam_ai_len(a) ((a)->addrlen)
+#define zam_ai_family(a) ((a)->family)
+#define zam_ai_socktype(a) ((a)->socktype)
+#define zam_ai_protocol(a) ((a)->protocol)
+typedef uintptr_t zam_sock;
+#define ZAM_BAD_SOCKET (~(uintptr_t)0)
+#define ZAM_SOL_SOCKET 0xffff
+#define ZAM_SO_REUSEADDR 4
+#define ZAM_SO_RCVTIMEO 0x1006
+#define ZAM_SO_SNDTIMEO 0x1005
+static int zam_net_errno(void) { return WSAGetLastError(); }
+static void zam_close_socket(zam_sock s) { closesocket(s); }
+static int zam_net_ready(void) {
+    static int done;
+    char data[512];
+    if (!done) { if (WSAStartup(0x0202, data) != 0) { zam_net_fail("cannot start Winsock", 0); return 0; } done = 1; }
+    return 1;
+}
+static void zam_set_timeout(zam_sock s, double seconds) {
+    unsigned long ms = seconds <= 0 ? 0 : (unsigned long)(seconds * 1000);
+    setsockopt(s, ZAM_SOL_SOCKET, ZAM_SO_RCVTIMEO, (const char *)&ms, sizeof ms);
+    setsockopt(s, ZAM_SOL_SOCKET, ZAM_SO_SNDTIMEO, (const char *)&ms, sizeof ms);
+}
+#else
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <unistd.h>
+#include <errno.h>
+#include <signal.h>
+typedef int zam_sock;
+#define ZAM_BAD_SOCKET (-1)
+#define ZAM_SOL_SOCKET SOL_SOCKET
+#define ZAM_SO_REUSEADDR SO_REUSEADDR
+#define zam_ai struct addrinfo
+#define zam_ai_addr(a) ((a)->ai_addr)
+#define zam_ai_next(a) ((a)->ai_next)
+#define zam_ai_len(a) ((a)->ai_addrlen)
+#define zam_ai_family(a) ((a)->ai_family)
+#define zam_ai_socktype(a) ((a)->ai_socktype)
+#define zam_ai_protocol(a) ((a)->ai_protocol)
+static int zam_net_errno(void) { return errno; }
+static void zam_close_socket(zam_sock s) { close(s); }
+static int zam_net_ready(void) {
+    // 对方关闭连接后再写不让进程收到 SIGPIPE 而直接退出，改成返回错误。
+    static int done;
+    if (!done) { signal(SIGPIPE, SIG_IGN); done = 1; }
+    return 1;
+}
+static void zam_set_timeout(zam_sock s, double seconds) {
+    struct timeval tv;
+    tv.tv_sec = seconds <= 0 ? 0 : (time_t)seconds;
+    tv.tv_usec = seconds <= 0 ? 0 : (suseconds_t)((seconds - (double)tv.tv_sec) * 1e6);
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv);
+    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, (const char *)&tv, sizeof tv);
+}
+#endif
+static void *zam_sock_handle(zam_sock s) { return (void *)((uintptr_t)s + 1); }
+static zam_sock zam_handle_sock(void *h) { return (zam_sock)((uintptr_t)h - 1); }
+// getaddrinfo 的提示：IPv4 或 IPv6、TCP；passive 时用于监听。
+static int zam_resolve(const char *host, int64_t port, int passive, zam_ai **out) {
+    char service[32];
+    zam_ai hint, *found = NULL;
+    int rc;
+    memset(&hint, 0, sizeof hint);
+    // 前四个字段两边一样：flags（AI_PASSIVE = 1）、family（不限）、socktype（SOCK_STREAM = 1）、
+    // protocol（IPPROTO_TCP = 6）。
+    ((int *)&hint)[0] = passive ? 1 : 0;
+    ((int *)&hint)[2] = 1;
+    ((int *)&hint)[3] = 6;
+    snprintf(service, sizeof service, "%lld", (long long)port);
+    rc = getaddrinfo(host[0] ? host : NULL, service, (const void *)&hint, (void *)&found);
+    if (rc != 0 || !found) { zam_net_fail("cannot resolve the host name", rc); return 0; }
+    *out = found;
+    return 1;
+}
+// 连接、监听、接受都把句柄写进输出参数（Zamak 侧是 &mut Option[Socket]），成功返回 0，失败返回 -1。
+int64_t zam_net_connect(const char *host, int64_t port, double timeout, void **out) {
+    zam_ai *list, *a;
+    zam_sock s = ZAM_BAD_SOCKET;
+    *out = NULL;
+    if (!zam_net_ready()) return -1;
+    if (port < 0 || port > 65535) { zam_net_fail("the port must be between 0 and 65535", 0); return -1; }
+    if (!zam_resolve(host, port, 0, &list)) return -1;
+    for (a = list; a; a = zam_ai_next(a)) {
+        s = socket(zam_ai_family(a), zam_ai_socktype(a), zam_ai_protocol(a));
+        if (s == ZAM_BAD_SOCKET) continue;
+        zam_set_timeout(s, timeout);
+        if (connect(s, (const void *)zam_ai_addr(a), (int)zam_ai_len(a)) == 0) break;
+        zam_net_fail("cannot connect", zam_net_errno());
+        zam_close_socket(s);
+        s = ZAM_BAD_SOCKET;
+    }
+    freeaddrinfo((void *)list);
+    if (s == ZAM_BAD_SOCKET) return -1;
+    *out = zam_sock_handle(s);
+    return 0;
+}
+int64_t zam_net_listen(const char *host, int64_t port, void **out) {
+    zam_ai *list, *a;
+    zam_sock s = ZAM_BAD_SOCKET;
+    int yes = 1;
+    *out = NULL;
+    if (!zam_net_ready()) return -1;
+    if (port < 0 || port > 65535) { zam_net_fail("the port must be between 0 and 65535", 0); return -1; }
+    if (!zam_resolve(host, port, 1, &list)) return -1;
+    for (a = list; a; a = zam_ai_next(a)) {
+        s = socket(zam_ai_family(a), zam_ai_socktype(a), zam_ai_protocol(a));
+        if (s == ZAM_BAD_SOCKET) continue;
+        setsockopt(s, ZAM_SOL_SOCKET, ZAM_SO_REUSEADDR, (const char *)&yes, sizeof yes);
+        if (bind(s, (const void *)zam_ai_addr(a), (int)zam_ai_len(a)) == 0 && listen(s, 64) == 0) break;
+        zam_net_fail("cannot listen on the address", zam_net_errno());
+        zam_close_socket(s);
+        s = ZAM_BAD_SOCKET;
+    }
+    freeaddrinfo((void *)list);
+    if (s == ZAM_BAD_SOCKET) return -1;
+    *out = zam_sock_handle(s);
+    return 0;
+}
+int64_t zam_net_accept(void *listener, void **out) {
+    zam_sock s = accept(zam_handle_sock(listener), NULL, NULL);
+    *out = NULL;
+    if (s == ZAM_BAD_SOCKET) { zam_net_fail("cannot accept a connection", zam_net_errno()); return -1; }
+    *out = zam_sock_handle(s);
+    return 0;
+}
+// 端口：监听 0 号端口时系统挑一个空闲的，用它查实际的端口。
+int64_t zam_net_port(void *listener) {
+    unsigned char address[128];
+    int size = (int)sizeof address;
+    if (getsockname(zam_handle_sock(listener), (void *)address, (void *)&size) != 0) return -1;
+    return (int64_t)address[2] << 8 | address[3];
+}
+int64_t zam_net_send(void *conn, const uint8_t *data, int64_t n) {
+    int64_t done = 0;
+    while (done < n) {
+        int chunk = n - done > 1 << 30 ? 1 << 30 : (int)(n - done);
+        int sent = (int)send(zam_handle_sock(conn), (const char *)data + done, chunk, 0);
+        if (sent <= 0) { zam_net_fail("cannot send", zam_net_errno()); return -1; }
+        done += sent;
+    }
+    return done;
+}
+int64_t zam_net_recv(void *conn, uint8_t *buf, int64_t n) {
+    int got;
+    if (n <= 0) return 0;
+    got = (int)recv(zam_handle_sock(conn), (char *)buf, n > 1 << 30 ? 1 << 30 : (int)n, 0);
+    if (got < 0) { zam_net_fail("cannot receive (or the timeout passed)", zam_net_errno()); return -1; }
+    return got;
+}
+void zam_net_timeout(void *conn, double seconds) { zam_set_timeout(zam_handle_sock(conn), seconds); }
+void zam_net_close(void *conn) { zam_close_socket(zam_handle_sock(conn)); }
+"#;
+/// 用 Zamak 写的标准库模块自带的 C 代码：编译这个模块的目标文件时放在开头（extern fn 调用它们）。
+const UNIT_PRELUDES: &[(&str, &str)] = &[("std/net", NET_PRELUDE)];
 /// 只在用到某个标准库模块时才需要的 C 辅助代码：（模块前缀, 代码）。
 const MODULE_PRELUDES: &[(&str, &str)] = &[
     ("std/hashlib:", HASH_PRELUDE),
@@ -7147,6 +7336,9 @@ pub fn generate_with(
         source.push_str(definition);
     }
     source.push_str(&bodies);
+    if let Some((_, code)) = UNIT_PRELUDES.iter().find(|(id, _)| *id == unit) {
+        source.insert_str(RUNTIME.len(), code);
+    }
     if needs_headers && !headers.is_empty() {
         let includes: String = headers
             .iter()
@@ -7743,6 +7935,8 @@ pub fn link(
                     .map(|path| format!("/LIBPATH:{}", path.display())),
             )
             .args(libraries.iter().map(|name| format!("{name}.lib")))
+            // std/net 用 Winsock；没用到网络的程序不会引用它，产物不变。
+            .arg("ws2_32.lib")
             .output()
     } else {
         // std/math 的函数在 Linux 上属于 libm，要显式链接；macOS 与 MinGW 也接受 -lm。
@@ -7753,6 +7947,11 @@ pub fn link(
         if cfg!(windows) {
             command.arg("-Wl,--no-insert-timestamp");
         }
+        let winsock = if cfg!(windows) {
+            &["-lws2_32"][..]
+        } else {
+            &[][..]
+        };
         command
             .args(
                 library_paths
@@ -7760,6 +7959,7 @@ pub fn link(
                     .map(|path| format!("-L{}", path.display())),
             )
             .args(libraries.iter().map(|name| format!("-l{name}")))
+            .args(winsock)
             .args(["-lm", "-o", "program.exe"])
             .output()
     }

@@ -265,6 +265,47 @@ fn main() -> !string:
 - 匹配结果 `Match`：`group(i)`、`named(name)`、`groups()`、`start(i)`、`end(i)`。
 - 匹配时间与文字长度成线性关系，写坏的表达式也不会让程序卡死。代价是不支持反向引用 `\1` 和环视 `(?=...)`，写了会报错。
 
+## 网络：std/net 和 std/http
+
+`std/http` 发 HTTP 请求，形状参考 Python 的 `requests`：
+
+```zamak,ignore
+use std/http
+
+fn main() -> !string:
+    let r = http.get("http://example.com/")?
+    println(r.status)
+    println(r.headers["content-type"])
+    println(r.text()?)
+    let reply = http.post("http://localhost:8000/notes", "buy milk")?
+    println(reply.ok())
+```
+
+| 函数 | 作用 |
+| --- | --- |
+| `http.get(url, timeout=30.0)` | GET 请求，返回 `Response`。 |
+| `http.post(url, body, content_type="text/plain; charset=utf-8")`、`http.post_json(url, value)` | POST 文字或 JSON。 |
+| `http.request(method, url, body, headers)` | 任意方法，自己给请求头与 `bytes` 请求体。 |
+| `Response` | `status`、`reason`、`headers`（键是小写）、`body`，以及 `text()`、`json()`、`ok()`。 |
+
+服务端：`http.serve(host, port, handler)` 一直处理请求，每个请求交给 `handler`，它返回的 `Response` 发回给客户端：
+
+```zamak,ignore
+use std/http
+
+fn hello(req: &http.Request) -> http.Response:
+    http.respond(200, f"hello from {req.path}")
+
+fn main() -> !string:
+    http.serve("127.0.0.1", 8000, hello)?
+```
+
+`http.respond(status, text)` 与 `http.respond_json(status, value)` 构造响应；`Request` 有 `method`、`path`、`query`、`headers`、`body`。
+
+`std/net` 是更底层的 TCP：`net.connect(host, port)` 得到连接，`net.listen(host, port)` 得到监听器，连接有 `send`、`recv`、`recv_all`、`set_timeout`。连接与监听器离开作用域时自动关闭。
+
+目前只支持 `http://`。`https://` 需要 TLS，后续版本加上；服务端一次处理一个请求。
+
 ## 哈希与 base64：std/hashlib 和 std/base64
 
 ```zamak

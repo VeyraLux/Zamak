@@ -257,6 +257,7 @@ See [Calling C](c-libraries.md).
 | `std/fmt` | Fixed decimal places |
 | `std/process` | Run other programs, read their output and exit code |
 | `std/json` | Parse and write JSON |
+| `std/net`, `std/http` | TCP connections and listeners; HTTP client and server |
 | `std/re` | Regular expressions |
 | `std/hashlib`, `std/base64` | SHA-256, SHA-1, MD5, HMAC; base64 |
 
@@ -267,7 +268,7 @@ See [Standard library](standard-library.md).
 ## Not supported yet
 
 - Threads and concurrency
-- Networking
+- HTTPS (TLS)
 - Macros
 - Class inheritance
 - Generic specialization, type-level programming

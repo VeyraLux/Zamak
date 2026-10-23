@@ -257,6 +257,7 @@ fn main():
 | `std/fmt` | 保留小数位 |
 | `std/process` | 运行其他程序，取得输出与退出码 |
 | `std/json` | 解析与生成 JSON |
+| `std/net`、`std/http` | TCP 连接与监听；HTTP 客户端与服务端 |
 | `std/re` | 正则表达式 |
 | `std/hashlib`、`std/base64` | SHA-256、SHA-1、MD5、HMAC，base64 |
 
@@ -267,7 +268,7 @@ fn main():
 ## 目前不支持
 
 - 线程与并发
-- 网络
+- HTTPS（TLS）
 - 宏
 - 类继承
 - 泛型特化、类型级编程

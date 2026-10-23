@@ -32,6 +32,7 @@ Zamak 尽可能沿用 Python 的名字和规则。这篇附录列出哪些与 Py
 | `{"a": 1}` | `{"a": 1}`；空字典：`let m: {string: i64} = {}` | 键是 `i64` 或 `string`。 |
 | `lambda x: x * 2` | `fn(x): x * 2` | |
 | `import math` | `use std/math` | |
+| `import requests`、`socket`、`http.server` | `use std/http`、`std/net` | `http.get(url)`、`http.post(url, body)`，服务端 `http.serve`；暂不支持 HTTPS。 |
 | `import re`、`json`、`subprocess`、`hashlib`、`base64` | `use std/re`、`std/json`、`std/process`、`std/hashlib`、`std/base64` | 函数名同 Python；`re` 不支持反向引用与环视。 |
 | `r"\d+"`、`"""..."""` | 相同 | 三引号字符串目前要写在同一行。 |
 | `{1, 2}`、`set()` | `{1, 2}`；空集合：`let s: {i64} = {}` | 值是 `i64` 或 `string`。 |
@@ -47,7 +48,7 @@ Zamak 尽可能沿用 Python 的名字和规则。这篇附录列出哪些与 Py
 
 ## 暂时没有的功能
 
-Zamak 还没有带继承的类、`@wrapping` 以外的装饰器、生成器、`async`、多线程和网络。参数默认值只能是常量，不支持 `*args` 和 `**kwargs`。
+Zamak 还没有带继承的类、`@wrapping` 以外的装饰器、生成器、`async` 和多线程；网络只有 HTTP（还没有 HTTPS）。参数默认值只能是常量，不支持 `*args` 和 `**kwargs`。
 
 ## 同一个程序的两种写法
 

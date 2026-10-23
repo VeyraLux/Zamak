@@ -265,6 +265,47 @@ fn main() -> !string:
 - A `Match` has `group(i)`, `named(name)`, `groups()`, `start(i)`, and `end(i)`.
 - Matching takes time linear in the length of the text, so a badly written pattern can't hang your program. In exchange, backreferences such as `\1` and lookaround such as `(?=...)` aren't supported and report an error.
 
+## Networking: std/net and std/http
+
+`std/http` sends HTTP requests in the shape of Python's `requests`:
+
+```zamak,ignore
+use std/http
+
+fn main() -> !string:
+    let r = http.get("http://example.com/")?
+    println(r.status)
+    println(r.headers["content-type"])
+    println(r.text()?)
+    let reply = http.post("http://localhost:8000/notes", "buy milk")?
+    println(reply.ok())
+```
+
+| Function | What it does |
+| --- | --- |
+| `http.get(url, timeout=30.0)` | Sends a GET request and returns a `Response`. |
+| `http.post(url, body, content_type="text/plain; charset=utf-8")`, `http.post_json(url, value)` | Posts text or JSON. |
+| `http.request(method, url, body, headers)` | Any method, with your own headers and a `bytes` body. |
+| `Response` | `status`, `reason`, `headers` (lowercase keys), and `body`, plus `text()`, `json()`, and `ok()`. |
+
+On the server side, `http.serve(host, port, handler)` handles requests until the program stops. Each request goes to `handler`, and the `Response` it returns goes back to the client:
+
+```zamak,ignore
+use std/http
+
+fn hello(req: &http.Request) -> http.Response:
+    http.respond(200, f"hello from {req.path}")
+
+fn main() -> !string:
+    http.serve("127.0.0.1", 8000, hello)?
+```
+
+`http.respond(status, text)` and `http.respond_json(status, value)` build responses. A `Request` has `method`, `path`, `query`, `headers`, and `body`.
+
+`std/net` is plain TCP underneath: `net.connect(host, port)` returns a connection, and `net.listen(host, port)` returns a listener. A connection has `send`, `recv`, `recv_all`, and `set_timeout`. Connections and listeners close when they go out of scope.
+
+Only `http://` works for now. `https://` needs TLS, which a later version adds, and the server handles one request at a time.
+
 ## Hashes and base64: std/hashlib and std/base64
 
 ```zamak

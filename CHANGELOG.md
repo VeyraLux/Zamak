@@ -37,6 +37,10 @@ and this file is the source for the text of each GitHub release.
   with no `impl` to write. Use it as a type to keep values of different types in one list
   (`[Shape]`, calls dispatch to each value), or as a bound on a type parameter
   (`fn total[T: Shape]`, compiled once per type).
+- **Networking.** `std/http` sends requests in the shape of Python's `requests` (`http.get`,
+  `http.post`, `r.status`, `r.text()`, `r.json()`) and serves them with `http.serve`. `std/net` has
+  TCP connections and listeners that close when they go out of scope. Only `http://` for now.
+- A parenthesized value can take a method call: `(a + b).upper()`.
 
 ## 0.1.1
 
@@ -199,6 +203,10 @@ this preview.
 - **接口。** `interface Shape:` 列出方法，有这些方法的类型自动满足它，不用写 `impl`。接口可以当类型，
   把不同类型的值放进同一个列表（`[Shape]`，调用时按各自的类型分派），也可以约束类型参数
   （`fn total[T: Shape]`，每种类型各生成一份代码）。
+- **网络。** `std/http` 发请求的写法参考 Python 的 `requests`（`http.get`、`http.post`、`r.status`、
+  `r.text()`、`r.json()`），`http.serve` 处理请求。`std/net` 提供 TCP 连接与监听，离开作用域时自动关闭。
+  目前只支持 `http://`。
+- 括号里的值也能接方法调用：`(a + b).upper()`。
 
 ## 0.1.1（中文）
 

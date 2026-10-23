@@ -1,0 +1,306 @@
+# HTTP/1.1 客户端与服务端。客户端的形状参考 Python 的 requests：http.get(url)、http.post(url, body)，
+# 响应有 status、headers、text()、json()。服务端：http.serve(host, port, handler)。
+# 目前只支持 http://；https:// 需要 TLS，后续版本加上。
+use std/net
+use std/json
+
+# 服务器返回的响应。headers 的键都是小写。
+pub struct Response:
+    status: i64
+    reason: string
+    headers: {string: string}
+    body: bytes
+
+    # 响应体按 UTF-8 解码成文字。
+    pub fn text(&self) -> string!string:
+        self.body.decode()?
+
+    # 响应体按 JSON 解析。
+    pub fn json(&self) -> json.Json!string:
+        json.loads(self.body.decode()?)?
+
+    # 状态码是 2xx。
+    pub fn ok(&self) -> bool:
+        self.status >= 200 and self.status < 300
+
+# 服务端收到的请求。path 不含查询串，query 是 ? 后面的部分；headers 的键都是小写。
+pub struct Request:
+    method: string
+    path: string
+    query: string
+    headers: {string: string}
+    body: bytes
+
+    pub fn text(&self) -> string!string:
+        self.body.decode()?
+
+    pub fn json(&self) -> json.Json!string:
+        json.loads(self.body.decode()?)?
+
+# 发一个 GET 请求。
+pub fn get(url: &string, timeout: f64 = 30.0) -> Response!string:
+    let headers: {string: string} = {}
+    request("GET", url, b"", headers, timeout)?
+
+# 发一个 POST 请求，body 是文字。
+pub fn post(url: &string, body: &string, content_type: &string = "text/plain; charset=utf-8", timeout: f64 = 30.0) -> Response!string:
+    let mut headers: {string: string} = {}
+    headers["Content-Type"] = content_type
+    request("POST", url, body.encode(), headers, timeout)?
+
+# 把 value 写成 JSON，用 POST 发出去。
+pub fn post_json(url: &string, value: &json.Json, timeout: f64 = 30.0) -> Response!string:
+    let mut headers: {string: string} = {}
+    headers["Content-Type"] = "application/json"
+    request("POST", url, json.dumps(value).encode(), headers, timeout)?
+
+# 任意方法的请求。headers 里的项原样加进请求头。
+pub fn request(method: &string, url: &string, body: &bytes, headers: &{string: string}, timeout: f64 = 30.0) -> Response!string:
+    let target = parse_url(url)?
+    let conn = net.connect(target.host, target.port, timeout)?
+    let mut head: [string] = [f"{method} {target.path} HTTP/1.1", f"Host: {target.host_header}", "Connection: close", "User-Agent: zamak", "Accept-Encoding: identity"]
+
+    if len(body) > 0 or method == "POST" or method == "PUT" or method == "PATCH":
+        head.push(f"Content-Length: {len(body)}")
+
+    for key, value in headers:
+        head.push(f"{key}: {value}")
+
+    conn.send(("\r\n".join(head) + "\r\n\r\n").encode())?
+
+    if len(body) > 0:
+        conn.send(body)?
+
+    parse_response(conn.recv_all()?)?
+
+# 在 host 的 port 端口上一直处理请求：每个请求交给 handler，把它返回的响应发回去。
+pub fn serve(host: &string, port: i64, handler: fn(&Request) -> Response) -> !string:
+    let listener = net.listen(host, port)?
+
+    while true:
+        serve_one(listener, handler) catch e:
+            continue
+
+# 接受一条连接、处理一个请求。测试或自己控制循环时用。
+pub fn serve_one(listener: &net.Listener, handler: fn(&Request) -> Response) -> !string:
+    let conn = listener.accept()?
+    conn.set_timeout(30.0)
+    let mut raw: bytes = []
+    let mut end = -1
+
+    while end < 0:
+        let chunk = conn.recv()?
+
+        if len(chunk) == 0:
+            fail "the client closed the connection before sending a request"
+
+        raw.extend(chunk)
+        end = find_blank_line(raw)
+
+    let head = raw[:end].decode()?
+    let lines = head.split("\r\n")
+    let first = lines[0].split(" ")
+
+    if len(first) < 3:
+        fail "malformed request line"
+
+    let headers = parse_headers(lines)
+    let mut body = raw[end + 4:]
+    let wanted = if "content-length" in headers: int(headers["content-length"])? else: 0
+
+    while len(body) < wanted:
+        let chunk = conn.recv()?
+
+        if len(chunk) == 0:
+            break
+
+        body.extend(chunk)
+
+    let full = copy(&first[1])
+    let mark = full.find("?")
+    let path = if mark < 0: copy(&full) else: full[:mark]
+    let query = if mark < 0: "" else: full[mark + 1:]
+    let req = Request(method=copy(&first[0]), path=path, query=query, headers=headers, body=body)
+    let response = handler(req)
+    let mut out: [string] = [f"HTTP/1.1 {response.status} {response.reason}", f"Content-Length: {len(response.body)}", "Connection: close"]
+
+    for key, value in response.headers:
+        out.push(f"{key}: {value}")
+
+    conn.send(("\r\n".join(out) + "\r\n\r\n").encode())?
+    conn.send(response.body)?
+
+# 文字响应。
+pub fn respond(status: i64, body: &string, content_type: &string = "text/plain; charset=utf-8") -> Response:
+    let mut headers: {string: string} = {}
+    headers["content-type"] = content_type
+    Response(status=status, reason=reason(status), headers=headers, body=body.encode())
+
+# JSON 响应。
+pub fn respond_json(status: i64, value: &json.Json) -> Response:
+    respond(status, json.dumps(value), content_type="application/json")
+
+struct Target:
+    host: string
+    host_header: string
+    port: i64
+    path: string
+
+fn parse_url(url: &string) -> Target!string:
+    let mut rest = ""
+    let mut port = 80
+
+    if url.starts_with("https://"):
+        fail "https:// is not supported yet: it needs TLS, which a later version adds; use http://"
+    elif url.starts_with("http://"):
+        rest = url[7:]
+    else:
+        fail f"a URL starts with http://, such as http://example.com/path; got {url}"
+
+    let slash = rest.find("/")
+    let question = rest.find("?")
+    let cut = if slash < 0: question elif question < 0: slash else: min(slash, question)
+    let authority = if cut < 0: copy(&rest) else: rest[:cut]
+    let mut path = if cut < 0: "/" else: rest[cut:]
+
+    if path.starts_with("?"):
+        path = "/" + path
+
+    let mut host = copy(&authority)
+
+    if authority.starts_with("["):
+        # IPv6：[::1]:8080
+        let close = authority.find("]")
+
+        if close < 0:
+            fail f"malformed IPv6 address in {url}"
+
+        host = authority[1:close]
+
+        if authority[close + 1:].starts_with(":"):
+            port = int(authority[close + 2:])?
+    else:
+        let colon = authority.find(":")
+
+        if colon >= 0:
+            host = authority[:colon]
+            port = int(authority[colon + 1:])?
+
+    if host == "":
+        fail f"the URL has no host: {url}"
+
+    Target(host=host, host_header=authority, port=port, path=path)
+
+# 头部结束的位置（\r\n\r\n 的开头）；还没收到时是 -1。
+fn find_blank_line(data: &bytes) -> i64:
+    for i in range(len(data) - 3):
+        if data[i] == 13 and data[i + 1] == 10 and data[i + 2] == 13 and data[i + 3] == 10:
+            return i
+
+    -1
+
+fn parse_headers(lines: &[string]) -> {string: string}:
+    let mut headers: {string: string} = {}
+
+    for i in range(1, len(lines)):
+        let line = &lines[i]
+        let colon = line.find(":")
+
+        if colon <= 0:
+            continue
+
+        let key = line[:colon].trim().lower()
+        let value = line[colon + 1:].trim()
+
+        if key in headers:
+            headers[key] = headers[key] + ", " + value
+        else:
+            headers[key] = value
+
+    headers
+
+fn parse_response(raw: bytes) -> Response!string:
+    let end = find_blank_line(raw)
+
+    if end < 0:
+        fail "malformed HTTP response: no blank line after the headers"
+
+    let head = raw[:end].decode()?
+    let lines = head.split("\r\n")
+    let first = lines[0].split(" ")
+
+    if len(first) < 2 or not first[0].starts_with("HTTP/"):
+        fail f"malformed HTTP status line: {lines[0]}"
+
+    let status = int(first[1])?
+    let reason = " ".join(first[2:])
+    let headers = parse_headers(lines)
+    let mut body = raw[end + 4:]
+
+    let encoding = headers.get("transfer-encoding", "").lower()
+
+    if encoding.contains("chunked"):
+        body = unchunk(body)?
+    elif "content-length" in headers:
+        let size = int(headers["content-length"])?
+
+        if size < len(body):
+            body = body[:size]
+
+    Response(status=status, reason=reason, headers=headers, body=body)
+
+# chunked 传输编码：每块是“十六进制长度\r\n数据\r\n”，长度为 0 的块结束。
+fn unchunk(data: bytes) -> bytes!string:
+    let mut out: bytes = []
+    let mut at = 0
+
+    while at < len(data):
+        let mut line_end = at
+
+        while line_end + 1 < len(data) and not (data[line_end] == 13 and data[line_end + 1] == 10):
+            line_end += 1
+
+        let parts = data[at:line_end].decode()?.split(";")
+        let size_text = parts[0].trim()
+        let size = hex_number(size_text)?
+
+        if size == 0:
+            break
+
+        at = line_end + 2
+        out.extend(data[at:at + size])
+        at += size + 2
+
+    out
+
+fn hex_number(text: &string) -> i64!string:
+    if text == "":
+        fail "malformed chunk size in the HTTP response"
+
+    let mut value = 0
+
+    for c in text.lower().encode():
+        let digit = if c >= '0' and c <= '9': c - '0' elif c >= 'a' and c <= 'f': c - 'a' + 10 else: -1
+
+        if digit < 0:
+            fail f"malformed chunk size {text} in the HTTP response"
+
+        value = value * 16 + digit
+
+    value
+
+fn reason(status: i64) -> string:
+    match status:
+        200: "OK"
+        201: "Created"
+        204: "No Content"
+        301: "Moved Permanently"
+        302: "Found"
+        304: "Not Modified"
+        400: "Bad Request"
+        401: "Unauthorized"
+        403: "Forbidden"
+        404: "Not Found"
+        405: "Method Not Allowed"
+        500: "Internal Server Error"
+        _: "Status"

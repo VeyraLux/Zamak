@@ -1,0 +1,107 @@
+# TCP 网络：连接、监听、收发字节。形状参考 Python 的 socket 模块，但用起来更直接：
+# net.connect 得到连接，net.listen 得到监听器，连接与监听器离开作用域时自动关闭。
+use std/bytes
+
+extern type Socket: "void", close = zam_net_close
+
+# 句柄写进输出参数：match 拿到的是借用，从 Option 里取不出来，直接写进结构体的字段。
+extern fn zam_net_connect(host: &string, port: i64, timeout: f64, out: &mut Option[Socket]) -> i64
+extern fn zam_net_listen(host: &string, port: i64, out: &mut Option[Socket]) -> i64
+extern fn zam_net_accept(listener: &Socket, out: &mut Option[Socket]) -> i64
+extern fn zam_net_port(listener: &Socket) -> i64
+extern fn zam_net_send(conn: &Socket, data: &bytes, n: i64) -> i64
+extern fn zam_net_recv(conn: &Socket, buf: &mut bytes, n: i64) -> i64
+extern fn zam_net_timeout(conn: &Socket, seconds: f64)
+extern fn zam_net_error() -> string
+
+# 一条 TCP 连接。
+pub struct Conn:
+    socket: Option[Socket]
+
+    # 把 data 全部发出去。
+    pub fn send(&self, data: &bytes) -> !string:
+        match self.socket:
+            Some(s):
+                if zam_net_send(s, data, len(data)) < 0:
+                    fail zam_net_error()
+            None: fail "the connection is closed"
+
+    # 收一次数据，最多 max 个字节。对方关闭连接时得到空的 bytes。
+    pub fn recv(&self, max: i64 = 65536) -> bytes!string:
+        match self.socket:
+            Some(s):
+                let mut buf = bytes.zeros(max)
+                let n = zam_net_recv(s, &mut buf, max)
+
+                if n < 0:
+                    fail zam_net_error()
+
+                return buf[:n]
+            None: fail "the connection is closed"
+
+    # 一直收到对方关闭连接为止。
+    pub fn recv_all(&self) -> bytes!string:
+        let mut out: bytes = []
+
+        while true:
+            let chunk = self.recv()?
+
+            if len(chunk) == 0:
+                break
+
+            out.extend(chunk)
+
+        out
+
+    # 收发的超时，单位秒；0 表示一直等。
+    pub fn set_timeout(&self, seconds: f64):
+        match self.socket:
+            Some(s): zam_net_timeout(s, seconds)
+            None: pass
+
+    pub fn close(&mut self):
+        self.socket = Option.None
+
+# 监听某个地址的 TCP 连接。
+pub struct Listener:
+    socket: Option[Socket]
+
+    # 等下一条连接。
+    pub fn accept(&self) -> Conn!string:
+        let mut conn = Conn(socket=Option.None)
+
+        match self.socket:
+            Some(s):
+                if zam_net_accept(s, &mut conn.socket) < 0:
+                    fail zam_net_error()
+            None: fail "the listener is closed"
+
+        conn
+
+    # 实际监听的端口（监听 0 号端口时由系统挑选）。
+    pub fn port(&self) -> i64:
+        match self.socket:
+            Some(s): zam_net_port(s)
+            None: -1
+
+    pub fn close(&mut self):
+        self.socket = Option.None
+
+# 连接到 host 的 port 端口。timeout 秒内连不上或收发停住时返回错误。
+pub fn connect(host: &string, port: i64, timeout: f64 = 30.0) -> Conn!string:
+    let mut conn = Conn(socket=Option.None)
+
+    if zam_net_connect(host, port, timeout, &mut conn.socket) < 0:
+        fail f"cannot connect to {host}:{port}: {zam_net_error()}"
+
+    conn
+
+# 在 host 的 port 端口上监听。host 写 "0.0.0.0" 接受所有网卡的连接，写 "127.0.0.1" 只接受本机的；
+# port 写 0 由系统挑一个空闲端口，用 listener.port() 查。
+pub fn listen(host: &string, port: i64) -> Listener!string:
+    let mut listener = Listener(socket=Option.None)
+
+    if zam_net_listen(host, port, &mut listener.socket) < 0:
+        fail f"cannot listen on {host}:{port}: {zam_net_error()}"
+
+    listener

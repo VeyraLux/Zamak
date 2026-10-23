@@ -676,7 +676,7 @@ fn show(ty: compiler::Type) -> String {
 
 const STD_MODULES: &[&str] = &[
     "io", "fmt", "string", "bytes", "fs", "env", "math", "time", "random", "path", "hashlib",
-    "base64", "process", "json", "re",
+    "base64", "process", "json", "re", "net", "http",
 ];
 
 /// 项目里另一个模块的源码（打开的文档优先），按 `use` 的路径找：`modules 目录/路径.zm`。
