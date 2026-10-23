@@ -6740,7 +6740,19 @@ impl<'a> Checker<'a> {
                 "type mismatch: an empty list literal needs a type annotation, such as let xs: [i64] = []"
                     .into(),
             ),
-            Expr::Array(values) => Ok(Type::ArrayInt(values.len())),
+            // 整数字面量列表是定长数组（`let xs = [1, 2]`）；其他元素按第一项的类型推断成列表
+            // （`["a", "b"]` 是 `[string]`）。
+            Expr::Array(values) => match self.ty(&values[0])? {
+                Type::Int => Ok(Type::ArrayInt(values.len())),
+                first => {
+                    let first = match first.borrowable().map_or(first, |(owned, _)| owned) {
+                        // `[[1, 2], [3]]`：内层的整数字面量也是列表。
+                        Type::ArrayInt(_) => Type::List(Elem::Int),
+                        first => first,
+                    };
+                    Ok(elem_from(first).map_or(Type::ArrayInt(values.len()), Type::List))
+                }
+            },
             Expr::Index(local, _) => match self.place(local)?.1 {
                 Type::ArrayInt(_) => Ok(Type::Int),
                 Type::List(elem) | Type::ListRef(elem, _) => Ok(elem.ty()),

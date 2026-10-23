@@ -25,6 +25,8 @@ fn main():
 88
 ```
 
+A list literal of strings, floats, booleans, structs, or lists gets its type from its first item, so `let names = ["Ada", "Grace"]` is a `[string]`. A literal of integers without an annotation is a fixed-size array, which is faster but can't grow; write `let xs: [i64] = [1, 2]` for a growable list.
+
 Indexes start at 0, and a negative index counts from the end. An index outside the list stops the program with an error instead of reading random memory:
 
 ```zamak,panics

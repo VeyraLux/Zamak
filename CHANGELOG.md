@@ -53,6 +53,8 @@ and this file is the source for the text of each GitHub release.
   TLS works from several threads at once.
 - A generic function whose type parameter appears only in its return type infers it from the
   annotation: `let q: thread.Queue[i64] = thread.queue()`.
+- A list literal of strings, floats, booleans, structs, or lists no longer needs an annotation:
+  `let names = ["Ada", "Grace"]` is a `[string]`.
 - A parenthesized value can take a method call: `(a + b).upper()`.
 
 ## 0.1.1
@@ -228,6 +230,7 @@ this preview.
   用 `thread.Queue[T]` 传递值，形状参考 Python 的 `queue.Queue`。任何线程的 `println` 都按整行输出，
   TLS 可以在多个线程里同时用。
 - 类型参数只出现在返回类型里的泛型函数，按标注推断：`let q: thread.Queue[i64] = thread.queue()`。
+- 字符串、浮点数、布尔值、结构体或列表组成的列表字面量不再需要标注：`let names = ["Ada", "Grace"]` 是 `[string]`。
 - 括号里的值也能接方法调用：`(a + b).upper()`。
 
 ## 0.1.1（中文）

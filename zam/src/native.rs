@@ -5026,7 +5026,20 @@ impl<'a> Generator<'a> {
             }
             Expr::Int(_) | Expr::ByteLen(_) | Expr::CharLen(_) => Type::Int,
             Expr::Float(_) => Type::Float,
-            Expr::Array(values) => Type::ArrayInt(values.len()),
+            // 与检查器一致：整数是定长数组，其他按第一项的类型推断成列表。空列表的类型来自标注，
+            // 这里不会用到。
+            Expr::Array(values) if values.is_empty() => Type::ArrayInt(0),
+            Expr::Array(values) => match self.ty(&values[0]) {
+                Type::Int => Type::ArrayInt(values.len()),
+                first => {
+                    let first = match first.borrowable().map_or(first, |(owned, _)| owned) {
+                        Type::ArrayInt(_) => Type::List(Elem::Int),
+                        first => first,
+                    };
+                    crate::compiler::elem_from(first)
+                        .map_or(Type::ArrayInt(values.len()), Type::List)
+                }
+            },
             Expr::Index(local, _) => match self.place_ty(local) {
                 Type::ArrayInt(_) => Type::Int,
                 Type::List(elem) | Type::ListRef(elem, _) => elem.ty(),

@@ -405,3 +405,32 @@ fn struct_and_nested_lists_slice_with_deep_copies() {
         "[P(name: \"b\", tags: [\"new\"]), P(name: \"c\", tags: [\"y\", \"z\"])]\n[P(name: \"a\", tags: [\"x\"])]\n[P(name: \"c\", tags: [\"y\", \"z\"])]\n[]\n[[2, 3]]\n"
     );
 }
+
+#[test]
+fn list_literals_infer_their_element_type() {
+    // 不写标注时按第一项推断：字符串、浮点数、结构体、布尔值、内层列表都得到可增长的列表。
+    let case = Case::new("lists", "literals");
+    let output = case.run(
+        r#"struct P:
+    x: i64
+
+fn main():
+    let names = ["a", "b"]
+    for i, n in &names:
+        println(f"{i} {n}")
+    let mut fs = [1.5, 2.5]
+    fs.push(3.0)
+    println(fs)
+    let ps = [P(x: 1), P(x: 2)]
+    println(ps)
+    let mut grid = [[1, 2], [3]]
+    grid[1].push(4)
+    println(grid)
+    println([true, false])
+"#,
+    );
+    assert_eq!(
+        stdout(&output),
+        "0 a\n1 b\n[1.5, 2.5, 3.0]\n[P(x: 1), P(x: 2)]\n[[1, 2], [3, 4]]\n[true, false]\n"
+    );
+}

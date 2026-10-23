@@ -262,7 +262,7 @@ let area = match s:
 
 - Nested elements: `grid[i][j]` reads and writes an inner element (two levels at most; string elements are read as copies), `grid[i].push(x)` and `m[k].len()` call methods on an inner container, `for row in &grid:` gives `&[i64]`, and `&grid[i]` borrows a row. `grid[i]` alone cannot be taken out.
 
-- `let mut xs: [i64] = []` (an empty list needs a type annotation), `let xs: [string] = ["a", "b"]`.
+- `let mut xs: [i64] = []` (an empty list needs a type annotation), `let xs: [string] = ["a", "b"]`. Without an annotation, a literal of strings, floats, bools, structs, or lists takes its first item's type (`let names = ["a", "b"]` is `[string]`), but a literal of integers is a fixed-size array that can't `push` or print: write `let xs: [i64] = [1, 2]`.
 - `xs.len()` (or `len(xs)`), `xs.push(v)`, `xs.pop()` (removes and returns the last element), `xs.insert(i, v)` (clamps `i` like Python), `xs.remove(i)` (removes and returns element `i`), `xs.swap(i, j)`, `xs.reverse()`, `xs.clear()`, `xs.extend(ys)` (moves all of `ys` to the end).
 - For `i64`, `f64`, `bool` and `string` elements: `xs.sort()` (ascending, stable, in place), `xs.sorted()` or `sorted(xs)` (a sorted copy), `xs.contains(v)` or `v in xs`, `xs.index_of(v)` (-1 when absent), `xs.min()`/`min(xs)` and `xs.max()`/`max(xs)` (stop the program on an empty list). For `i64` and `f64` elements: `xs.sum()` or `sum(xs)`.
 - Indexes and slices follow Python: `xs[-1]` is the last element; `xs[a:b]`, `xs[:b]`, `xs[a:]` (and `xs.slice(a, b)`) copy a part, with negative bounds counted from the end and out-of-range bounds clamped.
