@@ -38,6 +38,31 @@ fn main():
 144
 ```
 
+## 默认参数与关键字参数
+
+参数可以有默认值，调用时可以按名字传，写法与 Python 相同：
+
+```zamak
+fn connect(host: &string, port: i64 = 80, timeout: f64 = 5.0) -> string:
+    f"{host}:{port} ({timeout}s)"
+
+fn main():
+    println(connect("example.com"))
+    println(connect("example.com", 8080))
+    println(connect("example.com", timeout=1.5))
+```
+
+```text
+example.com:80 (5.0s)
+example.com:8080 (5.0s)
+example.com:80 (1.5s)
+```
+
+- 默认值只能是常量（字面量、`const` 常量和它们的运算）或 `Option.None`。默认值在每次调用时重新放进去，不会像 Python 那样被多次调用共用。
+- 有默认值的参数后面，参数都要有默认值。
+- 调用时先写位置实参，再写 `名字=值`。方法也一样：`p.moved(dy=5)`。
+- 结构体也可以这样构造：`Point(x=1, y=2)` 和 `Point(x: 1, y: 2)` 相同。
+
 ## 提前返回
 
 `return` 立即离开函数。先处理特殊情况时很有用：
@@ -209,6 +234,7 @@ fn main():
 
 ## 小结
 
+- 参数可以有默认值（`port: i64 = 80`），调用时可以按名字传（`connect(host, timeout=1.5)`）。
 - `fn name(param: Type) -> Result:` 定义函数，最后一个表达式就是结果。
 - 用元组返回多个值，用 `let (a, b) = ...` 拆开。
 - `fn name[T](...)` 定义泛型函数；Zamak 推断 `T`，并为每种类型编译一份高效的版本。

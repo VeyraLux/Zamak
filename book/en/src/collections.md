@@ -1,4 +1,4 @@
-# Lists, maps, and tuples
+# Lists, maps, sets, and tuples
 
 Zamak has three ways to hold several values: lists keep values in order, maps look values up by key, and tuples group a fixed number of values that can have different types.
 
@@ -228,6 +228,37 @@ fn main():
 {"a": ["apple", "avocado"], "b": ["banana", "blueberry"], "c": ["cherry"]}
 ```
 
+## Sets
+
+A set holds values without duplicates, and checking whether a value is in it is fast. Write a literal as `{1, 2, 3}` and the type as `{i64}` or `{string}`:
+
+```zamak
+fn main():
+    let mut seen = {"apple", "kiwi"}
+    seen.add("apple")
+    seen.add("plum")
+    println(len(seen))
+    println("kiwi" in seen)
+    println(sorted(seen))
+    let fruit = {"kiwi", "mango"}
+    println(sorted(seen.intersection(fruit)))
+    let empty: {i64} = {}
+    println(empty)
+```
+
+```text
+3
+true
+["apple", "kiwi", "plum"]
+["kiwi"]
+set()
+```
+
+- `s.add(x)` adds a value. `s.remove(x)` and `s.discard(x)` remove one and return whether it was there.
+- `x in s`, `len(s)`, and `for x in s` work as they do for map keys. A set has no indexes and no order; use `sorted(s)` when you need one.
+- `a.union(b)`, `a.intersection(b)`, and `a.difference(b)` return new sets, and `a.issubset(b)` tests for a subset.
+- An empty set needs a type annotation: `let s: {i64} = {}`.
+
 ## Tuples
 
 A tuple groups a fixed number of values. Write its type as `(i64, string)` and read items with `.0`, `.1`, and so on:
@@ -258,6 +289,7 @@ Use a tuple for a short-lived group, such as several return values. When the gro
 
 ## Summary
 
+- A set `{1, 2, 3}` holds values without duplicates; its type is `{i64}`.
 - `[T]` is a growable list. Indexes start at 0, negative indexes count from the end, and out-of-range indexes stop the program.
 - `{K: V}` is a map with `i64` or `string` keys that keeps insertion order.
 - `(A, B)` is a tuple; unpack it with `let (a, b) = ...`.

@@ -146,7 +146,7 @@ apple -> 5
 banana -> 0
 ```
 
-`for` 循环借用集合，所以循环结束后还能继续用它。循环进行期间不能增删元素。[列表、字典与元组](collections.md)一章会讲怎样用 `for x in &mut list` 就地修改元素。
+`for` 循环借用集合，所以循环结束后还能继续用它。循环进行期间不能增删元素。[列表、字典、集合与元组](collections.md)一章会讲怎样用 `for x in &mut list` 就地修改元素。
 
 ## match
 

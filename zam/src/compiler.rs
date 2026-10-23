@@ -320,7 +320,8 @@ pub fn method_args(
         }
         (Receiver::Temp(expr), _) => expr.clone(),
     };
-    Ok(std::iter::once(first).chain(args.iter().cloned()).collect())
+    let rest = bind_args(method, &callee.params, &callee.defaults, args.to_vec(), 1)?;
+    Ok(std::iter::once(first).chain(rest).collect())
 }
 
 /// 全局 `copy(&x)`：深复制字符串、列表、字典、结构体与枚举。它对任何类型都成立，
@@ -398,6 +399,7 @@ pub fn expr_roots(expr: &Expr, out: &mut BTreeSet<String>) {
             expr_roots(k, out);
             expr_roots(v, out);
         }),
+        Expr::SetLit(items) => items.iter().for_each(|item| expr_roots(item, out)),
         Expr::Unary(_, inner) | Expr::Try(inner) | Expr::ByteLen(inner) | Expr::CharLen(inner) => {
             expr_roots(inner, out)
         }
@@ -501,6 +503,15 @@ pub fn bytes_method(
     ))
 }
 
+/// 集合是值为占位的字典：`{i64}` 就是 `Map(Int, SET)`。用户写不出值为 byte 的字典，
+/// 所以这个组合只代表集合；哈希、遍历、比较、复制都沿用字典。
+pub const SET: Elem = Elem::Byte;
+
+/// `{K}`（owned 或借用）。
+pub fn is_set(ty: Type) -> bool {
+    matches!(ty, Type::Map(_, SET) | Type::MapRef(_, SET, _))
+}
+
 /// `bytes`（owned 或借用）。
 pub fn is_bytes(ty: Type) -> bool {
     matches!(ty, Type::List(Elem::Byte) | Type::ListRef(Elem::Byte, _))
@@ -540,6 +551,7 @@ pub fn produces_value(expr: &Expr) -> bool {
             | Expr::Variant(..)
             | Expr::Tuple(..)
             | Expr::MapLit(..)
+            | Expr::SetLit(..)
     )
 }
 
@@ -665,6 +677,7 @@ pub fn each_bindings(
                     .into(),
             )
         }
+        (Type::Map(_, SET), true) => return Err("a set has no values; write for x in s".into()),
         (Type::Map(key, _), false) => vec![(key.item(), false)],
         (Type::Map(key, value), true) => vec![(key.item(), false), item(value)],
         _ => unreachable!("container type"),
@@ -675,6 +688,21 @@ pub fn each_bindings(
 pub fn method_signature(receiver: Type, method: &str) -> Option<(bool, Vec<Type>, Type)> {
     Some(match (receiver.container()?, method) {
         (_, "len") => (false, Vec::new(), Type::Int),
+        // 集合：加入、删除、并交差、子集判断、排好序的列表；没有下标、get、keys、values。
+        (Type::Map(key, SET), method) => match method {
+            "add" => (true, vec![key.key_arg()], Type::Unit),
+            "remove" | "discard" => (true, vec![key.key_arg()], Type::Bool),
+            "contains" => (false, vec![key.key_arg()], Type::Bool),
+            "clear" => (true, Vec::new(), Type::Unit),
+            "union" | "intersection" | "difference" => (
+                false,
+                vec![Type::MapRef(key, SET, false)],
+                Type::Map(key, SET),
+            ),
+            "issubset" => (false, vec![Type::MapRef(key, SET, false)], Type::Bool),
+            "sorted" => (false, Vec::new(), Type::List(key)),
+            _ => return None,
+        },
         (Type::List(elem), "push") => (true, vec![elem.ty()], Type::Unit),
         (Type::List(elem), "pop") => (true, Vec::new(), elem.ty()),
         (Type::List(_), "swap") => (true, vec![Type::Int, Type::Int], Type::Unit),
@@ -760,6 +788,9 @@ fn supported_methods(container: Type, method: &str) -> &'static str {
         }
         Type::Map(_, value) if method == "values" && !value.comparable() => {
             "struct values cannot be copied; iterate the keys instead"
+        }
+        Type::Map(_, SET) => {
+            "sets support len, add, remove, discard, contains, clear, union, intersection, difference, issubset and sorted"
         }
         _ => "maps support len, contains, get, remove, keys, values and clear",
     }
@@ -979,6 +1010,8 @@ pub enum Expr {
     Chain(Box<Expr>, String, Vec<Expr>),
     // `{k: v, ...}` 字典字面量；空字典需要类型标注。
     MapLit(Vec<(Expr, Expr)>),
+    // 集合字面量 `{1, 2, 3}`：类型是 `{i64}`，内部是值为占位的字典（见 `is_set`）。
+    SetLit(Vec<Expr>),
     // `fn(x: i64) -> i64: x * 2`：匿名函数，函数体是一个表达式；参数类型与返回类型可以省略，
     // 按期望的函数类型补上。用到外层局部变量时是闭包，只能直接当实参传。
     // 函数体存成只有一条语句的代码块：`println(x)` 是打印语句，其他是一个表达式。
@@ -1045,6 +1078,96 @@ pub struct Function {
     pub external: bool,
     // `@wrapping`：整数 + - * 与取负按二进制补码回绕，浮点 / // % 按 IEEE 754（不检查除以零）。
     pub wrapping: bool,
+    // 参数的默认值（`timeout: f64 = 5.0`），与 params 一一对应；没有默认值的函数是空表。
+    // 默认值只能是常量或 `Option.None`，调用时由 `bind_args` 填进没写的位置。
+    pub defaults: Vec<Option<Expr>>,
+}
+
+/// 关键字实参 `timeout=2.0` 在归位之前的写法：`Call("$kw:timeout", [值])`。
+pub fn keyword_arg(expr: &Expr) -> Option<(&str, &Expr)> {
+    match expr {
+        Expr::Call(name, args) if args.len() == 1 => {
+            name.strip_prefix("$kw:").map(|key| (key, &args[0]))
+        }
+        _ => None,
+    }
+}
+
+/// 按参数表把实参排好：位置实参在前，关键字实参按名字归位，没写的参数用默认值。
+/// `skip` 是已经由接收者占掉的前几个参数（方法的 self）。没有关键字实参、个数也够时原样返回，
+/// 个数不对的情况留给检查器报原来的错误。
+pub fn bind_args(
+    name: &str,
+    params: &[(String, Type)],
+    defaults: &[Option<Expr>],
+    args: Vec<Expr>,
+    skip: usize,
+) -> Result<Vec<Expr>, String> {
+    let short = name.rsplit(':').next().unwrap_or(name);
+    let keywords = args.iter().any(|arg| keyword_arg(arg).is_some());
+    if !keywords && args.len() + skip >= params.len() {
+        return Ok(args);
+    }
+    let names = &params[skip.min(params.len())..];
+    let mut slots: Vec<Option<Expr>> = vec![None; names.len()];
+    let mut positional = true;
+    for (i, arg) in args.into_iter().enumerate() {
+        if let Some((key, value)) = keyword_arg(&arg) {
+            positional = false;
+            let Some(j) = names.iter().position(|(param, _)| param == key) else {
+                return Err(format!(
+                    "{short} got an unexpected keyword argument {key}; its parameters are {}",
+                    names
+                        .iter()
+                        .map(|(param, _)| param.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            };
+            if slots[j].is_some() {
+                return Err(format!("{short} got multiple values for argument {key}"));
+            }
+            slots[j] = Some(value.clone());
+        } else {
+            if !positional {
+                return Err(format!(
+                    "positional argument follows keyword argument in the call to {short}; write positional arguments first"
+                ));
+            }
+            if i >= slots.len() {
+                return Err(format!("argument count mismatch for {name}"));
+            }
+            slots[i] = Some(arg);
+        }
+    }
+    slots
+        .into_iter()
+        .enumerate()
+        .map(|(j, slot)| match slot {
+            Some(value) => Ok(value),
+            None => {
+                defaults.get(skip + j).cloned().flatten().ok_or_else(|| {
+                    format!("missing argument {} in the call to {short}", names[j].0)
+                })
+            }
+        })
+        .collect()
+}
+
+/// 默认值的写法：常量（字面量、前面的常量与运算）或 `Option.None`。
+fn default_value(expr: &Expr, constants: &BTreeMap<String, Constant>) -> Result<Expr, String> {
+    match expr {
+        Expr::Variant(owner, variant, args)
+            if owner == "Option" && variant == "None" && args.is_empty() =>
+        {
+            Ok(expr.clone())
+        }
+        // 不带括号的 `Option.None` 解析时还是字段写法，名字解析时才变成变体。
+        Expr::Field(owner, variant) if owner == "Option" && variant == "None" => Ok(expr.clone()),
+        _ => fold(expr, constants).map_err(|_| {
+            "a default value is a constant, such as 5, 2.5, \"text\", true or Option.None".into()
+        }),
+    }
 }
 
 /// `extern fn` 能用的参数与返回类型：数值、布尔、只读字符串参数（C 侧是 `const char *`）、
@@ -2440,6 +2563,10 @@ struct Parser {
     owner_generics: Vec<String>,
     // 源码各行：`assert` 失败时把条件原文写进报错。
     text: Vec<String>,
+    // 刚解析完的参数表里各参数的默认值；`take_defaults` 取走。
+    defaults: Vec<Option<Expr>>,
+    // 已声明的常量：参数默认值可以用它们。
+    constants: BTreeMap<String, Constant>,
 }
 
 /// match 的一个分支：枚举变体、字面量（`1 | 2`、`"a"`、`true`）或 `_`。
@@ -2535,6 +2662,15 @@ fn untail(body: &mut Block, tail: bool, implicit: &BTreeSet<SourcePosition>) {
     }
 }
 impl Parser {
+    /// 取走刚解析的参数默认值：全都没有时是空表，否则与参数一一对应。
+    fn take_defaults(&mut self, count: usize) -> Vec<Option<Expr>> {
+        let mut defaults = std::mem::take(&mut self.defaults);
+        if defaults.iter().all(Option::is_none) {
+            return Vec::new();
+        }
+        defaults.resize(count, None);
+        defaults
+    }
     fn at(&self) -> SourcePosition {
         self.lines[self.position.min(self.lines.len() - 1)]
     }
@@ -2891,6 +3027,14 @@ impl Parser {
                 "string" => Elem::Str,
                 _ => return Err("unsupported map key type; expected i64 or string keys".into()),
             };
+            // `{i64}`、`{string}`：集合。
+            if self.symbol('}') {
+                return Ok(match ty {
+                    Type::Owned => Type::Map(key, SET),
+                    Type::Shared => Type::MapRef(key, SET, false),
+                    _ => Type::MapRef(key, SET, true),
+                });
+            }
             self.expect(':')?;
             let value = match self.inner_container()? {
                 Some(value) => value,
@@ -3315,6 +3459,21 @@ impl Parser {
             self.newlines();
             while !self.symbol('}') {
                 let key = self.expr()?;
+                // 第一项后面不是冒号：集合字面量 `{1, 2, 3}`。
+                if entries.is_empty() && self.peek() != Some(&Token::Symbol(':')) {
+                    let mut items = vec![key];
+                    self.newlines();
+                    while !self.symbol('}') {
+                        self.expect(',')?;
+                        self.newlines();
+                        if self.symbol('}') {
+                            break;
+                        }
+                        items.push(self.expr()?);
+                        self.newlines();
+                    }
+                    return self.after_call(Expr::SetLit(items));
+                }
                 self.expect(':')?;
                 let value = self.expr()?;
                 entries.push((key, value));
@@ -3325,7 +3484,7 @@ impl Parser {
                 self.expect(',')?;
                 self.newlines();
             }
-            return Ok(Expr::MapLit(entries));
+            return self.after_call(Expr::MapLit(entries));
         }
         if self.symbol('[') {
             let mut values = Vec::new();
@@ -3451,13 +3610,18 @@ impl Parser {
             .next()
             .is_some_and(|n| n.starts_with(char::is_uppercase))
         {
+            // `Point(x: 1, y: 2)`，也可以像 Python 的关键字实参那样写 `Point(x=1, y=2)`。
             let named = matches!(self.peek(), Some(Token::Word(_)))
-                && self.tokens.get(self.position + 1) == Some(&Token::Symbol(':'));
+                && (self.tokens.get(self.position + 1) == Some(&Token::Symbol(':'))
+                    || (self.tokens.get(self.position + 1) == Some(&Token::Symbol('='))
+                        && self.tokens.get(self.position + 2) != Some(&Token::Symbol('='))));
             if named {
                 let mut fields = Vec::new();
                 loop {
                     let field = self.word()?;
-                    self.expect(':')?;
+                    if !self.symbol('=') {
+                        self.expect(':')?;
+                    }
                     fields.push((field, self.expr()?));
                     if self.symbol(')') {
                         break;
@@ -3567,6 +3731,7 @@ impl Parser {
         generics: Vec<String>,
     ) -> Result<(String, Function), String> {
         let (params, result, error) = self.signature(owner)?;
+        let defaults = self.take_defaults(params.len());
         self.imports = imports.to_vec();
         self.result = result;
         let mut body = self.suite(imports, result, "fn")?;
@@ -3584,6 +3749,7 @@ impl Parser {
                 generics,
                 external: false,
                 wrapping: false,
+                defaults,
             },
         ))
     }
@@ -3606,6 +3772,7 @@ impl Parser {
             return Err(format!("extern fn {name} cannot have type parameters"));
         }
         let (params, result, error) = self.signature(None)?;
+        let defaults = self.take_defaults(params.len());
         if error.is_some() {
             return Err(format!(
                 "extern fn {name} cannot declare an error type; return a status value and check it in Zamak"
@@ -3630,6 +3797,7 @@ impl Parser {
                 generics: Vec::new(),
                 external: true,
                 wrapping: false,
+                defaults,
             },
         ))
     }
@@ -3640,6 +3808,7 @@ impl Parser {
         owner: Option<&str>,
     ) -> Result<(Vec<(String, Type)>, Type, Option<Type>), String> {
         self.expect('(')?;
+        self.defaults.clear();
         let mut params = Vec::new();
         if !self.symbol(')') {
             loop {
@@ -3663,6 +3832,21 @@ impl Parser {
                     if matches!(ty, Type::ArrayInt(_)) {
                         return Err("arrays are only supported as local values".into());
                     }
+                    // `timeout: f64 = 5.0`：默认值，之后的参数也都要有默认值（同 Python）。
+                    let default = if self.symbol('=') {
+                        Some(default_value(&self.expr()?, &self.constants)?)
+                    } else {
+                        None
+                    };
+                    if default.is_none() && self.defaults.iter().any(Option::is_some) {
+                        return Err(format!(
+                            "parameter {param} needs a default value because an earlier parameter has one"
+                        ));
+                    }
+                    while self.defaults.len() < params.len() {
+                        self.defaults.push(None);
+                    }
+                    self.defaults.push(default);
                     params.push((param, ty));
                 }
                 if self.symbol(')') {
@@ -3767,6 +3951,23 @@ impl Parser {
     fn arguments(&mut self) -> Result<Vec<Expr>, String> {
         let mut args = Vec::new();
         while !self.symbol(')') {
+            // `timeout=2.0`：关键字实参（`==` 是比较，不算）。
+            if let (Some(Token::Word(key)), Some(Token::Symbol('=')), next) = (
+                self.peek().cloned(),
+                self.tokens.get(self.position + 1),
+                self.tokens.get(self.position + 2),
+            ) {
+                if next != Some(&Token::Symbol('=')) {
+                    self.take();
+                    self.take();
+                    args.push(Expr::Call(format!("$kw:{key}"), vec![self.expr()?]));
+                    if self.symbol(')') {
+                        break;
+                    }
+                    self.expect(',')?;
+                    continue;
+                }
+            }
             args.push(self.expr()?);
             if self.symbol(')') {
                 break;
@@ -3827,6 +4028,8 @@ impl Parser {
                         type_params: self.type_params.clone(),
                         owner_generics: Vec::new(),
                         text: Vec::new(),
+                        defaults: Vec::new(),
+                        constants: self.constants.clone(),
                     };
                     let expr = inner
                         .expr()
@@ -4554,6 +4757,8 @@ pub fn parse(source: &str) -> Result<Module, String> {
         type_params: Vec::new(),
         owner_generics: Vec::new(),
         text: source.lines().map(str::to_owned).collect(),
+        defaults: Vec::new(),
+        constants: BTreeMap::new(),
     };
     let result = (|| {
         let mut module = Module {
@@ -4624,6 +4829,13 @@ pub fn parse(source: &str) -> Result<Module, String> {
                         });
                     }
                 }
+                p.constants.insert(
+                    name.clone(),
+                    Constant {
+                        public,
+                        value: value.clone(),
+                    },
+                );
                 if module.structs.contains_key(&name)
                     || module
                         .constants
@@ -4921,7 +5133,7 @@ pub fn encode(module: &Module) -> Vec<u8> {
         .map(|(name, constant)| (name, constant.public, &constant.value))
         .collect();
     format!(
-        "ZAM-IR-36\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
+        "ZAM-IR-37\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
         module.type_names, module.imports, module.functions
     )
     .into_bytes()
@@ -5860,12 +6072,18 @@ impl<'a> Checker<'a> {
             Expr::Index(local, _) => match self.place(local)?.1 {
                 Type::ArrayInt(_) => Ok(Type::Int),
                 Type::List(elem) | Type::ListRef(elem, _) => Ok(elem.ty()),
+                ty if is_set(ty) => Err("a set has no index; test membership with x in s, and add values with s.add(x)".into()),
                 Type::Map(_, value) | Type::MapRef(_, value, _) => Ok(value.ty()),
                 ty if is_text(ty) => Err(
                     "index requires an array, list or map; take one character of a string with s.slice(i, i + 1)"
                         .into(),
                 ),
                 _ => Err("index requires an array, list or map".into()),
+            },
+            Expr::SetLit(items) => match self.ty(&items[0])? {
+                Type::Int => Ok(Type::Map(Elem::Int, SET)),
+                Type::Owned | Type::Shared | Type::Mutable => Ok(Type::Map(Elem::Str, SET)),
+                _ => Err("unsupported set literal; sets hold i64 or string values".into()),
             },
             Expr::MapLit(entries) => {
                 let Some((key, value)) = entries.first() else {
@@ -6134,6 +6352,7 @@ impl<'a> Checker<'a> {
                     generics: Vec::new(),
                     external: false,
                     wrapping: false,
+                    defaults: Vec::new(),
                 };
                 self.call("this function value", &callee, args, expected, &mut frame)
             }
@@ -6251,6 +6470,16 @@ impl<'a> Checker<'a> {
                 }
                 if seen.len() != declaration.len() {
                     return Err("missing struct field".into());
+                }
+                Ok(())
+            }
+            Expr::SetLit(items) => {
+                let Type::Map(key, SET) = expected else {
+                    return Err("type mismatch: unexpected set literal".into());
+                };
+                // 字面量里的值都移入集合。
+                for item in items {
+                    self.expr(item, key.ty(), loans)?;
                 }
                 Ok(())
             }
@@ -6994,6 +7223,7 @@ impl<'a> Checker<'a> {
             generics: Vec::new(),
             external: false,
             wrapping: false,
+            defaults: Vec::new(),
         };
         self.call(&label, &callee, args, expected, loans)?;
         Ok(Some((label, error, result)))
@@ -7026,6 +7256,7 @@ impl<'a> Checker<'a> {
             generics: Vec::new(),
             external: false,
             wrapping: false,
+            defaults: Vec::new(),
         };
         self.call(path, &callee, args, expected, loans)
     }
@@ -7385,6 +7616,9 @@ impl<'a> Checker<'a> {
                     if self.place(local)?.1.container().is_some() =>
                 {
                     let container = self.place(local)?.1.container().expect("guarded");
+                    if is_set(container) {
+                        return Err("a set has no index; test membership with x in s, and add values with s.add(x)".into());
+                    }
                     let (key, elem) = Self::subscript(container);
                     self.expr(index, key, &mut loans)?;
                     self.container(local, true, &loans)?;
@@ -7664,6 +7898,26 @@ pub fn check(module: &Module, entry: &str) -> Result<(), String> {
     }
     let mut errors = Vec::new();
     for (name, function) in &module.functions {
+        // 默认值在声明处就核对类型：没有调用用到它时也能发现写错。
+        for ((param, ty), default) in function.params.iter().zip(&function.defaults) {
+            let Some(default) = default else { continue };
+            let fits = match default {
+                Expr::Int(_) => matches!(ty, Type::Int | Type::Float),
+                Expr::Float(_) => *ty == Type::Float,
+                Expr::Bool(_) => *ty == Type::Bool,
+                Expr::Text(_) => matches!(ty, Type::Owned | Type::Shared),
+                _ => {
+                    matches!(ty, Type::Record(id) if struct_of(*id, &module.structs).is_some_and(|(n, _)| n.contains(":Option[")))
+                }
+            };
+            if !fits {
+                let (line, column) = function.position;
+                errors.push(format!(
+                    "line {line}, column {column}: {name}: type mismatch: the default value of {param} is not {}",
+                    type_text(*ty, &module.structs)
+                ));
+            }
+        }
         if function.external {
             if let Err(error) = check_extern_handles(name, function, &module.structs) {
                 let (line, column) = function.position;
@@ -7820,6 +8074,12 @@ pub fn type_text(ty: Type, structs: &BTreeMap<String, Struct>) -> String {
             "&{}[{}]",
             if mutable { "mut " } else { "" },
             elem_text(elem, structs)
+        ),
+        Type::Map(key, SET) => format!("{{{}}}", elem_text(key, structs)),
+        Type::MapRef(key, SET, mutable) => format!(
+            "&{}{{{}}}",
+            if mutable { "mut " } else { "" },
+            elem_text(key, structs)
         ),
         Type::Map(key, value) => format!(
             "{{{}: {}}}",

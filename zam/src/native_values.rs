@@ -268,15 +268,27 @@ fn map(key: Elem, value: Elem, protos: &mut String, defs: &mut String) {
         "size_t i; int64_t at; if (a->count != b->count) return 0; for (i = 0; i < a->len; i++) {{ E{m} *e = &a->entries[i]; if (!e->live) continue; at = find{m}(b, {key_arg}, e->hash); if (at < 0 || !{}) return 0; }} return 1;",
         equal(value.ty(), "&e->value", "&b->entries[at].value")
     );
-    let show_body = format!(
-        "size_t i; int first = 1; {} for (i = 0; i < p->len; i++) {{ E{m} *e = &p->entries[i]; if (!e->live) continue; if (!first) {} first = 0; {} {} {} }} {}",
-        text("out", "{"),
-        text("out", ", "),
-        show(key.ty(), "out", "&e->key"),
-        text("out", ": "),
-        show(value.ty(), "out", "&e->value"),
-        text("out", "}")
-    );
+    // 集合照 Python 显示：`{1, 2}`，空集合是 `set()`。
+    let show_body = if value == crate::compiler::SET {
+        format!(
+            "size_t i; int first = 1; if (!p->count) {{ {} return; }} {} for (i = 0; i < p->len; i++) {{ E{m} *e = &p->entries[i]; if (!e->live) continue; if (!first) {} first = 0; {} }} {}",
+            text("out", "set()"),
+            text("out", "{"),
+            text("out", ", "),
+            show(key.ty(), "out", "&e->key"),
+            text("out", "}")
+        )
+    } else {
+        format!(
+            "size_t i; int first = 1; {} for (i = 0; i < p->len; i++) {{ E{m} *e = &p->entries[i]; if (!e->live) continue; if (!first) {} first = 0; {} {} {} }} {}",
+            text("out", "{"),
+            text("out", ", "),
+            show(key.ty(), "out", "&e->key"),
+            text("out", ": "),
+            show(value.ty(), "out", "&e->value"),
+            text("out", "}")
+        )
+    };
     shared(
         Type::Map(key, value),
         protos,

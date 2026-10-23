@@ -1,4 +1,4 @@
-# 列表、字典与元组
+# 列表、字典、集合与元组
 
 Zamak 有三种存放多个值的方式：列表按顺序保存值，字典按键查找值，元组把固定数量、类型可以不同的值组合在一起。
 
@@ -228,6 +228,37 @@ fn main():
 {"a": ["apple", "avocado"], "b": ["banana", "blueberry"], "c": ["cherry"]}
 ```
 
+## 集合
+
+集合保存不重复的值，判断“在不在里面”很快。字面量写 `{1, 2, 3}`，类型写 `{i64}` 或 `{string}`：
+
+```zamak
+fn main():
+    let mut seen = {"apple", "kiwi"}
+    seen.add("apple")
+    seen.add("plum")
+    println(len(seen))
+    println("kiwi" in seen)
+    println(sorted(seen))
+    let fruit = {"kiwi", "mango"}
+    println(sorted(seen.intersection(fruit)))
+    let empty: {i64} = {}
+    println(empty)
+```
+
+```text
+3
+true
+["apple", "kiwi", "plum"]
+["kiwi"]
+set()
+```
+
+- `s.add(x)` 加入；`s.remove(x)` 和 `s.discard(x)` 删除，返回原来在不在。
+- `x in s`、`len(s)`、`for x in s` 与字典的键一样用。集合没有下标，也没有顺序，要有序就用 `sorted(s)`。
+- `a.union(b)`、`a.intersection(b)`、`a.difference(b)` 得到新集合，`a.issubset(b)` 判断子集。
+- 空集合要写类型标注：`let s: {i64} = {}`。
+
 ## 元组
 
 元组把固定数量的值组合在一起。类型写作 `(i64, string)`，用 `.0`、`.1` 等读取各项：
@@ -258,6 +289,7 @@ three
 
 ## 小结
 
+- 集合 `{1, 2, 3}` 保存不重复的值，类型写 `{i64}`。
 - `[T]` 是可增长的列表。下标从 0 开始，负数从末尾数，越界会让程序停下。
 - `{K: V}` 是字典，键是 `i64` 或 `string`，保持插入顺序。
 - `(A, B)` 是元组，用 `let (a, b) = ...` 拆开。

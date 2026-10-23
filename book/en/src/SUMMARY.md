@@ -27,7 +27,7 @@
 
 - [Structs and methods](structs.md)
 - [Enums, Option, and match](enums.md)
-- [Lists, maps, and tuples](collections.md)
+- [Lists, maps, sets, and tuples](collections.md)
 
 # Errors and tests
 

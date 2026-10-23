@@ -659,6 +659,7 @@ fn show(ty: compiler::Type) -> String {
         }
         Type::List(e) => format!("[{}]", elem(e)),
         Type::ListRef(e, mutable) => format!("&{}[{}]", if mutable { "mut " } else { "" }, elem(e)),
+        Type::Map(k, Elem::Byte) => format!("{{{}}}", elem(k)),
         Type::Map(k, v) => format!("{{{}: {}}}", elem(k), elem(v)),
         Type::MapRef(k, v, mutable) => {
             format!(

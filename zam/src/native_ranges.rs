@@ -433,6 +433,12 @@ impl Analysis {
                 }
                 Interval::TOP
             }
+            Expr::SetLit(items) => {
+                for item in items {
+                    self.expr(item, env, collect);
+                }
+                Interval::TOP
+            }
             Expr::If(condition, yes, no) => {
                 // Each branch sees the facts its condition establishes.
                 let (yes_env, no_env) = self.condition(condition, env.clone(), collect);
@@ -908,6 +914,9 @@ fn expression_cost(expr: &Expr) -> Option<i128> {
         Expr::MapLit(entries) => entries.iter().try_fold(0, |cost, (key, value)| {
             Some(cost + expression_cost(key)? + expression_cost(value)?)
         })?,
+        Expr::SetLit(items) => items
+            .iter()
+            .try_fold(0, |cost, item| Some(cost + expression_cost(item)?))?,
         Expr::If(condition, yes, no) => {
             expression_cost(condition)? + expression_cost(yes)? + expression_cost(no)?
         }
@@ -1178,6 +1187,7 @@ mod tests {
             generics: Vec::new(),
             external: false,
             wrapping: false,
+            defaults: Vec::new(),
         }
     }
     fn binary(op: &str, a: Expr, b: Expr) -> Expr {

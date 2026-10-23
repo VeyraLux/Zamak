@@ -21,6 +21,11 @@ and this file is the source for the text of each GitHub release.
 - **`[native] headers`** lets Zamak call a C library through its own header, so `int` and
   `size_t` parameters work without a C wrapper. `extern fn` also takes `&bytes` and `&mut bytes`.
 - **`?` and `catch` after a method chain**, such as `buf[:n].decode() catch e: "?"`.
+- **Default and keyword arguments**, as in Python: `fn connect(host: &string, port: i64 = 80)`
+  and `connect("a", timeout=1.5)`. Defaults are constants or `Option.None`, so calls never share
+  a mutable default. Methods take keyword arguments, and `Point(x=1, y=2)` builds a struct.
+- **Sets.** `{1, 2, 3}` has the type `{i64}`, with `add`, `remove`, `in`, `union`,
+  `intersection`, `difference`, `issubset`, and `sorted(s)`.
 
 ## 0.1.1
 
@@ -169,6 +174,11 @@ this preview.
 - **`[native] headers`**：按 C 库自己的头文件调用，`int`、`size_t` 参数不用再写 C 包装。
   `extern fn` 也能接收 `&bytes` 和 `&mut bytes`。
 - **方法链之后也能接 `?` 和 `catch`**，例如 `buf[:n].decode() catch e: "?"`。
+- **默认参数与关键字实参**，写法同 Python：`fn connect(host: &string, port: i64 = 80)`、
+  `connect("a", timeout=1.5)`。默认值只能是常量或 `Option.None`，不会出现多次调用共用一个可变默认值的问题。
+  方法也能用关键字实参，结构体可以写 `Point(x=1, y=2)`。
+- **集合。** `{1, 2, 3}` 的类型是 `{i64}`，支持 `add`、`remove`、`in`、`union`、`intersection`、
+  `difference`、`issubset` 和 `sorted(s)`。
 
 ## 0.1.1（中文）
 

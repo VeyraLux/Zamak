@@ -31,6 +31,8 @@ Zamak keeps Python's names and rules wherever it can. This appendix lists what s
 | `{"a": 1}` | `{"a": 1}`; empty: `let m: {string: i64} = {}` | Keys are `i64` or `string`. |
 | `lambda x: x * 2` | `fn(x): x * 2` | |
 | `import math` | `use std/math` | |
+| `{1, 2}`, `set()` | `{1, 2}`; an empty set: `let s: {i64} = {}` | Values are `i64` or `string`. |
+| `def f(x, n=1)`, `f(x, n=2)` | `fn f(x: i64, n: i64 = 1)`, `f(x, n=2)` | A default value is a constant. |
 | `b"\x00"`, `s.encode()`, `b.decode()` | The same, and the type is `bytes` | Indexing gives an integer from 0 to 255. |
 
 ## New in Zamak
@@ -42,7 +44,7 @@ Zamak keeps Python's names and rules wherever it can. This appendix lists what s
 
 ## Not available yet
 
-Zamak doesn't have classes with inheritance, decorators other than `@wrapping`, generators, `async`, threads, or networking. Default and keyword arguments aren't supported either; pass every argument, or use a struct for many options.
+Zamak doesn't have classes with inheritance, decorators other than `@wrapping`, generators, `async`, threads, or networking. Default values must be constants, and `*args` and `**kwargs` aren't supported.
 
 ## A program side by side
 

@@ -146,7 +146,7 @@ apple -> 5
 banana -> 0
 ```
 
-A `for` loop borrows the collection, so you can still use it after the loop. While the loop runs, you can't add or remove elements. [Lists, maps, and tuples](collections.md) shows how to change elements in place with `for x in &mut list`.
+A `for` loop borrows the collection, so you can still use it after the loop. While the loop runs, you can't add or remove elements. [Lists, maps, sets, and tuples](collections.md) shows how to change elements in place with `for x in &mut list`.
 
 ## match
 

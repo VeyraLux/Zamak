@@ -12,7 +12,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-66");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-67");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -633,6 +633,10 @@ impl Project {
                     ));
                 }
                 self.resolve_body(id, &locals, &mut function.body)?;
+                for default in function.defaults.iter_mut().flatten() {
+                    self.resolve_expr(id, &BTreeSet::new(), default)
+                        .map_err(|error| self.located(id, position, error))?;
+                }
                 linked.functions.insert(format!("{id}:{name}"), function);
             }
         }
@@ -994,7 +998,61 @@ impl Project {
         Ok(Some(constant.value.clone()))
     }
 
+    /// 实参：关键字实参 `key=value` 只解析里面的值，归位留给 `bind_args`。
+    fn resolve_args(
+        &self,
+        module: &str,
+        locals: &BTreeSet<String>,
+        args: &mut [Expr],
+    ) -> Result<()> {
+        for arg in args {
+            match arg {
+                Expr::Call(name, inner) if name.starts_with("$kw:") => {
+                    self.resolve_expr(module, locals, &mut inner[0])?
+                }
+                _ => self.resolve_expr(module, locals, arg)?,
+            }
+        }
+        Ok(())
+    }
+
+    /// 普通函数调用按参数表排好实参：关键字实参归位，没写的参数用默认值（在被调函数的模块里解析）。
+    fn bind_call(&self, name: &str, args: &mut Vec<Expr>) -> Result<()> {
+        let keywords = args.iter().any(|arg| compiler::keyword_arg(arg).is_some());
+        let callee = name.split_once(':').and_then(|(target, short)| {
+            self.modules
+                .get(target)
+                .and_then(|input| input.module.functions.get(short))
+                .map(|function| (target, function))
+        });
+        let Some((target, function)) = callee else {
+            if keywords {
+                let short = name.rsplit(':').next().unwrap_or(name);
+                return Err(format!(
+                    "{short} takes positional arguments only; keyword arguments work with functions declared with fn"
+                ));
+            }
+            return Ok(());
+        };
+        if !keywords && function.defaults.is_empty() {
+            return Ok(());
+        }
+        let mut defaults = function.defaults.clone();
+        for default in defaults.iter_mut().flatten() {
+            self.resolve_expr(target, &BTreeSet::new(), default)?;
+        }
+        *args = compiler::bind_args(name, &function.params, &defaults, std::mem::take(args), 0)?;
+        Ok(())
+    }
+
     fn resolve_expr(&self, module: &str, locals: &BTreeSet<String>, expr: &mut Expr) -> Result<()> {
+        if let Expr::Call(name, _) = expr {
+            if let Some(key) = name.strip_prefix("$kw:") {
+                return Err(format!(
+                    "keyword argument {key}=... only goes in a call to a function or method declared with fn"
+                ));
+            }
+        }
         if let Some(value) = self.constant_use(module, locals, expr)? {
             *expr = value;
             return Ok(());
@@ -1264,28 +1322,19 @@ impl Project {
                     // 局部变量与没导入的标准库同名（`let fs = ...`）时是方法调用；导入了同名模块才算模块调用。
                     if locals.contains(root) && (receiver.contains('.') || !imported) {
                         let mut args = std::mem::take(args);
-                        for arg in &mut args {
-                            self.resolve_expr(module, locals, arg)?;
-                        }
+                        self.resolve_args(module, locals, &mut args)?;
                         *expr = Expr::Method(receiver.to_owned(), method.to_owned(), args);
                         return Ok(());
                     }
                 }
                 *name = self.resolve(module, name)?;
-                for arg in args {
-                    self.resolve_expr(module, locals, arg)?;
-                }
+                self.resolve_args(module, locals, args)?;
+                self.bind_call(name, args)?;
             }
-            Expr::Method(_, _, args) => {
-                for arg in args {
-                    self.resolve_expr(module, locals, arg)?;
-                }
-            }
+            Expr::Method(_, _, args) => self.resolve_args(module, locals, args)?,
             Expr::ElementMethod(_, index, _, _, args) | Expr::Chain(index, _, args) => {
                 self.resolve_expr(module, locals, index)?;
-                for arg in args {
-                    self.resolve_expr(module, locals, arg)?;
-                }
+                self.resolve_args(module, locals, args)?;
             }
             Expr::BorrowIndex(_, index, _, _) | Expr::IndexField(_, index, _) => {
                 self.resolve_expr(module, locals, index)?
@@ -1294,6 +1343,11 @@ impl Project {
                 for (key, value) in entries {
                     self.resolve_expr(module, locals, key)?;
                     self.resolve_expr(module, locals, value)?;
+                }
+            }
+            Expr::SetLit(items) => {
+                for item in items {
+                    self.resolve_expr(module, locals, item)?;
                 }
             }
             Expr::Format(segments) => {
@@ -1892,6 +1946,7 @@ fn declared(body: &Block, names: &mut BTreeSet<String>) {
                 expr(key, names);
                 expr(value, names);
             }),
+            Expr::SetLit(items) => items.iter().for_each(|item| expr(item, names)),
             Expr::If(condition, yes, no) => {
                 expr(condition, names);
                 expr(yes, names);

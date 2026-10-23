@@ -28,13 +28,14 @@ fn greet(name: string) -> string:
 | 字节 | `bytes` | `b"..."`，下标得 0–255 的整数 |
 | 列表 | `[T]` | 可增长 |
 | 字典 | `{K: V}` | 插入顺序，键是 `i64` 或 `string` |
+| 集合 | `{K}` | `{1, 2}`，值是 `i64` 或 `string` |
 | 元组 | `(i64, string)` | 多返回值 |
 | 结构体 | `struct Point:` | 字段逐行声明 |
 | 枚举 | `enum Shape:` | 变体可带载荷 |
 | 函数 | `fn(i64) -> bool` | 可作值传递 |
 | 错误 | `T!E`、`!E` | 见下 |
 
-详见[数字与运算符](operators.md)、[列表、字典与元组](collections.md)。
+详见[数字与运算符](operators.md)、[列表、字典、集合与元组](collections.md)。
 
 ## 函数
 
@@ -42,27 +43,27 @@ fn greet(name: string) -> string:
 fn add(a: i64, b: i64) -> i64:
     return a + b
 
-fn largest[T](items: &[T]) -> T:      // 泛型，每种类型各生成一份
+fn largest[T](items: &[T]) -> T:      # 泛型，每种类型各生成一份
     ...
 
-fn parse(s: &string) -> i64!string:   // 可能失败
+fn parse(s: &string) -> i64!string:   # 可能失败
     ...
 ```
 
-参数可以是值、借用 `&T`、可变借用 `&mut T`。省略返回类型表示没有返回值。函数体最后一条表达式可以作为返回值。
+参数可以是值、借用 `&T`、可变借用 `&mut T`，可以有默认值 `port: i64 = 80`，调用时可以按名字传 `connect(host, timeout=1.5)`。省略返回类型表示没有返回值。函数体最后一条表达式可以作为返回值。
 
 详见[函数](functions.md)。
 
 ## 变量与所有权
 
 ```zamak,ignore
-let n = 1              // 不可变
-let mut count = 0       // 可变
+let n = 1              # 不可变
+let mut count = 0       # 可变
 count += 1
 
 let a = [1, 2, 3]
-let b = a               // a 被移走，之后不能用
-let c = copy(a)         // 深复制
+let b = a               # a 被移走，之后不能用
+let c = copy(a)         # 深复制
 ```
 
 数字、布尔复制；字符串、结构体、列表、字典移动。
@@ -74,10 +75,10 @@ let c = copy(a)         // 深复制
 借用只在当前函数内有效，不越过函数返回。
 
 ```zamak,ignore
-fn total(xs: &[i64]) -> i64:     // 只读借用
+fn total(xs: &[i64]) -> i64:     # 只读借用
     ...
 
-fn push_all(xs: &mut [i64]):      // 可变借用
+fn push_all(xs: &mut [i64]):      # 可变借用
     ...
 ```
 
@@ -97,7 +98,7 @@ struct Point:
 
 fn main():
     let p = Point(x: 3, y: 4)
-    println(p.norm())        // 5.0
+    println(p.norm())        # 5.0
 ```
 
 方法写在结构体的缩进块里，第一个参数是 `&self`、`&mut self` 或 `self`。没有 `self` 的是关联函数，用类型名调用：`Point.new(1, 2)`。
@@ -151,18 +152,20 @@ println(name.upper())              # WORLD
 let mut xs: [i64] = [3, 1, 2]
 xs.push(4)
 xs.sort()
-println(xs[0])          // 1
-println(xs[-1])         // 4，负数从末尾数
+println(xs[0])          # 1
+println(xs[-1])         # 4，负数从末尾数
 println(xs.slice(1, 3)) // [2, 3]
 
 let mut counts: {string: i64} = {}
 counts["a"] = 1
-println(counts.get("b", 0))   // 0
+println(counts.get("b", 0))   # 0
 ```
 
 空列表、空字典要写类型标注。`for x in &xs` 只借用不移走。
 
-详见[列表、字典与元组](collections.md)。
+集合写 `{1, 2, 3}`，类型 `{i64}`。
+
+详见[列表、字典、集合与元组](collections.md)。
 
 ## 错误处理
 
@@ -187,7 +190,7 @@ fn apply(f: fn(i64) -> i64, n: i64) -> i64:
     return f(n)
 
 let double = fn(x: i64) -> i64: x * 2
-println(apply(double, 5))     // 10
+println(apply(double, 5))     # 10
 ```
 
 匿名函数可以读外层局部变量。捕获变量的闭包不能存进结构体、不能返回、不能活得比变量久，所以不需要垃圾回收。

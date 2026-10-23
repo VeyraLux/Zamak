@@ -28,13 +28,14 @@ See [Variables and types](variables.md) and [Control flow](control-flow.md).
 | Bytes | `bytes` | `b"..."`, indexes give integers 0–255 |
 | List | `[T]` | Growable |
 | Dictionary | `{K: V}` | Insertion order; keys are `i64` or `string` |
+| Set | `{K}` | `{1, 2}`; values are `i64` or `string` |
 | Tuple | `(i64, string)` | Multiple return values |
 | Struct | `struct Point:` | Fields declared one per line |
 | Enum | `enum Shape:` | Variants may carry data |
 | Function | `fn(i64) -> bool` | First-class value |
 | Error | `T!E`, `!E` | See below |
 
-See [Numbers and operators](operators.md) and [Lists, dictionaries and tuples](collections.md).
+See [Numbers and operators](operators.md) and [Lists, maps, sets, and tuples](collections.md).
 
 ## Functions
 
@@ -42,27 +43,27 @@ See [Numbers and operators](operators.md) and [Lists, dictionaries and tuples](c
 fn add(a: i64, b: i64) -> i64:
     return a + b
 
-fn largest[T](items: &[T]) -> T:      // generic: one copy per type
+fn largest[T](items: &[T]) -> T:      # generic: one copy per type
     ...
 
-fn parse(s: &string) -> i64!string:   // can fail
+fn parse(s: &string) -> i64!string:   # can fail
     ...
 ```
 
-A parameter is a value, a borrow `&T`, or a mutable borrow `&mut T`. Omitting the return type means no return value. The last expression in a body acts as the return value.
+A parameter is a value, a borrow `&T`, or a mutable borrow `&mut T`. It can have a default, such as `port: i64 = 80`, and a call can pass it by name, such as `connect(host, timeout=1.5)`. Omitting the return type means no return value. The last expression in a body acts as the return value.
 
 See [Functions](functions.md).
 
 ## Variables and ownership
 
 ```zamak,ignore
-let n = 1              // immutable
-let mut count = 0       // mutable
+let n = 1              # immutable
+let mut count = 0       # mutable
 count += 1
 
 let a = [1, 2, 3]
-let b = a               // a is moved; unusable afterwards
-let c = copy(a)         // deep copy
+let b = a               # a is moved; unusable afterwards
+let c = copy(a)         # deep copy
 ```
 
 Numbers and booleans copy; strings, structs, lists, and dictionaries move.
@@ -74,10 +75,10 @@ See [Move and copy](ownership.md).
 A borrow lasts only for the current call and never outlives the function.
 
 ```zamak,ignore
-fn total(xs: &[i64]) -> i64:     // read-only borrow
+fn total(xs: &[i64]) -> i64:     # read-only borrow
     ...
 
-fn push_all(xs: &mut [i64]):      // mutable borrow
+fn push_all(xs: &mut [i64]):      # mutable borrow
     ...
 ```
 
@@ -97,7 +98,7 @@ struct Point:
 
 fn main():
     let p = Point(x: 3, y: 4)
-    println(p.norm())        // 5.0
+    println(p.norm())        # 5.0
 ```
 
 Methods live in the struct's indented block; the first parameter is `&self`, `&mut self`, or `self`. A function without `self` is an associated function, called through the type name: `Point.new(1, 2)`.
@@ -151,18 +152,20 @@ See [Strings](strings.md).
 let mut xs: [i64] = [3, 1, 2]
 xs.push(4)
 xs.sort()
-println(xs[0])          // 1
-println(xs[-1])         // 4, negative indexes count from the end
+println(xs[0])          # 1
+println(xs[-1])         # 4, negative indexes count from the end
 println(xs.slice(1, 3)) // [2, 3]
 
 let mut counts: {string: i64} = {}
 counts["a"] = 1
-println(counts.get("b", 0))   // 0
+println(counts.get("b", 0))   # 0
 ```
 
 An empty list or dictionary needs a type annotation. `for x in &xs` borrows without moving.
 
-See [Lists, dictionaries and tuples](collections.md).
+A set is written `{1, 2, 3}` and its type is `{i64}`.
+
+See [Lists, maps, sets, and tuples](collections.md).
 
 ## Errors
 
@@ -187,7 +190,7 @@ fn apply(f: fn(i64) -> i64, n: i64) -> i64:
     return f(n)
 
 let double = fn(x: i64) -> i64: x * 2
-println(apply(double, 5))     // 10
+println(apply(double, 5))     # 10
 ```
 
 An anonymous function may read the enclosing function's locals. A closure that captures cannot be stored in a struct, returned, or outlive its variables, so no garbage collector is needed.

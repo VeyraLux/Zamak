@@ -1,0 +1,32 @@
+# 集合：{1, 2, 3} 是字面量，类型写 {i64} 或 {string}。
+fn count_unique(words: &[string]) -> i64:
+    let mut seen: {string} = {}
+
+    for w in words:
+        seen.add(w)
+
+    len(seen)
+
+fn main():
+    let mut primes = {2, 3, 5, 7}
+    primes.add(11)
+    primes.add(3)
+    println(len(primes))
+    println(5 in primes)
+    println(4 not in primes)
+    println(primes.remove(2))
+    println(primes.discard(100))
+    println(sorted(primes))
+
+    let odds = {1, 3, 5, 7, 9}
+    println(sorted(primes.union(odds)))
+    println(sorted(primes.intersection(odds)))
+    println(sorted(primes.difference(odds)))
+    println({3, 5}.issubset(primes))
+
+    println({"ada", "grace"})
+    let empty: {i64} = {}
+    println(empty)
+    println({1, 2} == {2, 1})
+    let words: [string] = ["a", "b", "a", "c", "b"]
+    println(count_unique(words))

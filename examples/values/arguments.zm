@@ -1,0 +1,29 @@
+# 默认参数与关键字实参，写法同 Python。默认值只能是常量或 Option.None。
+const RETRIES = 3
+
+struct Point:
+    x: i64
+    y: i64
+
+    fn moved(&self, dx: i64 = 0, dy: i64 = 0) -> Point:
+        Point(x=self.x + dx, y=self.y + dy)
+
+fn connect(host: &string, port: i64 = 80, timeout: f64 = 5.0, retries: i64 = RETRIES) -> string:
+    f"{host}:{port} timeout={timeout} retries={retries}"
+
+fn greet(name: &string, greeting: string = "hello", suffix: Option[string] = Option.None) -> string:
+    match suffix:
+        Some(s): f"{greeting}, {name}{s}"
+        None: f"{greeting}, {name}"
+
+fn main():
+    println(connect("a"))
+    println(connect("b", 8080))
+    println(connect("c", timeout=1.5))
+    println(connect(timeout=2.0, host="d", retries=0))
+    println(greet("Ada"))
+    println(greet("Ada", suffix=Option.Some("!")))
+
+    let p = Point(x=1, y=2)
+    println(p.moved(dy=5))
+    println(p.moved(3))

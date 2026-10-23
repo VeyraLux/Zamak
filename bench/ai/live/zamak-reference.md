@@ -82,6 +82,8 @@ fn double(n: i64) -> i64: n * 2
 
 The last expression of the function body (or of the final `if`/`elif`/`else` branches) is the return value; `return expr` also works. Function names start with a lowercase letter. Only `pub fn` is visible from other modules (single-file programs do not need `pub`).
 
+Parameters may have defaults and calls may name arguments, as in Python: `fn connect(host: &string, port: i64 = 80, timeout: f64 = 5.0)`, called as `connect("a")`, `connect("a", 8080)` or `connect("a", timeout=1.5)`. A default is a constant (literal, `const`, or an operation on them) or `Option.None`; every parameter after a defaulted one needs a default; positional arguments come before `name=value`. Methods take keyword arguments too (`p.moved(dy=5)`), and structs can be built as `Point(x=1, y=2)`. There are no `*args` or `**kwargs`.
+
 ## Generic functions
 
 ```
@@ -244,6 +246,10 @@ let area = match s:
 - `xs[i]` reads an `i64`/`f64`/`bool` element and `xs[i] = v` writes. A string element cannot be taken out with `xs[i]`; pass `&xs[i]` to a `&string` parameter or copy it with `string.copy(&xs[i])`.
 - Struct elements: read and write fields with `xs[i].field` (also `+=`), pass `&xs[i]` / `&mut xs[i]` to `&Point` / `&mut Point` parameters, pass `&xs[i].name` to a `&string` parameter, call `xs[i].tags.push(v)`. `for p in &xs` gives a read-only `&Point`. Structs move on assignment: `let p = xs[i]` is an error; write `copy(&xs[i])` for an independent copy, `xs.pop()` to take the last one out, `xs.swap(i, j)` to reorder, and `xs[i] = Point(...)` to replace. `xs[i].tags[j]` is not supported.
 - Methods can be called on variables, fields and call results: `parts.len()`, `string.split(&s, ",").len()`, `xs.slice(0, 2).len()`.
+
+## Sets `{K}`
+
+`{1, 2, 3}` is a set; its type is `{i64}` or `{string}` (an empty set needs an annotation: `let s: {i64} = {}`). `s.add(x)`, `s.remove(x)` / `s.discard(x)` (return whether it was there), `x in s`, `len(s)`, `for x in s`, `s.clear()`, `a.union(b)`, `a.intersection(b)`, `a.difference(b)` (new sets), `a.issubset(b)`, `sorted(s)` (a sorted list). Sets have no indexes and no order; they print as `{1, 2}` and `set()`.
 
 ## Maps `{K: V}`
 

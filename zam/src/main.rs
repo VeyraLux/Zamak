@@ -541,6 +541,23 @@ fn with_python_hint(message: String) -> String {
 }
 
 fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>) {
+    // 关键字实参与默认值：调用写法与参数表对不上。
+    if message.contains("keyword argument")
+        || message.contains("missing argument")
+        || message.contains("multiple values for argument")
+        || message.contains("positional argument follows")
+        || message.contains("needs a default value")
+        || message.contains("a default value is a constant")
+        || message.contains("positional arguments only")
+        || message.contains("a set has no")
+        || message.contains("unsupported set literal")
+    {
+        return (
+            "ZM200",
+            "type",
+            Some("pass positional arguments first, then name=value for the parameters you want to set"),
+        );
+    }
     // C 句柄：只能由 extern fn 产生，不能复制。
     if message.contains("is a C handle")
         || message.contains("C handle cannot be copied")
@@ -781,7 +798,7 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
             "ZM203",
             "name",
             Some(
-                "check the module name and the file it should come from; the standard library modules are std/string, std/io, std/fmt, std/fs, std/path, std/env, std/math, std/time and std/random",
+                "check the module name and the file it should come from; the standard library modules are std/string, std/bytes, std/io, std/fmt, std/fs, std/path, std/env, std/math, std/time and std/random",
             ),
         )
     } else if message.contains("ambiguous or missing import for ")

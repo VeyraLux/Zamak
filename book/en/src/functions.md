@@ -38,6 +38,31 @@ fn main():
 144
 ```
 
+## Default and keyword arguments
+
+Parameters can have default values, and you can pass arguments by name, as in Python:
+
+```zamak
+fn connect(host: &string, port: i64 = 80, timeout: f64 = 5.0) -> string:
+    f"{host}:{port} ({timeout}s)"
+
+fn main():
+    println(connect("example.com"))
+    println(connect("example.com", 8080))
+    println(connect("example.com", timeout=1.5))
+```
+
+```text
+example.com:80 (5.0s)
+example.com:8080 (5.0s)
+example.com:80 (1.5s)
+```
+
+- A default value is a constant (a literal, a `const`, or an operation on them) or `Option.None`. Each call gets the default afresh, so calls never share a default the way Python's mutable defaults do.
+- Every parameter after one with a default must have a default too.
+- In a call, write positional arguments first, then `name=value`. Methods work the same way: `p.moved(dy=5)`.
+- You can build a struct the same way: `Point(x=1, y=2)` is the same as `Point(x: 1, y: 2)`.
+
 ## Return early
 
 `return` leaves the function at once. It's useful for handling special cases first:
@@ -209,6 +234,7 @@ Recursion works the same way as any other call: the arguments are checked agains
 
 ## Summary
 
+- Parameters can have defaults (`port: i64 = 80`), and calls can pass arguments by name (`connect(host, timeout=1.5)`).
 - `fn name(param: Type) -> Result:` defines a function; the last expression is the result.
 - Return several values as a tuple, and unpack them with `let (a, b) = ...`.
 - `fn name[T](...)` defines a generic function; Zamak infers `T` and compiles one fast version per type.

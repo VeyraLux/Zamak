@@ -5,7 +5,7 @@ use crate::compiler::{
     is_string, lambda_body, lambda_prints, linked_tuple, loop_list, membership, method_args,
     method_signature, nest, nested, numeric, overload, promote, record_id, record_method_with,
     record_order, sort_by_type, string_alias, string_method, terminates, tuple_fields, Block, Elem,
-    Expr, Instruction, Module, Pattern, Receiver, Type, COPY,
+    Expr, Instruction, Module, Pattern, Receiver, Type, COPY, SET,
 };
 use crate::project::Result;
 use std::collections::BTreeMap;
@@ -2041,6 +2041,7 @@ pub fn builtin_functions() -> impl Iterator<Item = (String, crate::compiler::Fun
                 generics: Vec::new(),
                 external: false,
                 wrapping: false,
+                defaults: Vec::new(),
             },
         )
     })
@@ -2237,6 +2238,14 @@ static uint64_t zam_hash_str(S *key) { uint64_t h = 1469598103934665603ULL; size
 // 插入顺序表 + 开放寻址下标表：遍历按插入顺序，删除留墓碑，下标表装载率不超过 1/2，
 // 重建时先压掉已删除的项。
 // 类型分三段发射：前置声明、字典本体（只含条目指针）、条目（按值含键和值，要等结构体定义完）。
+// 集合（值为占位的字典）的方法：加入、并交差、子集、排好序的列表。
+const SET_TEMPLATE: &str = r#"static void add$M($M *m, $KP) { set$M(m, k, 1); }
+static $M union$M($M *a, $M *b) { $M out = {0}; size_t i; for (i = 0; i < a->len; i++) if (a->entries[i].live) set$M(&out, $AKEY, 1); for (i = 0; i < b->len; i++) if (b->entries[i].live) set$M(&out, $BKEY, 1); return out; }
+static $M intersection$M($M *a, $M *b) { $M out = {0}; size_t i; for (i = 0; i < a->len; i++) if (a->entries[i].live && has$M(b, $AKEY)) set$M(&out, $AKEY, 1); return out; }
+static $M difference$M($M *a, $M *b) { $M out = {0}; size_t i; for (i = 0; i < a->len; i++) if (a->entries[i].live && !has$M(b, $AKEY)) set$M(&out, $AKEY, 1); return out; }
+static int issubset$M($M *a, $M *b) { size_t i; for (i = 0; i < a->len; i++) if (a->entries[i].live && !has$M(b, $AKEY)) return 0; return 1; }
+static $L sorted$M($M *m) { $L out = keys$M(m); sort$L(&out); return out; }
+"#;
 const MAP_DECLARATION: &str = "typedef struct $M $M;\ntypedef struct E$M E$M;\n";
 const MAP_DEFINITION: &str =
     "struct $M { E$M *entries; size_t len, cap, count; int64_t *slots; size_t nslots; };\n";
@@ -2365,6 +2374,14 @@ fn map_helpers(template: &str, key: Elem, value: Elem) -> String {
         ("$HASH", pick("zam_hash_str(k)", "zam_hash_int(k)", text)),
         ("$EQ", pick("string_equal(&e->key, k)", "e->key == k", text)),
         ("$KP", pick("S *k", "int64_t k", text)),
+        (
+            "$AKEY",
+            pick("&a->entries[i].key", "a->entries[i].key", text),
+        ),
+        (
+            "$BKEY",
+            pick("&b->entries[i].key", "b->entries[i].key", text),
+        ),
         ("$KT", pick("S", "int64_t", text)),
         ("$VT", value_type.as_str()),
         ("$L", list.as_str()),
@@ -3221,6 +3238,7 @@ impl<'a> Generator<'a> {
                 let (key, value) = entries.first().expect("checked non-empty map literal");
                 Type::Map(elem_of(self.ty(key)), elem_of(self.ty(value)))
             }
+            Expr::SetLit(items) => Type::Map(elem_of(self.ty(&items[0])), SET),
             Expr::IndexField(path, _, field) => self.element_ty(path, field),
             Expr::BorrowIndex(path, _, field, mutable) => {
                 borrow_of(self.element_ty(path, field), *mutable).expect("checked borrow")
@@ -3422,6 +3440,17 @@ impl<'a> Generator<'a> {
                     let value = self.expr_as(item, field);
                     let value = self.moved(&value, field);
                     self.code.push_str(&format!("{local}.m{i} = {value};\n"));
+                }
+                local
+            }
+            (Expr::SetLit(items), Type::Map(key, SET)) => {
+                let local = self.scalar("{0}", ty);
+                self.owners.push((local.clone(), ty));
+                for item in items {
+                    let k = self.expr(item);
+                    let k = if key == Elem::Str { format!("&{k}") } else { k };
+                    self.code
+                        .push_str(&format!("set{}(&{local}, {k}, 1);\n", ctype(ty)));
                 }
                 local
             }
@@ -3713,7 +3742,7 @@ impl<'a> Generator<'a> {
                 values.insert(0, format!("&{target}"));
                 self.method_call(receiver, method, &values, result)
             }
-            Expr::MapLit(_) => {
+            Expr::MapLit(_) | Expr::SetLit(_) => {
                 let ty = self.ty(expr);
                 self.expr_as(expr, ty)
             }
@@ -4300,7 +4329,7 @@ impl<'a> Generator<'a> {
             "contains" => "has",
             "get" => "getor",
             "remove" if list => "removeat",
-            "remove" => "del",
+            "remove" | "discard" => "del",
             "index_of" => "index",
             "sort_by" => "sortby",
             "$at" => "valat",
@@ -5189,6 +5218,11 @@ fn visit_exprs<'a>(body: &'a Block, visit: &mut impl FnMut(&'a Expr)) {
                     expr(value, visit);
                 }
             }
+            Expr::SetLit(items) => {
+                for item in items {
+                    expr(item, visit);
+                }
+            }
             Expr::If(condition, yes, no) => {
                 expr(condition, visit);
                 expr(yes, visit);
@@ -5824,6 +5858,9 @@ pub fn generate_with(
         source.push_str(&map_helpers(MAP_TEMPLATE, *key, *value));
         source.push_str(&map_values(*key, *value));
         source.push_str(&map_slots(*key, *value));
+        if *value == SET {
+            source.push_str(&map_helpers(SET_TEMPLATE, *key, *value));
+        }
     }
     let mut closers = std::collections::BTreeSet::new();
     for name in &records {

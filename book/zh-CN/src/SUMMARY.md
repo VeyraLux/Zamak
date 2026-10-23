@@ -27,7 +27,7 @@
 
 - [结构体与方法](structs.md)
 - [枚举、Option 与 match](enums.md)
-- [列表、字典与元组](collections.md)
+- [列表、字典、集合与元组](collections.md)
 
 # 错误与测试
 
