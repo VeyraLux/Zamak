@@ -85,10 +85,12 @@ hello, Ada
 
 `[native]` 部分可以写：
 
-- `sources`：和项目一起编译的 C 文件。
+- `sources`：和项目一起编译的文件。C 文件以 `.c` 结尾，C++ 文件以 `.cpp`、`.cc` 或 `.cxx` 结尾，Objective-C 文件（只限 macOS）以 `.m` 结尾。C++ 函数要用 `extern "C"` 导出，Zamak 才能调用。
 - `include`：查找头文件的目录。
 - `headers`：库的头文件，例如 `["sqlite3.h"]`。见下文。
 - `libraries`：要链接的库，例如 `["sqlite3"]` 对应 `-lsqlite3`。
+- `library_paths`：查找库文件的目录。
+- `frameworks`：要链接的 macOS framework，例如 `["Foundation"]`。其他系统忽略这一项。
 
 包也可以带自己的 `[native]` 部分，所以一个 C 库只需包装一次，别的项目就能把它当作普通的 Zamak 包来用。
 
@@ -193,4 +195,4 @@ Zamak 的安全保证止步于 `extern fn` 这一行：编译器无法检查 C �
 - `extern fn name(...)` 调用 C 函数；C 标准库不需要任何设置。
 - 参数和返回值是 `i64`、`f64`、`bool`、`&string`、`string`、`&bytes` 或 C 句柄。
 - `extern type` 声明 C 句柄，Zamak 在离开作用域时调用 `close` 释放它。
-- 在 `zam.toml` 的 `[native]` 部分列出 C 文件和库。
+- 在 `zam.toml` 的 `[native]` 部分列出 C、C++ 与 Objective-C 文件和库。

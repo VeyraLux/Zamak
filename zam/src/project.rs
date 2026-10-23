@@ -1744,6 +1744,7 @@ impl Project {
                         vec!["pthread".into()]
                     },
                     library_paths: Vec::new(),
+                    ..Default::default()
                 },
             ));
         }
@@ -1757,6 +1758,7 @@ impl Project {
                     headers: Vec::new(),
                     libraries: vec!["pthread".into()],
                     library_paths: Vec::new(),
+                    ..Default::default()
                 },
             ));
         }
@@ -1899,7 +1901,17 @@ impl Project {
         // 先算好每个文件的缓存键，再像上面一样用工作队列并行编译（Mbed TLS 有一百多个文件）。
         let mut libraries = Vec::new();
         let mut library_paths = Vec::new();
-        let mut sources: Vec<(String, PathBuf, Vec<u8>, Vec<PathBuf>)> = Vec::new();
+        // 每个源文件：（缓存键, 路径, 内容, 头文件目录, 语言, 额外编译参数）。
+        type Source = (
+            String,
+            PathBuf,
+            Vec<u8>,
+            Vec<PathBuf>,
+            native::Language,
+            Vec<String>,
+        );
+        let mut sources: Vec<Source> = Vec::new();
+        let mut link_args: Vec<String> = Vec::new();
         for (root, settings) in &natives {
             // 编译在缓存的临时目录里进行，路径都换成绝对路径。
             let absolute = |path: PathBuf| std::path::absolute(&path).unwrap_or(path);
@@ -1913,20 +1925,36 @@ impl Project {
                 let path = root.join(source);
                 let text = fs::read(&path)
                     .map_err(|e| format!("native source {}: {e}", path.display()))?;
+                let language = native::Language::of(source).ok_or_else(|| {
+                    format!(
+                        "native source {}: zam compiles .c, .cpp, .cc, .cxx and .m files",
+                        path.display()
+                    )
+                })?;
                 let mut dirs = vec![absolute(path.parent().unwrap_or(root).to_owned())];
                 dirs.extend(includes.iter().cloned());
+                let settings_text = format!("{language:?}\n{:?}", settings.flags);
                 let key = hash(&[
                     VERSION.as_bytes(),
                     b"native source",
                     &text,
                     headers.as_bytes(),
+                    settings_text.as_bytes(),
                     identity.as_bytes(),
                     native::OPTIONS.as_bytes(),
                     env::consts::OS.as_bytes(),
                     env::consts::ARCH.as_bytes(),
                 ]);
-                sources.push((key, source.clone(), text, dirs));
+                sources.push((
+                    key,
+                    source.clone(),
+                    text,
+                    dirs,
+                    language,
+                    settings.flags.clone(),
+                ));
             }
+            link_args.extend(settings.link_args.iter().cloned());
             libraries.extend(settings.libraries.iter().cloned());
             library_paths.extend(
                 settings
@@ -1944,15 +1972,19 @@ impl Project {
                         let mut completed = Vec::new();
                         loop {
                             let index = next.fetch_add(1, Ordering::Relaxed);
-                            let Some((key, source, text, dirs)) = sources.get(index) else {
+                            let Some((key, source, text, dirs, language, flags)) =
+                                sources.get(index)
+                            else {
                                 break;
                             };
                             let (bytes, hit) = native_cached(cache, key, "obj", |scratch| {
-                                native::compile_with(
+                                native::compile_source(
                                     tool,
                                     scratch,
                                     &String::from_utf8_lossy(text),
                                     dirs,
+                                    *language,
+                                    flags,
                                 )
                             })?;
                             eprintln!(
@@ -1982,11 +2014,14 @@ impl Project {
                 compiled[index] = Some(bytes);
             }
         }
-        for ((key, _, _, _), bytes) in sources.into_iter().zip(compiled) {
+        let cpp = sources
+            .iter()
+            .any(|(_, _, _, _, language, _)| *language == native::Language::Cpp);
+        for ((key, _, _, _, _, _), bytes) in sources.into_iter().zip(compiled) {
             object_keys.push(key);
             objects.push(bytes.ok_or("native cache entry was not produced")?);
         }
-        let link_settings = format!("{libraries:?}\n{library_paths:?}");
+        let link_settings = format!("{libraries:?}\n{library_paths:?}\n{link_args:?}\n{cpp}");
         let app_key = hash(&[
             VERSION.as_bytes(),
             object_keys.join("\n").as_bytes(),
@@ -1996,7 +2031,15 @@ impl Project {
         ]);
         let link_started = Instant::now();
         let (bytes, hit) = native_cached(cache, &app_key, "exe", |scratch| {
-            native::link(&tool, scratch, &objects, &libraries, &library_paths)
+            native::link_with(
+                &tool,
+                scratch,
+                &objects,
+                &libraries,
+                &library_paths,
+                &link_args,
+                cpp,
+            )
         })?;
         let link_ms = link_started.elapsed().as_secs_f64() * 1000.0;
         eprintln!("LINK {} {:.12}", if hit { "HIT" } else { "MISS" }, app_key);

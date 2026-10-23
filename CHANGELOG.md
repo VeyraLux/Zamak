@@ -55,6 +55,8 @@ and this file is the source for the text of each GitHub release.
   annotation: `let q: thread.Queue[i64] = thread.queue()`.
 - A list literal of strings, floats, booleans, structs, or lists no longer needs an annotation:
   `let names = ["Ada", "Grace"]` is a `[string]`.
+- `[native]` compiles C++ (`.cpp`, `.cc`, `.cxx`) and, on macOS, Objective-C (`.m`) files as well as C,
+  and links the C++ runtime when it needs to. `frameworks = ["Foundation"]` links macOS frameworks.
 - A parenthesized value can take a method call: `(a + b).upper()`.
 
 ## 0.1.1
@@ -231,6 +233,8 @@ this preview.
   TLS 可以在多个线程里同时用。
 - 类型参数只出现在返回类型里的泛型函数，按标注推断：`let q: thread.Queue[i64] = thread.queue()`。
 - 字符串、浮点数、布尔值、结构体或列表组成的列表字面量不再需要标注：`let names = ["Ada", "Grace"]` 是 `[string]`。
+- `[native]` 除了 C，还编译 C++（`.cpp`、`.cc`、`.cxx`）与 macOS 上的 Objective-C（`.m`），需要时链接 C++ 运行库；
+  `frameworks = ["Foundation"]` 链接 macOS 的 framework。
 - 括号里的值也能接方法调用：`(a + b).upper()`。
 
 ## 0.1.1（中文）

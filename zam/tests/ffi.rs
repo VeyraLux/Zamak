@@ -243,3 +243,68 @@ fn c_handles_are_closed_exactly_once() {
 
     fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn native_sources_can_be_cpp_and_objective_c() {
+    let root = std::env::temp_dir().join(format!("zam-ffi-languages-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let cache = root.join("cache");
+    // C++：用 extern "C" 导出的函数，链接时带上 C++ 运行库。
+    let app = root.join("cpp");
+    write(
+        &app.join("zam.toml"),
+        &format!("{MANIFEST}\n[native]\nsources = [\"native/words.cpp\"]\n"),
+    );
+    write(
+        &app.join("native/words.cpp"),
+        r#"#include <numeric>
+#include <string>
+#include <vector>
+extern "C" long long total_length(const char *a, const char *b) {
+    std::vector<std::string> words{a, b};
+    return std::accumulate(words.begin(), words.end(), 0LL,
+        [](long long n, const std::string &w) { return n + (long long)w.size(); });
+}
+"#,
+    );
+    write(
+        &app.join("src/main.zm"),
+        "extern fn total_length(a: &string, b: &string) -> i64\n\nfn main():\n    println(total_length(\"hello\", \"zamak\"))\n",
+    );
+    let output = zam(&["run", app.to_str().unwrap()], &cache);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(stdout(&output), "10\n");
+
+    // 不认识的扩展名在读清单时就报错。
+    write(
+        &app.join("zam.toml"),
+        &format!("{MANIFEST}\n[native]\nsources = [\"native/words.rs\"]\n"),
+    );
+    let output = zam(&["run", app.to_str().unwrap()], &cache);
+    assert!(stderr(&output).contains(
+        "native source native/words.rs must be a C, C++ or Objective-C file: .c, .cpp, .cc, .cxx or .m"
+    ));
+
+    // Objective-C 与 framework 只在 macOS 上有。
+    if cfg!(target_os = "macos") {
+        let app = root.join("objc");
+        write(
+            &app.join("zam.toml"),
+            &format!(
+                "{MANIFEST}\n[native]\nsources = [\"native/text.m\"]\nframeworks = [\"Foundation\"]\n"
+            ),
+        );
+        write(
+            &app.join("native/text.m"),
+            "#import <Foundation/Foundation.h>\nlong long upper_length(const char *s) {\n    NSString *text = [[NSString stringWithUTF8String:s] uppercaseString];\n    return (long long)[text length];\n}\n",
+        );
+        write(
+            &app.join("src/main.zm"),
+            "extern fn upper_length(s: &string) -> i64\n\nfn main():\n    println(upper_length(\"zamak\"))\n",
+        );
+        let output = zam(&["run", app.to_str().unwrap()], &cache);
+        assert!(output.status.success(), "{}", stderr(&output));
+        assert_eq!(stdout(&output), "5\n");
+    }
+    fs::remove_dir_all(&root).unwrap();
+}

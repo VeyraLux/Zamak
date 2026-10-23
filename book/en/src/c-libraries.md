@@ -85,10 +85,12 @@ hello, Ada
 
 The `[native]` section accepts:
 
-- `sources`: C files to compile with the project.
+- `sources`: files to compile with the project. C files end in `.c`, C++ files in `.cpp`, `.cc`, or `.cxx`, and Objective-C files (macOS only) in `.m`. Export C++ functions with `extern "C"` so that Zamak can call them.
 - `include`: folders to search for header files.
 - `headers`: the library's header files, such as `["sqlite3.h"]`. See below.
 - `libraries`: libraries to link, such as `["sqlite3"]` for `-lsqlite3`.
+- `library_paths`: folders to search for libraries.
+- `frameworks`: macOS frameworks to link, such as `["Foundation"]`. Other systems ignore it.
 
 A package can carry its own `[native]` section, so you can wrap a C library once and let other projects use it as an ordinary Zamak package.
 
@@ -193,4 +195,4 @@ Zamak's safety guarantees stop at the `extern fn` line: the compiler can't check
 - `extern fn name(...)` calls a C function; the C standard library needs no setup.
 - Parameters and results are `i64`, `f64`, `bool`, `&string`, `string`, `&bytes`, or C handles.
 - `extern type` declares a C handle, and Zamak calls its `close` function when the handle goes out of scope.
-- List C files and libraries in the `[native]` section of `zam.toml`.
+- List C, C++, and Objective-C files and libraries in the `[native]` section of `zam.toml`.

@@ -8499,7 +8499,47 @@ pub fn compile_with(
     source: &str,
     includes: &[std::path::PathBuf],
 ) -> Result<Vec<u8>> {
-    std::fs::write(dir.join("program.c"), source).map_err(|e| e.to_string())?;
+    compile_source(tool, dir, source, includes, Language::C, &[])
+}
+
+/// `[native]` 源码的语言，按扩展名决定。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Language {
+    C,
+    Cpp,
+    ObjectiveC,
+}
+
+impl Language {
+    /// `.c`、`.cpp`/`.cc`/`.cxx`、`.m`；其他扩展名返回 None。
+    pub fn of(path: &Path) -> Option<Language> {
+        match path.extension()?.to_str()? {
+            "c" => Some(Language::C),
+            "cpp" | "cc" | "cxx" => Some(Language::Cpp),
+            "m" => Some(Language::ObjectiveC),
+            _ => None,
+        }
+    }
+    fn file(self) -> &'static str {
+        match self {
+            Language::C => "program.c",
+            Language::Cpp => "program.cpp",
+            Language::ObjectiveC => "program.m",
+        }
+    }
+}
+
+/// 编译一个 C、C++ 或 Objective-C 源文件。`flags` 是额外的编译参数（如 pkg-config 给出的）。
+pub fn compile_source(
+    tool: &str,
+    dir: &Path,
+    source: &str,
+    includes: &[std::path::PathBuf],
+    language: Language,
+    flags: &[String],
+) -> Result<Vec<u8>> {
+    let file = language.file();
+    std::fs::write(dir.join(file), source).map_err(|e| e.to_string())?;
     // 编译器记录的是工作目录的写法；临时目录经过 8.3 短名（CI 的 `RUNNER~1`）、联接或
     // 符号链接（macOS 的 /var → /private/var）时，它和规范路径不同，路径映射就会失配，
     // 随机的临时目录名漏进目标文件，破坏「同键 ⇒ 同字节」。统一用规范路径做工作目录与映射源。
@@ -8527,6 +8567,14 @@ pub fn compile_with(
         {
             return Err("unsupported native cache path".into());
         }
+        if language == Language::ObjectiveC {
+            return Err("Objective-C sources compile with clang on macOS, not with MSVC".into());
+        }
+        let cpp: &[&str] = if language == Language::Cpp {
+            &["/EHsc", "/std:c++17"]
+        } else {
+            &[]
+        };
         // ponytail: 源码按 UTF-8 写出，cl 默认按本地代码页(如 936)读取会吞掉中文注释后的下一行；/utf-8 固定两端编码。
         Command::new(msvc_tool(&environment, "cl.exe")?)
             .current_dir(&mapped)
@@ -8539,26 +8587,33 @@ pub fn compile_with(
                 "/utf-8",
                 "/c",
                 &format!("/d2pathmap:{mapped}=Z:"),
-                "program.c",
+                file,
                 "/Fo:program.obj",
             ])
+            .args(cpp)
             .args(includes.iter().map(|dir| format!("/I{dir}")))
             .args(includes.iter().map(|dir| format!("/d1trimfile:{dir}\\")))
+            .args(flags)
             .output()
     } else {
         // ponytail: `-g`（用户经 CC 传入）会把编译目录写进 DWARF，同一个缓存键在不同临时目录
         // 就会编出不同字节，破坏「同键 ⇒ 同字节」并让并发构建报 corrupt cache entry。
         // 把临时目录前缀映射掉即可，与 Windows 的 /d2pathmap 对应。
         let map = format!("-ffile-prefix-map={mapped}=.");
+        let standard = match language {
+            Language::C => "-std=c11",
+            Language::Cpp => "-std=c++17",
+            Language::ObjectiveC => "-std=gnu11",
+        };
         Command::new(tool)
             .current_dir(&mapped)
             .args([
-                "-std=c11",
+                standard,
                 "-O2",
                 "-funroll-loops",
                 map.as_str(),
                 "-c",
-                "program.c",
+                file,
                 "-o",
                 "program.obj",
             ])
@@ -8569,6 +8624,7 @@ pub fn compile_with(
                     .enumerate()
                     .map(|(n, dir)| format!("-ffile-prefix-map={dir}=I{n}")),
             )
+            .args(flags)
             .output()
     }
     .map_err(|e| e.to_string())?;
@@ -8582,12 +8638,16 @@ pub fn compile_with(
     std::fs::read(dir.join("program.obj")).map_err(|e| e.to_string())
 }
 
-pub fn link(
+/// 把目标文件链接成可执行文件。`extra` 是额外的链接参数（如 macOS 的 `-framework Cocoa`、
+/// Windows 的清单），`cpp` 表示有 C++ 目标文件，GCC/Clang 要带上 C++ 运行库。
+pub fn link_with(
     tool: &str,
     dir: &Path,
     objects: &[Vec<u8>],
     libraries: &[String],
     library_paths: &[std::path::PathBuf],
+    extra: &[String],
+    cpp: bool,
 ) -> Result<Vec<u8>> {
     let mut names = Vec::new();
     // ponytail: Windows 之外统一用 .o —— clang/ld（macOS）对 .obj 的识别不如 .o 可靠，MSVC 侧不变。
@@ -8612,6 +8672,7 @@ pub fn link(
             .args(libraries.iter().map(|name| format!("{name}.lib")))
             // std/net 用 Winsock；没用到网络的程序不会引用它，产物不变。
             .arg("ws2_32.lib")
+            .args(extra)
             .output()
     } else {
         // std/math 的函数在 Linux 上属于 libm，要显式链接；macOS 与 MinGW 也接受 -lm。
@@ -8635,8 +8696,15 @@ pub fn link(
             )
             .args(libraries.iter().map(|name| format!("-l{name}")))
             .args(winsock)
-            .args(["-lm", "-o", "program.exe"])
-            .output()
+            .args(extra);
+        if cpp {
+            command.arg(if cfg!(target_os = "macos") {
+                "-lc++"
+            } else {
+                "-lstdc++"
+            });
+        }
+        command.args(["-lm", "-o", "program.exe"]).output()
     }
     .map_err(|e| e.to_string())?;
     if !output.status.success() {

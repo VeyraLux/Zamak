@@ -39,6 +39,10 @@ pub struct Native {
     pub headers: Vec<String>,
     pub libraries: Vec<String>,
     pub library_paths: Vec<PathBuf>,
+    // 下面两项只给标准库自带的 C 代码用（std/ui 的 pkg-config 参数、macOS 的 framework、
+    // Windows 的清单），zam.toml 里不能写。
+    pub flags: Vec<String>,
+    pub link_args: Vec<String>,
 }
 
 fn native(config: &toml::Table) -> Result<Native> {
@@ -49,11 +53,11 @@ fn native(config: &toml::Table) -> Result<Native> {
     if let Some(key) = table.keys().find(|key| {
         !matches!(
             key.as_str(),
-            "sources" | "include" | "headers" | "libraries" | "library_paths"
+            "sources" | "include" | "headers" | "libraries" | "library_paths" | "frameworks"
         )
     }) {
         return Err(format!(
-            "unknown native setting {key}; [native] accepts sources, include, headers, libraries and library_paths"
+            "unknown native setting {key}; [native] accepts sources, include, headers, libraries, library_paths and frameworks"
         ));
     }
     let list = |key: &str| -> Result<Vec<String>> {
@@ -73,8 +77,10 @@ fn native(config: &toml::Table) -> Result<Native> {
     let mut sources = Vec::new();
     for source in list("sources")? {
         let path = relative(&source)?;
-        if path.extension().is_none_or(|ext| ext != "c") {
-            return Err(format!("native source {source} must be a .c file"));
+        if crate::native::Language::of(&path).is_none() {
+            return Err(format!(
+                "native source {source} must be a C, C++ or Objective-C file: .c, .cpp, .cc, .cxx or .m"
+            ));
         }
         sources.push(path);
     }
@@ -110,6 +116,18 @@ fn native(config: &toml::Table) -> Result<Native> {
             .into_iter()
             .map(PathBuf::from)
             .collect(),
+        // macOS 的 framework（`frameworks = ["Foundation"]`）：链接时写成 `-framework Foundation`，
+        // 其他系统上没有 framework，忽略。
+        link_args: if cfg!(target_os = "macos") {
+            list("frameworks")?
+                .into_iter()
+                .flat_map(|name| ["-framework".to_owned(), name])
+                .collect()
+        } else {
+            list("frameworks")?;
+            Vec::new()
+        },
+        ..Default::default()
     })
 }
 
