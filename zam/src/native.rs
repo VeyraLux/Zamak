@@ -1,11 +1,11 @@
 use crate::compiler::{
-    auto_borrow, bitwise, block_roots, borrow_of, captured_view, char_at, compound, constructed,
-    copied, each_bindings, elem_from, field_function, field_path, func_error, func_sig, func_type,
-    func_type_full, generic_value, instance_of, instance_with, is_string, lambda_body,
-    lambda_prints, linked_tuple, loop_list, membership, method_args, method_signature, nest,
-    nested, numeric, overload, promote, record_id, record_method_with, record_order, sort_by_type,
-    string_alias, string_method, terminates, tuple_fields, Block, Elem, Expr, Instruction, Module,
-    Pattern, Receiver, Type, COPY,
+    auto_borrow, bitwise, block_roots, borrow_of, bytes_method, captured_view, char_at, compound,
+    constructed, copied, each_bindings, elem_from, field_function, field_path, func_error,
+    func_sig, func_type, func_type_full, generic_value, instance_of, instance_with, is_bytes,
+    is_string, lambda_body, lambda_prints, linked_tuple, loop_list, membership, method_args,
+    method_signature, nest, nested, numeric, overload, promote, record_id, record_method_with,
+    record_order, sort_by_type, string_alias, string_method, terminates, tuple_fields, Block, Elem,
+    Expr, Instruction, Module, Pattern, Receiver, Type, COPY,
 };
 use crate::project::Result;
 use std::collections::BTreeMap;
@@ -1825,6 +1825,122 @@ return own(text, n);"#,
         body: "Li out = {0}; size_t i; for (i = 0; i < p0->len; i++) pushLi(&out, p0->data[i]); return out;",
     },
     Builtin {
+        name: "std/core:bytes_literal",
+        params: &[Type::Shared],
+        result: Type::List(Elem::Byte),
+        fallible: false,
+        // 解析器已把 `b"..."` 的每个字节写成两位小写十六进制。
+        body: r#"Ly out = {0}; size_t i;
+reserveLy(&out, p0->len / 2);
+for (i = 0; i + 1 < p0->len; i += 2) { unsigned char a = p0->data[i], b = p0->data[i + 1]; pushLy(&out, (a <= '9' ? a - '0' : a - 'a' + 10) * 16 + (b <= '9' ? b - '0' : b - 'a' + 10)); }
+return out;"#,
+    },
+    Builtin {
+        name: "std/string:encode",
+        params: &[Type::Shared],
+        result: Type::List(Elem::Byte),
+        fallible: false,
+        body: "Ly out = {0}; reserveLy(&out, p0->len); if (p0->len) memcpy(out.data, p0->data, p0->len); out.len = p0->len; return out;",
+    },
+    Builtin {
+        name: "std/bytes:decode",
+        params: &[Type::ListRef(Elem::Byte, false)],
+        result: Type::Owned,
+        fallible: true,
+        body: r#"size_t i, n; int64_t c;
+for (i = 0; i < p0->len; i += n) {
+    n = zam_utf8_next(p0->data + i, p0->len - i, &c);
+    if (!n) { S at = from_int((int64_t)i); S message = zam_message("invalid UTF-8 at byte ", &at); drop(&at); return F_S_err(message); }
+}
+return F_S_ok(own(p0->data, p0->len));"#,
+    },
+    Builtin {
+        name: "std/bytes:hex",
+        params: &[Type::ListRef(Elem::Byte, false)],
+        result: Type::Owned,
+        fallible: false,
+        body: r#"static const char digits[] = "0123456789abcdef"; unsigned char *q; size_t i; S s;
+if (p0->len > SIZE_MAX / 2) zam_alloc_failed();
+q = (unsigned char*)malloc(p0->len ? p0->len * 2 : 1);
+if (!q) zam_alloc_failed();
+for (i = 0; i < p0->len; i++) { q[2 * i] = (unsigned char)digits[p0->data[i] >> 4]; q[2 * i + 1] = (unsigned char)digits[p0->data[i] & 15]; }
+s.data = q; s.len = p0->len * 2; s.chars = s.len;
+return s;"#,
+    },
+    Builtin {
+        name: "std/bytes:from_hex",
+        params: &[Type::Shared],
+        result: Type::List(Elem::Byte),
+        fallible: true,
+        // 与 Python 的 bytes.fromhex 相同：两位一组，组与组之间可以有空白。
+        body: r#"Ly out = {0}; size_t i = 0; int high = -1;
+for (i = 0; i < p0->len; i++) {
+    unsigned char c = p0->data[i]; int v;
+    if (high < 0 && (c == ' ' || c == '\t' || c == '\n' || c == '\r')) continue;
+    v = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+    if (v < 0) { S at = from_int((int64_t)i); S message = zam_message("invalid hex digit at position ", &at); drop(&at); dropLy(&out); return F_Ly_err(message); }
+    if (high < 0) high = v; else { pushLy(&out, high * 16 + v); high = -1; }
+}
+if (high >= 0) { dropLy(&out); return F_Ly_err(zam_message("odd number of hex digits", NULL)); }
+return F_Ly_ok(out);"#,
+    },
+    Builtin {
+        name: "std/bytes:zeros",
+        params: &[Type::Int],
+        result: Type::List(Elem::Byte),
+        fallible: false,
+        body: r#"Ly out = {0};
+if (p0 < 0) { zam_panic_one("negative count"); exit(1); }
+if ((uint64_t)p0 > SIZE_MAX) list_alloc_failed();
+reserveLy(&out, (size_t)p0);
+if (p0) memset(out.data, 0, (size_t)p0);
+out.len = (size_t)p0;
+return out;"#,
+    },
+    Builtin {
+        name: "std/fs:read_bytes",
+        params: &[Type::Shared],
+        result: Type::List(Elem::Byte),
+        fallible: true,
+        body: r#"S text; int ok; Ly out = {0};
+FILE *file = zam_open(p0, "rb");
+if (!file) return F_Ly_err(zam_message("cannot open ", p0));
+ok = zam_read_all(file, &text);
+fclose(file);
+if (!ok) return F_Ly_err(zam_message("cannot read ", p0));
+reserveLy(&out, text.len);
+if (text.len) memcpy(out.data, text.data, text.len);
+out.len = text.len;
+drop(&text);
+return F_Ly_ok(out);"#,
+    },
+    Builtin {
+        name: "std/fs:write_bytes",
+        params: &[Type::Shared, Type::ListRef(Elem::Byte, false)],
+        result: Type::Unit,
+        fallible: true,
+        body: r#"int ok;
+FILE *file = zam_open(p0, "wb");
+if (!file) return F_void_err(zam_message("cannot open ", p0));
+ok = !p1->len || fwrite(p1->data, 1, p1->len, file) == p1->len;
+if (fclose(file) != 0) ok = 0;
+if (!ok) return F_void_err(zam_message("cannot write ", p0));
+return F_void_ok();"#,
+    },
+    Builtin {
+        name: "std/fs:append_bytes",
+        params: &[Type::Shared, Type::ListRef(Elem::Byte, false)],
+        result: Type::Unit,
+        fallible: true,
+        body: r#"int ok;
+FILE *file = zam_open(p0, "ab");
+if (!file) return F_void_err(zam_message("cannot open ", p0));
+ok = !p1->len || fwrite(p1->data, 1, p1->len, file) == p1->len;
+if (fclose(file) != 0) ok = 0;
+if (!ok) return F_void_err(zam_message("cannot write ", p0));
+return F_void_ok();"#,
+    },
+    Builtin {
         name: "std/string:from_bytes",
         params: &[Type::ListRef(Elem::Int, false)],
         result: Type::Owned,
@@ -2094,6 +2210,21 @@ fn elem_suffix(elem: Elem) -> String {
             _ => unreachable!("nested elements are containers"),
         },
         Elem::Func(id) => format!("F{id}"),
+        Elem::Byte => "y".into(),
+    }
+}
+/// 列表里元素的 C 存储类型：`bytes` 按 uint8_t 存，其余与元素的值类型相同。
+fn elem_ctype(elem: Elem) -> String {
+    match elem {
+        Elem::Byte => "uint8_t".into(),
+        _ => ctype(elem.ty()),
+    }
+}
+/// 写进列表元素的值：`bytes` 先检查 0–255。
+fn elem_store(elem: Elem, value: &str) -> String {
+    match elem {
+        Elem::Byte => format!("zam_byte({value})"),
+        _ => value.to_owned(),
     }
 }
 fn map_name(key: Elem, value: Elem) -> String {
@@ -2259,6 +2390,7 @@ fn drop_elem(elem: Elem, slot: &str) -> String {
 const LIST_PRELUDE: &str = r#"static void list_bounds(void) { zam_panic_one("list index out of bounds"); exit(1); }
 static void list_empty(void) { zam_panic_one("pop from empty list"); exit(1); }
 static void list_alloc_failed(void) { zam_panic_one("allocation failed"); exit(1); }
+static uint8_t zam_byte(int64_t v) { if (v < 0 || v > 255) { zam_panic_one("byte must be in range(0, 256)"); exit(1); } return (uint8_t)v; }
 // 小列表缓冲区的空闲链表：按 16 字节分级，释放时留给下一次同级分配，最多缓存 32 MB。
 // 每块都是 malloc 来的真实内存块，别处直接 free 它也没问题，只是不回到这里。
 // 放进第 k 级的块至少有 16k 字节（按声明大小向下取级），取出时按请求向上取级。
@@ -2316,13 +2448,16 @@ static void *zam_list_grow(void *old, size_t old_size, size_t size) {
 /// 列表本体只含元素指针，元素类型声明过即可定义。
 fn list_definition(elem: Elem) -> String {
     let l = list_suffix(elem);
-    let t = ctype(elem.ty());
+    let t = elem_ctype(elem);
     format!("struct {l} {{ {t} *data; size_t len; size_t cap; }};\n")
 }
 /// 某种元素的列表函数：释放、移走、长度、追加、按下标取地址、弹出、交换。
 fn list_helpers(elem: Elem) -> String {
     let l = list_suffix(elem);
-    let t = ctype(elem.ty());
+    let t = elem_ctype(elem);
+    // 追加、插入与替换收的是值类型（bytes 收 int64_t），存进去之前按 `elem_store` 检查。
+    let a = ctype(elem.ty());
+    let store = elem_store(elem, "v");
     let drop_items = match drop_elem(elem, "&l->data[i]") {
         drop if drop.is_empty() => drop,
         drop => format!("for (size_t i = 0; i < l->len; i++) {drop} "),
@@ -2343,7 +2478,7 @@ fn list_helpers(elem: Elem) -> String {
         "static void drop{l}({l} *l) {{ {drop_items}zam_list_free(l->data, l->cap * sizeof({t})); l->data = NULL; l->len = 0; l->cap = 0; }}
 static {l} take{l}({l} *l) {{ {l} v = *l; l->data = NULL; l->len = 0; l->cap = 0; return v; }}
 static int64_t len{l}({l} *l) {{ return (int64_t)l->len; }}
-static void push{l}({l} *l, {t} v) {{
+static void push{l}({l} *l, {a} v) {{
     if (l->len == l->cap) {{
         size_t cap = l->cap ? l->cap * 2 : 4;
         {t} *p;
@@ -2351,7 +2486,7 @@ static void push{l}({l} *l, {t} v) {{
         p = ({t}*)zam_list_grow(l->data, l->cap * sizeof({t}), cap * sizeof({t}));
         l->data = p; l->cap = cap;
     }}
-    l->data[l->len++] = v;
+    l->data[l->len++] = {store};
 }}
 // 列表字面量：元素个数已知，一次分配到位。
 static void reserve{l}({l} *l, size_t cap) {{
@@ -2364,19 +2499,19 @@ static void reserve{l}({l} *l, size_t cap) {{
 static {t} *at{l}({l} *l, int64_t i) {{ if (i < 0) i += (int64_t)l->len; if (i < 0 || (uint64_t)i >= l->len) list_bounds(); return &l->data[i]; }}
 static {t} pop{l}({l} *l) {{ if (!l->len) list_empty(); return l->data[--l->len]; }}
 static void swap{l}({l} *l, int64_t i, int64_t j) {{ {t} tmp; if (i < 0) i += (int64_t)l->len; if (j < 0) j += (int64_t)l->len; if (i < 0 || j < 0 || (uint64_t)i >= l->len || (uint64_t)j >= l->len) list_bounds(); tmp = l->data[i]; l->data[i] = l->data[j]; l->data[j] = tmp; }}
-static void insert{l}({l} *l, int64_t i, {t} v) {{ if (i < 0) i += (int64_t)l->len; if (i < 0) i = 0; if ((uint64_t)i > l->len) i = (int64_t)l->len; push{l}(l, v); memmove(&l->data[i + 1], &l->data[i], (l->len - 1 - (size_t)i) * sizeof({t})); l->data[i] = v; }}
+static void insert{l}({l} *l, int64_t i, {a} v) {{ if (i < 0) i += (int64_t)l->len; if (i < 0) i = 0; if ((uint64_t)i > l->len) i = (int64_t)l->len; push{l}(l, v); memmove(&l->data[i + 1], &l->data[i], (l->len - 1 - (size_t)i) * sizeof({t})); l->data[i] = {store}; }}
 static {t} removeat{l}({l} *l, int64_t i) {{ {t} v; if (i < 0) i += (int64_t)l->len; if (i < 0 || (uint64_t)i >= l->len) list_bounds(); v = l->data[i]; memmove(&l->data[i], &l->data[i + 1], (l->len - 1 - (size_t)i) * sizeof({t})); l->len--; return v; }}
 static void reverse{l}({l} *l) {{ size_t i, j; for (i = 0, j = l->len; i + 1 < j; i++, j--) {{ {t} tmp = l->data[i]; l->data[i] = l->data[j - 1]; l->data[j - 1] = tmp; }} }}
 static void clear{l}({l} *l) {{ {drop_items}l->len = 0; }}
 static void extend{l}({l} *l, {l} o) {{ size_t i; for (i = 0; i < o.len; i++) push{l}(l, o.data[i]); free(o.data); }}
-static void put{l}({l} *l, int64_t i, {t} v) {{ {t} *slot = at{l}(l, i); {drop_slot} *slot = v; }}
+static void put{l}({l} *l, int64_t i, {a} v) {{ {t} *slot = at{l}(l, i); {drop_slot} *slot = {store}; }}
 {valat}{comparable}"
     )
 }
 /// `xs.sort_by(before)`：稳定的归并排序，`before(b, a)` 为真时 b 才排到 a 前面。
 fn sort_by_helper(elem: Elem) -> String {
     let l = list_suffix(elem);
-    let t = ctype(elem.ty());
+    let t = elem_ctype(elem);
     let id = sort_by_type(elem);
     let (x, y) = if by_value(elem.ty()) {
         ("a[x]", "a[y]")
@@ -2409,9 +2544,11 @@ fn sort_by_helper(elem: Elem) -> String {
 /// 能比较的元素（整数、浮点、布尔、字符串）才有排序、查找与切片：结构体还不能比较或复制。
 fn comparable_list_helpers(elem: Elem) -> String {
     let l = list_suffix(elem);
-    let t = ctype(elem.ty());
+    let t = elem_ctype(elem);
     let (compare, param, equal, copy) = match elem {
         Elem::Int | Elem::Bool => ("(*a > *b) - (*a < *b)", t.clone(), "x == v", "x"),
+        // 查找时按 i64 比较：`b.index_of(300)` 找不到，而不是截断成 44 再去找。
+        Elem::Byte => ("(*a > *b) - (*a < *b)", "int64_t".into(), "x == v", "x"),
         // NaN 排在所有数之后；排序稳定，-0.0 与 0.0 保持原来的先后。
         Elem::Float => (
             "*a < *b ? -1 : *a > *b ? 1 : isnan(*a) - isnan(*b)",
@@ -2429,7 +2566,7 @@ fn comparable_list_helpers(elem: Elem) -> String {
     };
     // `xs.sum()`：整数求和与 `+` 一样检查溢出。
     let sum = match elem {
-        Elem::Int => format!("static int64_t sum{l}({l} *l) {{ int64_t s = 0; size_t i; for (i = 0; i < l->len; i++) s = add(s, l->data[i]); return s; }}\n"),
+        Elem::Int | Elem::Byte => format!("static int64_t sum{l}({l} *l) {{ int64_t s = 0; size_t i; for (i = 0; i < l->len; i++) s = add(s, l->data[i]); return s; }}\n"),
         Elem::Float => format!("static double sum{l}({l} *l) {{ double s = 0.0; size_t i; for (i = 0; i < l->len; i++) s += l->data[i]; return s; }}\n"),
         _ => String::new(),
     };
@@ -2898,6 +3035,31 @@ impl<'a> Generator<'a> {
             && self.ty(right) == ty)
             .then_some((op.as_str(), default, right.as_ref()))
     }
+    fn bytes_call(&self, expr: &Expr) -> Option<Expr> {
+        let (receiver, method, args) = match expr {
+            Expr::Method(path, method, args) => {
+                let root = path.split('.').next().unwrap_or(path);
+                if !self.locals.contains_key(root) || !is_bytes(self.place_ty(path)) {
+                    return None;
+                }
+                (Expr::Borrow(path.clone(), false), method, args)
+            }
+            Expr::Chain(inner, method, args) if is_bytes(self.ty(inner)) => {
+                ((**inner).clone(), method, args)
+            }
+            Expr::ElementMethod(path, index, field, method, args)
+                if is_bytes(self.element_ty(path, field)) =>
+            {
+                (
+                    Expr::BorrowIndex(path.clone(), index.clone(), field.clone(), false),
+                    method,
+                    args,
+                )
+            }
+            _ => return None,
+        };
+        bytes_method(&self.module.functions, receiver, method, args)
+    }
     fn string_call(&self, expr: &Expr) -> Option<Expr> {
         if let Expr::Index(path, index) = expr {
             let root = path.split('.').next().unwrap_or(path);
@@ -2921,6 +3083,9 @@ impl<'a> Generator<'a> {
                 return promote(expr, self.ty(item), self.ty(other));
             }
             return membership(expr, is_text(self.ty(item)));
+        }
+        if let Some(call) = self.bytes_call(expr) {
+            return Some(call);
         }
         let (receiver, method, args) = match expr {
             Expr::Method(path, method, args) => {
@@ -4253,6 +4418,9 @@ impl<'a> Generator<'a> {
     }
     /// 调用的目标函数与实参：普通调用原样返回，结构体的方法改写成 `Owner.m(接收者, ...)`。
     fn call_target(&self, expr: &Expr) -> Option<(String, Vec<Expr>)> {
+        if let Some(Expr::Call(name, args)) = self.string_call(expr) {
+            return Some((self.callee(&name, &args), args));
+        }
         let (receiver, ty, method, args) = match expr {
             Expr::Call(name, args) => return Some((self.callee(name, args), args.clone())),
             Expr::Method(path, method, args) => {
@@ -4627,7 +4795,7 @@ impl<'a> Generator<'a> {
                             drop_fn(elem.ty()),
                             take_fn(elem.ty())
                         ),
-                        Type::List(_) => format!("*{slot} = {value};\n"),
+                        Type::List(elem) => format!("*{slot} = {};\n", elem_store(elem, &value)),
                         _ => unreachable!(),
                     });
                 }
@@ -5292,6 +5460,10 @@ pub fn generate_with(module: &Module, entry: &str, unit: &str, tests: &[String])
                     let string = format!("std/string:{}", string_alias(method));
                     if module.functions.contains_key(&string) {
                         needed.insert(string);
+                    }
+                    let bytes = format!("std/bytes:{method}");
+                    if module.functions.contains_key(&bytes) {
+                        needed.insert(bytes);
                     }
                     // 泛型类型的方法调用的是副本（`Stack.push[Int]`），模板本身不生成。
                     let suffix = format!(".{method}");

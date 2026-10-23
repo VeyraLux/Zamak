@@ -221,9 +221,39 @@ fn main() -> !string:
 5.0
 ```
 
+## 字节：bytes
+
+文件内容、网络数据和哈希值这类原始字节，用 `bytes` 类型保存，写法与 Python 相同：`b"..."` 是字面量，下标读出来是 0 到 255 的整数。
+
+```zamak
+fn main() -> !string:
+    let mut data = b"GIF\x89"
+    println(data)
+    println(data[3])
+    data.push(10)
+    println(len(data))
+    let text = "你好".encode()
+    println(text)
+    println(text.decode()?)
+```
+
+```text
+b"GIF\x89"
+137
+5
+b"\xe4\xbd\xa0\xe5\xa5\xbd"
+你好
+```
+
+- `b"..."` 里只能写 ASCII 字符，其他字节写成 `\xNN`。
+- `s.encode()` 把字符串变成 UTF-8 字节；`b.decode()` 反过来，字节不是合法的 UTF-8 时返回错误。
+- `bytes` 和列表的用法一样：`len`、下标、切片、`push`、`extend`、`for b in data`。写入 0 到 255 以外的数会让程序停下。
+- `b.hex()` 得到十六进制文本；`std/bytes` 和 `std/fs` 里还有更多函数，见[标准库速览](standard-library.md)。
+
 ## 小结
 
 - 字符串是 UTF-8，`len`、下标和切片按字符计算。
 - `"{expr}"` 插入值，`+` 拼接字符串。
 - 字符串函数可以当方法用：`s.strip()`、`s.split(",")`、`s.find("x")`。
 - `int(s)` 和 `float(s)` 解析数字，可能失败。
+- `bytes` 保存原始字节：`b"..."`、`s.encode()`、`b.decode()`。

@@ -37,6 +37,23 @@ static void zam_show_str(S *out, S *s) {
     }
     zam_append(out, "\"", 1);
 }
+// bytes 照 Python 的写法显示：b"..."，可打印的 ASCII 原样，其余写成 \xNN。
+static void zam_show_bytes(S *out, const uint8_t *p, size_t n) {
+    static const char digits[] = "0123456789abcdef";
+    size_t i;
+    zam_append(out, "b\"", 2);
+    for (i = 0; i < n; i++) {
+        unsigned char c = p[i];
+        if (c == '"') zam_append(out, "\\\"", 2);
+        else if (c == '\\') zam_append(out, "\\\\", 2);
+        else if (c == '\n') zam_append(out, "\\n", 2);
+        else if (c == '\r') zam_append(out, "\\r", 2);
+        else if (c == '\t') zam_append(out, "\\t", 2);
+        else if (c >= 32 && c < 127) zam_append(out, &c, 1);
+        else { char e[4]; e[0] = '\\'; e[1] = 'x'; e[2] = digits[c >> 4]; e[3] = digits[c & 15]; zam_append(out, e, 4); }
+    }
+    zam_append(out, "\"", 1);
+}
 "#;
 
 /// 复制一份 `*ptr`：标量按值，字符串与复合值深复制。
@@ -201,13 +218,17 @@ fn list(elem: Elem, protos: &mut String, defs: &mut String) {
         "size_t i; if (a->len != b->len) return 0; for (i = 0; i < a->len; i++) if (!{}) return 0; return 1;",
         equal(ty, "&a->data[i]", "&b->data[i]")
     );
-    let show_body = format!(
-        "size_t i; {} for (i = 0; i < p->len; i++) {{ if (i) {} {} }} {}",
-        text("out", "["),
-        text("out", ", "),
-        show(ty, "out", "&p->data[i]"),
-        text("out", "]")
-    );
+    let show_body = if elem == Elem::Byte {
+        "zam_show_bytes(out, p->data, p->len);".to_owned()
+    } else {
+        format!(
+            "size_t i; {} for (i = 0; i < p->len; i++) {{ if (i) {} {} }} {}",
+            text("out", "["),
+            text("out", ", "),
+            show(ty, "out", "&p->data[i]"),
+            text("out", "]")
+        )
+    };
     shared(
         Type::List(elem),
         protos,

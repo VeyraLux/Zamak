@@ -651,6 +651,10 @@ fn show(ty: compiler::Type) -> String {
         Type::Int => "i64".into(),
         Type::Float => "f64".into(),
         Type::Bool => "bool".into(),
+        Type::List(Elem::Byte) => "bytes".into(),
+        Type::ListRef(Elem::Byte, mutable) => {
+            format!("&{}bytes", if mutable { "mut " } else { "" })
+        }
         Type::List(e) => format!("[{}]", elem(e)),
         Type::ListRef(e, mutable) => format!("&{}[{}]", if mutable { "mut " } else { "" }, elem(e)),
         Type::Map(k, v) => format!("{{{}: {}}}", elem(k), elem(v)),
@@ -667,7 +671,7 @@ fn show(ty: compiler::Type) -> String {
 }
 
 const STD_MODULES: &[&str] = &[
-    "io", "fmt", "string", "fs", "env", "math", "time", "random", "path",
+    "io", "fmt", "string", "bytes", "fs", "env", "math", "time", "random", "path",
 ];
 
 /// 项目里另一个模块的源码（打开的文档优先），按 `use` 的路径找：`modules 目录/路径.zm`。

@@ -1,0 +1,54 @@
+# bytes：原始字节。写法照 Python，下标读出 0–255 的整数。
+use std/bytes
+
+struct Packet:
+    kind: i64
+    body: bytes
+
+# 所有字节加起来对 256 取余：读字节就是读整数。
+fn checksum(data: &bytes) -> i64:
+    let mut total = 0
+
+    for b in data:
+        total = (total + b) % 256
+
+    total
+
+fn main() -> !string:
+    let mut data = b"AB\x00\xff\n"
+    println(data)
+    println(len(data))
+    println(data[0])
+    println(data[-1])
+    data.push(67)
+    data[1] = 98
+    data[0] += 1
+    println(data)
+    println(data[1:3])
+    println(checksum(data))
+    println(255 in data)
+    println(data.index_of(300))
+
+    let text = "héllo".encode()
+    println(text)
+    println(text.decode()?)
+    println(text.hex())
+    println(bytes.from_hex("de ad BE ef")?)
+    println(bytes.zeros(3) == b"\x00\x00\x00")
+
+    let packet = Packet(kind: 1, body: b"hi")
+    println(packet)
+    let mut chunks: [bytes] = [b"x", b"yz"]
+    chunks.push(copy(&packet.body))
+    println(chunks)
+    let mut joined: bytes = []
+
+    for chunk in chunks:
+        joined.extend(copy(chunk))
+
+    println(joined)
+    println(sum(b"\x01\x02\x03"))
+
+    let broken = b"\xff"
+    broken.decode() catch err:
+        println(err)

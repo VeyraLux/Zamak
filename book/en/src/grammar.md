@@ -25,6 +25,7 @@ See [Variables and types](variables.md) and [Control flow](control-flow.md).
 | Float | `f64` | IEEE 754; division by zero stops the program |
 | Boolean | `bool` | `and`, `or`, `not`, short-circuiting |
 | String | `string` | UTF-8, indexes count characters |
+| Bytes | `bytes` | `b"..."`, indexes give integers 0–255 |
 | List | `[T]` | Growable |
 | Dictionary | `{K: V}` | Insertion order; keys are `i64` or `string` |
 | Tuple | `(i64, string)` | Multiple return values |
@@ -132,12 +133,12 @@ See [Enums, Option and match](enums.md).
 
 ```zamak,ignore
 let name = "world"
-println("hello, {name}")          // interpolation
-println("x = {count + 1}")        // an expression may go in the braces
+println("hello, {name}")          # interpolation
+println("x = {count + 1}")        # an expression may go in the braces
 
 let parts = "a,b,c".split(",")
-println(parts.len())               // 3
-println(name.upper())              // WORLD
+println(parts.len())               # 3
+println(name.upper())              # WORLD
 ```
 
 String methods need no import. Python's names work too: `strip`, `startswith`, `endswith`.
@@ -228,8 +229,9 @@ See [Calling C](c-libraries.md).
 | Module | Provides |
 | --- | --- |
 | `std/string` | Split, join, find, trim, case |
+| `std/bytes` | Hexadecimal, zero-filled bytes |
 | `std/io` | Print without newline, read a line, read all |
-| `std/fs` | Read, write, append, list, create, remove, rename |
+| `std/fs` | Read and write text or bytes, append, list, create, remove, rename |
 | `std/path` | Join, parent, file name, extension |
 | `std/env` | Arguments, environment variables, exit |
 | `std/math` | sqrt, pow, trigonometry, rounding, constants |

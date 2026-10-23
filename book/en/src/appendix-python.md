@@ -31,6 +31,7 @@ Zamak keeps Python's names and rules wherever it can. This appendix lists what s
 | `{"a": 1}` | `{"a": 1}`; empty: `let m: {string: i64} = {}` | Keys are `i64` or `string`. |
 | `lambda x: x * 2` | `fn(x): x * 2` | |
 | `import math` | `use std/math` | |
+| `b"\x00"`, `s.encode()`, `b.decode()` | The same, and the type is `bytes` | Indexing gives an integer from 0 to 255. |
 
 ## New in Zamak
 

@@ -25,6 +25,7 @@ fn greet(name: string) -> string:
 | 浮点 | `f64` | IEEE 754，除以零终止程序 |
 | 布尔 | `bool` | `and`、`or`、`not`，短路求值 |
 | 字符串 | `string` | UTF-8，下标按字符算 |
+| 字节 | `bytes` | `b"..."`，下标得 0–255 的整数 |
 | 列表 | `[T]` | 可增长 |
 | 字典 | `{K: V}` | 插入顺序，键是 `i64` 或 `string` |
 | 元组 | `(i64, string)` | 多返回值 |
@@ -132,12 +133,12 @@ fn main():
 
 ```zamak,ignore
 let name = "world"
-println("hello, {name}")          // 插值
-println("x = {count + 1}")        // 花括号里可写表达式
+println("hello, {name}")          # 插值
+println("x = {count + 1}")        # 花括号里可写表达式
 
 let parts = "a,b,c".split(",")
-println(parts.len())               // 3
-println(name.upper())              // WORLD
+println(parts.len())               # 3
+println(name.upper())              # WORLD
 ```
 
 字符串方法不用导入，直接调。支持 `strip`、`startswith`、`endswith` 这些 Python 名字。
@@ -228,8 +229,9 @@ fn main():
 | 模块 | 提供 |
 | --- | --- |
 | `std/string` | 分割、拼接、查找、裁剪、大小写 |
+| `std/bytes` | 十六进制、全零字节串 |
 | `std/io` | 不换行输出、读一行、读全部 |
-| `std/fs` | 读写、追加、列目录、创建、删除、改名 |
+| `std/fs` | 读写文本或字节、追加、列目录、创建、删除、改名 |
 | `std/path` | join、父目录、文件名、扩展名 |
 | `std/env` | 命令行参数、环境变量、退出 |
 | `std/math` | sqrt、pow、三角、取整、常量 |

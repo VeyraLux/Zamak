@@ -5,6 +5,17 @@ and this file is the source for the text of each GitHub release.
 
 <!-- 中文版在下半部分。Chinese version: scroll down or search for "## 0.1.1（中文）". -->
 
+## Unreleased
+
+- **`bytes` for raw data.** `b"GIF\x89"`, `s.encode()`, and `b.decode()` work as in Python, and
+  indexing gives an integer from 0 to 255. `bytes` works like a list (`len`, slices, `push`,
+  `for b in data`), and writing a value outside 0 to 255 stops the program. `std/bytes` adds
+  `from_hex`, `hex`, and `zeros`; `std/fs` adds `read_bytes`, `write_bytes`, and `append_bytes`.
+- **String escapes `\xNN` and `\0`**, as in Python.
+- **`?` and `catch` work on method calls** such as `text.decode()?` and `line.parse_i64()?`.
+- **Clearer error** when you assign a list to a string variable: it now says the types differ
+  instead of "cannot move borrowed value".
+
 ## 0.1.1
 
 Released 2026-10-19.
@@ -136,6 +147,16 @@ interop layer, and the `zam lsp` server. Everything under "new in this release" 
 this preview.
 
 ---
+
+## 未发布（中文）
+
+- **`bytes` 类型，用来存原始数据。** `b"GIF\x89"`、`s.encode()`、`b.decode()` 与 Python 相同，下标读出
+  0 到 255 的整数。`bytes` 的用法和列表一样（`len`、切片、`push`、`for b in data`），写入 0 到 255
+  以外的数会让程序停下。`std/bytes` 新增 `from_hex`、`hex`、`zeros`；`std/fs` 新增 `read_bytes`、
+  `write_bytes`、`append_bytes`。
+- **字符串转义新增 `\xNN` 和 `\0`**，与 Python 相同。
+- **方法调用也能接 `?` 和 `catch`**，例如 `text.decode()?`、`line.parse_i64()?`。
+- **报错更清楚**：把列表赋给字符串变量时，现在说类型不同，而不是“不能移动被借用的值”。
 
 ## 0.1.1（中文）
 

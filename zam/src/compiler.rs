@@ -477,6 +477,35 @@ pub fn string_method(
     ))
 }
 
+/// bytes 上的方法：std/bytes 里第一个参数是 `&bytes` 的同名函数（`b.decode()`、`b.hex()`）。
+/// 列表自己的方法（len、push、slice……）优先，这里返回 None。
+pub fn bytes_method(
+    functions: &BTreeMap<String, Function>,
+    receiver: Expr,
+    method: &str,
+    args: &[Expr],
+) -> Option<Expr> {
+    if method_signature(Type::List(Elem::Byte), method).is_some() {
+        return None;
+    }
+    let name = format!("std/bytes:{method}");
+    let function = functions.get(&name)?;
+    if function.params.first().map(|(_, ty)| *ty) != Some(Type::ListRef(Elem::Byte, false)) {
+        return None;
+    }
+    Some(Expr::Call(
+        name,
+        std::iter::once(receiver)
+            .chain(args.iter().cloned())
+            .collect(),
+    ))
+}
+
+/// `bytes`（owned 或借用）。
+pub fn is_bytes(ty: Type) -> bool {
+    matches!(ty, Type::List(Elem::Byte) | Type::ListRef(Elem::Byte, _))
+}
+
 /// 字符串类型（owned 或借用）。
 pub fn is_string(ty: Type) -> bool {
     matches!(ty, Type::Owned | Type::Shared | Type::Mutable)
@@ -621,6 +650,12 @@ pub fn each_bindings(
         (_, true) => (elem.ty(), true),
         _ => (elem.item(), false),
     };
+    if mutable && container == Type::List(Elem::Byte) {
+        return Err(
+            "for x in &mut over bytes is not supported; assign b[i] = v in a for i in range(len(b)) loop"
+                .into(),
+        );
+    }
     Ok(match (container, pair) {
         (Type::List(elem), false) => vec![item(elem)],
         (Type::List(elem), true) => vec![(Type::Int, false), item(elem)],
@@ -662,7 +697,9 @@ pub fn method_signature(receiver: Type, method: &str) -> Option<(bool, Vec<Type>
         (Type::List(elem), "slice") if !matches!(elem, Elem::Func(_)) => {
             (false, vec![Type::Int, Type::Int], Type::List(elem))
         }
-        (Type::List(elem @ (Elem::Int | Elem::Float)), "sum") => (false, Vec::new(), elem.ty()),
+        (Type::List(elem @ (Elem::Int | Elem::Float | Elem::Byte)), "sum") => {
+            (false, Vec::new(), elem.ty())
+        }
         (Type::List(elem), "min" | "max") if elem.comparable() => (false, Vec::new(), elem.ty()),
         (Type::List(elem), "sorted") if elem.comparable() => (false, Vec::new(), Type::List(elem)),
         (Type::Map(_, _), "clear") => (true, Vec::new(), Type::Unit),
@@ -703,6 +740,9 @@ fn supported_methods(container: Type, method: &str) -> &'static str {
         {
             "struct elements have no natural order; use sort_by, or a loop with == to find one"
         }
+        Type::List(Elem::Byte) => {
+            "bytes support len, push, pop, insert, remove, swap, reverse, clear, extend, sort, sorted, contains, index_of, slice, sum, min, max, decode and hex"
+        }
         Type::List(_) if method == "sum" => "sum needs i64 or f64 elements",
         Type::List(_)
             if matches!(
@@ -737,6 +777,8 @@ pub enum Elem {
     Nested(u64),
     // 函数值 `[fn(i64) -> i64]`：编号是函数类型（`func_sig`）。按值复制，不释放。
     Func(u64),
+    // `bytes` 的元素：C 里按 uint8_t 存，Zamak 里读出来是 0–255 的 i64，写入时检查范围。
+    Byte,
 }
 
 /// 嵌套容器的内层类型表：编号 → 列表或字典类型。编号只取决于类型的结构，同样的类型在任何
@@ -862,6 +904,7 @@ impl Elem {
             Elem::Record(id) => Type::Record(id),
             Elem::Nested(id) => nested(id),
             Elem::Func(id) => Type::Func(id),
+            Elem::Byte => Type::Int,
         }
     }
     /// `for x in &items` 拿到的元素：标量按值，字符串、结构体与内层容器是只读借用。
@@ -875,7 +918,10 @@ impl Elem {
     }
     /// 能比较、能复制的元素：标量与字符串。
     pub fn comparable(self) -> bool {
-        matches!(self, Elem::Int | Elem::Float | Elem::Bool | Elem::Str)
+        matches!(
+            self,
+            Elem::Int | Elem::Float | Elem::Bool | Elem::Str | Elem::Byte
+        )
     }
     /// 能整个读出来（复制一份）的元素：能比较的元素与函数值。
     pub fn copyable(self) -> bool {
@@ -1780,6 +1826,14 @@ fn lex(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>, bool), String> 
                     ));
                 }
                 '"' => {
+                    // `b"..."` 是 bytes 字面量：紧贴引号的 `b` 换成解析器认得的 `$bytes`。
+                    let raw_bytes = i >= 1
+                        && chars[i - 1] == 'b'
+                        && (i < 2 || !(chars[i - 2].is_alphanumeric() || chars[i - 2] == '_'))
+                        && tokens.last() == Some(&Token::Word("b".into()));
+                    if raw_bytes {
+                        *tokens.last_mut().expect("checked") = Token::Word("$bytes".into());
+                    }
                     let mut text = String::new();
                     let mut j = i + 1;
                     loop {
@@ -1792,16 +1846,34 @@ fn lex(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>, bool), String> 
                                 }))
                             }
                             Some('"') => break,
+                            Some('\\') if at(j + 1) == Some('x') => {
+                                // `\xNN`：码点 U+00NN（与 Python 相同）；bytes 字面量里就是那个字节。
+                                let digits: String = (j + 2..j + 4).filter_map(at).collect();
+                                let value = u32::from_str_radix(&digits, 16)
+                                    .ok()
+                                    .filter(|_| digits.len() == 2)
+                                    .ok_or_else(|| {
+                                        error("\\x takes two hex digits, such as \\x0a or \\xff")
+                                    })?;
+                                text.push(char::from_u32(value).expect("below 256"));
+                                j += 4;
+                            }
                             Some('\\') => {
                                 text.push(match at(j + 1) {
                                     Some('n') => '\n',
                                     Some('r') => '\r',
                                     Some('t') => '\t',
+                                    Some('0') => '\0',
                                     Some('"') => '"',
                                     Some('\\') => '\\',
                                     _ => return Err(error("unsupported string escape")),
                                 });
                                 j += 2;
+                            }
+                            Some(c) if raw_bytes && !c.is_ascii() => {
+                                return Err(error(
+                                    "bytes literals hold ASCII characters only; write other bytes as \\xNN, or use \"...\".encode() for UTF-8 text",
+                                ));
                             }
                             Some(c) => {
                                 text.push(c);
@@ -2638,6 +2710,7 @@ impl Parser {
             "f64" => Elem::Float,
             "bool" => Elem::Bool,
             "string" => Elem::Str,
+            "bytes" => nest(Type::List(Elem::Byte)),
             _ => Elem::Record(self.record(name)?),
         })
     }
@@ -2792,6 +2865,10 @@ impl Parser {
         }
         match name.as_str() {
             "string" => Ok(ty),
+            "bytes" => Ok(match ty {
+                Type::Owned => Type::List(Elem::Byte),
+                _ => Type::ListRef(Elem::Byte, ty == Type::Mutable),
+            }),
             "i64" if ty == Type::Owned => Ok(Type::Int),
             "f64" if ty == Type::Owned => Ok(Type::Float),
             "bool" if ty == Type::Owned => Ok(Type::Bool),
@@ -3107,6 +3184,15 @@ impl Parser {
             && matches!(self.tokens.get(self.position + 1), Some(Token::Text(_)))
         {
             self.take();
+        }
+        // `b"..."`：每个字节写成两位十六进制交给 `std/core:bytes_literal`，不做插值。
+        if self.peek() == Some(&Token::Word("$bytes".into())) {
+            if let Some(Token::Text(text)) = self.tokens.get(self.position + 1).cloned() {
+                self.take();
+                self.take();
+                let hex: String = text.chars().map(|c| format!("{:02x}", c as u32)).collect();
+                return self.after_call(Expr::Call("$bytes".into(), vec![Expr::Text(hex)]));
+            }
         }
         if let Some(Token::Text(text)) = self.peek().cloned() {
             self.take();
@@ -4667,7 +4753,7 @@ pub fn encode(module: &Module) -> Vec<u8> {
         .map(|(name, constant)| (name, constant.public, &constant.value))
         .collect();
     format!(
-        "ZAM-IR-34\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
+        "ZAM-IR-35\n{declarations:?}\n{constants:?}\n{:?}\n{:?}\n{:?}\n",
         module.type_names, module.imports, module.functions
     )
     .into_bytes()
@@ -5018,6 +5104,10 @@ impl<'a> Checker<'a> {
     /// 调用的目标函数与实参：普通调用原样返回；结构体的方法改写成 `Owner.m(接收者, ...)`。
     /// 列表、字典的方法与不是调用的表达式返回 None。
     fn call_target(&self, expr: &Expr) -> Result<Option<(String, Vec<Expr>)>, String> {
+        // `text.parse_i64()?`、`data.decode()?`：字符串与 bytes 上的方法就是标准库函数。
+        if let Ok(Some(Expr::Call(name, args))) = self.string_call(expr) {
+            return Ok(Some((self.callee(&name, &args), args)));
+        }
         let (receiver, ty, method, args) = match expr {
             Expr::Call(name, args) => return Ok(Some((self.callee(name, args), args.clone()))),
             Expr::Method(path, method, args) => {
@@ -5446,6 +5536,29 @@ impl<'a> Checker<'a> {
     }
     /// `s.upper()`、`string.trim(&s).upper()`：字符串上的方法改写成 std/string 的调用。接收者不是
     /// 字符串时返回 None；是字符串但没有这个方法时报错。
+    fn bytes_call(&self, expr: &Expr) -> Option<Expr> {
+        let (receiver, method, args) = match expr {
+            Expr::Method(path, method, args)
+                if self.place(path).is_ok_and(|(_, ty)| is_bytes(ty)) =>
+            {
+                (Expr::Borrow(path.clone(), false), method, args)
+            }
+            Expr::Chain(inner, method, args) if self.ty(inner).is_ok_and(is_bytes) => {
+                ((**inner).clone(), method, args)
+            }
+            Expr::ElementMethod(path, index, field, method, args)
+                if self.element(path, field).is_ok_and(|(_, ty)| is_bytes(ty)) =>
+            {
+                (
+                    Expr::BorrowIndex(path.clone(), index.clone(), field.clone(), false),
+                    method,
+                    args,
+                )
+            }
+            _ => return None,
+        };
+        bytes_method(self.functions, receiver, method, args)
+    }
     fn string_call(&self, expr: &Expr) -> Result<Option<Expr>, String> {
         // `s[i]`：第 i 个字符（与 Python 相同，负数从末尾数）。
         if let Expr::Index(path, index) = expr {
@@ -5462,6 +5575,9 @@ impl<'a> Checker<'a> {
                 });
             }
             return Ok(membership(expr, self.ty(item).is_ok_and(is_text)));
+        }
+        if let Some(call) = self.bytes_call(expr) {
+            return Ok(Some(call));
         }
         let (receiver, method, args) = match expr {
             Expr::Method(path, method, args) => {
@@ -6294,8 +6410,17 @@ impl<'a> Checker<'a> {
                 if matches!(self.binding(name)?.ty, Type::Shared | Type::Mutable) {
                     return Ok(());
                 }
-                if self.binding(name)?.ty != Type::Owned {
-                    return Err(format!("cannot move borrowed value {name}"));
+                match self.binding(name)?.ty {
+                    Type::Owned => {}
+                    ty if ty.is_reference() => {
+                        return Err(format!("cannot move borrowed value {name}"))
+                    }
+                    ty => {
+                        return Err(format!(
+                            "type mismatch: {name} is {}, but string is expected",
+                            type_text(ty, self.structs)
+                        ))
+                    }
                 }
                 if loans.contains_key(name) {
                     return Err(format!(
@@ -6733,6 +6858,12 @@ impl<'a> Checker<'a> {
         loans: &mut BTreeMap<String, Type>,
     ) -> Result<(), String> {
         if callee.result != expected {
+            if name == "std/core:bytes_literal" {
+                return Err(format!(
+                    "type mismatch: b\"...\" is bytes, but {} is expected",
+                    type_text(expected, self.structs)
+                ));
+            }
             return Err(format!("return type mismatch for {name}"));
         }
         if callee.params.len() != args.len() {
@@ -7494,6 +7625,10 @@ pub fn type_text(ty: Type, structs: &BTreeMap<String, Struct>) -> String {
             record_text(id, structs)
         ),
         Type::ArrayInt(n) => format!("[i64; {n}]"),
+        Type::List(Elem::Byte) => "bytes".to_owned(),
+        Type::ListRef(Elem::Byte, mutable) => {
+            format!("&{}bytes", if mutable { "mut " } else { "" })
+        }
         Type::List(elem) => format!("[{}]", elem_text(elem, structs)),
         Type::ListRef(elem, mutable) => format!(
             "&{}[{}]",
@@ -7524,6 +7659,7 @@ fn elem_text(elem: Elem, structs: &BTreeMap<String, Struct>) -> String {
         Elem::Record(id) => record_text(id, structs),
         Elem::Nested(id) => type_text(nested(id), structs),
         Elem::Func(id) => func_text(id, structs),
+        Elem::Byte => "byte".to_owned(),
     }
 }
 

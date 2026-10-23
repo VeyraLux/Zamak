@@ -221,9 +221,39 @@ fn main() -> !string:
 5.0
 ```
 
+## Bytes
+
+Use the `bytes` type for raw bytes, such as file contents, network data, or hashes. It works as in Python: `b"..."` is a literal, and indexing gives an integer from 0 to 255.
+
+```zamak
+fn main() -> !string:
+    let mut data = b"GIF\x89"
+    println(data)
+    println(data[3])
+    data.push(10)
+    println(len(data))
+    let text = "你好".encode()
+    println(text)
+    println(text.decode()?)
+```
+
+```text
+b"GIF\x89"
+137
+5
+b"\xe4\xbd\xa0\xe5\xa5\xbd"
+你好
+```
+
+- A `b"..."` literal holds ASCII characters only. Write other bytes as `\xNN`.
+- `s.encode()` turns a string into UTF-8 bytes. `b.decode()` goes the other way and returns an error when the bytes aren't valid UTF-8.
+- `bytes` works like a list: `len`, indexes, slices, `push`, `extend`, and `for b in data`. Writing a number outside 0 to 255 stops the program.
+- `b.hex()` gives hexadecimal text. `std/bytes` and `std/fs` have more functions; see [A tour of the standard library](standard-library.md).
+
 ## Summary
 
 - Strings are UTF-8, and `len`, indexes, and slices count characters.
 - `"{expr}"` inserts a value; `+` joins strings.
 - String functions are methods: `s.strip()`, `s.split(",")`, `s.find("x")`.
 - `int(s)` and `float(s)` parse numbers and can fail.
+- `bytes` holds raw bytes: `b"..."`, `s.encode()`, and `b.decode()`.

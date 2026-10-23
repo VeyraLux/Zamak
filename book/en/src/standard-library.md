@@ -96,6 +96,7 @@ false
 | Function | What it does |
 | --- | --- |
 | `fs.read(p)`, `fs.write(p, text)`, `fs.append(p, text)` | Read or write a whole file. |
+| `fs.read_bytes(p)`, `fs.write_bytes(p, data)`, `fs.append_bytes(p, data)` | Read or write a file as bytes; see `bytes` below. |
 | `fs.exists(p)`, `fs.is_file(p)`, `fs.is_dir(p)`, `fs.size(p)` | Inspect a path. |
 | `fs.list(dir)` | Sorted names in a folder. |
 | `fs.mkdir(p)` | Create a folder and its parents. |
@@ -160,11 +161,39 @@ Every string function is also a method, so you rarely need to import `std/string
 - Measure and compare: `len`, `byte_len`, `starts_with`, `ends_with`, `contains`, `count`, `find`, `find_from`.
 - Transform: `trim`, `lower`, `upper`, `replace`, `repeat`, `pad_left`, `pad_right`, `slice`.
 - Split and join: `split`, `words`, `lines`, `join`, `chars`.
-- Convert: `parse_i64`, `parse_f64`, `codepoints`, `from_code`, `bytes`, `from_bytes`.
+- Convert: `parse_i64`, `parse_f64`, `codepoints`, `from_code`, `encode`, `bytes`, `from_bytes`.
+
+## Bytes: std/bytes
+
+The `bytes` methods `decode` and `hex` need no import. The functions that create bytes are in `std/bytes`:
+
+```zamak
+use std/bytes
+
+fn main() -> !string:
+    let key = bytes.from_hex("de ad be ef")?
+    println(key)
+    println(key.hex())
+    println(bytes.zeros(4))
+```
+
+```text
+b"\xde\xad\xbe\xef"
+deadbeef
+b"\x00\x00\x00\x00"
+```
+
+| Function | What it does |
+| --- | --- |
+| `b.decode()` | Decode UTF-8 into a string. Returns an error if the bytes aren't valid UTF-8. |
+| `b.hex()` | Hexadecimal text, two lowercase digits per byte. |
+| `bytes.from_hex(text)` | Parse hexadecimal text in pairs of digits, with optional spaces between pairs. |
+| `bytes.zeros(n)` | `n` zero bytes. |
+| `fs.read_bytes(p)`, `fs.write_bytes(p, data)`, `fs.append_bytes(p, data)` | Read and write files as bytes. |
 
 ## Summary
 
 - Built-in functions such as `len`, `int`, and `sorted` need no import.
-- `std/io`, `std/env`, `std/fs`, and `std/path` handle input, arguments, and files.
+- `std/io`, `std/env`, `std/fs`, and `std/path` handle input, arguments, and files; `std/bytes` handles raw bytes.
 - `std/math`, `std/fmt`, `std/time`, and `std/random` handle numbers, formatting, clocks, and randomness.
 - Functions that can fail return errors that you handle with `?` or `catch`.

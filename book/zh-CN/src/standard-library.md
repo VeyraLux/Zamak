@@ -96,6 +96,7 @@ false
 | 函数 | 作用 |
 | --- | --- |
 | `fs.read(p)`、`fs.write(p, text)`、`fs.append(p, text)` | 读写整个文件。 |
+| `fs.read_bytes(p)`、`fs.write_bytes(p, data)`、`fs.append_bytes(p, data)` | 按字节读写文件，见下文的 `bytes`。 |
 | `fs.exists(p)`、`fs.is_file(p)`、`fs.is_dir(p)`、`fs.size(p)` | 查看路径的情况。 |
 | `fs.list(dir)` | 目录里的名字，已排序。 |
 | `fs.mkdir(p)` | 创建目录及其上级目录。 |
@@ -160,11 +161,39 @@ true
 - 测量与比较：`len`、`byte_len`、`starts_with`、`ends_with`、`contains`、`count`、`find`、`find_from`。
 - 变换：`trim`、`lower`、`upper`、`replace`、`repeat`、`pad_left`、`pad_right`、`slice`。
 - 切分与连接：`split`、`words`、`lines`、`join`、`chars`。
-- 转换：`parse_i64`、`parse_f64`、`codepoints`、`from_code`、`bytes`、`from_bytes`。
+- 转换：`parse_i64`、`parse_f64`、`codepoints`、`from_code`、`encode`、`bytes`、`from_bytes`。
+
+## 字节：std/bytes
+
+`bytes` 的方法 `decode` 和 `hex` 不用导入；创建字节串的函数在 `std/bytes` 里：
+
+```zamak
+use std/bytes
+
+fn main() -> !string:
+    let key = bytes.from_hex("de ad be ef")?
+    println(key)
+    println(key.hex())
+    println(bytes.zeros(4))
+```
+
+```text
+b"\xde\xad\xbe\xef"
+deadbeef
+b"\x00\x00\x00\x00"
+```
+
+| 函数 | 作用 |
+| --- | --- |
+| `b.decode()` | 按 UTF-8 解码成字符串，不合法时返回错误。 |
+| `b.hex()` | 十六进制文本，每个字节两位小写数字。 |
+| `bytes.from_hex(text)` | 解析十六进制文本，两位一组，组之间可以有空白。 |
+| `bytes.zeros(n)` | n 个零字节。 |
+| `fs.read_bytes(p)`、`fs.write_bytes(p, data)`、`fs.append_bytes(p, data)` | 按字节读写文件。 |
 
 ## 小结
 
 - `len`、`int`、`sorted` 这样的内置函数不用导入。
-- `std/io`、`std/env`、`std/fs`、`std/path` 处理输入、参数和文件。
+- `std/io`、`std/env`、`std/fs`、`std/path` 处理输入、参数和文件；`std/bytes` 处理原始字节。
 - `std/math`、`std/fmt`、`std/time`、`std/random` 处理数字、格式、时钟和随机数。
 - 可能失败的函数返回错误，用 `?` 或 `catch` 处理。

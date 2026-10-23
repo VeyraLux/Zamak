@@ -24,13 +24,24 @@
     "strings": {
       "patterns": [
         {
+          "name": "string.quoted.double.bytes.zamak",
+          "begin": "\\bb\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.zamak",
+              "match": "\\\\(?:[nrt0\"\\\\]|x[0-9A-Fa-f]{2})"
+            }
+          ]
+        },
+        {
           "name": "string.quoted.double.zamak",
           "begin": "\"",
           "end": "\"",
           "patterns": [
             {
               "name": "constant.character.escape.zamak",
-              "match": "\\\\[nrt\"\\\\]"
+              "match": "\\\\(?:[nrt0\"\\\\]|x[0-9A-Fa-f]{2})"
             },
             {
               "name": "constant.character.escape.brace.zamak",
@@ -79,7 +90,7 @@
         },
         {
           "name": "storage.type.zamak",
-          "match": "\\b(?:i64|f64|bool|string)\\b"
+          "match": "\\b(?:i64|f64|bool|string|bytes)\\b"
         },
         {
           "name": "support.function.builtin.zamak",

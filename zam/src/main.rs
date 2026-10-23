@@ -575,11 +575,19 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
         )
     } else if message.contains("unsupported string escape")
         || message.contains("unsupported character escape")
+        || message.contains("takes two hex digits")
+        || message.contains("bytes literals hold ASCII")
     {
         (
             "ZM101",
             "syntax",
-            Some("use a supported escape such as `\\n`, `\\r`, `\\t`, `\\\"`, or `\\\\`"),
+            Some("use a supported escape such as `\\n`, `\\t`, `\\\"`, `\\\\`, `\\0`, or `\\x41`"),
+        )
+    } else if message.contains("over bytes is not supported") {
+        (
+            "ZM200",
+            "type",
+            Some("loop over the indexes and assign b[i] = value"),
         )
     } else if message.contains("use after move") {
         (

@@ -12,7 +12,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-64");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-65");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -415,7 +415,15 @@ impl Project {
             if matches.is_empty()
                 && matches!(
                     alias,
-                    "io" | "fmt" | "string" | "fs" | "env" | "math" | "time" | "random" | "path"
+                    "io" | "fmt"
+                        | "string"
+                        | "bytes"
+                        | "fs"
+                        | "env"
+                        | "math"
+                        | "time"
+                        | "random"
+                        | "path"
                 )
             {
                 return Err(format!(
@@ -521,6 +529,7 @@ impl Project {
                     "std/io"
                         | "std/fmt"
                         | "std/string"
+                        | "std/bytes"
                         | "std/fs"
                         | "std/env"
                         | "std/math"
@@ -1135,6 +1144,10 @@ impl Project {
                 for arg in args {
                     self.resolve_expr(module, locals, arg)?;
                 }
+            }
+            // `b"..."` 字面量：解析器已把字节写成十六进制文本。
+            Expr::Call(name, _) if name == "$bytes" => {
+                *name = "std/core:bytes_literal".into();
             }
             // `assert` 展开出的报错调用：报错前面补上模块文件路径。
             Expr::Call(name, args) if name == "$assert" => {

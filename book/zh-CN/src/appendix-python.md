@@ -31,6 +31,7 @@ Zamak 尽可能沿用 Python 的名字和规则。这篇附录列出哪些与 Py
 | `{"a": 1}` | `{"a": 1}`；空字典：`let m: {string: i64} = {}` | 键是 `i64` 或 `string`。 |
 | `lambda x: x * 2` | `fn(x): x * 2` | |
 | `import math` | `use std/math` | |
+| `b"\x00"`、`s.encode()`、`b.decode()` | 写法相同，类型叫 `bytes` | 下标读出 0–255 的整数。 |
 
 ## Zamak 新增的内容
 

@@ -25,7 +25,7 @@ fn main() -> !string:
 
 ## Values and bindings
 
-- Types: `i64`, `f64`, `bool`, `string` (UTF-8, owned), structs, enums, lists `[T]`, maps `{K: V}`, tuples `(i64, string)`, `Option[T]`, and function types such as `fn(i64) -> bool`.
+- Types: `i64`, `f64`, `bool`, `string` (UTF-8, owned), `bytes` (raw bytes), structs, enums, lists `[T]`, maps `{K: V}`, tuples `(i64, string)`, `Option[T]`, and function types such as `fn(i64) -> bool`.
 - `let x = 1`, `let mut x = 1`, `let mut x: i64 = 1`. Only `let mut` bindings can be reassigned. A name cannot be declared twice in the same function scope chain (no shadowing).
 - Top-level constants: `const LIMIT = 100`, `const RATE: f64 = 0.25`, `const NAME = "x"`. Names are UPPER_CASE; the value is computed at compile time from literals, earlier constants and operators. `pub const` is visible from other modules as `config.LIMIT`.
 - Integer literals may use `_` between digits: `1_000_000`. Character literals like `'a'`, `'#'`, `'\n'`, `'\''` are `i64` Unicode code points (useful with `string.byte_at`).
@@ -52,6 +52,11 @@ fn main() -> !string:
 - Methods also work on literals and Python names work: `"a,b".split(",")`, `", ".join(words)`, `s.strip()`, `s.lstrip()`, `s.rstrip()`, `s.startswith(p)`, `s.endswith(p)`, `s.isdigit()`, `s.isalpha()`, `s.isalnum()`, `s.isspace()`, `s.ljust(n)`, `s.rjust(n)`.
 - A borrowed string is copied automatically where an owned string is needed: `return ch`, `out.push(w)` inside `for w in words`.
 - `for ch in s:` loops over the characters (each `ch` is a one-character string); `for i, ch in s:` also gives the position.
+
+## Bytes
+
+- `bytes` holds raw bytes, as in Python: `b"GIF\x89"` (ASCII characters and `\xNN` only), `s.encode()` (UTF-8), `b.decode() -> string!string`, `b.hex() -> string`. Indexing gives an `i64` from 0 to 255; `len`, slices, `push`, `extend`, `in` and `for b in data` work as on lists; writing a value outside 0 to 255 stops the program. `for x in &mut data` is not supported; assign `data[i] = v` instead. Parameters take `&bytes` or `&mut bytes`.
+- `std/bytes`: `bytes.from_hex(&text) -> bytes!string` (pairs of hex digits, spaces allowed between pairs), `bytes.zeros(n) -> bytes`.
 
 ## Ownership and borrowing
 
@@ -251,7 +256,7 @@ Import a module with `use std/<name>` and call `name.function(...)`. `println(x)
 - `std/io`: `io.print(&text)` (no newline), `io.eprintln(&text)` (standard error), `io.read_line(&mut line) -> bool!string` reads the next line into `line` without its trailing `\n` or `\r\n` and returns `false` at end of input (typical loop: `let mut line = ""` then `while io.read_line(&mut line)?:`); `io.read_all() -> string!string`.
 - `std/env`: `env.args() -> [string]` (program arguments, without the program name), `env.arg(i) -> string!string`, `env.arg_count() -> i64`, `env.var(&name) -> string!string` (an environment variable), `env.exit(code)` (ends the program with status 0 to 255; a `catch` block may end with it instead of `return`).
 - Built-in functions need no import, as in Python: `len(x)` (string bytes, list or map size), `str(x)` (same as `"{x}"`), `int(x)` (truncates an `f64`; parses a string and can fail, so write `int(s)?` or catch it), `float(x)` (converts an `i64`; parses a string and can fail), `abs(x)`, `min(a, b)`, `max(a, b)` (both of the same type), `min(xs)`, `max(xs)`, `sum(xs)`, `sorted(xs)`.
-- `std/fs`: `fs.read(&path) -> string!string`, `fs.write(&path, &text) -> !string`, `fs.append(&path, &text) -> !string`, `fs.exists(&path) -> bool`, `fs.is_file`, `fs.is_dir`, `fs.size(&path) -> i64!string`, `fs.list(&dir) -> [string]!string` (sorted names), `fs.mkdir(&path) -> !string` (creates parents), `fs.remove(&path) -> !string` (file or empty directory), `fs.rename(&from, &to) -> !string`.
+- `std/fs`: `fs.read(&path) -> string!string`, `fs.write(&path, &text) -> !string`, `fs.append(&path, &text) -> !string`, `fs.exists(&path) -> bool`, `fs.is_file`, `fs.is_dir`, `fs.size(&path) -> i64!string`, `fs.list(&dir) -> [string]!string` (sorted names), `fs.mkdir(&path) -> !string` (creates parents), `fs.remove(&path) -> !string` (file or empty directory), `fs.rename(&from, &to) -> !string`, `fs.read_bytes(&path) -> bytes!string`, `fs.write_bytes(&path, &data) -> !string`, `fs.append_bytes(&path, &data) -> !string`.
 - `std/path` (text only): `path.join(&a, &b) -> string`, `path.parent`, `path.name`, `path.stem`, `path.suffix` (`.txt`, or empty).
 - `std/math` (all `f64`): `sqrt`, `pow(x, y)`, `exp`, `log` (natural), `log10`, `sin`, `cos`, `tan`, `atan`, `atan2(y, x)`, `floor`, `ceil`, `round` (half away from zero), `trunc`, `abs`, `min(a, b)`, `max(a, b)`, `is_nan(x) -> bool`; constants `math.pi`, `math.e`, `math.inf`.
 - `std/fmt`: `fmt.fixed(x, digits) -> string` (0 to 30 digits).
