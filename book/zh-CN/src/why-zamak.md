@@ -28,7 +28,7 @@ Zamak 没想当哪门语言的影子，是把几门语言各自最擅长的部�
 
 ## 能带来什么
 
-- **Python 的可读性，C 的速度**：Zamak 读起来像 Python，`for i in range(n)`、`xs[-1]`、`f"..."` 和除法规则都与 Python 相同。它编译成本机代码：在 binary-trees、fannkuch-redux、素数统计和词频统计上比 C 快，spectral-norm 只慢约 1%，计算密集的程序比 Python 快 43 到 204 倍。
+- **Python 的可读性，C 的速度**：Zamak 读起来像 Python，`for i in range(n)`、`xs[-1]`、`f"..."` 和除法规则都与 Python 相同。它编译成本机代码：n-body、spectral-norm、fannkuch-redux 和词频统计都与 C 只差几个百分点，计算密集的程序比 Python 快 39 到 231 倍。哪里慢、为什么慢，见[附录 B](appendix-performance.md)。
 - **不用和编译器较劲的内存安全**：所有权在编译时就排除了释放后使用和重复释放，不需要垃圾回收器。只读借用自动进行，借用最多持续一次调用，永远不用写生命周期标注。代码真被拒绝时，错误信息会指出问题所在，并给出修改建议。
 - **整数运算比 C、Rust、Go 更安全**：整数溢出、除以零和下标越界在任何构建里（包括发布构建）都会让程序带着清楚的错误停下。编译器会去掉能证明多余的检查，所以安全的代码照样跑出 C 的速度；哈希这类确实需要回绕的函数，用 `@wrapping` 只在这一个函数里关闭检查。
 - **程序小，占用也小**：Linux 上 hello world 只有 16 KB，与 C 相当；同一个程序用 Rust 写，即使 strip 加 LTO 也有 275 KB。Windows 上两边都会因为静态链接 C 运行库变大：Zamak 默认 MSVC 约 143 KB，Rust 压到极限约 106 KB，属于同一量级。在 binary-trees 上，Zamak 是七种语言里最快的，只用 20 MB 内存，而 Java 和 Node.js 都超过 360 MB。

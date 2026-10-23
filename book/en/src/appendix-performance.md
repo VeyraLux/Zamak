@@ -1,21 +1,30 @@
 # Appendix B: Performance
 
-Zamak compiles through C, so well-written Zamak code runs at about the speed of C. This appendix shows measured results, explains where Zamak's safety checks cost time and how the compiler removes them, and gives tips for fast code.
+Zamak compiles through C, so well-written Zamak code usually runs within a few percent of C. This appendix shows measured results, including where Zamak is slower, explains where Zamak's safety checks cost time and how the compiler removes them, and gives tips for fast code.
 
 ## Measured results
 
-The repository's [comparison benchmark](https://github.com/VeyraLux/Zamak/tree/main/bench/compare) runs the same programs in seven languages on one machine. Run time in milliseconds (lower is better):
+The repository's [comparison benchmark](https://github.com/VeyraLux/Zamak/tree/main/bench/compare) runs the same programs in seven languages on one machine (Windows 10, with GCC compiling both C and Zamak). Run time in milliseconds from the 2026-10-21 run (lower is better):
 
 | Program | Zamak | C | Rust | Go | Java | Node.js | Python |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| n-body | 212 | 222 | 129 | 208 | 361 | 356 | 16,340 |
-| spectral-norm | 197 | 195 | 215 | 250 | 668 | 457 | 40,114 |
-| fannkuch-redux | 197 | 200 | 207 | 214 | 391 | 336 | 10,885 |
-| binary-trees | 318 | 961 | 1,041 | 473 | 405 | 402 | 2,603 |
-| primes | 203 | 568 | 200 | 531 | 680 | 313 | 8,642 |
-| word frequency | 154 | 160 | 191 | 208 | 742 | 972 | 880 |
+| n-body | 208 | 201 | 118 | 254 | 404 | 418 | 18,110 |
+| spectral-norm | 207 | 201 | 217 | 286 | 732 | 510 | 47,910 |
+| fannkuch-redux | 209 | 213 | 221 | 257 | 453 | 371 | 13,960 |
+| binary-trees | 322 | 1,040 | 1,130 | 584 | 455 | 426 | 2,410 |
+| primes | 291 | 628 | 239 | 639 | 946 | 379 | 11,340 |
+| word frequency | 158 | 165 | 191 | 213 | 997 | 1,040 | 819 |
 
-A hello world is 56 KB, starts in 28 ms, and uses 3.8 MB of memory, about the same as C. The benchmark's README describes the method, the machine, and how to run it yourself.
+Read the table with these caveats:
+
+- **n-body**: Rust is about 40% faster than both Zamak and C.
+- **binary-trees** measures allocation strategy, not code generation. The C reference calls `malloc` for every node, while Zamak reuses small list buffers. A C version with an arena allocator takes 63 ms.
+- **primes**: Zamak and Rust divide in 32 bits when both numbers fit, and GCC compiles the C reference's 64-bit `%` as a full 64-bit division.
+- **spectral-norm** uses `@wrapping` on its hot function; see below.
+- Giving C the `-funroll-loops` flag that Zamak's back end adds doesn't make C faster.
+- Results move by a few percent between runs. The benchmark's README has every run, the machine, and the commands to reproduce them.
+
+A hello world is 16 KB on Linux, about the size of C's. On Windows, Zamak links the C runtime statically, so a hello world is about 143 KB.
 
 ## What the safety checks cost
 

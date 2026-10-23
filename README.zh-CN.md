@@ -184,7 +184,7 @@ Zamak 想把 C、Rust、Go 与 Python 各自最擅长的部分融合在一起。
 | 独立的原生可执行文件 | ✓ | ✓ | ✓ | ✓ | ✗ |
 | 不写生命周期标注 | ✓ | ✓ | ✗ | ✓ | ✓ |
 
-在这些计算密集的程序上，Zamak 与 C 处在同一档，同时默认检查溢出与越界：n-body、spectral-norm、fannkuch-redux、素数统计和词频统计都在几个百分点内，互有高下，具体先后每次运行都可能不同。binary-trees 比 C 参考实现快约 3 倍，但这个差距来自两个 benchmark 程序本身的写法，不来自编译器：C 版本逐个节点 `malloc`，Zamak 版本复用了小的列表缓冲区。同样用 arena 分配的 C 版本只要 63 ms，而 Zamak 是 322 ms，所以这一项量的是分配策略，不是代码生成。编译参数也已对齐：给 C 加上 Zamak 后端同样使用的 `-funroll-loops` 并不会让它变快，反而在其余五项上更慢。之前这个文件写的"比 C 快 3 倍"没有这句说明，那个说法已经撤回。唯一的例外是 spectral-norm 的热点函数用了 `@wrapping`，只在这一个函数里关闭溢出检查。测试方法、两组对照、复现命令见 [bench/compare](bench/compare/README.md)。
+在这些计算密集的程序上，Zamak 与 C 处在同一档，同时默认检查溢出与越界：n-body、spectral-norm、fannkuch-redux 和词频统计都在几个百分点内，互有高下，具体先后每次运行都可能不同。素数统计上 Zamak 约是 C 参考实现的两倍快，Rust 更快：两个数都放得进 32 位时，Zamak 和 Rust 用 32 位除法，而 GCC 把 C 版本的 64 位 `%` 编译成完整的 64 位除法。binary-trees 比 C 参考实现快约 3 倍，但这个差距来自两个 benchmark 程序本身的写法，不来自编译器：C 版本逐个节点 `malloc`，Zamak 版本复用了小的列表缓冲区。同样用 arena 分配的 C 版本只要 63 ms，而 Zamak 是 322 ms，所以这一项量的是分配策略，不是代码生成。编译参数也已对齐：给 C 加上 Zamak 后端同样使用的 `-funroll-loops` 并不会让它变快，反而在其余五项上更慢。之前这个文件写的"比 C 快 3 倍"没有这句说明，那个说法已经撤回。唯一的例外是 spectral-norm 的热点函数用了 `@wrapping`，只在这一个函数里关闭溢出检查。测试方法、两组对照、复现命令见 [bench/compare](bench/compare/README.md)。
 
 ## 编辑器与 AI 工具
 
