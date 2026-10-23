@@ -111,28 +111,37 @@ static int64_t sub(int64_t a, int64_t b) {
     if ((b < 0 && a > INT64_MAX+b) || (b > 0 && a < INT64_MIN+b)) arithmetic_error();
     return a-b;
 }
+#if defined(_MSC_VER) && defined(_M_X64)
+#include <intrin.h>
+/* MSVC x64：_mul128 一条指令给出 128 位乘积；高 64 位不是低 64 位的符号扩展就是溢出。
+   可移植写法每次乘法都要做一次 64 位除法，热循环里会慢一倍。 */
+static int64_t mul(int64_t a, int64_t b) {
+    int64_t high;
+    int64_t low = _mul128(a, b, &high);
+    if (high != (low >> 63)) arithmetic_error();
+    return low;
+}
+#else
 static int64_t mul(int64_t a, int64_t b) {
     if (a > 0 ? (b > 0 ? a > INT64_MAX/b : b < INT64_MIN/a) :
         (a < 0 && (b > 0 ? a < INT64_MIN/b : b < 0 && a < INT64_MAX/b))) arithmetic_error();
     return a*b;
 }
 #endif
+#endif
 // 除以零与 Python 一样报 division by zero。
 static void zam_zero_division(void) { zam_panic_one("division by zero"); exit(1); }
 static int64_t quotient(int64_t a, int64_t b) {
     if (!b) zam_zero_division();
     if (a == INT64_MIN && b == -1) arithmetic_error();
-#if defined(__GNUC__) || defined(__clang__)
+    /* 两边都落在 32 位无符号范围时用 32 位除法，比 64 位除法快得多；所有编译器都适用。 */
     if (((uint64_t)a | (uint64_t)b) <= UINT32_MAX) return (int64_t)((uint32_t)a / (uint32_t)b);
-#endif
     return a/b;
 }
 static int64_t zam_remainder(int64_t a, int64_t b) {
     if (!b) zam_zero_division();
     if (a == INT64_MIN && b == -1) arithmetic_error();
-#if defined(__GNUC__) || defined(__clang__)
     if (((uint64_t)a | (uint64_t)b) <= UINT32_MAX) return (int64_t)((uint32_t)a % (uint32_t)b);
-#endif
     return a%b;
 }
 // Python 的 `//` 与 `%`：商向下取整，余数的符号跟除数。
