@@ -165,9 +165,53 @@ first
 
 Write the type with its parameter, as in `Stack[string]`. Annotate the variable when the value doesn't show the type, as with an empty `items` list.
 
+## Compared with object-oriented languages
+
+If you've written Python, Java, or C++, you might wonder whether Zamak is object-oriented. Zamak has structs and methods, so you can keep data together with the functions that work on it. It doesn't have class inheritance or interfaces.
+
+In an object-oriented language, "several kinds of animal that each make a different sound" is usually a base class with a few subclasses. In Zamak, you list the cases in an [enum](enums.md) and handle each one with `match` in a method:
+
+```zamak
+enum Animal:
+    Dog(name: string)
+    Cat(name: string, lives: i64)
+
+    fn speak(&self) -> string:
+        match self:
+            Dog(name): f"{name} says woof"
+            Cat(name, lives): f"{name} says meow ({lives} lives left)"
+
+fn main():
+    let pets: [Animal] = [Animal.Dog("Rex"), Animal.Cat("Tom", 9)]
+    for pet in pets:
+        println(pet.speak())
+```
+
+```text
+Rex says woof
+Tom says meow (9 lives left)
+```
+
+Every case is in one place. When you add a kind of animal, the compiler points to each `match` that needs a new branch. The trade-off is that code using the type can't add a new animal without changing `Animal`. When the users of a type need to plug in their own behavior, store a function in a field:
+
+```zamak
+struct Button:
+    label: string
+    on_click: fn(i64) -> i64
+
+fn main():
+    let b = Button(label: "double", on_click: fn(n): n * 2)
+    println(b.on_click(21))
+```
+
+```text
+42
+```
+
 ## Summary
 
 - `struct Name:` declares fields one per line; `Name(field: value, ...)` creates a value.
 - Methods go inside the struct and take `&self`, `&mut self`, or `self`. A function without `self` is called on the type.
 - A struct owns its fields; lists of structs are read and changed through `items[i].field`.
 - `struct Name[T]:` declares a generic struct.
+- There is no class inheritance and no interfaces: use an enum with `match` for variants, and a field of function type for pluggable behavior.

@@ -165,9 +165,53 @@ first
 
 写类型时带上参数，例如 `Stack[string]`。值本身看不出类型时（例如 `items` 是空列表），给变量加上标注。
 
+## 和面向对象语言比较
+
+如果你写过 Python、Java 或 C++，可能想知道 Zamak 算不算面向对象。Zamak 有结构体和方法，能把数据和操作它的函数放在一起；但没有类继承，也没有接口。
+
+在面向对象语言里，「几种动物都会叫，叫声各不相同」通常写成一个父类加几个子类。在 Zamak 里，用[枚举](enums.md)列出所有情况，在方法里用 `match` 分别处理：
+
+```zamak
+enum Animal:
+    Dog(name: string)
+    Cat(name: string, lives: i64)
+
+    fn speak(&self) -> string:
+        match self:
+            Dog(name): f"{name} says woof"
+            Cat(name, lives): f"{name} says meow ({lives} lives left)"
+
+fn main():
+    let pets: [Animal] = [Animal.Dog("Rex"), Animal.Cat("Tom", 9)]
+    for pet in pets:
+        println(pet.speak())
+```
+
+```text
+Rex says woof
+Tom says meow (9 lives left)
+```
+
+所有情况都写在一处。新增一种动物时，编译器会指出每一个需要补分支的 `match`。代价是，使用这个类型的人不能在不改 `Animal` 的情况下加一种新动物。需要让使用者自己扩展行为时，把函数存进字段：
+
+```zamak
+struct Button:
+    label: string
+    on_click: fn(i64) -> i64
+
+fn main():
+    let b = Button(label: "double", on_click: fn(n): n * 2)
+    println(b.on_click(21))
+```
+
+```text
+42
+```
+
 ## 小结
 
 - `struct Name:` 每行声明一个字段；`Name(field: value, ...)` 创建值。
 - 方法写在结构体里，第一个参数是 `&self`、`&mut self` 或 `self`。没有 `self` 的函数在类型上调用。
 - 结构体拥有它的字段；结构体列表通过 `items[i].field` 读写。
 - `struct Name[T]:` 声明泛型结构体。
+- 没有类继承和接口：几种变体用枚举加 `match`，可替换的行为用函数类型的字段。

@@ -139,9 +139,43 @@ fn main():
 [1, 2, 3, 4]
 ```
 
+## What you give up without lifetimes
+
+Skipping lifetime annotations has a cost. In Rust, a lifetime annotation tells the compiler that a returned borrow lives as long as a particular argument, so Rust can safely return borrows and store them in structs. Zamak never lets a borrow leave the call or block that created it. That removes the annotations, and it also rules out these patterns:
+
+| What you want to do | Rust | Zamak |
+| --- | --- | --- |
+| Return a borrow of one element of a list | `fn first<'a>(xs: &'a [String]) -> &'a String` | Not supported (ZM422). Return an index or a copy. |
+| Store a borrow in a struct, such as a parser that borrows its source text | A struct with a lifetime parameter | Not supported (ZM422). Let the struct own the data, or store indexes. |
+| Take part of a list without copying | `&xs[1..3]` | `xs[1:3]` copies that part. To only read it, loop over the indexes of the original list. |
+| Chain iterators, such as `iter().map().filter()` | Iterator objects that borrow the collection | No iterator objects. Use a `for` loop, or write a function that takes a function. |
+
+The most common replacement is to return an index:
+
+```zamak
+fn longest(words: &[string]) -> i64:
+    let mut best = 0
+    for i in range(len(words)):
+        if len(words[i]) > len(words[best]):
+            best = i
+    best
+
+fn main():
+    let words: [string] = ["fig", "banana", "kiwi"]
+    let i = longest(words)
+    println(f"{words[i]} is at index {i}")
+```
+
+```text
+banana is at index 1
+```
+
+The complexity doesn't disappear; it moves. Instead of writing correct lifetime annotations, you follow one rule: a borrow can't leave the call. The rule is easier to learn, and the compiler points at the exact spot when you break it (ZM421, ZM422). The cost is that some code that copies nothing in Rust needs a copy or an index in Zamak. If your program depends on returning borrows or on views that don't copy, Rust is the better fit today.
+
 ## Summary
 
 - `&T` borrows read-only. Zamak borrows a variable automatically when you pass it.
 - `&mut T` borrows mutably. Write `&mut x` at the call, and declare `x` with `let mut`.
 - A borrow lasts one call, or one block for a local. Borrows can't be stored or returned, so you never write lifetimes.
 - While a value is borrowed, it can't be changed or moved.
+- The cost: you can't return a borrow or store one in a struct. Return an index or an owned value instead.

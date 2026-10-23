@@ -151,6 +151,29 @@ Ada ordered 2 items
 Order(customer: "Ada", items: ["notebook", "pen"])
 ```
 
+## What a move does inside
+
+Earlier, this chapter said a move "copies a pointer". This section shows what that pointer is and what happens to the old variable. You don't need it to write Zamak code.
+
+A string variable doesn't hold the text itself. It holds a small record: where the text is and how long it is. The text lives in a separate block of memory. Zamak compiles your program to C, where the record looks like this:
+
+```c
+typedef struct { unsigned char *data; size_t len; size_t chars; } S;
+```
+
+`data` is the address of the text, which is the pointer. `len` counts bytes and `chars` counts characters. Lists and dictionaries work the same way: the variable holds a small record, and the elements live in another block of memory.
+
+`let other = name` compiles to roughly `S other = take(&name);`. `take` does two things:
+
+1. It copies the record from `name` to `other`. Now `other` holds the address of the text.
+2. It clears the record in `name`: the address becomes `NULL`, which points nowhere, and the length becomes 0.
+
+The text doesn't move and isn't freed. It only changes owner. At the end of the block, the compiler frees both `other` and `name`. Freeing `other` releases the text. Freeing `name` does nothing, because its address is `NULL`. So the text is freed exactly once.
+
+After the move, `name` points nowhere, but it isn't dangling. A dangling pointer still holds an address whose memory was already freed and may now hold other data, so reading it gives wrong results. Here it's the opposite: the text is still alive and owned by `other`, `name` holds no address at all, and the compiler won't let you use `name` again.
+
+So an assignment in Zamak doesn't give two names for the same data, as in Python. It doesn't give two independent copies either, as with numbers. After the assignment, exactly one name can be used.
+
 ## Why ownership
 
 - **No garbage collector.** Memory is freed at a known point, so there are no pauses and no extra memory held for later collection.
