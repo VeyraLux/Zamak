@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.1
 
 - One-click install: when `zam` isn't on `PATH`, the extension offers **Install with npm** (runs `npm install -g @veyralux/zamak` in a terminal) and **Zamak: Check for the zam Compiler Again** to pick it up afterwards.
 - The status bar shows the `zam` version in use, and turns into a warning with an install entry point when `zam` is missing.
