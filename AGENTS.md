@@ -4,6 +4,8 @@ This file is for anyone who changes Zamak itself, people and AI coding agents al
 
 If a file named `AGENTS.local.md` exists next to this one, read it too. It holds a maintainer's local notes and isn't part of the repository.
 
+**Talk to people in their language.** Reply in the language the person you work with writes in, and keep doing so for the whole session, including progress updates and summaries. The maintainer works in Chinese, so when you work for the maintainer, every reply is in Chinese. Code, commands, commit messages, and the English docs stay in English.
+
 ## What's where
 
 | Path | What it is |
