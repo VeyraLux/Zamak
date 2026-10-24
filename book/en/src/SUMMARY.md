@@ -56,3 +56,4 @@
 - [B. Performance](appendix-performance.md)
 - [C. Keywords and operators](appendix-operators.md)
 - [D. Diagnostic codes](appendix-diagnostics.md)
+- [E. How Zamak works](appendix-internals.md)

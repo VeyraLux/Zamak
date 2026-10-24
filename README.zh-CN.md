@@ -18,7 +18,7 @@
   &nbsp;·&nbsp;
   <a href="./PREVIEW.md">预览版安装</a>
   &nbsp;·&nbsp;
-  <a href="./CONTRIBUTING.md">参与开发</a>
+  <a href="./CONTRIBUTING.zh-CN.md">参与开发</a>
   &nbsp;·&nbsp;
   <a href="./docs/AI_WORKFLOW.md">AI 工作流</a>
   &nbsp;·&nbsp;
@@ -228,7 +228,7 @@ cargo fmt --manifest-path zam/Cargo.toml -- --check
 cargo clippy --manifest-path zam/Cargo.toml --all-targets --locked -- -D warnings
 ```
 
-开发规范、可复现的工程测量和仓库结构见 [贡献指南](CONTRIBUTING.md)，测试方法与性能结论见 [案例验证](docs/VALIDATION.md)。
+报告问题和提交改动的方法见 [贡献指南](CONTRIBUTING.zh-CN.md)，每次改动都要遵守的规则（包括要同步哪些文档）见 [AGENTS.md](AGENTS.md)，测试方法与性能结论见 [案例验证](docs/VALIDATION.md)。
 
 Zamak 0.2.0 是早期版本，1.0 之前语法与库都可能变化。
 

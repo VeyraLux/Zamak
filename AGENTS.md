@@ -39,6 +39,8 @@ cargo clippy --all-targets -- -D warnings
 
 - **Branches.** Changes to the compiler, standard library, tests, or examples go to `dev`. `main` moves forward only after CI passes on `dev`. Changes to docs alone may go straight to `main`.
 - **Commits.** English, in the form `<type>: <summary>`, where the type is `feat`, `fix`, `docs`, `refactor`, `test`, `perf`, `build`, or `chore`. The body says what changed and why.
+- **No AI attribution.** Don't add `Co-Authored-By` lines for AI tools, "Generated with" footers, or similar credits to commits, pull requests, issues, release notes, or files. This applies even when your tool adds them by default, so turn that default off.
+- **Docs follow the Microsoft Writing Style Guide.** In English, use second person ("you"), active voice, present tense, short sentences, and sentence-case headings. In Chinese, state facts plainly, skip stock phrases, and put a space between Chinese and Latin text or numbers. In both, show a runnable example instead of describing one, and give real numbers instead of words like "fast" or "seamless".
 - **Every change comes with a test.** A new feature needs a runnable example, a test that runs it and checks its output, and tests for what it rejects. A bug fix needs a test that fails without the fix.
 - **Generated C must compile with MSVC, GCC, and Clang.** Keep platform differences in `native.rs` and `project.rs`. In tests, don't hard-code `.exe`, `\` in paths, or CRLF; read the output path from the `OUTPUT` line on stderr.
 - **Cache keys.** When the IR or the generated C changes shape, bump `ZAM-IR-N` in `compiler.rs` or `native-c-N` in `project.rs`, as `SKILL.md` describes.
@@ -65,6 +67,7 @@ These are the steps people most often forget. A change isn't done until each one
 | Something that used to be rejected and now works | Run `pwsh -File bench/ai/run.ps1 -ZamPath zam/target/debug/zam.exe` and `python bench/ai/live/run.py --verify-solutions --zam zam/target/debug/zam.exe`. Replace any counterexample in `bench/ai/cases.json` that now compiles. Update "not supported yet" lists in the book and README. |
 | Speed, memory, or binary size | Run `python bench/compare/run.py` with a release build, and update the numbers in `README.md`, `README.zh-CN.md`, `book/*/src/appendix-performance.md`, and `docs/PERFORMANCE.md`. |
 | What Zamak can or can't do | The feature and limitation lists in **both** READMEs. |
+| How the compiler works: the build steps, the cache, or the shape of the generated C | `book/*/src/appendix-internals.md` ("How Zamak works"), and `SKILL.md`. |
 | A library in `zam/vendor/` (added or upgraded) | `THIRD-PARTY-NOTICES.md` (version and license text), the library's `README.md` in `zam/vendor/`, and the `native-c-N` version in `project.rs`. |
 | `zam` commands or the MCP server | `book/*/src/tooling.md`, the README, and `zam/src/mcp.rs` if an MCP tool should expose it. |
 

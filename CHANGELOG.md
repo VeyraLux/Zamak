@@ -155,6 +155,9 @@ change it. See `examples/ui/widgets.zm`.
 - `THIRD-PARTY-NOTICES.md` lists the licenses of the bundled Mbed TLS, libui-ng, and SQLite, and
   ships in every package. If you distribute a program that uses HTTPS, TLS, or `std/ui`, include the
   matching notice with it.
+- The Zamak Book has a new appendix, "How Zamak works". It follows a program from source to
+  executable and shows the C it turns into, how memory is freed, and how the build cache decides
+  what to rebuild.
 
 ### Fixes
 
@@ -436,6 +439,8 @@ HTTPS 装好就能用。`zam` 自带 Mbed TLS 3.6，按系统的根证书（或 
 - 新增两个平台的预编译版：Intel 芯片的 macOS 和 arm64 的 Linux，npm 和安装脚本都能装。
 - 新增 `THIRD-PARTY-NOTICES.md`，列出内置的 Mbed TLS、libui-ng、SQLite 的许可证，每个安装包都带着它。
   如果你分发的程序用到了 HTTPS、TLS 或 `std/ui`，请把对应的声明一起附上。
+- Zamak 语言手册新增附录“Zamak 是怎么工作的”：跟着一个程序从源码走到可执行文件，看它变成什么样的 C、
+  内存在哪里释放，以及构建缓存怎么决定要重新编译什么。
 
 ### 修复
 

@@ -56,3 +56,4 @@
 - [B. 性能](appendix-performance.md)
 - [C. 关键字与运算符](appendix-operators.md)
 - [D. 诊断码](appendix-diagnostics.md)
+- [E. Zamak 是怎么工作的](appendix-internals.md)

@@ -256,7 +256,7 @@ No REPL or debugger yet. On Linux, window programs need GTK 3, and the canvas ca
 
 ## Contribute
 
-For the development guide, see [CONTRIBUTING.md](CONTRIBUTING.md) (in Chinese). Before you submit a change, make sure these commands pass in the `zam` folder:
+To report a bug or send a change, see [CONTRIBUTING.md](CONTRIBUTING.md). The rules that every change follows, including the docs to update, are in [AGENTS.md](AGENTS.md). Before you submit a change, make sure these commands pass in the `zam` folder:
 
 ```sh
 cargo test --locked
