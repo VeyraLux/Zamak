@@ -4,11 +4,11 @@ The `zam` compiler contains the source code of the libraries below. It compiles 
 
 | Library | Version | Used by | License |
 | --- | --- | --- | --- |
-| [Mbed TLS](https://github.com/Mbed-TLS/mbedtls) | 3.6.7 | `std/tls`, and `https://` in `std/http` | Apache-2.0 (Mbed TLS is offered under Apache-2.0 OR GPL-2.0-or-later; Zamak uses it under Apache-2.0) |
+| [Mbed TLS](https://github.com/Mbed-TLS/mbedtls) | 3.6.7 | HTTPS in `std/http`, and `start_tls` and `accept_tls` in `std/net` | Apache-2.0 (Mbed TLS is offered under Apache-2.0 OR GPL-2.0-or-later; Zamak uses it under Apache-2.0) |
 | [libui-ng](https://github.com/libui-ng/libui-ng) | commit `43ba1ef` | `std/ui` | MIT |
 | [SQLite](https://sqlite.org) | 3.54.1 | `std/sqlite` | Public domain |
 
-If you distribute a program that uses `std/tls`, `https://`, or `std/ui`, include the matching notice below with it.
+If you distribute a program that uses HTTPS, TLS, or `std/ui`, include the matching notice below with it.
 
 ## Mbed TLS
 

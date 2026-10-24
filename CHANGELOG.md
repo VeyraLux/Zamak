@@ -7,140 +7,173 @@ and this file is the source for the text of each GitHub release.
 
 ## 0.2.0
 
-- **`bytes` for raw data.** `b"GIF\x89"`, `s.encode()`, and `b.decode()` work as in Python, and
-  indexing gives an integer from 0 to 255. `bytes` works like a list (`len`, slices, `push`,
-  `for b in data`), and writing a value outside 0 to 255 stops the program. `std/bytes` adds
-  `from_hex`, `hex`, and `zeros`; `std/fs` adds `read_bytes`, `write_bytes`, and `append_bytes`.
-- **String escapes `\xNN` and `\0`**, as in Python.
-- **`?` and `catch` work on method calls** such as `text.decode()?` and `line.parse_i64()?`.
-- **Clearer error** when you assign a list to a string variable: it now says the types differ
-  instead of "cannot move borrowed value".
-- **C handles.** `extern type Db: "sqlite3", close = sqlite3_close` declares a C pointer type that
-  Zamak closes exactly once when it goes out of scope. C functions return it as `Option[Db]` (NULL
-  is `None`) or through an output parameter `&mut Option[Db]`, and take it as `&Db`.
-- **`[native] headers`** lets Zamak call a C library through its own header, so `int` and
-  `size_t` parameters work without a C wrapper. `extern fn` also takes `&bytes` and `&mut bytes`.
-- **`?` and `catch` after a method chain**, such as `buf[:n].decode() catch e: "?"`.
-- **Default and keyword arguments**, as in Python: `fn connect(host: &string, port: i64 = 80)`
-  and `connect("a", timeout=1.5)`. Defaults are constants or `Option.None`, so calls never share
-  a mutable default. Methods take keyword arguments, and `Point(x=1, y=2)` builds a struct.
-- **Sets.** `{1, 2, 3}` has the type `{i64}`, with `add`, `remove`, `in`, `union`,
+Released 2026-10-24.
+
+0.1 could compute things and print them. 0.2 is about the programs it couldn't write yet: one that
+calls a web API, keeps data in a database, reads command-line options, or opens a window. Most of
+what's new came from writing four real programs in Zamak and fixing whatever got in the way. They're
+in `examples/apps/`: a multithreaded link checker, a to-do list, a notes REST service on SQLite, and
+a desktop ledger.
+
+A small program that uses three of the new modules:
+
+```zamak
+use std/cli
+use std/env
+use std/http
+use std/json
+
+struct Options:
+    repo: string
+
+struct Repo:
+    full_name: string
+    stargazers_count: i64
+
+fn main() -> !string:
+    let o: Options = cli.parse_or_exit(env.args())
+    let r = http.get(f"https://api.github.com/repos/{o.repo}", headers={"User-Agent": "zamak"})?
+    let repo: Repo = json.decode(r.text()?)?
+    println(f"{repo.full_name} has {repo.stargazers_count} stars")
+```
+
+### Upgrading from 0.1
+
+Two changes can break existing code.
+
+- `xs.remove(i)` used to remove the element at index `i`. List methods now mean what they mean in
+  Python: `remove(x)` removes the first element equal to `x`, and `pop(i)` removes and returns the
+  element at `i`. On a `[i64]`, `xs.remove(0)` still compiles but now looks for the value 0, so
+  search your code for `.remove(` and change the index calls to `pop`. If the value isn't in the
+  list, the program stops with an error, as Python raises `ValueError`.
+
+  ```zamak
+  let mut names = ["Ada", "Grace", "Ada"]
+  let first = names.pop(0)   # was names.remove(0)
+  names.remove("Ada")        # removes the first "Ada" that's left
+  ```
+
+- `Json.Number(f64)` is now two variants, `Json.Int(i64)` and `Json.Float(f64)`. `1` and `1.0` keep
+  their types through `loads` and `dumps`, and an integer too large for `i64` is an error instead
+  of a rounded float. A `match` arm on `Json.Number(n)` becomes two arms.
+
+The build cache format changed too, so the first build after upgrading compiles everything again.
+
+### Language
+
+- Default and keyword arguments, as in Python: `fn connect(host: &string, port: i64 = 80)`, then
+  `connect("a", timeout=1.5)`. A default can be a constant, `Option.None`, or a list or map of
+  constants such as `tags: &[string] = []`. Each call gets a fresh default, so calls never share
+  one mutable list. Methods take keyword arguments too, and `Point(x=1, y=2)` builds a struct.
+- Sets. `{1, 2, 3}` has the type `{i64}` and supports `add`, `remove`, `in`, `union`,
   `intersection`, `difference`, `issubset`, and `sorted(s)`.
-- **New standard library modules**, named as in Python: `std/process` (run programs and read their
-  output), `std/json` (`loads`, `dumps`), `std/re` (regular expressions on a linear-time engine,
-  so no pattern can hang a program; no backreferences or lookaround), `std/hashlib` (SHA-256,
-  SHA-1, MD5, HMAC-SHA256), and `std/base64`.
-- **Raw and triple-quoted strings**: `r"\d+"`, `"""say "hi" now"""`, and `r"""{"a": 1}"""`, plus the
-  `\uXXXX` and `\UXXXXXXXX` escapes.
-- Parts of the standard library are now written in Zamak and compiled with your program.
-- **Interfaces.** `interface Shape:` lists methods, and any type with those methods satisfies it,
-  with no `impl` to write. Use it as a type to keep values of different types in one list
-  (`[Shape]`, calls dispatch to each value), or as a bound on a type parameter
-  (`fn total[T: Shape]`, compiled once per type).
-- **Networking.** `std/http` sends requests in the shape of Python's `requests` (`http.get`,
-  `http.post`, `r.status`, `r.text()`, `r.json()`) and serves them with `http.serve`. `std/net` has
-  TCP connections and listeners that close when they go out of scope.
-- **HTTPS.** `https://` URLs use TLS and check the server's certificate against the system's roots
-  (or `SSL_CERT_FILE`). `http.serve` takes `cert_file` and `key_file` to serve HTTPS, and `std/net` has
-  `conn.start_tls(host)` and `listener.accept_tls(cert_file, key_file)`. TLS comes from Mbed TLS 3.6
-  (Apache-2.0), which `zam` carries and compiles into the cache the first time a program needs it.
-- `[native]` C sources compile in parallel, and a header's `__FILE__` no longer puts the build
-  machine's paths into the program.
-- **Threads.** `std/thread` runs a function on a new thread with `thread.spawn(work, args...)`, in
-  the shape of Python's `executor.submit`. Arguments move to the new thread, and `join()` returns the
-  result (or the function's error). Threads share nothing that can change; `thread.Queue[T]` carries
-  values between them, like Python's `queue.Queue`. `println` writes whole lines from any thread, and
-  TLS works from several threads at once.
-- A generic function whose type parameter appears only in its return type infers it from the
-  annotation: `let q: thread.Queue[i64] = thread.queue()`.
-- A list literal of strings, floats, booleans, structs, or lists no longer needs an annotation:
-  `let names = ["Ada", "Grace"]` is a `[string]`.
-- `[native]` compiles C++ (`.cpp`, `.cc`, `.cxx`) and, on macOS, Objective-C (`.m`) files as well as C,
-  and links the C++ runtime when it needs to. `frameworks = ["Foundation"]` links macOS frameworks.
-- A struct, enum, or tuple that holds only numbers, booleans, function values, and other such types
-  is copied on assignment, like a number, so the old variable stays usable: `let b = a` with
-  `a: Point`.
-- **Windows and controls.** `std/ui` builds desktop programs with each system's native controls
-  (Win32, AppKit, GTK 3): windows, labels, buttons, entries, text areas, check boxes, drop-down lists,
-  option buttons, sliders, spin boxes, progress bars, columns, rows, forms, grids, groups, tabs, and
-  file and message dialogs. The program's state is a struct passed to `app.run`, and handlers such as
-  `app.on_click(button, clicked)` receive it as `&mut`. It is built on libui-ng (MIT), which `zam`
-  carries and compiles into the cache the first time a program needs it.
-- `kept fn(...)` marks a parameter whose function is stored for later, so it only takes functions
-  that don't use local variables.
-- A generic method of a struct that isn't generic, such as `fn add[C: Control](&self, child: &C)`,
-  now infers its type parameters.
-- Reading a string element or field gives a copy: `let arg = args[i]` and `let why = c.error` work,
-  and the list or struct keeps its value.
-- String methods `rfind`, `removeprefix`, `removesuffix`, `capitalize`, `title`, `center`, `zfill`,
-  `isupper`, and `islower`, and `s.find(sub, start)`.
-- Interpolation takes any expression, including string literals and slices: `f"{d["key"]} {s[:5]}"`.
-- `std/http` follows redirects by default (`follow=false` turns it off) and has `http.urljoin`.
-- `examples/apps/linkcheck` checks the links of a web page with several threads.
-- **Dates and times.** `std/datetime` follows Python's `datetime`: `Date` and `DateTime`, `today()`,
-  `now()`, parsing and `isoformat()`, `strftime`, `add_days`, `days_since`, and time zone offsets.
-- More everyday shapes compile: indexing, slicing, and reading a field of a call result
-  (`line.split(",")[0]`, `user().name`), `?` after an element's method (`args[1].parse_i64()?`),
-  methods on struct literals, nested `catch e:`, `fail x` in several `catch` blocks, and a borrowed
-  plain value where a value is needed.
-- `examples/apps/todo` is a command-line task list that stores its tasks as JSON.
-- **JSON for any type.** `json.encode(value)` and `json.decode(text)` convert structs, lists, maps,
-  `Option`, and enums to and from JSON with no code to write; errors give the path, such as
-  `[0].tags[1]: the JSON value is not a string`. `Json` also has `as_list`, `lookup`, and `is_str`.
-- Moving a list, map, or struct field out of a struct you own uses up the struct: `let tasks = store.tasks`.
-- `[]` and `{}` work as a `catch` fallback value.
-- **`std/sqlite`**: SQLite 3.54.1 is built into `zam`. `db.execute(sql, params)`, `db.execute_named(sql, &value)`,
-  and `let rows: [T] = db.query(sql, params)?` store structs and read rows back as structs. Integers keep every digit,
-  `BOOLEAN` columns read back as `bool`, and anything that doesn't fit is an error.
-- **Breaking:** `Json.Number(f64)` is now two variants, `Json.Int(i64)` and `Json.Float(f64)`, as in Python.
-  `1` and `1.0` keep their types through `loads` and `dumps`, and an integer that doesn't fit in `i64` is an error.
-- Lists have `append`, the same as `push`.
-- **Breaking:** list methods now mean what they mean in Python. `xs.remove(x)` removes the first element equal to `x`,
-  and `xs.pop(i)` removes and returns the element at `i`; `xs.remove(i)` used to do what `pop(i)` does now.
-- Module constants can be lists and maps: `const NAMES = ["Food", "Home"]` works with `for`, `[i]`, methods, and `&` arguments.
-- **`std/cli`**: declare a struct and `cli.parse(args)` reads the command line into it. Fields are options and their types decide
-  how each is read: `bool` switches, required `i64`/`f64`/`string` values, `Option` for optional ones, lists for repeated ones,
-  and `args` for positional arguments. Errors name the option, and `--help` prints the options. `env.program()` is the program's name.
-  `examples/apps/todo` uses it.
-- `json.shape(sample)` describes a type's fields, for libraries that read data by type.
-- `http.get`, `http.post`, and `http.post_json` take `params` (encoded into the query string) and `headers`, as `requests` does,
-  and `http.post_json` takes any value.
-- A default parameter value can be a list or map of constants, such as `tags: &[string] = []` or `extra: &{string: string} = {}`.
-- **Prebuilt compilers for two more platforms**: macOS on Intel and Linux on arm64, from npm and the install script.
-  GitHub releases now carry the notes from this changelog, and the VS Code extension and the book site publish with each release.
-- **`THIRD-PARTY-NOTICES.md`** lists the licenses of the bundled Mbed TLS, libui-ng, and SQLite, and ships in every package.
-  If you distribute a program that uses `std/tls`, `https://`, or `std/ui`, include the matching notice with it.
-- Fixed: on Windows, builds running at the same time could report `corrupt cache entry`. MSVC's multithreaded code generation
-  sometimes picked different instructions for the same C under load; zam now asks for one code generation thread per file.
-- **Faster rebuilds.** zam remembers which C compiler it found, so a build where nothing changed takes about 4 ms
-  instead of about 100 ms on Windows. Builds also leave one CPU core free and run the C compiler at a lower priority,
-  so a cold build no longer makes the desktop stutter.
-- A multi-line `catch` block can end with a value: the lines before it run first, and the value is the result when the call fails.
-- **`http.serve` handles requests on several threads at once** (`workers=n`, by default twice the number of processors and at least 8),
-  and HTTPS handshakes happen on those threads too. `Request` has `args()` and `arg(name)` for query parameters,
-  `http.quote`, `http.unquote`, and `http.parse_query` match Python's `urllib.parse`, and `http.respond_json` takes any value.
-- `match` on the result of a call gives the arm its own copy of the data: you can change it or move it, as in
+- Interfaces. `interface Shape:` lists methods, and any type that has them satisfies it. You don't
+  write an `impl`. Use one as a type to keep different types in one list (`[Shape]`), or as a bound
+  (`fn total[T: Shape]`), which compiles once per type.
+- `bytes` for raw data. `b"GIF\x89"`, `s.encode()`, and `b.decode()` work as in Python, indexing gives
+  an integer from 0 to 255, and storing anything outside that range stops the program.
+- More string literals: raw strings `r"\d+"`, triple-quoted strings `"""say "hi" now"""`, and the
+  escapes `\xNN`, `\0`, `\uXXXX`, and `\UXXXXXXXX`. Interpolation takes any expression, including
+  string literals and slices: `f"{d["key"]} {s[:5]}"`.
+- Module constants can be lists and maps. `const NAMES = ["Food", "Home"]` works with `for`,
+  indexing, methods, and `&` arguments.
+- `?` and `catch` work after method calls and chains, as in `line.parse_i64()?` and
+  `buf[:n].decode() catch e: "?"`. A multi-line `catch` block can end with a value, `[]` and `{}`
+  work as fallbacks, and `catch` blocks can nest.
+- A struct, enum, or tuple that holds only numbers, booleans, and other plain values is copied on
+  assignment, like a number, so `let b = a` leaves `a` usable.
+- Fewer annotations. A list literal of strings, floats, structs, or lists knows its type
+  (`let names = ["Ada", "Grace"]`). A type parameter that appears only in the return type is read
+  from the annotation, for functions and methods alike: `let q: thread.Queue[i64] = thread.queue()`.
+- `match` on the result of a call gives each arm its own copy, so you can change or move it:
   `match jobs.get(): Some(job): done.append(job)`. `match` on a variable still borrows.
-- `examples/apps/notes` is a REST service for notes, backed by SQLite.
-- **`ui.table(columns)`** shows a read-only table: `set_rows(rows)`, `selected()`, `set_selected(i)`, and `app.on_change`
-  when the user selects another row.
-- **Draw your own controls.** `ui.canvas()` with `app.on_draw`, `app.on_mouse`, and `app.on_key`; the `Painter` draws paths,
-  rounded rectangles, circles, linear and radial gradients, and text, and can translate, rotate, scale, and clip.
-- **`std/widgets`**: default controls drawn on a canvas, which you can copy and change: switches, buttons, sliders, check boxes,
-  progress bars and rings, line and bar charts, cards, and badges, with light and dark themes. See `examples/ui/widgets.zm`.
-- `examples/apps/ledger` is a desktop ledger: a form, a table, monthly totals, and CSV export, with amounts kept in whole cents.
-- `s.ljust(width, fill)`, `s.rjust(width, fill)`, and `s.center(width, fill)` take a fill character, as in Python.
-- `let x = f()` where `f` returns nothing now says so, instead of reporting a borrow error.
-- Fixed on Linux: a control set as a window's child, such as a canvas, filled only its natural width; it now fills the window,
-  as on Windows and macOS. Changing a table's rows or selection in code no longer calls `on_change` on Linux, as on Windows.
-- Fixed: `catch` inside a call that takes a borrowed argument, such as `int(env.var("PORT") catch e: "8080")`, was rejected.
-- Fixed: `datetime.now()` and other local-time functions could return a wrong offset when several threads called them at once.
-- Fixed: a `CC` wrapper script that adds flags (such as `exec gcc -fsanitize=thread "$@"`) shared cached objects with plain `gcc`.
-  An empty `CC` now means the default compiler, as in `make`.
-- `let x: T = obj.method(...)` infers a method's type parameter from the annotation, as it already did for functions.
-- Fixed: `obj.method(x)?` crashed the compiler when the method's type parameter had the same name as another type's,
-  such as `T` in `Option[T]`.
-- A parenthesized value can take a method call: `(a + b).upper()`.
+- More everyday code compiles: indexing, slicing, and field access on a call result
+  (`line.split(",")[0]`, `user().name`), methods on struct literals and on parenthesized values
+  (`(a + b).upper()`), `let arg = args[i]` for a string element, and moving a field out of a
+  struct you own.
+- `kept fn(...)` marks a parameter whose function is stored for later. It only accepts functions
+  that don't capture local variables.
+
+### Standard library
+
+New modules, named after their Python counterparts:
+
+| Module | What it does |
+| --- | --- |
+| `std/http` | Requests in the style of `requests`: `http.get`, `http.post`, `http.post_json`, with `params`, `headers`, `timeout`, and redirects. `http.serve` handles requests on several threads (`workers=n`). `quote`, `unquote`, `parse_query`, and `urljoin` match `urllib.parse`. |
+| `std/net` | TCP connections and listeners that close when they go out of scope, plus `start_tls` and `accept_tls`. |
+| `std/json` | `loads` and `dumps`, and `json.encode` / `json.decode` for any struct, list, map, `Option`, or enum. A decode error names the path, such as `[0].tags[1]`. |
+| `std/sqlite` | SQLite 3.54.1, built into `zam`. `db.query` reads rows straight into structs, and integers keep every digit. |
+| `std/cli` | Declare a struct and `cli.parse(args)` fills it from the command line. Field types decide how options are read; `--help` comes for free. |
+| `std/thread` | `thread.spawn(work, args...)` and `join()`, in the style of `executor.submit`. `thread.Queue[T]` carries values between threads. Threads share nothing that can change. |
+| `std/datetime` | `Date` and `DateTime`, `today()`, `now()`, ISO parsing, `strftime`, and time zone offsets. |
+| `std/process` | Run a program and read its output: `run`, `call`, `check_output`. |
+| `std/re` | Regular expressions on a linear-time engine, so no pattern can hang your program. No backreferences or lookaround. |
+| `std/hashlib`, `std/base64`, `std/bytes` | SHA-256, SHA-1, MD5, and HMAC-SHA256; Base64; `from_hex`, `hex`, and `zeros`. |
+
+HTTPS works out of the box. `zam` carries Mbed TLS 3.6 and checks certificates against the
+system's root store (or `SSL_CERT_FILE`). `http.serve` takes `cert_file` and `key_file` to serve
+HTTPS.
+
+Smaller additions: string methods `rfind`, `removeprefix`, `removesuffix`, `capitalize`, `title`,
+`center`, `zfill`, `isupper`, `islower`, `find(sub, start)`, and a fill character for `ljust`,
+`rjust`, and `center`; `append` on lists; `read_bytes`, `write_bytes`, and `append_bytes` in
+`std/fs`; `env.program()` for the program's name; `json.shape(sample)` for libraries that read data
+by type. Part of the standard library is now written in Zamak itself and compiled with your program.
+
+### Desktop apps
+
+`std/ui` builds windows with each system's own controls: Win32 on Windows, AppKit on macOS, and
+GTK 3 on Linux. It has labels, buttons, entries, text areas, check boxes, drop-down lists, option
+buttons, sliders, spin boxes, progress bars, tables, tabs, forms, grids, and file and message
+dialogs. The program's state is a struct you pass to `app.run`, and handlers receive it as `&mut`.
+
+When the built-in controls aren't enough, `ui.canvas()` lets you draw your own. The `Painter` draws
+paths, rounded rectangles, circles, gradients, and text, and `app.on_mouse` and `app.on_key` bring in
+mouse and keyboard input.
+`std/widgets` is a set of controls drawn this way (switches, sliders, progress rings, line and bar
+charts, cards, and badges) in light and dark themes. They're plain Zamak, so you can copy one and
+change it. See `examples/ui/widgets.zm`.
+
+### Calling C
+
+- `extern type Db: "sqlite3", close = sqlite3_close` declares a C pointer that Zamak closes exactly
+  once. C functions return it as `Option[Db]`, where NULL is `None`.
+- `[native] headers` compiles calls against the library's own header, so `int` and `size_t`
+  parameters work without a wrapper.
+- `[native]` also compiles C++ and, on macOS, Objective-C, and `frameworks = ["Foundation"]` links
+  macOS frameworks. Native sources compile in parallel.
+
+### Builds and tools
+
+- Rebuilds are faster. `zam` remembers which C compiler it found, so a build where nothing changed
+  takes about 4 ms on Windows, down from about 100 ms.
+- Builds leave one CPU core free and run the C compiler at below-normal priority, so a cold build no
+  longer makes the desktop stutter.
+- Prebuilt compilers for two more platforms: macOS on Intel and Linux on arm64, from npm and the
+  install script.
+- `THIRD-PARTY-NOTICES.md` lists the licenses of the bundled Mbed TLS, libui-ng, and SQLite, and
+  ships in every package. If you distribute a program that uses HTTPS, TLS, or `std/ui`, include the
+  matching notice with it.
+
+### Fixes
+
+- On Windows, builds running at the same time could report `corrupt cache entry`. Under load, MSVC's
+  multithreaded code generation sometimes produced different instructions for the same C file, so
+  `zam` now compiles each file on one code generation thread.
+- On Linux, a window's only child (such as a canvas) filled just its natural width instead of the
+  window. Changing a table's rows from code also triggered `on_change`. Both now behave as they do
+  on Windows and macOS.
+- `datetime.now()` and other local-time functions could return the wrong offset when several threads
+  called them at once.
+- A `CC` wrapper script that adds flags, such as `exec gcc -fsanitize=thread "$@"`, shared cached
+  objects with plain `gcc`. An empty `CC` now means the default compiler, as in `make`.
+- `obj.method(x)?` crashed the compiler when the method's type parameter had the same name as
+  another type's, such as `T`.
+- `catch` inside an argument that's passed by reference, as in
+  `int(env.var("PORT") catch e: "8080")`, was rejected.
+- Clearer errors: assigning a list to a string variable reports a type mismatch instead of a borrow
+  error, and `let x = f()` where `f` returns nothing says so.
 
 ## 0.1.1
 
@@ -276,120 +309,147 @@ this preview.
 
 ## 0.2.0（中文）
 
-- **`bytes` 类型，用来存原始数据。** `b"GIF\x89"`、`s.encode()`、`b.decode()` 与 Python 相同，下标读出
-  0 到 255 的整数。`bytes` 的用法和列表一样（`len`、切片、`push`、`for b in data`），写入 0 到 255
-  以外的数会让程序停下。`std/bytes` 新增 `from_hex`、`hex`、`zeros`；`std/fs` 新增 `read_bytes`、
-  `write_bytes`、`append_bytes`。
-- **字符串转义新增 `\xNN` 和 `\0`**，与 Python 相同。
-- **方法调用也能接 `?` 和 `catch`**，例如 `text.decode()?`、`line.parse_i64()?`。
-- **报错更清楚**：把列表赋给字符串变量时，现在说类型不同，而不是“不能移动被借用的值”。
-- **C 句柄。** `extern type Db: "sqlite3", close = sqlite3_close` 声明一个 C 指针类型，离开作用域时
-  Zamak 正好调用一次 close。C 函数以 `Option[Db]` 返回它（NULL 是 `None`），或通过输出参数
-  `&mut Option[Db]` 交出它；参数写 `&Db`。
-- **`[native] headers`**：按 C 库自己的头文件调用，`int`、`size_t` 参数不用再写 C 包装。
-  `extern fn` 也能接收 `&bytes` 和 `&mut bytes`。
-- **方法链之后也能接 `?` 和 `catch`**，例如 `buf[:n].decode() catch e: "?"`。
-- **默认参数与关键字实参**，写法同 Python：`fn connect(host: &string, port: i64 = 80)`、
-  `connect("a", timeout=1.5)`。默认值只能是常量或 `Option.None`，不会出现多次调用共用一个可变默认值的问题。
+2026-10-24 发布。
+
+0.1 能算东西、能打印。0.2 补的是以前写不出来的程序：调网络接口、把数据存进数据库、读命令行选项、开一个窗口。
+这一版的新东西大多来自用 Zamak 写四个真实程序时碰到的问题，程序都在 `examples/apps/` 里：多线程的链接检查器、
+命令行待办清单、基于 SQLite 的笔记 REST 服务，以及一个桌面记账本。
+
+下面这个小程序用到了三个新模块：
+
+```zamak
+use std/cli
+use std/env
+use std/http
+use std/json
+
+struct Options:
+    repo: string
+
+struct Repo:
+    full_name: string
+    stargazers_count: i64
+
+fn main() -> !string:
+    let o: Options = cli.parse_or_exit(env.args())
+    let r = http.get(f"https://api.github.com/repos/{o.repo}", headers={"User-Agent": "zamak"})?
+    let repo: Repo = json.decode(r.text()?)?
+    println(f"{repo.full_name} has {repo.stargazers_count} stars")
+```
+
+### 从 0.1 升级
+
+有两处改动可能让旧代码出问题。
+
+- 以前 `xs.remove(i)` 按下标删除。现在列表方法与 Python 同义：`remove(x)` 删掉第一个等于 `x` 的元素，
+  `pop(i)` 删掉并返回下标 `i` 处的元素。在 `[i64]` 上，`xs.remove(0)` 仍然能编译，但意思变成了“删掉值 0”，
+  所以请搜一下代码里的 `.remove(`，把按下标删除的地方改成 `pop`。要删的值不在列表里时，程序会报错停下，
+  和 Python 抛出 `ValueError` 一样。
+
+  ```zamak
+  let mut names = ["Ada", "Grace", "Ada"]
+  let first = names.pop(0)   # 以前写 names.remove(0)
+  names.remove("Ada")        # 删掉剩下的第一个 "Ada"
+  ```
+
+- `Json.Number(f64)` 拆成了 `Json.Int(i64)` 和 `Json.Float(f64)` 两个变体。`1` 和 `1.0` 经过 `loads`、`dumps`
+  之后类型不变；超出 `i64` 范围的整数会报错，不会悄悄变成一个近似的小数。原来匹配 `Json.Number(n)` 的分支要拆成两个。
+
+构建缓存的格式也变了，升级后第一次构建会全部重新编译。
+
+### 语言
+
+- 默认参数和关键字实参，写法同 Python：`fn connect(host: &string, port: i64 = 80)`，调用时写
+  `connect("a", timeout=1.5)`。默认值可以是常量、`Option.None`，或由常量组成的列表和字典，例如
+  `tags: &[string] = []`。每次调用拿到的都是新的默认值，不会出现几次调用共用同一个列表的问题。
   方法也能用关键字实参，结构体可以写 `Point(x=1, y=2)`。
-- **集合。** `{1, 2, 3}` 的类型是 `{i64}`，支持 `add`、`remove`、`in`、`union`、`intersection`、
-  `difference`、`issubset` 和 `sorted(s)`。
-- **新的标准库模块**，名字同 Python：`std/process`（运行程序、读取输出）、`std/json`（`loads`、`dumps`）、
-  `std/re`（正则表达式，线性时间引擎，任何表达式都不会让程序卡死；不支持反向引用与环视）、
-  `std/hashlib`（SHA-256、SHA-1、MD5、HMAC-SHA256）和 `std/base64`。
-- **原始字符串与三引号字符串**：`r"\d+"`、`"""say "hi" now"""`、`r"""{"a": 1}"""`，以及 `\uXXXX`、
-  `\UXXXXXXXX` 转义。
-- 标准库的一部分改用 Zamak 编写，和你的程序一起编译。
-- **接口。** `interface Shape:` 列出方法，有这些方法的类型自动满足它，不用写 `impl`。接口可以当类型，
-  把不同类型的值放进同一个列表（`[Shape]`，调用时按各自的类型分派），也可以约束类型参数
-  （`fn total[T: Shape]`，每种类型各生成一份代码）。
-- **网络。** `std/http` 发请求的写法参考 Python 的 `requests`（`http.get`、`http.post`、`r.status`、
-  `r.text()`、`r.json()`），`http.serve` 处理请求。`std/net` 提供 TCP 连接与监听，离开作用域时自动关闭。
-- **HTTPS。** `https://` 地址走 TLS，用系统的根证书（或 `SSL_CERT_FILE`）校验服务器证书。`http.serve` 传
-  `cert_file` 与 `key_file` 即提供 HTTPS；`std/net` 有 `conn.start_tls(host)` 与
-  `listener.accept_tls(cert_file, key_file)`。TLS 来自 Mbed TLS 3.6（Apache-2.0），`zam` 自带源码，
-  程序第一次用到时编译进缓存。
-- `[native]` 的 C 源码并行编译；头文件里的 `__FILE__` 不再把构建机器的路径带进程序。
-- **线程。** `std/thread` 用 `thread.spawn(work, 参数...)` 在新线程里运行函数，写法参考 Python 的
-  `executor.submit`。参数移交给新线程，`join()` 取回返回值（或函数的错误）。线程之间不共享可以修改的数据，
-  用 `thread.Queue[T]` 传递值，形状参考 Python 的 `queue.Queue`。任何线程的 `println` 都按整行输出，
-  TLS 可以在多个线程里同时用。
-- 类型参数只出现在返回类型里的泛型函数，按标注推断：`let q: thread.Queue[i64] = thread.queue()`。
-- 字符串、浮点数、布尔值、结构体或列表组成的列表字面量不再需要标注：`let names = ["Ada", "Grace"]` 是 `[string]`。
-- `[native]` 除了 C，还编译 C++（`.cpp`、`.cc`、`.cxx`）与 macOS 上的 Objective-C（`.m`），需要时链接 C++ 运行库；
-  `frameworks = ["Foundation"]` 链接 macOS 的 framework。
-- 只含数字、布尔值、函数值与这类类型的结构体、枚举和元组，赋值时像数字一样复制，原来的变量还能用：
-  `a: Point` 时 `let b = a` 之后 `a` 照样可用。
-- **窗口程序。** `std/ui` 用各系统的原生控件（Win32、AppKit、GTK 3）写桌面程序：窗口、标签、按钮、输入框、
-  多行文本框、复选框、下拉框、单选按钮、滑块、数字框、进度条，纵向、横向、表单、网格、分组、选项卡布局，
-  以及文件与消息对话框。程序状态是交给 `app.run` 的结构体，`app.on_click(button, clicked)` 这样的回调
-  以 `&mut` 收到它。底层是 libui-ng（MIT），`zam` 自带源码，程序第一次用到时编译进缓存。
-- `kept fn(...)` 标出函数会被保存下来的参数，它只收不用局部变量的函数。
-- 非泛型结构体的泛型方法（如 `fn add[C: Control](&self, child: &C)`）现在能推断类型参数。
-- 读取字符串元素或字段得到副本：`let arg = args[i]`、`let why = c.error` 都能写，列表与结构体不变。
-- 字符串方法 `rfind`、`removeprefix`、`removesuffix`、`capitalize`、`title`、`center`、`zfill`、`isupper`、
-  `islower`，以及 `s.find(sub, start)`。
-- 插值里可以写任何表达式，包括字符串字面量与切片：`f"{d["key"]} {s[:5]}"`。
-- `std/http` 默认跟随重定向（`follow=false` 关闭），新增 `http.urljoin`。
-- `examples/apps/linkcheck`：用多个线程检查网页上的链接。
-- **日期与时间。** `std/datetime` 参考 Python 的 `datetime`：`Date` 与 `DateTime`、`today()`、`now()`、解析与
-  `isoformat()`、`strftime`、`add_days`、`days_since`，以及时区偏移。
-- 更多日常写法可以编译：调用结果上取下标、切片和字段（`line.split(",")[0]`、`user().name`），元素方法后接 `?`
-  （`args[1].parse_i64()?`），结构体字面量上调方法，嵌套的 `catch e:`，几个 `catch` 块里 `fail` 同一个值，
-  以及在要值的地方使用借来的纯数据值。
-- `examples/apps/todo`：命令行的待办事项，任务存成 JSON。
-- **任何类型都能转成 JSON。** `json.encode(value)` 与 `json.decode(text)` 在 JSON 和结构体、列表、字典、`Option`、
-  枚举之间直接转换，不用写转换代码；出错时带着路径，例如 `[0].tags[1]: the JSON value is not a string`。
-  `Json` 还新增了 `as_list`、`lookup`、`is_str`。
-- 从自己拥有的结构体里移出列表、字典或结构体字段，会用掉整个结构体：`let tasks = store.tasks`。
-- `[]` 和 `{}` 可以当 `catch` 的回退值。
-- **`std/sqlite`**：SQLite 3.54.1 编进了 `zam`。`db.execute(sql, params)`、`db.execute_named(sql, &value)` 与
-  `let rows: [T] = db.query(sql, params)?` 直接存结构体、把结果行读成结构体。整数保留每一位，`BOOLEAN` 列读回 `bool`，
-  放不进去的直接报错。
-- **不兼容：** `Json.Number(f64)` 拆成 `Json.Int(i64)` 和 `Json.Float(f64)` 两个变体，和 Python 一样。
-  `1` 与 `1.0` 经过 `loads`、`dumps` 类型不变；超出 `i64` 的整数报错。
-- 列表有了 `append`，与 `push` 相同。
-- **不兼容：** 列表方法和 Python 同义：`xs.remove(x)` 删掉第一个等于 `x` 的元素，`xs.pop(i)` 取走并返回第 `i` 个元素；
-  以前的 `xs.remove(i)` 就是现在的 `pop(i)`。
-- 模块级常量可以是列表和字典：`const NAMES = ["Food", "Home"]` 能用在 `for`、`[i]`、方法调用和 `&` 实参里。
-- **`std/cli`**：声明一个结构体，`cli.parse(args)` 就把命令行读进去。字段就是选项，类型决定怎么读：`bool` 是开关，
-  `i64`/`f64`/`string` 必须给值，`Option` 可以不写，列表可以写几次，`args` 收位置参数。出错时指出是哪个选项，`--help` 打印用法。
-  `env.program()` 是程序名。`examples/apps/todo` 用上了它。
-- `json.shape(sample)` 描述一个类型的字段，给按类型读数据的库用。
-- `http.get`、`http.post`、`http.post_json` 接受 `params`（编码进查询串）和 `headers`，同 `requests`；`http.post_json` 可以直接传任何值。
-- 参数默认值可以是由常量组成的列表或字典，如 `tags: &[string] = []`、`extra: &{string: string} = {}`。
-- **又多了两个平台的预编译版**：Intel 芯片的 macOS 和 arm64 的 Linux，npm 与安装脚本都能装。
-  GitHub Release 的说明直接取自本文件，VS Code 插件与网站也随每次发布一起更新。
-- **新增 `THIRD-PARTY-NOTICES.md`**：列出内置的 Mbed TLS、libui-ng、SQLite 的许可证，随每个安装包分发。
-  如果你分发的程序用到了 `std/tls`、`https://` 或 `std/ui`，请把对应的声明一起附上。
-- 修复：Windows 上几个构建同时进行时，可能报 `corrupt cache entry`。MSVC 的多线程代码生成在机器忙时偶尔为同一份 C
-  挑出不同的指令；现在每个文件只用一个代码生成线程。
-- **重新构建更快。** zam 记住找到的 C 编译器，什么都没改时一次构建约 4 毫秒，Windows 上以前约 100 毫秒。
-  构建时留出一个 CPU 核，C 编译器以较低优先级运行，冷构建不再让桌面卡顿。
-- 多行的 `catch` 块可以以一个值结尾：前面几行先执行，这个值就是调用失败时的结果。
-- **`http.serve` 用几个线程同时处理请求**（`workers=n`，默认是处理器个数的两倍，至少 8 个），HTTPS 握手也在这些线程里做。
-  `Request` 有 `args()` 与 `arg(name)` 读查询参数，`http.quote`、`http.unquote`、`http.parse_query` 对应 Python 的
-  `urllib.parse`，`http.respond_json` 可以直接传任何值。
-- 对调用结果做 `match` 时，分支拿到的数据归自己：可以修改、移走，如 `match jobs.get(): Some(job): done.append(job)`。
-  对变量做 `match` 仍然是借用。
-- `examples/apps/notes`：存笔记的 REST 服务，数据在 SQLite 里。
-- **`ui.table(columns)`**：只读表格，`set_rows(rows)`、`selected()`、`set_selected(i)`；用户选中别的行时触发 `app.on_change`。
-- **自己画控件。** `ui.canvas()` 配合 `app.on_draw`、`app.on_mouse`、`app.on_key`；`Painter` 能画路径、圆角矩形、圆、
-  线性与径向渐变和文字，还能平移、旋转、缩放、裁剪。
-- **`std/widgets`**：画在画布上的默认组件，可以复制了改：开关、按钮、滑块、复选框、进度条与进度环、折线图与柱状图、
-  卡片、徽章，配浅色与深色主题。见 `examples/ui/widgets.zm`。
-- `examples/apps/ledger`：桌面记账本，表单、表格、按月汇总、导出 CSV，金额按整数分保存。
-- `s.ljust(width, fill)`、`s.rjust(width, fill)`、`s.center(width, fill)` 可以指定填充字符，同 Python。
-- `let x = f()` 而 `f` 什么也不返回时，报错直接说明这一点，不再报借用错误。
-- 修复（Linux）：直接放进窗口的控件（如画布）只有自然宽度，现在和 Windows、macOS 一样铺满窗口。程序自己改表格的数据或选中行
-  时，Linux 上也不再调用 `on_change`（同 Windows）。
-- 修复：`catch` 放在借用参数的调用里（如 `int(env.var("PORT") catch e: "8080")`）会被拒绝。
-- 修复：几个线程同时调用 `datetime.now()` 等本地时间函数时，可能得到错误的时区偏移。
-- 修复：加了参数的 `CC` 包装脚本（如 `exec gcc -fsanitize=thread "$@"`）与普通 `gcc` 共用缓存的目标文件。
-  `CC` 为空时和没设一样，用默认编译器（同 `make`）。
-- `let x: T = obj.method(...)` 可以按标注推断方法的类型参数，和函数一样。
-- 修复：方法的类型参数与别的类型的同名（如 `Option[T]` 的 `T`）时，`obj.method(x)?` 让编译器崩溃。
-- 括号里的值也能接方法调用：`(a + b).upper()`。
+- 集合。`{1, 2, 3}` 的类型是 `{i64}`，支持 `add`、`remove`、`in`、`union`、`intersection`、`difference`、
+  `issubset` 和 `sorted(s)`。
+- 接口。`interface Shape:` 列出一组方法，哪个类型有这些方法，就算实现了这个接口，不用写 `impl`。
+  接口可以当类型用，把不同类型的值放进同一个列表（`[Shape]`）；也可以当约束用（`fn total[T: Shape]`），
+  这时每种类型各编译一份。
+- `bytes` 类型，用来存原始数据。`b"GIF\x89"`、`s.encode()`、`b.decode()` 与 Python 相同，下标读出 0 到 255 的整数，
+  存入这个范围以外的数会让程序停下。
+- 更多字符串写法：原始字符串 `r"\d+"`、三引号字符串 `"""say "hi" now"""`，以及转义 `\xNN`、`\0`、`\uXXXX`、
+  `\UXXXXXXXX`。插值里可以写任何表达式，包括字符串字面量和切片：`f"{d["key"]} {s[:5]}"`。
+- 模块常量可以是列表和字典。`const NAMES = ["Food", "Home"]` 能用在 `for`、下标、方法调用和 `&` 参数里。
+- 方法调用和方法链后面也能接 `?` 和 `catch`，例如 `line.parse_i64()?`、`buf[:n].decode() catch e: "?"`。
+  多行的 `catch` 块可以用一个值结尾，`[]` 和 `{}` 可以当兜底值，`catch` 块也可以嵌套。
+- 只含数字、布尔值等简单值的结构体、枚举和元组，赋值时像数字一样复制，`let b = a` 之后 `a` 照样能用。
+- 少写类型标注。字符串、小数、结构体或列表组成的列表字面量能自己推出类型（`let names = ["Ada", "Grace"]`）。
+  只出现在返回类型里的类型参数，会从变量的标注里读出来，函数和方法都一样：`let q: thread.Queue[i64] = thread.queue()`。
+- 对函数调用的结果做 `match` 时，每个分支拿到的是自己的一份，可以修改或移走：
+  `match jobs.get(): Some(job): done.append(job)`。对变量做 `match` 仍然是借用。
+- 更多常见写法能编译了：对调用结果取下标、切片、读字段（`line.split(",")[0]`、`user().name`），
+  在结构体字面量和括号表达式上调方法（`(a + b).upper()`），用 `let arg = args[i]` 取出字符串元素，
+  以及从自己拥有的结构体里移走一个字段。
+- `kept fn(...)` 标记一个会被存起来以后再调用的函数参数，它只接受不捕获局部变量的函数。
+
+### 标准库
+
+新模块，名字与 Python 里对应的模块一致：
+
+| 模块 | 用途 |
+| --- | --- |
+| `std/http` | 用法照着 `requests`：`http.get`、`http.post`、`http.post_json`，支持 `params`、`headers`、`timeout` 和重定向。`http.serve` 用多个线程处理请求（`workers=n`）。`quote`、`unquote`、`parse_query`、`urljoin` 与 `urllib.parse` 相同。 |
+| `std/net` | TCP 连接和监听，离开作用域时自动关闭；还有 `start_tls` 和 `accept_tls`。 |
+| `std/json` | `loads` 和 `dumps`；`json.encode` / `json.decode` 能转换任意结构体、列表、字典、`Option` 和枚举。解析出错时会指出位置，例如 `[0].tags[1]`。 |
+| `std/sqlite` | 内置 SQLite 3.54.1。`db.query` 直接把行读成结构体，整数一位不丢。 |
+| `std/cli` | 声明一个结构体，`cli.parse(args)` 就把命令行填进去。字段的类型决定选项怎么读，`--help` 自动就有。 |
+| `std/thread` | `thread.spawn(work, args...)` 和 `join()`，用法照着 `executor.submit`。线程之间用 `thread.Queue[T]` 传值，不共享任何可变的东西。 |
+| `std/datetime` | `Date` 和 `DateTime`、`today()`、`now()`、ISO 格式解析、`strftime`，以及时区偏移。 |
+| `std/process` | 运行别的程序并读取输出：`run`、`call`、`check_output`。 |
+| `std/re` | 正则表达式，用的是线性时间的引擎，什么样的表达式都不会让程序卡死。不支持反向引用和环视。 |
+| `std/hashlib`、`std/base64`、`std/bytes` | SHA-256、SHA-1、MD5、HMAC-SHA256；Base64；`from_hex`、`hex`、`zeros`。 |
+
+HTTPS 装好就能用。`zam` 自带 Mbed TLS 3.6，按系统的根证书（或 `SSL_CERT_FILE`）校验证书。
+`http.serve` 传入 `cert_file` 和 `key_file` 就能提供 HTTPS 服务。
+
+其他小的补充：字符串方法 `rfind`、`removeprefix`、`removesuffix`、`capitalize`、`title`、`center`、`zfill`、
+`isupper`、`islower`、`find(sub, start)`，`ljust`、`rjust`、`center` 可以指定填充字符；列表有了 `append`；
+`std/fs` 新增 `read_bytes`、`write_bytes`、`append_bytes`；`env.program()` 返回程序名；
+`json.shape(sample)` 给按类型读数据的库用。标准库有一部分改用 Zamak 自己写，和你的程序一起编译。
+
+### 桌面程序
+
+`std/ui` 用各系统自己的控件做窗口：Windows 上是 Win32，macOS 上是 AppKit，Linux 上是 GTK 3。
+有标签、按钮、输入框、多行文本框、复选框、下拉列表、单选按钮、滑块、数字框、进度条、表格、标签页、表单、网格，
+以及文件和消息对话框。程序的状态是一个结构体，交给 `app.run`，事件处理函数以 `&mut` 拿到它。
+
+自带的控件不够用时，可以用 `ui.canvas()` 自己画。`Painter` 能画路径、圆角矩形、圆、渐变和文字，
+`app.on_mouse` 和 `app.on_key` 接收鼠标和键盘输入。`std/widgets` 是一套这样画出来的控件（开关、滑块、环形进度、
+折线图和柱状图、卡片、徽标），有浅色和深色两套主题。它们就是普通的 Zamak 代码，可以复制一份改成你想要的样子。
+参见 `examples/ui/widgets.zm`。
+
+### 调用 C
+
+- `extern type Db: "sqlite3", close = sqlite3_close` 声明一个 C 指针类型，Zamak 保证正好关闭一次。
+  C 函数以 `Option[Db]` 返回它，NULL 就是 `None`。
+- `[native] headers` 按 C 库自己的头文件生成调用，`int`、`size_t` 参数不用再写 C 包装。
+- `[native]` 还能编译 C++，在 macOS 上还能编译 Objective-C；`frameworks = ["Foundation"]` 链接 macOS 框架。
+  原生源码并行编译。
+
+### 构建与工具
+
+- 重新构建更快了。`zam` 会记住找到的 C 编译器，在 Windows 上，什么都没改的构建从大约 100 毫秒降到大约 4 毫秒。
+- 构建时留出一个 CPU 核，并以较低优先级运行 C 编译器，冷构建不会再让电脑卡顿。
+- 新增两个平台的预编译版：Intel 芯片的 macOS 和 arm64 的 Linux，npm 和安装脚本都能装。
+- 新增 `THIRD-PARTY-NOTICES.md`，列出内置的 Mbed TLS、libui-ng、SQLite 的许可证，每个安装包都带着它。
+  如果你分发的程序用到了 HTTPS、TLS 或 `std/ui`，请把对应的声明一起附上。
+
+### 修复
+
+- Windows 上同时运行几个构建时，可能报 `corrupt cache entry`。原因是 MSVC 的多线程代码生成在机器繁忙时，
+  同一个 C 文件偶尔会编出不同的指令。现在 `zam` 让每个文件只用一个代码生成线程。
+- Linux 上，窗口里唯一的子控件（例如画布）只占自身的宽度，没有铺满窗口；用代码修改表格的行也会触发 `on_change`。
+  现在两处都和 Windows、macOS 一致。
+- 多个线程同时调用 `datetime.now()` 等本地时间函数时，时区偏移可能出错。
+- 加了参数的 `CC` 包装脚本（例如 `exec gcc -fsanitize=thread "$@"`）会和普通的 `gcc` 共用缓存的目标文件。
+  现在 `CC` 为空表示使用默认编译器，和 `make` 一样。
+- 方法的类型参数和其他类型的类型参数同名（例如都叫 `T`）时，`obj.method(x)?` 会让编译器崩溃。
+- 按引用传递的参数里写 `catch`，例如 `int(env.var("PORT") catch e: "8080")`，以前会被拒绝。
+- 报错更清楚：把列表赋给字符串变量时，报的是类型不同，而不是借用错误；`f` 什么都不返回时写 `let x = f()`，
+  会直接说明这一点。
 
 ## 0.1.1（中文）
 
