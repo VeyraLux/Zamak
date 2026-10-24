@@ -1,10 +1,10 @@
-# Zamak 0.1.1 安装说明
+# Zamak 0.2.0 安装说明
 
 这是早期版本，1.0 之前语法及缓存格式可能变化，暂不建议用于生产。
 
 ## 安装与工具链
 
-最省事的方式是 npm（Windows x64、Linux x64、macOS Apple 芯片）：
+最省事的方式是 npm（Windows x64、Linux x64 与 arm64、macOS Apple 芯片与 Intel）：
 
 ```sh
 npm install -g @veyralux/zamak    # 或 bun add -g @veyralux/zamak；不安装直接试用：npx @veyralux/zamak --version
@@ -58,4 +58,4 @@ zam fmt hello
 
 ## 发布状态
 
-v0.1.0 与 v0.1.1 已于 2026-10-19 发布为 GitHub Release，同时发布到 npm（`@veyralux/zamak`）。发布流程通过手动触发或打 tag 启动，产物包含各平台安装包与 SHA-256 清单。本文档描述的是安装与首次使用，不替代 CHANGELOG 的版本说明。
+v0.1.0 与 v0.1.1 已于 2026-10-19 发布为 GitHub Release，同时发布到 npm（`@veyralux/zamak`）。v0.2.0 起，推送版本标签后自动构建五个平台的安装包，并发布 GitHub Release、npm 包、VS Code 插件和 Book 网站。发布流程通过手动触发或打 tag 启动，产物包含各平台安装包与 SHA-256 清单。本文档描述的是安装与首次使用，不替代 CHANGELOG 的版本说明。

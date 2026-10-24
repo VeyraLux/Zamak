@@ -5,7 +5,7 @@ and this file is the source for the text of each GitHub release.
 
 <!-- 中文版在下半部分。Chinese version: scroll down or search for "## 0.1.1（中文）". -->
 
-## Unreleased
+## 0.2.0
 
 - **`bytes` for raw data.** `b"GIF\x89"`, `s.encode()`, and `b.decode()` work as in Python, and
   indexing gives an integer from 0 to 255. `bytes` works like a list (`len`, slices, `push`,
@@ -272,7 +272,7 @@ this preview.
 
 ---
 
-## 未发布（中文）
+## 0.2.0（中文）
 
 - **`bytes` 类型，用来存原始数据。** `b"GIF\x89"`、`s.encode()`、`b.decode()` 与 Python 相同，下标读出
   0 到 255 的整数。`bytes` 的用法和列表一样（`len`、切片、`push`、`for b in data`），写入 0 到 255

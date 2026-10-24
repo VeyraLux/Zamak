@@ -41,16 +41,16 @@ Install the dependency once, then link the folder into your extensions directory
 cd editors/vscode
 npm install
 # Windows
-New-Item -ItemType Junction -Path "$env:USERPROFILE\.vscode\extensions\zamak-0.1.1" -Target "$PWD"
+New-Item -ItemType Junction -Path "$env:USERPROFILE\.vscode\extensions\zamak-0.2.0" -Target "$PWD"
 # macOS and Linux
-ln -s "$PWD" ~/.vscode/extensions/zamak-0.1.1
+ln -s "$PWD" ~/.vscode/extensions/zamak-0.2.0
 ```
 
 To build a `.vsix` package, run:
 
 ```powershell
 npx @vscode/vsce package
-code --install-extension zamak-0.1.1.vsix
+code --install-extension zamak-0.2.0.vsix
 ```
 
 `node scripts/check-grammar.mjs` checks that the three JSON files parse, that every TextMate regular expression compiles, that the language ID, file extension, and scope name agree, and that every command registered in `extension.js` is declared in `package.json` (and the other way round). When you change keywords or operators, update `syntaxes/zamak.tmLanguage.json`, `language-configuration.json`, and the keyword list in that script.

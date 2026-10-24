@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.0
+
+- Highlighting for `bytes` literals (`b"GIF\x89"`), `\0` and `\xNN` escapes, and the `interface` keyword and the `bytes` type.
+- Released together with Zamak 0.2.0. Everything the language server reports comes from `zam lsp`, so the new language features show up in diagnostics, completion, and hover without an extension update.
+
 ## 0.1.1
 
 - One-click install: when `zam` isn't on `PATH`, the extension offers **Install with npm** (runs `npm install -g @veyralux/zamak` in a terminal) and **Zamak: Check for the zam Compiler Again** to pick it up afterwards.

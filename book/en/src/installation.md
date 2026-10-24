@@ -49,7 +49,7 @@ zam --version
 ```
 
 ```console
-0.1.1
+0.2.0
 ```
 
 If your shell can't find `zam`, open a new terminal so that it picks up the updated `PATH`.
@@ -64,13 +64,13 @@ The VS Code extension in [editors/vscode](https://github.com/VeyraLux/Zamak/tree
 ```sh
 # Linux and macOS
 cd /path/to/Zamak/editors/vscode && npm install
-ln -s /path/to/Zamak/editors/vscode ~/.vscode/extensions/zamak-0.1.1
+ln -s /path/to/Zamak/editors/vscode ~/.vscode/extensions/zamak-0.2.0
 ```
 
 ```powershell
 # Windows
 cd C:\path\to\Zamak\editors\vscode; npm install
-New-Item -ItemType Junction -Path "$env:USERPROFILE\.vscode\extensions\zamak-0.1.1" -Target "C:\path\to\Zamak\editors\vscode"
+New-Item -ItemType Junction -Path "$env:USERPROFILE\.vscode\extensions\zamak-0.2.0" -Target "C:\path\to\Zamak\editors\vscode"
 ```
 
 The extension runs the `zam` on your `PATH`. To use another one, set **zamak.path** in the VS Code settings. Other editors that speak the Language Server Protocol can run `zam lsp` the same way.
