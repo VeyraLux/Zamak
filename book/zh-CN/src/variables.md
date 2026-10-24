@@ -159,6 +159,27 @@ welcome: up to 100 users at 0.25
 
 常量的值可以由字面量、运算符和前面的常量组成，例如 `const SECONDS_PER_DAY = 24 * 60 * 60`。值由编译器算出，所以常量在运行时没有任何开销。
 
+常量也可以是由这些值组成的列表或字典。每个用到它的地方得到一份新的，改这一份不会改到常量本身：
+
+```zamak
+const CATEGORIES = ["Food", "Home", "Fun"]
+const LIMITS = {"low": 1, "high": 10}
+
+fn main():
+    for name in CATEGORIES:
+        println(name)
+    println(CATEGORIES[1])
+    println(LIMITS["high"])
+```
+
+```text
+Food
+Home
+Fun
+Home
+10
+```
+
 ## 命名规则
 
 - 变量、函数和模块用 `lower_snake_case`：`user_count`、`read_file`。

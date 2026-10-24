@@ -48,7 +48,7 @@ fn main():
     xs.insert(1, 4)
     println(xs)
     let last = xs.pop()
-    let first = xs.remove(0)
+    let first = xs.pop(0)
     println(f"{first} {last} {xs}")
     xs.extend([1, 2])
     xs.reverse()
@@ -68,8 +68,8 @@ fn main():
 | --- | --- |
 | `xs.push(v)` | Adds `v` at the end. |
 | `xs.insert(i, v)` | Inserts `v` at position `i`. |
-| `xs.pop()` | Removes and returns the last element. |
-| `xs.remove(i)` | Removes and returns the element at `i`. |
+| `xs.pop()`, `xs.pop(i)` | Removes and returns the last element, or the element at `i`. |
+| `xs.remove(x)` | Removes the first element equal to `x`. It's an error if there's none. |
 | `xs.extend(ys)` | Moves all of `ys` to the end. |
 | `xs.reverse()`, `xs.clear()`, `xs.swap(i, j)` | Reverse, empty, and swap in place. |
 

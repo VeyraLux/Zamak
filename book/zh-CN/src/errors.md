@@ -50,7 +50,22 @@ fn main():
 3000
 ```
 
-这个值必须是写在同一行的一个表达式，类型要与调用的结果相同。如果要先执行几条语句，就写一个缩进的代码块，并用 `return`、`fail`、`break` 或 `continue` 离开。
+值的类型要与调用的结果相同。如果要先执行几条语句，就写一个缩进的代码块，最后一行单独写这个值。前面几行依次执行，最后一行就是结果：
+
+```zamak
+fn main():
+    let port = int("eighty") catch e:
+        println(f"bad port: {e}")
+        3000
+    println(port)
+```
+
+```text
+bad port: invalid integer: eighty
+3000
+```
+
+最后一行是一个值（不是函数调用）时才算结果。代码块也可以用 `return`、`fail`、`break` 或 `continue` 离开。
 
 ## 用 ? 把错误传下去
 

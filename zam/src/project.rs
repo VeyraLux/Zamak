@@ -1179,6 +1179,37 @@ impl Project {
         locals: &BTreeSet<String>,
         body: &mut Block,
     ) -> Result<()> {
+        // `for n in NAMES`（NAMES 是列表或字典常量）：循环的对象是名字，换成循环前的隐藏局部变量，
+        // 同 `for n in [..]` 的写法。
+        let mut index = 0;
+        while index < body.len() {
+            let (instruction, position) = &body[index];
+            let position = *position;
+            if let Instruction::Each(_, _, container, _, _) = instruction {
+                let path = container.clone();
+                let target = match path.split_once('.') {
+                    Some((root, field)) => Expr::Field(root.into(), field.into()),
+                    None => Expr::Variable(path.clone()),
+                };
+                if !locals.contains(path.split('.').next().unwrap_or(&path)) {
+                    if let Some(value @ (Expr::Array(_) | Expr::MapLit(_))) = self
+                        .constant_use(module, locals, &target)
+                        .map_err(|error| self.located(module, position, error))?
+                    {
+                        let hidden = format!("$for_const_{}_{}", position.0, position.1);
+                        if let (Instruction::Each(_, _, container, _, _), _) = &mut body[index] {
+                            *container = hidden.clone();
+                        }
+                        body.insert(
+                            index,
+                            (Instruction::Let(hidden, false, None, value), position),
+                        );
+                        index += 1;
+                    }
+                }
+            }
+            index += 1;
+        }
         for (instruction, position) in body {
             let position = *position;
             // `print(x)` 与 Python 一样打印一行（同 println）；模块自己定义了 print 时用自己的。
@@ -1306,9 +1337,15 @@ impl Project {
                 "private constant {path}; declare it with pub const"
             ));
         }
-        if borrowed && !matches!(constant.value, Expr::Text(_)) {
+        // 借用常量：字符串当 `&string`，列表与字典当 `&[T]`、`&{K: V}`（字面量本来就能这样传）。
+        if borrowed
+            && !matches!(
+                constant.value,
+                Expr::Text(_) | Expr::Array(_) | Expr::MapLit(_)
+            )
+        {
             return Err(format!(
-                "cannot borrow the constant {path}; only string constants can be passed as &string"
+                "cannot borrow the constant {path}; only string, list and map constants can be borrowed"
             ));
         }
         Ok(Some(constant.value.clone()))
@@ -1372,6 +1409,64 @@ impl Project {
         if let Some(value) = self.constant_use(module, locals, expr)? {
             *expr = value;
             return Ok(());
+        }
+        // `NAMES.index_of(x)` 解析时是带点的调用 `Call("NAMES.index_of")`；`config.TAGS.m()` 也是。
+        if let Expr::Call(name, _) = expr {
+            if let Some((prefix, method)) = name.rsplit_once('.') {
+                let root = prefix.split('.').next().unwrap_or(prefix);
+                let target = match prefix.split_once('.') {
+                    Some((root, field)) => Expr::Field(root.into(), field.into()),
+                    None => Expr::Variable(prefix.to_owned()),
+                };
+                let method = method.to_owned();
+                if !locals.contains(root) {
+                    if let Some(value @ (Expr::Array(_) | Expr::MapLit(_))) =
+                        self.constant_use(module, locals, &target)?
+                    {
+                        let Expr::Call(_, args) = std::mem::replace(expr, Expr::Bool(false)) else {
+                            unreachable!("matched above")
+                        };
+                        *expr = Expr::Chain(Box::new(value), method, args);
+                        return self.resolve_expr(module, locals, expr);
+                    }
+                }
+            }
+        }
+        // `NAMES[1]`、`NAMES.index_of(x)`：接收者是列表或字典常量时，换成对字面量取下标或调方法
+        // （同调用结果上的 `f()[i]`、`f().m()`）。
+        if let Expr::Index(path, _)
+        | Expr::Method(path, _, _)
+        | Expr::ElementMethod(path, _, _, _, _) = expr
+        {
+            let path = path.clone();
+            // `xs[i].tags.m()` 这种元素里的字段不改写，照常解析。
+            let plain =
+                !matches!(expr, Expr::ElementMethod(_, _, field, _, _) if !field.is_empty());
+            let root = path.split('.').next().unwrap_or(&path);
+            if plain && !locals.contains(root) {
+                let target = match path.split_once('.') {
+                    Some((root, field)) => Expr::Field(root.into(), field.into()),
+                    None => Expr::Variable(path.clone()),
+                };
+                if let Some(value @ (Expr::Array(_) | Expr::MapLit(_))) =
+                    self.constant_use(module, locals, &target)?
+                {
+                    *expr = match std::mem::replace(expr, Expr::Bool(false)) {
+                        Expr::Index(_, index) => {
+                            Expr::Chain(Box::new(value), "$at".into(), vec![*index])
+                        }
+                        Expr::Method(_, method, args) => Expr::Chain(Box::new(value), method, args),
+                        // `GRID[1][0]`：先取第 1 项，再对它调 `$at`。
+                        Expr::ElementMethod(_, index, _, method, args) => Expr::Chain(
+                            Box::new(Expr::Chain(Box::new(value), "$at".into(), vec![*index])),
+                            method,
+                            args,
+                        ),
+                        _ => unreachable!("matched above"),
+                    };
+                    return self.resolve_expr(module, locals, expr);
+                }
+            }
         }
         match expr {
             // `f(x)`：f 是局部的函数值。

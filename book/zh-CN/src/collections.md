@@ -48,7 +48,7 @@ fn main():
     xs.insert(1, 4)
     println(xs)
     let last = xs.pop()
-    let first = xs.remove(0)
+    let first = xs.pop(0)
     println(f"{first} {last} {xs}")
     xs.extend([1, 2])
     xs.reverse()
@@ -68,8 +68,8 @@ fn main():
 | --- | --- |
 | `xs.push(v)` | 在末尾添加 `v`。 |
 | `xs.insert(i, v)` | 在位置 `i` 插入 `v`。 |
-| `xs.pop()` | 移除并返回最后一个元素。 |
-| `xs.remove(i)` | 移除并返回位置 `i` 的元素。 |
+| `xs.pop()`、`xs.pop(i)` | 移除并返回最后一个元素，或位置 `i` 的元素。 |
+| `xs.remove(x)` | 删掉第一个等于 `x` 的元素；没有时是运行时错误。 |
 | `xs.extend(ys)` | 把 `ys` 全部移到末尾。 |
 | `xs.reverse()`、`xs.clear()`、`xs.swap(i, j)` | 就地反转、清空、交换。 |
 

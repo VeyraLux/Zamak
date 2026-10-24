@@ -172,7 +172,7 @@ fn tick(s: &mut Demo):
         s.values.append(max(5.0, last + float((s.ticks * 7919) % 21 - 10)))
 
         if len(s.values) > 40:
-            s.values.remove(0)
+            s.values.pop(0)
 
     s.canvas.redraw()
 

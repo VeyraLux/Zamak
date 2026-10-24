@@ -159,6 +159,27 @@ welcome: up to 100 users at 0.25
 
 A constant's value can use literals, operators, and earlier constants, such as `const SECONDS_PER_DAY = 24 * 60 * 60`. The compiler computes it, so a constant costs nothing at run time.
 
+A constant can also be a list or a map of such values. Each place that uses it gets a fresh copy, so changing a copy never changes the constant:
+
+```zamak
+const CATEGORIES = ["Food", "Home", "Fun"]
+const LIMITS = {"low": 1, "high": 10}
+
+fn main():
+    for name in CATEGORIES:
+        println(name)
+    println(CATEGORIES[1])
+    println(LIMITS["high"])
+```
+
+```text
+Food
+Home
+Fun
+Home
+10
+```
+
 ## Naming rules
 
 - Variables, functions, and modules use `lower_snake_case`: `user_count`, `read_file`.

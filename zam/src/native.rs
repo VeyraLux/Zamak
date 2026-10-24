@@ -5170,6 +5170,12 @@ fn comparable_list_helpers(elem: Elem) -> String {
         ),
         Elem::Record(_) | Elem::Nested(_) | Elem::Func(_) => return String::new(),
     };
+    // `xs.remove(x)` 取下来的元素：字符串要释放，数字不用。
+    let drop = if elem == Elem::Str {
+        "drop(&x);"
+    } else {
+        "(void)x;"
+    };
     // `xs.sum()`：整数求和与 `+` 一样检查溢出。
     let sum = match elem {
         Elem::Int | Elem::Byte => format!("static int64_t sum{l}({l} *l) {{ int64_t s = 0; size_t i; for (i = 0; i < l->len; i++) s = add(s, l->data[i]); return s; }}\n"),
@@ -5199,6 +5205,7 @@ static void sort{l}({l} *l) {{
 }}
 static int64_t index{l}({l} *l, {param} v) {{ size_t i; for (i = 0; i < l->len; i++) {{ {t} x = l->data[i]; if ({equal}) return (int64_t)i; }} return -1; }}
 static int has{l}({l} *l, {param} v) {{ return index{l}(l, v) >= 0; }}
+static void removeval{l}({l} *l, {param} v) {{ int64_t i = index{l}(l, v); {t} x; if (i < 0) {{ zam_panic_one(\"list.remove(x): x is not in the list\"); exit(1); }} x = removeat{l}(l, i); {drop} }}
 static {l} slice{l}({l} *l, int64_t from, int64_t to) {{ {l} out = {{0}}; int64_t i; zam_clamp(&from, &to, l->len); for (i = from; i < to; i++) {{ {t} x = l->data[i]; push{l}(&out, {copy}); }} return out; }}
 static {l} sorted{l}({l} *l) {{ {l} out = slice{l}(l, 0, (int64_t)l->len); sort{l}(&out); return out; }}
 static {t} min{l}({l} *l) {{ size_t i, best = 0; if (!l->len) {{ zam_panic_one(\"min() of an empty list\"); exit(1); }} for (i = 1; i < l->len; i++) if (cmp{l}(&l->data[i], &l->data[best]) < 0) best = i; {{ {t} x = l->data[best]; return {copy}; }} }}
@@ -5868,9 +5875,12 @@ impl<'a> Generator<'a> {
                     .1
             }
             Expr::Chain(receiver, method, _) => {
-                method_signature(self.ty(receiver), method)
-                    .expect("checked method")
-                    .2
+                method_signature(
+                    crate::compiler::literal_list(self.ty(receiver), receiver),
+                    method,
+                )
+                .expect("checked method")
+                .2
             }
             Expr::Bool(_) | Expr::StringEqual(_, _) => Type::Bool,
             Expr::Text(_) | Expr::Format(_) => Type::Owned,
@@ -6393,7 +6403,7 @@ impl<'a> Generator<'a> {
                 }
             }
             Expr::Chain(receiver, method, args) => {
-                let ty = self.ty(receiver);
+                let ty = crate::compiler::literal_list(self.ty(receiver), receiver);
                 let (_, params, result) = method_signature(ty, method).expect("checked method");
                 // 调用结果是临时值，登记在 owners 里，语句结束时释放。
                 let value = self.expr_as(receiver, ty);
@@ -6835,7 +6845,11 @@ impl<'a> Generator<'a> {
                         && (crate::compiler::empty_fallback(value, result)
                             || crate::compiler::fallback_fits(self.ty(value), result))
                 });
-                let returned = if let Some(value) = fallback {
+                let tail = crate::compiler::catch_tail(block).filter(|_| result != Type::Unit);
+                let returned = if let Some((prefix, value, _)) = tail {
+                    let prefix: Block = prefix.to_vec();
+                    self.block_tail(&prefix, self.result, Some((value, result, &temp)))
+                } else if let Some(value) = fallback {
                     // 回退值的临时变量声明在 `if` 块里，也要在块里释放（移走后只剩空壳）。
                     let scope = self.owners.len();
                     let value = self.expr_as(value, result);
@@ -7020,7 +7034,8 @@ impl<'a> Generator<'a> {
             "contains" => "has",
             "append" => "push",
             "get" => "getor",
-            "remove" if list => "removeat",
+            "$pop_at" => "removeat",
+            "remove" if list => "removeval",
             "remove" | "discard" => "del",
             "index_of" => "index",
             "sort_by" => "sortby",
@@ -7244,6 +7259,16 @@ impl<'a> Generator<'a> {
         }
     }
     fn block(&mut self, body: &Block, result_type: Type) -> bool {
+        self.block_tail(body, result_type, None)
+    }
+    /// 代码块；`tail` 是 catch 块最后那个当作值的表达式（值, 类型, 结果变量）：在块里的变量
+    /// 释放之前求值，写进结果变量。
+    fn block_tail(
+        &mut self,
+        body: &Block,
+        result_type: Type,
+        tail: Option<(&Expr, Type, &str)>,
+    ) -> bool {
         let outer = self.locals.clone();
         let scope_start = self.owners.len();
         let mut returned = false;
@@ -7367,9 +7392,10 @@ impl<'a> Generator<'a> {
                 Instruction::Let(name, _, annotation, expr) => {
                     let ty = match (annotation, loop_list(name, expr)) {
                         (Some(ty), _) => *ty,
-                        (None, Some(first)) => {
-                            Type::List(elem_from(self.ty(first)).expect("checked loop list"))
-                        }
+                        (None, Some(first)) => Type::List(
+                            elem_from(crate::compiler::literal_list(self.ty(first), first))
+                                .expect("checked loop list"),
+                        ),
                         (None, None) => self.ty(expr),
                     };
                     // 函数里定义的 fn：函数体可能调用自己，递归在 `lambda_named` 里直接
@@ -7735,6 +7761,14 @@ impl<'a> Generator<'a> {
                     ));
                     returned = true;
                 }
+            }
+        }
+        if let Some((value, ty, target)) = tail {
+            if !returned {
+                let value = self.expr_as(value, ty);
+                let value = self.moved(&value, ty);
+                self.code
+                    .push_str(&format!("{target}.ok = 1;\n{target}.value = {value};\n"));
             }
         }
         if !returned {

@@ -249,7 +249,7 @@ fn custom_error_types() {
 #[test]
 fn catch_with_a_single_value_is_the_fallback() {
     // `f() catch e: value`：块只有一个表达式时，它就是出错时的值（与 Zig 的 catch 相同）。
-    // 多条语句的 catch 块照旧：值要用时必须用 return、fail、break 或 continue 离开，块尾的值不算。
+    // 多条语句的 catch 块以单独的值（不是调用）结尾时，前面几行先执行，最后的值是出错时的值。
     let case = common::Case::new("errors", "catch-fallback");
     let output = case.run("use std/env\n\nfn parse(text: &string) -> i64!string:\n    int(text)?\n\nfn label(n: i64) -> string!string:\n    if n < 0: fail \"negative\"\n    f\"n={n}\"\n\nfn total(items: &[string]) -> i64:\n    let mut sum = 0\n    for item in items:\n        sum += parse(item) catch e: 0\n    sum\n\nfn main():\n    let home = env.var(\"ZAMAK_SURELY_UNSET\") catch e: \"unknown\"\n    println(home)\n    println(parse(\"42\") catch e: -1)\n    println(parse(\"x\") catch e: -1)\n    println(float(\"oops\") catch e: 1)\n    println(label(-3) catch e: e)\n    println(total([\"1\", \"two\", \"3\"]))\n");
     assert!(
@@ -261,6 +261,32 @@ fn catch_with_a_single_value_is_the_fallback() {
         String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
         "unknown\n42\n-1\n1.0\nnegative\n4\n"
     );
-    let rejected = case.run("fn parse(text: &string) -> i64!string:\n    int(text)?\n\nfn main():\n    let n = parse(\"x\") catch e:\n        println(e)\n        0\n    println(n)\n");
-    assert!(!rejected.status.success());
+    let output = case.run(include_str!("../../examples/values/catch_blocks.zm"));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "bad port: invalid integer: 80x\n8080\n1\ndefault\n-1\n7\nskip x\n9\n",
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // 最后一行是调用时不算值（看不出是值还是语句）；调用不返回值、类型不对时都报错。
+    for (body, message) in [
+        (
+            "let n = parse(\"x\") catch e:\n        println(e)\n        parse(\"0\")?\n    println(n)",
+            "",
+        ),
+        (
+            "check(\"x\") catch e:\n        println(e)\n        0",
+            "returns nothing",
+        ),
+        (
+            "let n = parse(\"x\") catch e:\n        println(e)\n        \"zero\"\n    println(n)",
+            "last line of the catch block",
+        ),
+    ] {
+        let source = format!("fn parse(text: &string) -> i64!string:\n    int(text)?\n\nfn check(text: &string) -> !string:\n    parse(text)?\n\nfn main() -> !string:\n    {body}\n");
+        let rejected = case.run(&source);
+        let stderr = String::from_utf8_lossy(&rejected.stderr);
+        assert!(!rejected.status.success(), "accepted {body}");
+        assert!(stderr.contains(message), "{body}: {stderr}");
+    }
 }

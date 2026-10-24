@@ -256,7 +256,7 @@ fn list_and_map_methods() {
     );
     // 排序稳定：-0.0 与 0.0 保持原顺序；NaN 排在最后；字符串元素移出与清空都不泄漏。
     let output = case.run(
-        "use std/math\nfn main():\n    let mut xs: [f64] = [0.0, -0.0, math.inf - math.inf, -2.0, 0.0]\n    xs.sort()\n    println(\"{xs[0]} {xs[1]} {xs[2]} {xs[3]} {xs[4]}\")\n    let mut words: [string] = [\"b\", \"a\"]\n    words.insert(1, \"c\")\n    let w = words.remove(0)\n    println(w)\n    let tail = words.slice(1, 2)\n    words.extend(tail)\n    println(\"{words[0]}{words[1]}{words[2]}\")\n    words.clear()\n    println(words.len())\n",
+        "use std/math\nfn main():\n    let mut xs: [f64] = [0.0, -0.0, math.inf - math.inf, -2.0, 0.0]\n    xs.sort()\n    println(\"{xs[0]} {xs[1]} {xs[2]} {xs[3]} {xs[4]}\")\n    let mut words: [string] = [\"b\", \"a\"]\n    words.insert(1, \"c\")\n    let w = words.pop(0)\n    println(w)\n    let tail = words.slice(1, 2)\n    words.extend(tail)\n    println(\"{words[0]}{words[1]}{words[2]}\")\n    words.clear()\n    println(words.len())\n",
     );
     assert_eq!(stdout(&output), "-2.0 0.0 -0.0 0.0 NaN\nb\ncaa\n0\n");
     // `append` 是 Python 的写法，与 `push` 相同；结构体字段上的列表也一样。
@@ -264,9 +264,18 @@ fn list_and_map_methods() {
         "struct Bag:\n    items: [string]\nfn main():\n    let mut xs: [i64] = []\n    xs.append(1)\n    xs.append(2)\n    let mut bag = Bag(items: [])\n    bag.items.append(\"pen\")\n    println(xs)\n    println(bag.items)\n",
     );
     assert_eq!(stdout(&output), "[1, 2]\n[\"pen\"]\n");
+    // 同 Python：remove(x) 按值删第一个，pop(i) 按下标取走；结构体自己的 pop(i) 不受影响。
+    let output = case.run(
+        "struct Stack:\n    n: i64\n\n    fn pop(&mut self, k: i64) -> i64:\n        self.n -= k\n        self.n\n\nfn main():\n    let mut xs: [i64] = [3, 1, 3, 2]\n    xs.remove(3)\n    println(xs)\n    println(xs.pop(-1))\n    println(xs.pop(0))\n    println(xs)\n    let mut words: [string] = [\"a\", \"b\", \"a\"]\n    words.remove(\"a\")\n    println(words)\n    let mut s = Stack(n: 10)\n    println(s.pop(3))\n",
+    );
+    assert_eq!(stdout(&output), "[1, 3, 2]\n2\n1\n[3]\n[\"b\", \"a\"]\n7\n");
     for (body, message) in [
         (
-            "let mut xs: [i64] = [1]\n    println(xs.remove(1))",
+            "let mut xs: [i64] = [1, 2]\n    xs.remove(5)",
+            "zam: list.remove(x): x is not in the list",
+        ),
+        (
+            "let mut xs: [i64] = [1]\n    println(xs.pop(1))",
             "zam: list index out of bounds",
         ),
         // 负下标从末尾数，越过开头才越界。

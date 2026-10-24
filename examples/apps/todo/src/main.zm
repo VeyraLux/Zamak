@@ -130,7 +130,7 @@ fn main() -> !string:
         if command == "done":
             tasks[at].done = true
         else:
-            tasks.remove(at)
+            tasks.pop(at)
 
         save(file, tasks)?
         println(f"{command} {args[1]}")

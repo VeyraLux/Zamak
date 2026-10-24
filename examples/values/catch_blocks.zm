@@ -1,0 +1,29 @@
+# catch 块可以先做几件事，最后一行写出错时用的值；也可以用 return、fail、break、continue 离开。
+fn parse_port(text: &string) -> i64!string:
+    int(text)?
+
+fn main():
+    let port = parse_port("80x") catch e:
+        println(f"bad port: {e}")
+        let fallback = 8000
+        fallback + 80
+
+    println(port)
+    let name = parse_port("1") catch e:
+        println("unused")
+        0
+
+    println(name)
+    let conf = parse_port("nope") catch e:
+        let base = "default"
+        println(base)
+        -1
+
+    println(conf)
+
+    for t in ["7", "x", "9"]:
+        let n = parse_port(t) catch e:
+            println(f"skip {t}")
+            continue
+
+        println(n)

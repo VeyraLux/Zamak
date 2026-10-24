@@ -50,7 +50,22 @@ fn main():
 3000
 ```
 
-The value must be a single expression on the same line, and its type must match the call's result. To run statements first, write an indented block that leaves with `return`, `fail`, `break`, or `continue`.
+The value's type must match the call's result. To run statements first, write an indented block and end it with the value on its own line. The lines run in order, and the last one is the result:
+
+```zamak
+fn main():
+    let port = int("eighty") catch e:
+        println(f"bad port: {e}")
+        3000
+    println(port)
+```
+
+```text
+bad port: invalid integer: eighty
+3000
+```
+
+The last line counts as the value only when it's a value, not a function call. A block can also leave with `return`, `fail`, `break`, or `continue` instead.
 
 ## Pass errors on with ?
 

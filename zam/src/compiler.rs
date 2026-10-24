@@ -260,6 +260,8 @@ pub fn record_method_with<'f>(
     // 类型实参生成副本。
     let template = instance_of(id).map(|(template, _, _)| template);
     let owner = template.as_ref().unwrap_or(owner);
+    // 改写过的列表方法名对结构体来说还是原来的名字。
+    let method = if method == "$pop_at" { "pop" } else { method };
     let name = format!("{owner}.{method}");
     let short = owner.rsplit(':').next().unwrap_or(owner);
     // 方法自己有类型参数（`fn add[C: Control](&self, child: &C)`）时，接收者不是泛型实例也要生成副本。
@@ -778,10 +780,12 @@ pub fn method_signature(receiver: Type, method: &str) -> Option<(bool, Vec<Type>
         },
         // `append` 是 Python 的写法，与 `push` 相同。
         (Type::List(elem), "push" | "append") => (true, vec![elem.ty()], Type::Unit),
+        // 同 Python：`pop()` 取走最后一项，`pop(i)` 取走第 i 项（负数从末尾数；改写成 `$pop_at`，
+        // 见 rewrite_block），`remove(x)` 删掉第一个等于 x 的元素，没有时是运行时错误。
         (Type::List(elem), "pop") => (true, Vec::new(), elem.ty()),
+        (Type::List(elem), "$pop_at") => (true, vec![Type::Int], elem.ty()),
         (Type::List(_), "swap") => (true, vec![Type::Int, Type::Int], Type::Unit),
         (Type::List(elem), "insert") => (true, vec![Type::Int, elem.ty()], Type::Unit),
-        (Type::List(elem), "remove") => (true, vec![Type::Int], elem.ty()),
         (Type::List(_), "reverse" | "clear") => (true, Vec::new(), Type::Unit),
         // `xs.sort_by(fn(a, b): a.age < b.age)`：`before(a, b)` 为真时 a 排在 b 前面，稳定排序。
         (Type::List(elem), "sort_by") => {
@@ -795,6 +799,9 @@ pub fn method_signature(receiver: Type, method: &str) -> Option<(bool, Vec<Type>
         }
         (Type::List(elem), "index_of") if elem.comparable() => {
             (false, vec![elem.key_arg()], Type::Int)
+        }
+        (Type::List(elem), "remove") if elem.comparable() => {
+            (true, vec![elem.key_arg()], Type::Unit)
         }
         (Type::List(elem), "slice") if !matches!(elem, Elem::Func(_)) => {
             (false, vec![Type::Int, Type::Int], Type::List(elem))
@@ -2348,6 +2355,19 @@ pub fn rewrite_block(
     for (instruction, position) in block.iter_mut() {
         rewrite_let(functions, instruction).map_err(|error| at_position(error, *position))?;
     }
+    // `xs.pop(i)`：列表方法按实参个数选版本，带下标的叫 `$pop_at`（结构体自己的 pop 照旧，见
+    // record_method_with）。
+    visit_exprs_mut(block, &mut |expr| {
+        if let Expr::Method(_, method, args)
+        | Expr::ElementMethod(_, _, _, method, args)
+        | Expr::Chain(_, method, args) = expr
+        {
+            if method == "pop" && args.len() == 1 {
+                *method = "$pop_at".into();
+            }
+        }
+        Ok(())
+    })?;
     visit_exprs_mut(block, &mut |expr| rewrite_spawn(functions, expr))
 }
 
@@ -2966,6 +2986,19 @@ fn fold(expr: &Expr, constants: &BTreeMap<String, Constant>) -> Result<Expr, Str
     let overflow = || "integer arithmetic error in constant".to_owned();
     Ok(match expr {
         Expr::Int(_) | Expr::Float(_) | Expr::Bool(_) | Expr::Text(_) => expr.clone(),
+        // 列表与字典常量：元素也都是常量。用到的地方得到一份新的（同写一遍字面量）。
+        Expr::Array(items) => Expr::Array(
+            items
+                .iter()
+                .map(|item| fold(item, constants))
+                .collect::<Result<_, _>>()?,
+        ),
+        Expr::MapLit(pairs) => Expr::MapLit(
+            pairs
+                .iter()
+                .map(|(key, value)| Ok((fold(key, constants)?, fold(value, constants)?)))
+                .collect::<Result<_, String>>()?,
+        ),
         Expr::Variable(name) => constants
             .get(name)
             .map(|constant| constant.value.clone())
@@ -3874,6 +3907,51 @@ pub fn empty_fallback(value: &Expr, success: Type) -> bool {
         Expr::MapLit(items) => items.is_empty() && matches!(success, Type::Map(_, _)),
         _ => false,
     }
+}
+
+/// catch 块的（前面几行, 最后那个值, 它的位置），见 `catch_tail`。
+pub type CatchTail<'a> = (
+    &'a [(Instruction, SourcePosition)],
+    &'a Expr,
+    SourcePosition,
+);
+
+/// 多行的 catch 块：最后一行是单独的值（不是调用）时，它就是出错时的值，前面几行先执行：
+///
+/// ```text
+/// let port = int(text) catch e:
+///     println(f"bad port: {e}")
+///     8080
+/// ```
+///
+/// 单独的值在别处不能成句，所以这样认不会改变已有代码的意思。检查器与生成器共用。
+/// 字面量当接收者（`[2, 3, 5][i]`、`[2, 3].index_of(3)`，列表常量代入后就是这样）：整数字面量
+/// 平时是定长数组，这里当列表用，才有下标和列表方法。检查器与生成器共用。
+pub fn literal_list(ty: Type, receiver: &Expr) -> Type {
+    match (ty, receiver) {
+        (Type::ArrayInt(_), Expr::Array(_)) => Type::List(Elem::Int),
+        (ty, _) => ty,
+    }
+}
+
+pub fn catch_tail(block: &Block) -> Option<CatchTail<'_>> {
+    let ((Instruction::Call(value), position), prefix) = block.split_last()? else {
+        return None;
+    };
+    if prefix.is_empty()
+        || matches!(
+            value,
+            Expr::Call(..)
+                | Expr::Method(..)
+                | Expr::ElementMethod(..)
+                | Expr::Chain(..)
+                | Expr::Catch(..)
+                | Expr::Try(..)
+        )
+    {
+        return None;
+    }
+    Some((prefix, value, *position))
 }
 
 pub fn catch_fallback(block: &Block) -> Option<&Expr> {
@@ -7628,7 +7706,7 @@ impl<'a> Checker<'a> {
                 field_path(self.structs, self.ty(receiver)?, field).map(|(_, ty)| ty)
             }
             Expr::Chain(receiver, method, _) => {
-                let ty = self.ty(receiver)?;
+                let ty = literal_list(self.ty(receiver)?, receiver);
                 method_signature(ty, method)
                     .map(|(_, _, result)| result)
                     .ok_or_else(|| self.chain_error(ty, method))
@@ -8531,7 +8609,7 @@ impl<'a> Checker<'a> {
             }
             Expr::Chain(receiver, method, args) => {
                 // 先求值调用结果（临时值，语句结束时释放），再求实参，然后调用方法。
-                let ty = self.ty(receiver)?;
+                let ty = literal_list(self.ty(receiver)?, receiver);
                 let (_, params, result) =
                     method_signature(ty, method).ok_or_else(|| self.chain_error(ty, method))?;
                 if !matches!(ty, Type::List(_) | Type::Map(_, _)) {
@@ -8720,6 +8798,20 @@ impl<'a> Checker<'a> {
                         live: true,
                     },
                 );
+                // 多行的块以单独的值结尾：前面几行先执行，最后的值是出错时的值。
+                if let Some((prefix, value, position)) = catch_tail(block) {
+                    if success == Type::Unit {
+                        return Err("the catch block ends with a value, but the call returns nothing for it to replace; remove the last line".into());
+                    }
+                    let prefix: Block = prefix.to_vec();
+                    self.block_tail(&prefix, self.result, Some((value, success, position)))?;
+                    self.locals.remove(binding);
+                    if let Some(outer) = shadowed.clone() {
+                        self.locals.insert(binding.clone(), outer);
+                    }
+                    self.caught.pop();
+                    return Ok(());
+                }
                 // `f() catch e: default`：块只有一个表达式、类型合乎成功值时，它就是出错时的值。
                 if let Some(value) = catch_fallback(block) {
                     if success != Type::Unit
@@ -8908,6 +9000,15 @@ impl<'a> Checker<'a> {
         })
     }
     fn block(&mut self, body: &Block, result: Type) -> Result<bool, String> {
+        self.block_tail(body, result, None)
+    }
+    /// 代码块；`tail` 是 catch 块最后那个当作值的表达式（见 `catch_tail`），在块里的变量还在时检查。
+    fn block_tail(
+        &mut self,
+        body: &Block,
+        result: Type,
+        tail: Option<(&Expr, Type, SourcePosition)>,
+    ) -> Result<bool, String> {
         let outer_names: BTreeSet<String> = self.locals.keys().cloned().collect();
         // 代码块里 `let x = &...` 冻结的根到块尾解冻。
         let outer_frozen = self.frozen.len();
@@ -9203,7 +9304,7 @@ impl<'a> Checker<'a> {
                         (Some(ty), _) => *ty,
                         // `for n in [3, 1, 2]:` 的隐藏变量是列表，元素类型看第一项。
                         (None, Some(first)) => Type::List(
-                            elem_from(self.ty(first)?)
+                            elem_from(literal_list(self.ty(first)?, first))
                                 .ok_or("unsupported list element type in for loop")?,
                         ),
                         (None, None) => self.ty(expr)?,
@@ -9435,6 +9536,19 @@ impl<'a> Checker<'a> {
                     returned = true;
                 }
             }
+        }
+        if let Some((value, ty, position)) = tail {
+            self.position = position;
+            if returned || terminated {
+                return Err("unreachable statement after return".into());
+            }
+            if !(empty_fallback(value, ty)
+                || self.ty(value).is_ok_and(|found| fallback_fits(found, ty)))
+            {
+                return Err("type mismatch: the last line of the catch block is the value used when the call fails, so it needs the type of the call's result".into());
+            }
+            let mut loans = BTreeMap::new();
+            self.expr(value, ty, &mut loans)?;
         }
         // 块内声明的变量在退出时从 `locals` 删掉（它们不能逃出块），但编辑器要按位置查它们
         // 的类型，所以在删之前留一份快照。

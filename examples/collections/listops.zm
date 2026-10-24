@@ -18,7 +18,7 @@ fn main():
 
     xs.insert(0, 0)
     xs.insert(xs.len(), 10)
-    let removed = xs.remove(2)
+    let removed = xs.pop(2)
     println("removed {removed}")
     show("edited", &xs)
 
@@ -37,7 +37,7 @@ fn main():
     names.sort()
     println(string_list(&names))
     println(names.contains("amy"))
-    let first = names.remove(0)
+    let first = names.pop(0)
     println("first {first}")
 
     let mut scores: [f64] = [2.5, -1.0, 0.5]

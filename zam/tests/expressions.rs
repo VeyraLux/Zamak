@@ -261,6 +261,19 @@ fn constants_fold_and_inline() {
     };
     let output = run_project("use config\nuse std/string\nconst N = 3\nfn main():\n    println(config.LIMIT + N)\n    println(string.byte_len(&config.NAME))\n    println(config.twice())\n    println(\"{config.NAME}!\")\n");
     assert_eq!(stdout(&output), "13\n5\n20\nzamak!\n");
+    // 列表与字典常量：用到的地方得到一份新的（for、下标、方法、借给 & 参数、跨模块）。
+    let output = case.run("const NAMES = [\"Food\", \"Home\", \"Fun\"]\nconst PRIMES = [2, 3, 5, 7]\nconst LIMITS = {\"low\": 1, \"high\": 10}\nconst SCALE = 2.5\nconst RATES = [SCALE, SCALE * 2.0]\nconst GRID = [[1, 2], [3, 4]]\n\nfn total(xs: &[i64]) -> i64:\n    let mut t = 0\n    for x in xs:\n        t += x\n    t\n\nfn main():\n    for n in NAMES:\n        println(n)\n    println(len(NAMES))\n    println(NAMES[1])\n    println(total(PRIMES))\n    println(PRIMES[3])\n    println(PRIMES.index_of(5))\n    println(LIMITS[\"high\"])\n    println(RATES)\n    let mut mine = NAMES\n    mine.append(\"Work\")\n    println(mine)\n    println(NAMES)\n    for row in GRID:\n        println(row[0])\n    println(\"Home\" in NAMES)\n");
+    assert_eq!(
+        stdout(&output),
+        "Food\nHome\nFun\n3\nHome\n17\n7\n2\n10\n[2.5, 5.0]\n[\"Food\", \"Home\", \"Fun\", \"Work\"]\n[\"Food\", \"Home\", \"Fun\"]\n1\n3\ntrue\n"
+    );
+    std::fs::write(
+        project.join("src/config.zm"),
+        "pub const LIMIT = 10\npub const NAME = \"zamak\"\nconst SECRET = 7\npub const TAGS = [\"a\", \"b\"]\npub fn twice() -> i64: LIMIT * 2\n",
+    )
+    .unwrap();
+    let output = run_project("use config\nfn main():\n    for t in config.TAGS:\n        println(t)\n    println(config.TAGS[1])\n");
+    assert_eq!(stdout(&output), "a\nb\nb\n");
     let output = run_project("use config\nfn main(): println(config.SECRET)\n");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -779,7 +792,7 @@ fn python_indexing() {
     let case = Case::new("expressions", "python-indexing");
     // 与 Python 相同：负下标从末尾数；切片 xs[a:b]（可省略两端、可为负）越界收拢；insert 收拢位置；s[a:b] 切字符串。
     assert_eq!(
-        stdout(&case.run("fn main():\n    let mut xs: [i64] = [10, 20, 30, 40, 50]\n    println(xs[-1])\n    println(xs[-5])\n    println(xs[1:3])\n    println(xs[:2])\n    println(xs[3:])\n    println(xs[-2:])\n    println(xs[:-1])\n    println(xs[10:])\n    println(xs[3:1])\n    println(xs[1:].len())\n    xs[-1] = 99\n    println(xs)\n    xs.insert(-1, 7)\n    xs.insert(100, 8)\n    xs.insert(-100, 1)\n    println(xs)\n    println(xs.remove(-1))\n    let s = \"hello\"\n    println(s[1:4])\n    println(s[-3:])\n    println(s[:100])\n    let words: [string] = [\"a\", \"b\", \"c\"]\n    println(words[-1])\n    println(words[1:])\n    let i = -2\n    println(xs[i])\n")),
+        stdout(&case.run("fn main():\n    let mut xs: [i64] = [10, 20, 30, 40, 50]\n    println(xs[-1])\n    println(xs[-5])\n    println(xs[1:3])\n    println(xs[:2])\n    println(xs[3:])\n    println(xs[-2:])\n    println(xs[:-1])\n    println(xs[10:])\n    println(xs[3:1])\n    println(xs[1:].len())\n    xs[-1] = 99\n    println(xs)\n    xs.insert(-1, 7)\n    xs.insert(100, 8)\n    xs.insert(-100, 1)\n    println(xs)\n    println(xs.pop(-1))\n    let s = \"hello\"\n    println(s[1:4])\n    println(s[-3:])\n    println(s[:100])\n    let words: [string] = [\"a\", \"b\", \"c\"]\n    println(words[-1])\n    println(words[1:])\n    let i = -2\n    println(xs[i])\n")),
         "50\n10\n[20, 30]\n[10, 20]\n[40, 50]\n[40, 50]\n[10, 20, 30, 40]\n[]\n[]\n4\n[10, 20, 30, 40, 99]\n[1, 10, 20, 30, 40, 7, 99, 8]\n8\nell\nllo\nhello\nc\n[\"b\", \"c\"]\n7\n"
     );
 }
