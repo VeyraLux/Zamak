@@ -1675,11 +1675,76 @@ fn instance_full(
 const JSON: &str = "std/json:Json";
 const TO_JSON: &str = "std/json:to_json";
 const FROM_JSON: &str = "std/json:from_json";
+const SHAPE: &str = "std/json:shape";
+
+/// `json.shape(sample)` 的种类名：bool、int、float、string、list:种类、option:种类，结构体是
+/// struct，其他（字典、枚举、函数值……）是 other。std/cli 按它读命令行。
+fn shape_kind(ty: Type, table: &StructTable) -> String {
+    match ty {
+        Type::Int => "int".into(),
+        Type::Float => "float".into(),
+        Type::Bool => "bool".into(),
+        Type::Owned => "string".into(),
+        Type::List(elem) if elem != Elem::Byte => format!("list:{}", shape_kind(elem.ty(), table)),
+        Type::Record(id) => match table.get(&id) {
+            Some((record, structure)) if record.starts_with(&format!("{OPTION}[")) => {
+                let inner = structure.fields.get(1).map_or(Type::Unit, |(_, ty)| *ty);
+                format!("option:{}", shape_kind(inner, table))
+            }
+            Some((_, structure))
+                if structure.variants.is_empty()
+                    && structure.handle.is_none()
+                    && !structure.interface =>
+            {
+                "struct".into()
+            }
+            _ => "other".into(),
+        },
+        _ => "other".into(),
+    }
+}
+
+/// `json.shape[T]` 的函数体：结构体是 `{"字段": "种类", ...}`（按声明顺序），其他类型是种类名。
+fn derive_shape(ty: Type) -> Block {
+    let at: SourcePosition = (1, 1);
+    let table = STRUCT_TABLE.read().expect("struct table").clone();
+    let json = |variant: &str, args: Vec<Expr>| Expr::Variant(JSON.into(), variant.into(), args);
+    let text = |value: &str| Expr::Text(value.to_owned());
+    let ret = |expr: Expr| (Instruction::Return(Some(expr)), at);
+    let fields = match ty {
+        Type::Record(id) if shape_kind(ty, &table) == "struct" => table[&id].1.fields.clone(),
+        _ => return vec![ret(json("Str", vec![text(&shape_kind(ty, &table))]))],
+    };
+    let mut body = vec![(
+        Instruction::Let(
+            "fields".into(),
+            true,
+            Some(Type::Map(Elem::Str, Elem::Record(record_id(JSON)))),
+            Expr::MapLit(Vec::new()),
+        ),
+        at,
+    )];
+    for (field, field_ty) in fields {
+        body.push((
+            Instruction::AssignIndex(
+                "fields".into(),
+                text(&field),
+                json("Str", vec![text(&shape_kind(field_ty, &table))]),
+            ),
+            at,
+        ));
+    }
+    body.push(ret(json("Object", vec![Expr::Variable("fields".into())])));
+    body
+}
 
 /// 按类型合成 `json.to_json[T]`（参数 `value: &T`，返回 Json）与 `json.from_json[T]`（参数
 /// `value: &Json`，返回 `T!string`）的函数体。结构体是对象，列表是数组，字典是对象，Option 是 null
 /// 或值，只有名字的枚举变体是字符串、带载荷的是 `{"type": 变体名, 字段...}`。其他函数返回 None。
 fn derive_json(name: &str, ty: Type) -> Result<Option<Block>, String> {
+    if name == SHAPE {
+        return Ok(Some(derive_shape(ty)));
+    }
     if name != TO_JSON && name != FROM_JSON {
         return Ok(None);
     }

@@ -64,6 +64,7 @@ fn usage():
 - `env.args()` 返回参数列表，不含程序名。`env.arg(i)` 返回一个参数，参数不存在时失败。
 - `env.var(name)` 读取环境变量，没有设置时失败。
 - `env.exit(code)` 以 0 到 255 之间的状态码结束程序。
+- `env.program()` 是程序的文件名，不带目录和 `.exe`。读命令行选项见 [std/cli](#命令行参数stdcli)。
 
 ## 文件与路径：std/fs 和 std/path
 
@@ -360,6 +361,50 @@ fn main() -> !string:
 - 列表或结构体字段放不进一列。把 `json.encode(...)` 存进字符串字段，或者另建一张表。
 - `execute` 和各个查询方法只执行一条语句；要执行几条，用 `execute_script`。
 - 另一个连接正在写时，语句最多等 5 秒，之后才报告数据库被锁住。
+
+## 命令行参数：std/cli
+
+`std/cli` 把命令行选项读进一个结构体。每个字段就是一个选项，字段的类型决定怎么读，不用再另外声明：
+
+```zamak
+use std/cli
+
+struct Options:
+    all: bool
+    due: Option[string]
+    tag: [string]
+    count: i64
+    args: [string]
+
+fn main() -> !string:
+    let given: [string] = ["--all", "--tag", "work", "--tag=home", "--count", "3", "report.txt"]
+    let o: Options = cli.parse(given)?
+    println(f"{o.all} {o.due} {o.tag} {o.count} {o.args}")
+    let wrong: [string] = ["--count", "three"]
+    let bad: Options = cli.parse(wrong) catch e:
+        println(e)
+        return
+```
+
+```text
+true Option.None ["work", "home"] 3 ["report.txt"]
+--count needs a whole number, not three
+```
+
+| 字段类型 | 命令行上的写法 |
+| --- | --- |
+| `bool` | `--all` 是开关：写了就是 `true`。 |
+| `i64`、`f64`、`string` | `--count 3` 或 `--count=3`。必须写，类型不对时报错。 |
+| `Option[...]` | 可以不写，没写时是 `None`。 |
+| `[...]` | 可以写几次：`--tag a --tag b`。 |
+| `args: [...]` | 收集位置参数。没有这个字段时，出现位置参数就报错。`--` 之后的都算位置参数。 |
+
+- 字段名里的下划线在命令行上写成横线：`dry_run` 对应 `--dry-run`。
+- 不认识的选项、缺了值、同一个选项写两次，都会报错并指出是哪个选项。
+- `-h` 和 `--help` 打印所有选项后退出。
+- 在程序里读真正的命令行参数，写 `let o: Options = cli.parse_or_exit(env.args())`。出错时它打印错误和提示，以状态 2 退出，与 Python 的 `argparse` 一样。
+- 有子命令时，先自己读第一个参数，再解析剩下的：`cli.parse(args[1:])`。`examples/apps/todo` 就是这样做的。
+- `env.program()` 是程序的文件名，不带目录和 `.exe`。
 
 ## 正则表达式：std/re
 

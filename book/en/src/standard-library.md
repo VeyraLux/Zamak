@@ -64,6 +64,7 @@ fn usage():
 - `env.args()` returns the arguments, without the program name. `env.arg(i)` returns one argument and fails if it's missing.
 - `env.var(name)` reads an environment variable and fails if it isn't set.
 - `env.exit(code)` ends the program with an exit status from 0 to 255.
+- `env.program()` is the program's file name, without the folder or `.exe`. To read options, see [std/cli](#command-line-options-stdcli).
 
 ## Files and paths: std/fs and std/path
 
@@ -360,6 +361,50 @@ Values go in and come back exactly. Anything that doesn't fit is an error, never
 - A list or struct field can't go in one column. Store `json.encode(...)` in a string field, or use a second table.
 - `execute` and the query methods run exactly one statement. To run several, use `execute_script`.
 - While another connection is writing, a statement waits up to 5 seconds before it reports that the database is locked.
+
+## Command-line options: std/cli
+
+`std/cli` reads command-line options into a struct. Each field is an option, and its type decides how the option is read, so there's nothing else to declare:
+
+```zamak
+use std/cli
+
+struct Options:
+    all: bool
+    due: Option[string]
+    tag: [string]
+    count: i64
+    args: [string]
+
+fn main() -> !string:
+    let given: [string] = ["--all", "--tag", "work", "--tag=home", "--count", "3", "report.txt"]
+    let o: Options = cli.parse(given)?
+    println(f"{o.all} {o.due} {o.tag} {o.count} {o.args}")
+    let wrong: [string] = ["--count", "three"]
+    let bad: Options = cli.parse(wrong) catch e:
+        println(e)
+        return
+```
+
+```text
+true Option.None ["work", "home"] 3 ["report.txt"]
+--count needs a whole number, not three
+```
+
+| Field type | On the command line |
+| --- | --- |
+| `bool` | `--all` is a switch: present means `true`. |
+| `i64`, `f64`, `string` | `--count 3` or `--count=3`. Required, and a value of the wrong type is an error. |
+| `Option[...]` | Optional; a missing option is `None`. |
+| `[...]` | Repeatable: `--tag a --tag b`. |
+| `args: [...]` | Collects the positional arguments. Without this field, a positional argument is an error. Everything after `--` is positional. |
+
+- An underscore in a field name is a dash on the command line: `dry_run` is `--dry-run`.
+- An unknown option, a missing value, or an option given twice is an error that names the option.
+- `-h` and `--help` print the options and exit.
+- In a program, read the real arguments with `let o: Options = cli.parse_or_exit(env.args())`. It prints the error and a hint, and exits with status 2, as Python's `argparse` does.
+- For subcommands, read the first argument yourself and parse the rest: `cli.parse(args[1:])`. `examples/apps/todo` does this.
+- `env.program()` is the program's file name, without the folder or `.exe`.
 
 ## Regular expressions: std/re
 

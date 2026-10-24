@@ -3853,6 +3853,30 @@ return F_void_ok();"#,
         body: r#"if (p0 < 0 || p0 >= zam_arg_count()) return F_S_err(zam_message("argument index out of range", NULL));
 return F_S_ok(zam_arg(p0));"#,
     },
+    // 程序名（同 Python 的 sys.argv[0]，只要文件名）：去掉目录与 .exe；zam 构建出的
+    // `main-<64 位十六进制>` 去掉后面的内容哈希，用法说明里才好看。
+    Builtin {
+        name: "std/env:program",
+        params: &[],
+        result: Type::Owned,
+        fallible: false,
+        body: r#"const char *path, *base, *p;
+size_t n, i;
+#ifdef _WIN32
+path = __argv && __argv[0] ? __argv[0] : "program";
+#else
+path = zam_argc > 0 && zam_argv[0] ? zam_argv[0] : "program";
+#endif
+base = path;
+for (p = path; *p; p++) if (*p == '/' || *p == '\\') base = p + 1;
+n = strlen(base);
+if (n > 4 && (strcmp(base + n - 4, ".exe") == 0 || strcmp(base + n - 4, ".EXE") == 0)) n -= 4;
+if (n > 65 && base[n - 65] == '-') {
+    for (i = n - 64; i < n && ((base[i] >= '0' && base[i] <= '9') || (base[i] >= 'a' && base[i] <= 'f')); i++) {}
+    if (i == n) n -= 65;
+}
+return own((const unsigned char*)base, n);"#,
+    },
     Builtin {
         name: "std/env:args",
         params: &[],

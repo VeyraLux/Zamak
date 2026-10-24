@@ -1,0 +1,178 @@
+# 命令行参数：声明一个结构体，cli.parse 按字段的类型读命令行。作用同 Python 的 argparse，
+# 但不用一条条 add_argument：字段就是选项，类型决定怎么读。
+#
+#     struct Options:
+#         all: bool              # --all：出现就是 true
+#         due: Option[string]    # --due 2026-11-01：可以不写
+#         tag: [string]          # --tag a --tag b：可以写几次
+#         count: i64             # --count 3：必须写，不是整数时报错
+#         args: [string]         # 其余的位置参数
+#
+#     let opts: Options = cli.parse_or_exit(env.args())
+#
+# 字段名里的下划线写成横线：dry_run 对应 --dry-run。值可以跟在后面，也可以写 --count=3；
+# -- 之后的都是位置参数。-h 或 --help 打印用法后退出。字段可以是 bool、i64、f64、string，
+# 它们的列表与 Option；名叫 args 的列表收位置参数（没有这个字段时不接受位置参数）。
+use std/env
+use std/io
+use std/json
+
+# 按 T 的字段读 args（同 env.args()，不含程序名）。对不上时返回错误，说明是哪个选项。
+pub fn parse[T](args: &[string]) -> T!string:
+    let none: Option[T] = Option.None
+    let shape = json.shape(none)
+    let values = read(shape, args)?
+    let out: T = json.from_json(values) catch e: fail explain(e)
+    out
+
+# 同 parse，但出错时打印错误和用法提示，以状态 2 退出（同 argparse）。
+pub fn parse_or_exit[T](args: &[string]) -> T:
+    let program = env.program()
+
+    let out: T = parse(args) catch e:
+        io.eprintln(f"{program}: error: {e}")
+        io.eprintln(f"run {program} --help to see the options")
+        env.exit(2)
+
+    out
+
+fn option_name(field: &string) -> string:
+    "--" + field.replace("_", "-")
+
+# from_json 的错误换成命令行的说法：`.count: missing` → `--count is required`。
+fn explain(e: &string) -> string:
+    if e.starts_with(".") and e.ends_with(": missing"):
+        return f"{option_name(e[1:len(e) - 9])} is required"
+
+    copy(e)
+
+# 每个字段的种类（bool、int、float、string，以及 list:种类、option:种类）。
+fn kinds(shape: &json.Json) -> {string: string}!string:
+    let mut out: {string: string} = {}
+
+    for field in shape.field_names()?:
+        let kind = shape.get(field)?.as_str()?
+        let base = kind.removeprefix("list:").removeprefix("option:")
+
+        if base != "bool" and base != "int" and base != "float" and base != "string":
+            fail f"cli.parse: the field {field} can't be read from the command line; use bool, i64, f64, string, a list of them, or an Option of them"
+
+        if kind.starts_with("option:list:") or kind.starts_with("list:option:") or kind == "option:bool" or kind == "list:bool":
+            fail f"cli.parse: the field {field} can't be read from the command line; use bool, i64, f64, string, a list of them, or an Option of them"
+
+        if field == "args" and not kind.starts_with("list:"):
+            fail "cli.parse: the field args collects the positional arguments, so it must be a list"
+
+        out[copy(field)] = kind
+
+    out
+
+# 一个值按种类变成 Json：整数与小数要写对，否则报错。
+fn convert(base: &string, text: &string, option: &string) -> json.Json!string:
+    if base == "int":
+        let n = text.parse_i64() catch e: fail f"{option} needs a whole number, not {text}"
+        return json.Json.Int(n)
+
+    if base == "float":
+        let x = text.parse_f64() catch e: fail f"{option} needs a number, not {text}"
+        return json.Json.Float(x)
+
+    json.Json.Str(copy(text))
+
+fn read(shape: &json.Json, args: &[string]) -> json.Json!string:
+    let kind = kinds(shape)?
+    let program = env.program()
+    let mut out: {string: json.Json} = {}
+    let mut lists: {string: [json.Json]} = {}
+
+    for field, k in kind:
+        if k == "bool":
+            out[copy(field)] = json.Json.Bool(false)
+        elif k.starts_with("list:"):
+            lists[copy(field)] = []
+
+    let mut i = 0
+    let mut positional = false
+
+    while i < len(args):
+        let a = copy(&args[i])
+        i += 1
+
+        if a == "--" and not positional:
+            positional = true
+            continue
+
+        if positional or not a.starts_with("-") or a == "-":
+            if "args" not in kind:
+                fail f"unexpected argument {a}; this program takes only options, see --help"
+
+            let base = kind["args"].removeprefix("list:")
+            lists["args"].append(convert(base, a, "an argument")?)
+            continue
+
+        if a == "-h" or a == "--help":
+            println(describe(shape, program)?)
+            env.exit(0)
+
+        if not a.starts_with("--"):
+            fail f"unknown option {a}; options are written --name, see --help"
+
+        let eq = a.find("=")
+        let name = if eq < 0: a[2:] else: a[2:eq]
+        let field = name.replace("-", "_")
+        let option = f"--{name}"
+
+        if field not in kind or field == "args":
+            fail f"unknown option {option}; see --help for the options"
+
+        let k = copy(&kind[field])
+
+        if k == "bool":
+            if eq >= 0:
+                fail f"{option} is a switch and takes no value"
+
+            out[field] = json.Json.Bool(true)
+            continue
+
+        let mut text = ""
+
+        if eq >= 0:
+            text = a[eq + 1:]
+        elif i < len(args):
+            text = copy(&args[i])
+            i += 1
+        else:
+            fail f"{option} needs a value"
+
+        let base = k.removeprefix("list:").removeprefix("option:")
+        let value = convert(base, text, option)?
+
+        if k.starts_with("list:"):
+            lists[field].append(value)
+        else:
+            if field in out:
+                fail f"{option} is given more than once"
+
+            out[field] = value
+
+    for field, items in lists:
+        out[copy(field)] = json.Json.Array(copy(items))
+
+    json.Json.Object(out)
+
+fn describe(shape: &json.Json, program: &string) -> string!string:
+    let kind = kinds(shape)?
+    let positional = if "args" in kind: " [ARGS...]" else: ""
+    let mut lines: [string] = [f"usage: {program} [options]{positional}", "", "options:"]
+
+    for field, k in kind:
+        if field == "args":
+            continue
+
+        let base = k.removeprefix("list:").removeprefix("option:")
+        let value = if base == "int": " N" elif base == "float": " X" elif base == "bool": "" else: " VALUE"
+        let note = if k.starts_with("list:"): "  (can repeat)" elif k.starts_with("option:") or k == "bool": "" else: "  (required)"
+        lines.append(f"  {option_name(field)}{value}{note}")
+
+    lines.append("  -h, --help  show this help")
+    "\n".join(lines)

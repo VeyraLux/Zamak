@@ -179,6 +179,55 @@ fn sqlite_stores_and_reads_structs_exactly() {
 }
 
 #[test]
+fn cli_reads_options_from_struct_fields() {
+    let case = Case::new("std", "cli");
+    let output = case.run(include_str!("../../examples/values/cli.zm"));
+    assert_eq!(
+        stdout(&output),
+        concat!(
+            "all=true dry=false due=Option.None tag=[\"a\", \"b\"] count=3 ratio=Option.None args=[\"x\", \"y\"]\n",
+            "all=false dry=true due=Option.Some(\"2026-11-01\") tag=[] count=7 ratio=Option.Some(0.5) args=[\"--not-an-option\"]\n",
+            "error: --count needs a whole number, not abc\n",
+            "error: --count is required\n",
+            "error: --count is given more than once\n",
+            "error: unknown option --nope; see --help for the options\n",
+            "error: --count needs a value\n",
+            "error: --all is a switch and takes no value\n",
+            "error: unknown option -x; options are written --name, see --help\n",
+            "usage: main [options] [ARGS...]\n\noptions:\n  --all\n  --dry-run\n  --due VALUE\n  --tag VALUE  (can repeat)\n  --count N  (required)\n  --ratio X\n  -h, --help  show this help\n",
+        ),
+        "{}",
+        stderr(&output)
+    );
+    // parse_or_exit 读真正的命令行：对的时候照常往下走，错的时候打印到标准错误并以 2 退出。
+    let file = case.path("tool.zm");
+    std::fs::write(&file, "use std/cli\nuse std/env\n\nstruct Options:\n    name: string\n    loud: bool\n\nfn main():\n    let o: Options = cli.parse_or_exit(env.args())\n    println(if o.loud: o.name.upper() else: o.name)\n").unwrap();
+    let run = |args: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_zam"))
+            .arg("run")
+            .arg(&file)
+            .arg("--")
+            .args(args)
+            .env("ZAMAK_CACHE_DIR", case.path("cache"))
+            .env("ZAMAK_LANG", "en")
+            .output()
+            .unwrap()
+    };
+    let ok = run(&["--name", "ada", "--loud"]);
+    assert_eq!(stdout(&ok), "ADA\n");
+    let bad = run(&["--loud"]);
+    assert_eq!(bad.status.code(), Some(2));
+    assert!(
+        stderr(&bad).contains("main: error: --name is required"),
+        "{}",
+        stderr(&bad)
+    );
+    // 字段类型读不了时说清楚。
+    let output = case.run("use std/cli\n\nstruct Bad:\n    when: {string: i64}\n\nfn main():\n    let none: [string] = []\n    let b: Bad = cli.parse(none) catch e:\n        println(e)\n        return\n");
+    assert!(stdout(&output).contains("the field when can't be read from the command line"));
+}
+
+#[test]
 fn json_converts_structs_lists_maps_options_and_enums() {
     let case = Case::new("std", "json-structs");
     let output = case.run(include_str!("../../examples/values/json_structs.zm"));

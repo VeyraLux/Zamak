@@ -122,6 +122,12 @@ pub fn to_json[T](value: &T) -> Json:
 pub fn from_json[T](value: &Json) -> T!string:
     fail "unreachable"
 
+# T 长什么样（给按类型读数据的库用，如 std/cli）：结构体是 {"字段": "种类", ...}，按声明顺序；
+# 种类是 bool、int、float、string、list:种类、option:种类、struct 或 other。sample 只用来确定 T，
+# 传 Option.None 就行：let none: Option[Options] = Option.None。函数体由编译器生成。
+pub fn shape[T](sample: &Option[T]) -> Json:
+    Json.Null
+
 # 任意值写成 JSON 文字，同 dumps(to_json(value), indent)。
 pub fn encode[T](value: &T, indent: i64 = 0) -> string:
     dumps(to_json(value), indent)

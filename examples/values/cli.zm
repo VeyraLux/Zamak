@@ -1,0 +1,29 @@
+# 命令行参数：字段就是选项，类型决定怎么读。cli.parse 返回错误，cli.parse_or_exit 出错时打印用法提示并退出。
+use std/cli
+
+struct Options:
+    all: bool
+    dry_run: bool
+    due: Option[string]
+    tag: [string]
+    count: i64
+    ratio: Option[f64]
+    args: [string]
+
+fn show(argv: [string]):
+    let o: Options = cli.parse(argv) catch e:
+        println(f"error: {e}")
+        return
+    println(f"all={o.all} dry={o.dry_run} due={o.due} tag={o.tag} count={o.count} ratio={o.ratio} args={o.args}")
+
+fn main():
+    show(["--all", "--tag", "a", "--tag=b", "--count", "3", "x", "y"])
+    show(["--count=7", "--dry-run", "--due", "2026-11-01", "--ratio", "0.5", "--", "--not-an-option"])
+    show(["--count", "abc"])
+    show(["--all"])
+    show(["--count", "1", "--count", "2"])
+    show(["--count", "1", "--nope"])
+    show(["--count"])
+    show(["--count", "1", "--all=yes"])
+    show(["-x"])
+    show(["--help"])

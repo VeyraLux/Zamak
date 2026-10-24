@@ -4,6 +4,7 @@
 #     todo add "write the report" --due 2026-11-01 --tag work
 #     todo list
 #     todo done 1
+use std/cli
 use std/datetime
 use std/env
 use std/fs
@@ -28,6 +29,16 @@ fn store() -> string:
 
     let home = env.var("HOME") catch e: env.var("USERPROFILE") catch e: "."
     path.join(home, ".zamak-todo.json")
+
+# 子命令的选项：字段就是选项，std/cli 按类型读（--due 一个值，--tag 可以写几次，args 收其余的词）。
+struct AddOptions:
+    due: Option[string]
+    tag: [string]
+    args: [string]
+
+struct ListOptions:
+    all: bool
+    tag: Option[string]
 
 # 数据文件就是 {"tasks": [...]}：json.encode 与 json.decode 按 Store 的结构自动转换。
 struct Store:
@@ -77,45 +88,34 @@ fn main() -> !string:
     let today = datetime.today()
 
     if command == "add":
-        let mut text = ""
-        let mut due = ""
-        let mut tags: [string] = []
-        let mut i = 1
-
-        while i < len(args):
-            if args[i] == "--due" and i + 1 < len(args):
-                due = datetime.date_from_iso(args[i + 1])?.isoformat()
-                i += 2
-            elif args[i] == "--tag" and i + 1 < len(args):
-                tags.push(args[i + 1])
-                i += 2
-            else:
-                text = if text == "": args[i] else: f"{text} {args[i]}"
-                i += 1
+        let options: AddOptions = cli.parse(args[1:])?
+        let text = " ".join(options.args)
 
         if text == "":
             fail usage()
+
+        let due = match options.due:
+            Some(day): datetime.date_from_iso(day)?.isoformat()
+            None: ""
 
         let mut next = 1
 
         for t in &tasks:
             next = max(next, t.id + 1)
 
-        tasks.push(Task(id: next, text: text, done: false, due: due, tags: tags))
+        tasks.push(Task(id: next, text: text, done: false, due: due, tags: options.tag))
         save(file, tasks)?
         println(f"added {next}")
     elif command == "list":
-        let all = "--all" in args
-        let mut tag = ""
-
-        for i, arg in &args:
-            if arg == "--tag" and i + 1 < len(args):
-                tag = args[i + 1]
+        let options: ListOptions = cli.parse(args[1:])?
+        let tag = match options.tag:
+            Some(name): copy(name)
+            None: ""
 
         let mut shown = 0
 
         for t in &tasks:
-            if (all or not t.done) and (tag == "" or tag in t.tags):
+            if (options.all or not t.done) and (tag == "" or tag in t.tags):
                 show(t, today)
                 shown += 1
 

@@ -98,6 +98,11 @@ and this file is the source for the text of each GitHub release.
 - **Breaking:** list methods now mean what they mean in Python. `xs.remove(x)` removes the first element equal to `x`,
   and `xs.pop(i)` removes and returns the element at `i`; `xs.remove(i)` used to do what `pop(i)` does now.
 - Module constants can be lists and maps: `const NAMES = ["Food", "Home"]` works with `for`, `[i]`, methods, and `&` arguments.
+- **`std/cli`**: declare a struct and `cli.parse(args)` reads the command line into it. Fields are options and their types decide
+  how each is read: `bool` switches, required `i64`/`f64`/`string` values, `Option` for optional ones, lists for repeated ones,
+  and `args` for positional arguments. Errors name the option, and `--help` prints the options. `env.program()` is the program's name.
+  `examples/apps/todo` uses it.
+- `json.shape(sample)` describes a type's fields, for libraries that read data by type.
 - A multi-line `catch` block can end with a value: the lines before it run first, and the value is the result when the call fails.
 - **`http.serve` handles requests on several threads at once** (`workers=n`, by default twice the number of processors and at least 8),
   and HTTPS handshakes happen on those threads too. `Request` has `args()` and `arg(name)` for query parameters,
@@ -335,6 +340,10 @@ this preview.
 - **不兼容：** 列表方法和 Python 同义：`xs.remove(x)` 删掉第一个等于 `x` 的元素，`xs.pop(i)` 取走并返回第 `i` 个元素；
   以前的 `xs.remove(i)` 就是现在的 `pop(i)`。
 - 模块级常量可以是列表和字典：`const NAMES = ["Food", "Home"]` 能用在 `for`、`[i]`、方法调用和 `&` 实参里。
+- **`std/cli`**：声明一个结构体，`cli.parse(args)` 就把命令行读进去。字段就是选项，类型决定怎么读：`bool` 是开关，
+  `i64`/`f64`/`string` 必须给值，`Option` 可以不写，列表可以写几次，`args` 收位置参数。出错时指出是哪个选项，`--help` 打印用法。
+  `env.program()` 是程序名。`examples/apps/todo` 用上了它。
+- `json.shape(sample)` 描述一个类型的字段，给按类型读数据的库用。
 - 多行的 `catch` 块可以以一个值结尾：前面几行先执行，这个值就是调用失败时的结果。
 - **`http.serve` 用几个线程同时处理请求**（`workers=n`，默认是处理器个数的两倍，至少 8 个），HTTPS 握手也在这些线程里做。
   `Request` 有 `args()` 与 `arg(name)` 读查询参数，`http.quote`、`http.unquote`、`http.parse_query` 对应 Python 的
