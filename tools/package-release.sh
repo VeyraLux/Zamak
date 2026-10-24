@@ -9,7 +9,7 @@ out="$root/dist/$name"
 rm -rf "$out"
 mkdir -p "$out/bin"
 cp "$binary" "$out/bin/"
-for file in README.md README.zh-CN.md TUTORIAL.md LICENSE-MIT LICENSE-APACHE; do
+for file in README.md README.zh-CN.md TUTORIAL.md LICENSE-MIT LICENSE-APACHE THIRD-PARTY-NOTICES.md; do
     cp "$root/$file" "$out/"
 done
 # 只带示例源码，不带本地构建产物。

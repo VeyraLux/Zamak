@@ -65,6 +65,7 @@ These are the steps people most often forget. A change isn't done until each one
 | Something that used to be rejected and now works | Run `pwsh -File bench/ai/run.ps1 -ZamPath zam/target/debug/zam.exe` and `python bench/ai/live/run.py --verify-solutions --zam zam/target/debug/zam.exe`. Replace any counterexample in `bench/ai/cases.json` that now compiles. Update "not supported yet" lists in the book and README. |
 | Speed, memory, or binary size | Run `python bench/compare/run.py` with a release build, and update the numbers in `README.md`, `README.zh-CN.md`, `book/*/src/appendix-performance.md`, and `docs/PERFORMANCE.md`. |
 | What Zamak can or can't do | The feature and limitation lists in **both** READMEs. |
+| A library in `zam/vendor/` (added or upgraded) | `THIRD-PARTY-NOTICES.md` (version and license text), the library's `README.md` in `zam/vendor/`, and the `native-c-N` version in `project.rs`. |
 | `zam` commands or the MCP server | `book/*/src/tooling.md`, the README, and `zam/src/mcp.rs` if an MCP tool should expose it. |
 
 Two files are compiled into `zam`, so when they're out of date, every user gets stale information: `bench/ai/live/zamak-reference.md` (the MCP `docs` tool, and the guide that `zam new --template ai` writes) and `book/en/src/appendix-diagnostics.md` (the MCP `explain` tool).

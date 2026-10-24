@@ -48,14 +48,14 @@ for (const platform of PLATFORMS) {
   cpSync(join(tmp, folder, 'bin', platform.binary), join(dir, 'bin', platform.binary));
   rmSync(tmp, { recursive: true, force: true });
   if (platform.binary === 'zam') chmodSync(join(dir, 'bin', 'zam'), 0o755);
-  for (const license of ['LICENSE-MIT', 'LICENSE-APACHE']) cpSync(join(root, license), join(dir, license));
+  for (const license of ['LICENSE-MIT', 'LICENSE-APACHE', 'THIRD-PARTY-NOTICES.md']) cpSync(join(root, license), join(dir, license));
   writeFileSync(join(dir, 'package.json'), JSON.stringify({
     name: platform.name,
     description: `The zam compiler of Zamak for ${platform.os} ${platform.cpu}. Install the zamak package instead.`,
     ...common,
     os: [platform.os],
     cpu: [platform.cpu],
-    files: ['bin', 'LICENSE-MIT', 'LICENSE-APACHE'],
+    files: ['bin', 'LICENSE-MIT', 'LICENSE-APACHE', 'THIRD-PARTY-NOTICES.md'],
     preferUnplugged: true,
   }, null, 2) + '\n');
   writeFileSync(join(dir, 'README.md'), `# ${platform.name}\n\nThe \`zam\` compiler for ${platform.os} ${platform.cpu}. Install [zamak](https://www.npmjs.com/package/@veyralux/zamak) instead; it picks this package for you.\n`);
@@ -64,10 +64,10 @@ for (const platform of PLATFORMS) {
 // 主包：启动器、README，子包按同一个版本精确依赖。
 const main = join(out, 'zamak');
 cpSync(join(root, 'npm', 'zamak'), main, { recursive: true });
-for (const license of ['LICENSE-MIT', 'LICENSE-APACHE']) cpSync(join(root, license), join(main, license));
+for (const license of ['LICENSE-MIT', 'LICENSE-APACHE', 'THIRD-PARTY-NOTICES.md']) cpSync(join(root, license), join(main, license));
 const manifest = JSON.parse(readFileSync(join(main, 'package.json'), 'utf8'));
 manifest.version = version;
-manifest.files = ['bin', 'LICENSE-MIT', 'LICENSE-APACHE'];
+manifest.files = ['bin', 'LICENSE-MIT', 'LICENSE-APACHE', 'THIRD-PARTY-NOTICES.md'];
 manifest.optionalDependencies = Object.fromEntries(PLATFORMS.map((p) => [p.name, version]));
 writeFileSync(join(main, 'package.json'), JSON.stringify(manifest, null, 2) + '\n');
 chmodSync(join(main, 'bin', 'zam.js'), 0o755);

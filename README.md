@@ -267,3 +267,5 @@ cargo clippy --all-targets --locked -- -D warnings
 ## License
 
 You can use Zamak under either the [MIT license](LICENSE-MIT) or the [Apache License 2.0](LICENSE-APACHE). Unless you state otherwise, you license your contributions under the same terms.
+
+`zam` bundles Mbed TLS (Apache-2.0), libui-ng (MIT), and SQLite (public domain). If you distribute a program that uses `std/tls`, `https://`, or `std/ui`, include the notices in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) with it.

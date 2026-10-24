@@ -108,6 +108,8 @@ and this file is the source for the text of each GitHub release.
 - A default parameter value can be a list or map of constants, such as `tags: &[string] = []` or `extra: &{string: string} = {}`.
 - **Prebuilt compilers for two more platforms**: macOS on Intel and Linux on arm64, from npm and the install script.
   GitHub releases now carry the notes from this changelog, and the VS Code extension and the book site publish with each release.
+- **`THIRD-PARTY-NOTICES.md`** lists the licenses of the bundled Mbed TLS, libui-ng, and SQLite, and ships in every package.
+  If you distribute a program that uses `std/tls`, `https://`, or `std/ui`, include the matching notice with it.
 - Fixed: on Windows, builds running at the same time could report `corrupt cache entry`. MSVC's multithreaded code generation
   sometimes picked different instructions for the same C under load; zam now asks for one code generation thread per file.
 - **Faster rebuilds.** zam remembers which C compiler it found, so a build where nothing changed takes about 4 ms
@@ -358,6 +360,8 @@ this preview.
 - 参数默认值可以是由常量组成的列表或字典，如 `tags: &[string] = []`、`extra: &{string: string} = {}`。
 - **又多了两个平台的预编译版**：Intel 芯片的 macOS 和 arm64 的 Linux，npm 与安装脚本都能装。
   GitHub Release 的说明直接取自本文件，VS Code 插件与网站也随每次发布一起更新。
+- **新增 `THIRD-PARTY-NOTICES.md`**：列出内置的 Mbed TLS、libui-ng、SQLite 的许可证，随每个安装包分发。
+  如果你分发的程序用到了 `std/tls`、`https://` 或 `std/ui`，请把对应的声明一起附上。
 - 修复：Windows 上几个构建同时进行时，可能报 `corrupt cache entry`。MSVC 的多线程代码生成在机器忙时偶尔为同一份 C
   挑出不同的指令；现在每个文件只用一个代码生成线程。
 - **重新构建更快。** zam 记住找到的 C 编译器，什么都没改时一次构建约 4 毫秒，Windows 上以前约 100 毫秒。

@@ -235,3 +235,5 @@ Zamak 0.2.0 是早期版本，1.0 之前语法与库都可能变化。
 ## 许可证
 
 本项目按 [MIT](LICENSE-MIT) 或 [Apache-2.0](LICENSE-APACHE) 双许可发布，使用者可以任选其一。除非另有声明，你提交的贡献同样按这两种许可证发布。
+
+`zam` 内置了 Mbed TLS（Apache-2.0）、libui-ng（MIT）和 SQLite（公有领域）。如果你分发的程序用到了 `std/tls`、`https://` 或 `std/ui`，请把 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) 里对应的声明一起附上。
