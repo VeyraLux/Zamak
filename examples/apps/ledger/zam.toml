@@ -1,0 +1,4 @@
+[project]
+name = "ledger"
+entry = "src/main.zm"
+modules = "src"

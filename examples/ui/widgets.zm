@@ -1,0 +1,188 @@
+# 自己画的界面：一块画布上用 std/widgets 的默认组件拼出设置面板、进度和图表。
+# 所有状态（开关、滑块、鼠标停在哪）都在 Demo 里；on_draw 照着状态画，on_mouse 改状态再 redraw。
+# 点“Dark mode”切换深色主题，开关的圆点有一段滑动动画。
+use std/ui
+use std/widgets
+
+struct Demo:
+    canvas: ui.Canvas
+    width: f64
+    height: f64
+    dark: bool
+    knob: f64
+    notify: bool
+    volume: f64
+    remember: bool
+    hover: i64
+    pressed: bool
+    dragging: bool
+    saved: i64
+    progress: f64
+    ticks: i64
+    values: [f64]
+
+# 各个可以点的区域，画和判断点击都用这一份，保证对得上。
+struct Layout:
+    settings: ui.Rect
+    stats: ui.Rect
+    chart: ui.Rect
+    dark_row: ui.Rect
+    notify_row: ui.Rect
+    slider: ui.Rect
+    check: ui.Rect
+    button: ui.Rect
+
+# 鼠标停在哪个组件上（Demo.hover）。
+const NOTHING = 0
+const DARK = 1
+const NOTIFY = 2
+const SLIDER = 3
+const CHECK = 4
+const SAVE = 5
+
+fn layout(w: f64, h: f64) -> Layout:
+    let half = (w - 60.0) / 2.0
+    let settings = ui.rect(20.0, 20.0, half, 250.0)
+    let inner = ui.rect(settings.x + 16.0, settings.y + 40.0, settings.w - 32.0, 0.0)
+    Layout(settings: settings, stats: ui.rect(40.0 + half, 20.0, half, 250.0), chart: ui.rect(20.0, 290.0, w - 40.0, max(160.0, h - 310.0)), dark_row: ui.rect(inner.x, inner.y, inner.w, 32.0), notify_row: ui.rect(inner.x, inner.y + 40.0, inner.w, 32.0), slider: ui.rect(inner.x, inner.y + 100.0, inner.w, 24.0), check: ui.rect(inner.x, inner.y + 140.0, 18.0, 18.0), button: ui.rect(inner.right() - 96.0, inner.y + 162.0, 96.0, 34.0))
+
+fn theme(s: &Demo) -> widgets.Theme:
+    let light = widgets.light()
+    let dark = widgets.dark()
+
+    if s.knob <= 0.0:
+        return light
+
+    if s.knob >= 1.0:
+        return dark
+
+    # 切换主题时颜色也跟着开关的圆点渐变。
+    let k = s.knob
+    widgets.Theme(background: light.background.mix(dark.background, k), surface: light.surface.mix(dark.surface, k), border: light.border.mix(dark.border, k), text: light.text.mix(dark.text, k), muted: light.muted.mix(dark.muted, k), accent: light.accent.mix(dark.accent, k), good: light.good.mix(dark.good, k), bad: light.bad.mix(dark.bad, k), radius: light.radius)
+
+fn draw(s: &mut Demo, p: &ui.Painter):
+    s.width = p.width()
+    s.height = p.height()
+    let t = theme(s)
+    let l = layout(s.width, s.height)
+    widgets.draw_background(p, t)
+
+    widgets.draw_card(p, l.settings, "Settings", t)
+    widgets.draw_switch_row(p, l.dark_row, "Dark mode", s.dark, t, hover=s.hover == DARK, knob=s.knob)
+    widgets.draw_switch_row(p, l.notify_row, "Notifications", s.notify, t, hover=s.hover == NOTIFY)
+    p.text(l.slider.x, l.slider.y - 20.0, f"Volume  {int(s.volume * 100.0 + 0.5)}", t.text, size=13.0)
+    widgets.draw_slider(p, l.slider, s.volume, t, hover=s.hover == SLIDER or s.dragging)
+    widgets.draw_checkbox(p, l.check, s.remember, t, hover=s.hover == CHECK)
+    p.text(l.check.right() + 8.0, l.check.y, "Remember me", t.text, size=13.0)
+    widgets.draw_button(p, l.button, "Save", t, hover=s.hover == SAVE, pressed=s.pressed)
+
+    if s.saved > 0:
+        p.text(l.settings.x + 16.0, l.button.y + 9.0, f"saved {s.saved}×", t.muted, size=12.0)
+
+    let body = widgets.draw_card(p, l.stats, "Progress", t)
+    widgets.draw_ring(p, body.x + 70.0, body.y + 80.0, 62.0, s.progress, t, label="build")
+    widgets.draw_progress(p, ui.rect(body.x + 160.0, body.y + 40.0, body.w - 160.0, 10.0), s.volume, t)
+    p.text(body.x + 160.0, body.y + 16.0, "Volume", t.muted, size=12.0)
+    let mut x = body.x + 160.0
+    x += widgets.draw_badge(p, x, body.y + 80.0, "online", t.good) + 6.0
+    x += widgets.draw_badge(p, x, body.y + 80.0, if s.notify: "alerts on" else: "muted", if s.notify: t.accent else: t.muted) + 6.0
+    widgets.draw_badge(p, body.x + 160.0, body.y + 108.0, "3 errors", t.bad)
+
+    let chart = widgets.draw_card(p, l.chart, "Requests per second", t)
+    let split = chart.w * 0.62
+    widgets.draw_line_chart(p, ui.rect(chart.x, chart.y, split - 20.0, chart.h), s.values, t)
+    let days: [f64] = [12.0, 19.0, 7.0, 15.0, 22.0, 9.0, 17.0]
+    let names: [string] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    widgets.draw_bar_chart(p, ui.rect(chart.x + split, chart.y, chart.w - split, chart.h), days, names, t)
+
+fn hit(s: &Demo, x: f64, y: f64) -> i64:
+    let l = layout(s.width, s.height)
+
+    if l.dark_row.contains(x, y):
+        return DARK
+
+    if l.notify_row.contains(x, y):
+        return NOTIFY
+
+    if l.slider.contains(x, y):
+        return SLIDER
+
+    if l.check.inset(-4.0).contains(x, y):
+        return CHECK
+
+    if l.button.contains(x, y):
+        return SAVE
+
+    NOTHING
+
+# 状态真的变了才重画：鼠标在画布上移动会来很多事件，大多数什么也没改变。
+fn mouse(s: &mut Demo, m: &ui.Mouse):
+    let l = layout(s.width, s.height)
+    let before = s.hover
+    let was = s.volume
+    s.hover = hit(s, m.x(), m.y())
+    let mut changed = s.hover != before
+
+    if m.down() == 1:
+        changed = true
+
+        if s.hover == DARK:
+            s.dark = not s.dark
+        elif s.hover == NOTIFY:
+            s.notify = not s.notify
+        elif s.hover == CHECK:
+            s.remember = not s.remember
+        elif s.hover == SAVE:
+            s.pressed = true
+        elif s.hover == SLIDER:
+            s.dragging = true
+
+    if m.up() == 1:
+        changed = true
+
+        if s.pressed and s.hover == SAVE:
+            s.saved += 1
+
+        s.pressed = false
+        s.dragging = false
+
+    if s.dragging:
+        s.volume = widgets.slider_value(m.x(), l.slider)
+        changed = changed or s.volume != was
+
+    if changed:
+        s.canvas.redraw()
+
+# 大约每秒 30 次：推动开关的圆点、进度环，偶尔给折线图加一个点。
+fn tick(s: &mut Demo):
+    s.ticks += 1
+    let target = if s.dark: 1.0 else: 0.0
+    s.knob += (target - s.knob) * 0.25
+
+    if abs(target - s.knob) < 0.01:
+        s.knob = target
+
+    s.progress += 0.003
+
+    if s.progress > 1.0:
+        s.progress = 0.0
+
+    if s.ticks % 15 == 0:
+        let last = s.values[len(s.values) - 1]
+        s.values.append(max(5.0, last + float((s.ticks * 7919) % 21 - 10)))
+
+        if len(s.values) > 40:
+            s.values.remove(0)
+
+    s.canvas.redraw()
+
+fn main():
+    let window = ui.window("Widgets", 820, 600)
+    let canvas = ui.canvas()
+    window.set_child(canvas)
+    let app: ui.App[Demo] = ui.app()
+    app.on_draw(canvas, draw)
+    app.on_mouse(canvas, mouse)
+    app.every(33, tick)
+    let values: [f64] = [40.0, 42.0, 38.0, 45.0, 50.0, 47.0, 55.0, 53.0, 60.0, 58.0, 64.0, 61.0, 66.0]
+    app.run(window, Demo(canvas: canvas, width: 820.0, height: 600.0, dark: false, knob: 0.0, notify: true, volume: 0.6, remember: false, hover: NOTHING, pressed: false, dragging: false, saved: 0, progress: 0.35, ticks: 0, values: values))

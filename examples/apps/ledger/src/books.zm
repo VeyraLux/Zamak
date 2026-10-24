@@ -1,0 +1,104 @@
+# 账本的数据：每一笔是一行，金额是整数分（收入为正，支出为负）。不碰界面，所以能单独测试。
+use std/datetime
+use std/sqlite
+use money
+
+pub struct Item:
+    id: i64
+    day: string
+    text: string
+    category: string
+    cents: i64
+
+pub struct Totals:
+    income: i64
+    spent: i64
+
+    pub fn balance(&self) -> i64:
+        self.income - self.spent
+
+# 打开（没有就新建）账本数据库。
+pub fn open(path: &string) -> sqlite.Connection!string:
+    let db = sqlite.connect(path)?
+    db.execute_script("CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY, day TEXT NOT NULL, text TEXT NOT NULL, category TEXT NOT NULL, cents INTEGER NOT NULL)")?
+    db
+
+# 记一笔，返回它的编号。day 是 YYYY-MM-DD；text 不能为空。
+pub fn add(db: &sqlite.Connection, day: &string, text: &string, category: &string, cents: i64) -> i64!string:
+    let date = datetime.date_from_iso(day.strip())?
+
+    if text.strip() == "":
+        fail "the description is empty"
+
+    db.execute("INSERT INTO items (day, text, category, cents) VALUES (?, ?, ?, ?)", [sqlite.text(date.isoformat()), sqlite.text(text.strip()), sqlite.text(category), sqlite.integer(cents)])?
+    db.last_id()
+
+# 某个月（YYYY-MM）的账，按日期排；month 为空时是全部。
+pub fn items(db: &sqlite.Connection, month: &string) -> [Item]!string:
+    if month == "":
+        let all: [Item] = db.query("SELECT * FROM items ORDER BY day, id", [])?
+        return all
+
+    let some: [Item] = db.query("SELECT * FROM items WHERE substr(day, 1, 7) = ? ORDER BY day, id", [sqlite.text(month)])?
+    some
+
+pub fn remove(db: &sqlite.Connection, id: i64) -> !string:
+    if db.execute("DELETE FROM items WHERE id = ?", [sqlite.integer(id)])? == 0:
+        fail f"no item {id}"
+
+pub fn totals(list: &[Item]) -> Totals:
+    let mut t = Totals(income: 0, spent: 0)
+
+    for item in list:
+        if item.cents > 0:
+            t.income += item.cents
+        else:
+            t.spent -= item.cents
+
+    t
+
+# 导出成 CSV（Excel 能直接打开）：含逗号、引号或换行的字段加引号，引号写两遍。
+pub fn csv(list: &[Item]) -> string:
+    let mut lines: [string] = ["date,description,category,amount"]
+
+    for item in list:
+        lines.append(f"{item.day},{field(item.text)},{field(item.category)},{money.show(item.cents)}")
+
+    "\r\n".join(lines) + "\r\n"
+
+fn field(text: &string) -> string:
+    if "," in text or "\"" in text or "\n" in text:
+        return "\"" + text.replace("\"", "\"\"") + "\""
+
+    copy(text)
+
+fn test_adds_lists_and_totals_items() -> !string:
+    let db = open(":memory:")?
+    add(db, "2026-10-01", "salary", "Work", 250000)?
+    add(db, "2026-10-03", "rent", "Home", -90000)?
+    add(db, "2026-11-02", "milk", "Food", -350)?
+    let october = items(db, "2026-10")?
+    assert len(october) == 2
+    assert october[1].text == "rent"
+    let t = totals(items(db, "")?)
+    assert t.income == 250000
+    assert t.spent == 90350
+    assert t.balance() == 159650
+
+fn test_rejects_bad_dates_and_empty_text() -> !string:
+    let db = open(":memory:")?
+    let bad_date = add(db, "2026-02-30", "x", "Food", -1) catch e: -1
+    assert bad_date == -1
+    let empty = add(db, "2026-02-03", "  ", "Food", -1) catch e: -1
+    assert empty == -1
+    remove(db, 99) catch e:
+        assert e == "no item 99"
+        return
+
+    fail "removed a missing item"
+
+fn test_writes_csv() -> !string:
+    let db = open(":memory:")?
+    add(db, "2026-10-03", "rent, October", "Home", -90000)?
+    add(db, "2026-10-04", "a \"gift\"", "Gifts", 5000)?
+    assert csv(items(db, "")?) == "date,description,category,amount\r\n2026-10-03,\"rent, October\",Home,-900.00\r\n2026-10-04,\"a \"\"gift\"\"\",Gifts,50.00\r\n"

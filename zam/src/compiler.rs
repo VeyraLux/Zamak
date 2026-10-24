@@ -509,6 +509,18 @@ pub fn string_alias(method: &str) -> &str {
         method => method,
     }
 }
+/// 字符串方法 `s.m(..)` 对应的 std/string 函数名。按实参个数选版本：`s.find(sub, start)` 是
+/// find_from，`s.ljust(width, fill)`、`rjust`、`center` 是带填充字符的 `_with` 版本。
+/// 检查器与生成器（收集要带上的 C 实现）共用。
+pub fn string_function(method: &str, argc: usize) -> String {
+    let base = string_alias(method);
+    match (base, argc) {
+        ("find", 2) => "std/string:find_from".to_owned(),
+        ("pad_left" | "pad_right" | "center", 2) => format!("std/string:{base}_with"),
+        _ => format!("std/string:{base}"),
+    }
+}
+
 pub fn string_method(
     functions: &BTreeMap<String, Function>,
     receiver: Expr,
@@ -527,13 +539,7 @@ pub fn string_method(
         }
         _ => {}
     }
-    // `s.find(sub, start)`：与 Python 一样从第 start 个字符起找。
-    let method = if method == "find" && args.len() == 2 {
-        "find_from"
-    } else {
-        method
-    };
-    let name = format!("std/string:{}", string_alias(method));
+    let name = string_function(method, args.len());
     let function = functions.get(&name)?;
     if function.params.first().map(|(_, ty)| *ty) != Some(Type::Shared) {
         return None;
@@ -9202,7 +9208,12 @@ impl<'a> Checker<'a> {
                         ),
                         (None, None) => self.ty(expr)?,
                     };
-                    if ty.is_reference() || ty == Type::Unit {
+                    if ty == Type::Unit {
+                        return Err(format!(
+                            "{local} would hold no value: the call returns nothing; call it on its own line, without let"
+                        ));
+                    }
+                    if ty.is_reference() {
                         return Err("borrow escape: locals require an owned value".into());
                     }
                     self.expr(expr, ty, &mut loans)?;

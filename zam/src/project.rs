@@ -186,6 +186,7 @@ const STD_SOURCES: &[(&str, &str)] = &[
     ("std/ui", include_str!("../std/ui.zm")),
     ("std/datetime", include_str!("../std/datetime.zm")),
     ("std/sqlite", include_str!("../std/sqlite.zm")),
+    ("std/widgets", include_str!("../std/widgets.zm")),
 ];
 
 /// Mbed TLS 的源码（vendor/mbedtls，build.rs 压缩后嵌进来）：程序用到 std/net 时解压到缓存编译。

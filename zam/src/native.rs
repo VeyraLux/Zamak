@@ -4,8 +4,8 @@ use crate::compiler::{
     func_sig, func_type, func_type_full, generic_value, instance_of, instance_with, is_bytes,
     is_string, lambda_body, lambda_prints, linked_tuple, loop_list, membership, method_args,
     method_signature, nest, nested, numeric, overload, promote, record_id, record_method_with,
-    record_order, sort_by_type, string_alias, string_method, terminates, tuple_fields, Block, Elem,
-    Expr, Instruction, Module, Pattern, Receiver, Type, COPY, SET,
+    record_order, sort_by_type, string_method, terminates, tuple_fields, Block, Elem, Expr,
+    Instruction, Module, Pattern, Receiver, Type, COPY, SET,
 };
 use crate::project::Result;
 use std::collections::BTreeMap;
@@ -2237,7 +2237,20 @@ int zam_ui_visible(int64_t c) { return uiControlVisible(uiControl(ZAM_UI(c))); }
 int zam_ui_enabled(int64_t c) { return uiControlEnabled(uiControl(ZAM_UI(c))); }
 // ---- 窗口 ----
 int64_t zam_ui_window(const char *title, int64_t width, int64_t height, int menubar) { zam_ui_need(); return ZAM_UI_ID(uiNewWindow(title, (int)width, (int)height, menubar)); }
-void zam_ui_window_set_child(int64_t w, int64_t child) { uiWindowSetChild(uiWindow(ZAM_UI(w)), uiControl(ZAM_UI(child))); }
+// 窗口里的控件铺满窗口。Windows 与 macOS 本来就这样；GTK 上 libui 把它放进一个横向的盒子，控件不声明
+// 要扩展时只有自然宽度（画布是 0），所以这里替它声明。只用到两个 GTK 函数，手写声明，不引入 GTK 头文件。
+#if !defined(_WIN32) && !defined(__APPLE__)
+void gtk_widget_set_hexpand(void *widget, int expand);
+void gtk_widget_set_vexpand(void *widget, int expand);
+#endif
+void zam_ui_window_set_child(int64_t w, int64_t child) {
+#if !defined(_WIN32) && !defined(__APPLE__)
+    void *widget = (void *)uiControlHandle(uiControl(ZAM_UI(child)));
+    gtk_widget_set_hexpand(widget, 1);
+    gtk_widget_set_vexpand(widget, 1);
+#endif
+    uiWindowSetChild(uiWindow(ZAM_UI(w)), uiControl(ZAM_UI(child)));
+}
 void zam_ui_window_set_title(int64_t w, const char *title) { uiWindowSetTitle(uiWindow(ZAM_UI(w)), title); }
 const char *zam_ui_window_title(int64_t w) { return zam_ui_keep(uiWindowTitle(uiWindow(ZAM_UI(w)))); }
 void zam_ui_window_set_margined(int64_t w, int on) { uiWindowSetMargined(uiWindow(ZAM_UI(w)), on); }
@@ -2300,6 +2313,108 @@ int64_t zam_ui_choice(void) { zam_ui_need(); return ZAM_UI_ID(uiNewCombobox()); 
 void zam_ui_choice_add(int64_t c, const char *text) { uiComboboxAppend(uiCombobox(ZAM_UI(c)), text); }
 int64_t zam_ui_choice_selected(int64_t c) { return uiComboboxSelected(uiCombobox(ZAM_UI(c))); }
 void zam_ui_choice_set_selected(int64_t c, int64_t i) { uiComboboxSetSelected(uiCombobox(ZAM_UI(c)), (int)i); }
+// 表格：只读的文字表格。数据在 C 里存一份（行 × 列的字符串），libui 的模型回调从这里读。
+// handler 是第一个字段，所以模型回调拿到的 handler 指针就是整个结构体。表格的数据跟程序一样长寿。
+// 程序自己改表格（换数据、set_selected）时不通知：libui 在 GTK 上会发选中变化的信号，在 Windows 上不会，
+// 这里统一成只有用户选中别的行才调用 on_change。界面只在一个线程里用，所以一个全局标记就够了。
+static int zam_ui_table_quiet;
+typedef struct zam_ui_table_data {
+    uiTableModelHandler handler;
+    uiTableModel *model;
+    uiTable *table;
+    int columns, rows;
+    char **cells;
+} zam_ui_table_data;
+static int zam_ui_table_columns(uiTableModelHandler *mh, uiTableModel *m) { (void)m; return ((zam_ui_table_data *)mh)->columns; }
+static uiTableValueType zam_ui_table_type(uiTableModelHandler *mh, uiTableModel *m, int column) { (void)mh; (void)m; (void)column; return uiTableValueTypeString; }
+static int zam_ui_table_rows(uiTableModelHandler *mh, uiTableModel *m) { (void)m; return ((zam_ui_table_data *)mh)->rows; }
+static uiTableValue *zam_ui_table_value(uiTableModelHandler *mh, uiTableModel *m, int row, int column) {
+    zam_ui_table_data *t = (zam_ui_table_data *)mh;
+    const char *text = "";
+    (void)m;
+    if (row >= 0 && row < t->rows && column >= 0 && column < t->columns && t->cells[row * t->columns + column]) text = t->cells[row * t->columns + column];
+    return uiNewTableValueString(text);
+}
+static void zam_ui_table_edit(uiTableModelHandler *mh, uiTableModel *m, int row, int column, const uiTableValue *v) { (void)mh; (void)m; (void)row; (void)column; (void)v; }
+// 新建表格，返回数据的句柄；控件本身用 zam_ui_table_control 取。
+int64_t zam_ui_table(int64_t columns) {
+    zam_ui_table_data *t;
+    uiTableParams params;
+    zam_ui_need();
+    t = (zam_ui_table_data *)calloc(1, sizeof *t);
+    if (!t) { zam_panic_one("allocation failed"); exit(1); }
+    t->handler.NumColumns = zam_ui_table_columns;
+    t->handler.ColumnType = zam_ui_table_type;
+    t->handler.NumRows = zam_ui_table_rows;
+    t->handler.CellValue = zam_ui_table_value;
+    t->handler.SetCellValue = zam_ui_table_edit;
+    t->columns = (int)columns;
+    t->model = uiNewTableModel(&t->handler);
+    params.Model = t->model;
+    params.RowBackgroundColorModelColumn = -1;
+    t->table = uiNewTable(&params);
+    uiTableSetSelectionMode(t->table, uiTableSelectionModeZeroOrOne);
+    return ZAM_UI_ID(t);
+}
+int64_t zam_ui_table_control(int64_t data) { return ZAM_UI_ID(((zam_ui_table_data *)ZAM_UI(data))->table); }
+void zam_ui_table_add_column(int64_t data, const char *name, int64_t index) {
+    zam_ui_table_data *t = (zam_ui_table_data *)ZAM_UI(data);
+    uiTableAppendTextColumn(t->table, name, (int)index, uiTableModelColumnNeverEditable, NULL);
+}
+// 改成 n 行：多出来的行释放（从末尾往前通知删除），新加的行先是空的（通知插入）。
+void zam_ui_table_set_count(int64_t data, int64_t n) {
+    zam_ui_table_data *t = (zam_ui_table_data *)ZAM_UI(data);
+    int i, old = t->rows;
+    zam_ui_table_quiet = 1;
+    if (n < old) {
+        for (i = old - 1; i >= (int)n; i--) {
+            int c;
+            for (c = 0; c < t->columns; c++) { free(t->cells[i * t->columns + c]); t->cells[i * t->columns + c] = NULL; }
+            t->rows = i;
+            uiTableModelRowDeleted(t->model, i);
+        }
+        zam_ui_table_quiet = 0;
+        return;
+    }
+    if (n > old) {
+        char **cells = (char **)realloc(t->cells, (size_t)n * (size_t)(t->columns ? t->columns : 1) * sizeof *cells);
+        if (!cells) { zam_panic_one("allocation failed"); exit(1); }
+        memset(cells + (size_t)old * t->columns, 0, (size_t)(n - old) * t->columns * sizeof *cells);
+        t->cells = cells;
+        for (i = old; i < (int)n; i++) { t->rows = i + 1; uiTableModelRowInserted(t->model, i); }
+    }
+    zam_ui_table_quiet = 0;
+}
+void zam_ui_table_set_cell(int64_t data, int64_t row, int64_t column, const char *text) {
+    zam_ui_table_data *t = (zam_ui_table_data *)ZAM_UI(data);
+    size_t n;
+    char *copy;
+    if (row < 0 || row >= t->rows || column < 0 || column >= t->columns) return;
+    n = strlen(text);
+    copy = (char *)malloc(n + 1);
+    if (!copy) { zam_panic_one("allocation failed"); exit(1); }
+    memcpy(copy, text, n + 1);
+    free(t->cells[row * t->columns + column]);
+    t->cells[row * t->columns + column] = copy;
+}
+void zam_ui_table_changed(int64_t data, int64_t row) { zam_ui_table_quiet = 1; uiTableModelRowChanged(((zam_ui_table_data *)ZAM_UI(data))->model, (int)row); zam_ui_table_quiet = 0; }
+// 选中第 row 行；row 不在表格范围内（如 -1）时取消选中。不会触发 on_change 的回调。
+void zam_ui_table_set_selected(int64_t data, int64_t row) {
+    zam_ui_table_data *t = (zam_ui_table_data *)ZAM_UI(data);
+    uiTableSelection s;
+    int r = (int)row;
+    s.NumRows = row >= 0 && row < t->rows ? 1 : 0;
+    s.Rows = s.NumRows ? &r : NULL;
+    zam_ui_table_quiet = 1;
+    uiTableSetSelection(t->table, &s);
+    zam_ui_table_quiet = 0;
+}
+int64_t zam_ui_table_selected(int64_t data) {
+    uiTableSelection *s = uiTableGetSelection(((zam_ui_table_data *)ZAM_UI(data))->table);
+    int64_t row = s && s->NumRows > 0 ? s->Rows[0] : -1;
+    if (s) uiFreeTableSelection(s);
+    return row;
+}
 int64_t zam_ui_radio(void) { zam_ui_need(); return ZAM_UI_ID(uiNewRadioButtons()); }
 void zam_ui_radio_add(int64_t r, const char *text) { uiRadioButtonsAppend(uiRadioButtons(ZAM_UI(r)), text); }
 int64_t zam_ui_radio_selected(int64_t r) { return uiRadioButtonsSelected(uiRadioButtons(ZAM_UI(r))); }
@@ -2319,6 +2434,8 @@ const char *zam_ui_pick(int64_t w, int64_t kind) {
 typedef struct zam_ui_handler {
     struct zam_ui_app *app;
     void (*invoke)(void *function, void *state);
+    // 画布的回调多一个参数：画笔或事件的地址。
+    void (*event)(void *function, void *state, int64_t arg);
     unsigned char function[2 * sizeof(void *)];
     struct zam_ui_handler *next;
 } zam_ui_handler;
@@ -2354,8 +2471,9 @@ static void zam_ui_on_spinbox(uiSpinbox *s, void *data) { (void)s; zam_ui_call((
 static void zam_ui_on_choice(uiCombobox *c, void *data) { (void)c; zam_ui_call((zam_ui_handler *)data); }
 static void zam_ui_on_radio(uiRadioButtons *r, void *data) { (void)r; zam_ui_call((zam_ui_handler *)data); }
 static int zam_ui_on_timer(void *data) { zam_ui_call((zam_ui_handler *)data); return 1; }
+static void zam_ui_on_table(uiTable *t, void *data) { (void)t; if (!zam_ui_table_quiet) zam_ui_call((zam_ui_handler *)data); }
 // 回调的种类，与 std/ui.zm 里的常量一致。
-enum { ZAM_UI_CLICK, ZAM_UI_TEXT, ZAM_UI_TEXT_AREA, ZAM_UI_TOGGLE, ZAM_UI_SLIDE, ZAM_UI_SPIN, ZAM_UI_CHOOSE, ZAM_UI_RADIO, ZAM_UI_TIMER, ZAM_UI_CLOSE };
+enum { ZAM_UI_CLICK, ZAM_UI_TEXT, ZAM_UI_TEXT_AREA, ZAM_UI_TOGGLE, ZAM_UI_SLIDE, ZAM_UI_SPIN, ZAM_UI_CHOOSE, ZAM_UI_RADIO, ZAM_UI_TIMER, ZAM_UI_CLOSE, ZAM_UI_SELECT, ZAM_UI_DRAW, ZAM_UI_MOUSE, ZAM_UI_KEY };
 static void zam_ui_connect(void *handle, int64_t kind, int64_t control, const void *function, size_t size, void (*invoke)(void *, void *)) {
     zam_ui_app *app = (zam_ui_app *)handle;
     zam_ui_handler *h = (zam_ui_handler *)calloc(1, sizeof *h);
@@ -2375,7 +2493,206 @@ static void zam_ui_connect(void *handle, int64_t kind, int64_t control, const vo
     case ZAM_UI_RADIO: uiRadioButtonsOnSelected(uiRadioButtons(c), zam_ui_on_radio, h); break;
     case ZAM_UI_TIMER: uiTimer((int)control, zam_ui_on_timer, h); break;
     case ZAM_UI_CLOSE: app->closing = h; break;
+    case ZAM_UI_SELECT: uiTableOnSelectionChanged(uiTable(c), zam_ui_on_table, h); break;
     }
+}
+// ---- 画布：用户自己画（libui 的 uiArea）----
+// 画的时候有一支“画笔”：当前的绘图上下文与正在拼的路径。回调拿到的 Painter 里存的就是它的地址，
+// 只在 on_draw 的回调期间有效。路径画完（fill/stroke）后还留着，可以接着描边；begin 换一条新的。
+typedef struct zam_ui_paint {
+    uiDrawContext *ctx;
+    double width, height;
+    uiDrawPath *path;
+    int figure;
+} zam_ui_paint;
+typedef struct zam_ui_canvas_data {
+    uiAreaHandler handler;
+    uiArea *area;
+    zam_ui_handler *draw, *mouse, *key;
+} zam_ui_canvas_data;
+static void zam_ui_fire(zam_ui_handler *h, void *arg) {
+    if (h && h->app->state) h->event(h->function, h->app->state, (int64_t)(intptr_t)arg);
+}
+static void zam_ui_area_draw(uiAreaHandler *ah, uiArea *a, uiAreaDrawParams *p) {
+    zam_ui_canvas_data *c = (zam_ui_canvas_data *)ah;
+    zam_ui_paint paint;
+    (void)a;
+    paint.ctx = p->Context; paint.width = p->AreaWidth; paint.height = p->AreaHeight; paint.path = NULL; paint.figure = 0;
+    zam_ui_fire(c->draw, &paint);
+    if (paint.path) uiDrawFreePath(paint.path);
+}
+static void zam_ui_area_mouse(uiAreaHandler *ah, uiArea *a, uiAreaMouseEvent *e) { (void)a; zam_ui_fire(((zam_ui_canvas_data *)ah)->mouse, e); }
+static void zam_ui_area_crossed(uiAreaHandler *ah, uiArea *a, int left) { (void)ah; (void)a; (void)left; }
+static void zam_ui_area_drag(uiAreaHandler *ah, uiArea *a) { (void)ah; (void)a; }
+static int zam_ui_area_key(uiAreaHandler *ah, uiArea *a, uiAreaKeyEvent *e) {
+    zam_ui_canvas_data *c = (zam_ui_canvas_data *)ah;
+    (void)a;
+    if (!c->key) return 0;
+    zam_ui_fire(c->key, e);
+    return 1;
+}
+int64_t zam_ui_canvas(void) {
+    zam_ui_canvas_data *c;
+    zam_ui_need();
+    c = (zam_ui_canvas_data *)calloc(1, sizeof *c);
+    if (!c) { zam_panic_one("allocation failed"); exit(1); }
+    c->handler.Draw = zam_ui_area_draw;
+    c->handler.MouseEvent = zam_ui_area_mouse;
+    c->handler.MouseCrossed = zam_ui_area_crossed;
+    c->handler.DragBroken = zam_ui_area_drag;
+    c->handler.KeyEvent = zam_ui_area_key;
+    c->area = uiNewArea(&c->handler);
+    return ZAM_UI_ID(c);
+}
+int64_t zam_ui_canvas_control(int64_t c) { return ZAM_UI_ID(((zam_ui_canvas_data *)ZAM_UI(c))->area); }
+void zam_ui_canvas_redraw(int64_t c) { uiAreaQueueRedrawAll(((zam_ui_canvas_data *)ZAM_UI(c))->area); }
+#define ZAM_PAINT ((zam_ui_paint *)ZAM_UI(p))
+double zam_ui_paint_width(int64_t p) { return ZAM_PAINT->width; }
+double zam_ui_paint_height(int64_t p) { return ZAM_PAINT->height; }
+void zam_ui_paint_begin(int64_t p) {
+    if (ZAM_PAINT->path) uiDrawFreePath(ZAM_PAINT->path);
+    ZAM_PAINT->path = uiDrawNewPath(uiDrawFillModeWinding);
+    ZAM_PAINT->figure = 0;
+}
+static uiDrawPath *zam_ui_open_path(int64_t p) {
+    if (!ZAM_PAINT->path || uiDrawPathEnded(ZAM_PAINT->path)) zam_ui_paint_begin(p);
+    return ZAM_PAINT->path;
+}
+void zam_ui_paint_move_to(int64_t p, double x, double y) { uiDrawPathNewFigure(zam_ui_open_path(p), x, y); ZAM_PAINT->figure = 1; }
+void zam_ui_paint_line_to(int64_t p, double x, double y) {
+    uiDrawPath *path = zam_ui_open_path(p);
+    if (!ZAM_PAINT->figure) { uiDrawPathNewFigure(path, x, y); ZAM_PAINT->figure = 1; } else uiDrawPathLineTo(path, x, y);
+}
+void zam_ui_paint_curve_to(int64_t p, double c1x, double c1y, double c2x, double c2y, double x, double y) {
+    uiDrawPath *path = zam_ui_open_path(p);
+    if (!ZAM_PAINT->figure) { uiDrawPathNewFigure(path, c1x, c1y); ZAM_PAINT->figure = 1; }
+    uiDrawPathBezierTo(path, c1x, c1y, c2x, c2y, x, y);
+}
+// 圆弧：角度是弧度，从 x 轴正方向开始、顺时针（屏幕坐标 y 向下）。
+void zam_ui_paint_arc(int64_t p, double cx, double cy, double r, double start, double sweep) {
+    uiDrawPath *path = zam_ui_open_path(p);
+    if (sweep < 0) { start += sweep; sweep = -sweep; }
+    if (!ZAM_PAINT->figure) { uiDrawPathNewFigureWithArc(path, cx, cy, r, start, sweep, 0); ZAM_PAINT->figure = 1; }
+    else uiDrawPathArcTo(path, cx, cy, r, start, sweep, 0);
+}
+void zam_ui_paint_rect(int64_t p, double x, double y, double w, double h) { uiDrawPathAddRectangle(zam_ui_open_path(p), x, y, w, h); ZAM_PAINT->figure = 0; }
+void zam_ui_paint_close(int64_t p) { if (ZAM_PAINT->figure) { uiDrawPathCloseFigure(zam_ui_open_path(p)); ZAM_PAINT->figure = 0; } }
+static uiDrawPath *zam_ui_ended(int64_t p) {
+    uiDrawPath *path = zam_ui_open_path(p);
+    if (!uiDrawPathEnded(path)) uiDrawPathEnd(path);
+    ZAM_PAINT->figure = 0;
+    return path;
+}
+void zam_ui_paint_fill(int64_t p, double r, double g, double b, double a) {
+    uiDrawBrush brush;
+    memset(&brush, 0, sizeof brush);
+    brush.Type = uiDrawBrushTypeSolid; brush.R = r; brush.G = g; brush.B = b; brush.A = a;
+    uiDrawFill(ZAM_PAINT->ctx, zam_ui_ended(p), &brush);
+}
+void zam_ui_paint_stroke(int64_t p, double width, double r, double g, double b, double a) {
+    uiDrawBrush brush;
+    uiDrawStrokeParams stroke;
+    memset(&brush, 0, sizeof brush);
+    memset(&stroke, 0, sizeof stroke);
+    brush.Type = uiDrawBrushTypeSolid; brush.R = r; brush.G = g; brush.B = b; brush.A = a;
+    stroke.Cap = uiDrawLineCapRound; stroke.Join = uiDrawLineJoinRound; stroke.Thickness = width; stroke.MiterLimit = uiDrawDefaultMiterLimit;
+    uiDrawStroke(ZAM_PAINT->ctx, zam_ui_ended(p), &brush, &stroke);
+}
+// 渐变：线性从 (x0, y0) 到 (x1, y1)；径向从圆心 (x0, y0) 向外到半径 radius。两端各一个颜色。
+void zam_ui_paint_gradient(int64_t p, int64_t radial, double x0, double y0, double x1, double y1, double radius,
+                           double r0, double g0, double b0, double a0, double r1, double g1, double b1, double a1) {
+    uiDrawBrush brush;
+    uiDrawBrushGradientStop stops[2];
+    memset(&brush, 0, sizeof brush);
+    stops[0].Pos = 0; stops[0].R = r0; stops[0].G = g0; stops[0].B = b0; stops[0].A = a0;
+    stops[1].Pos = 1; stops[1].R = r1; stops[1].G = g1; stops[1].B = b1; stops[1].A = a1;
+    brush.Type = radial ? uiDrawBrushTypeRadialGradient : uiDrawBrushTypeLinearGradient;
+    brush.X0 = x0; brush.Y0 = y0;
+    brush.X1 = radial ? x0 : x1; brush.Y1 = radial ? y0 : y1;
+    brush.OuterRadius = radius;
+    brush.Stops = stops; brush.NumStops = 2;
+    uiDrawFill(ZAM_PAINT->ctx, zam_ui_ended(p), &brush);
+}
+void zam_ui_paint_clip(int64_t p) { uiDrawClip(ZAM_PAINT->ctx, zam_ui_ended(p)); }
+void zam_ui_paint_save(int64_t p) { uiDrawSave(ZAM_PAINT->ctx); }
+void zam_ui_paint_restore(int64_t p) { uiDrawRestore(ZAM_PAINT->ctx); }
+// kind：0 平移 (a, b)，1 绕原点旋转 a 弧度，2 缩放 (a, b)。
+void zam_ui_paint_transform(int64_t p, int64_t kind, double a, double b) {
+    uiDrawMatrix m;
+    uiDrawMatrixSetIdentity(&m);
+    if (kind == 0) uiDrawMatrixTranslate(&m, a, b);
+    else if (kind == 1) uiDrawMatrixRotate(&m, 0, 0, a);
+    else uiDrawMatrixScale(&m, 0, 0, a, b);
+    uiDrawTransform(ZAM_PAINT->ctx, &m);
+}
+// 文字：系统界面字体，size 是磅值。width > 0 时在这个宽度里按 align（0 左、1 中、2 右）排版并换行。
+// 系统字体只查一次：uiLoadControlFont 在 Windows 上每次都重新扫描系统字体集合，一次要几十毫秒。
+static uiFontDescriptor zam_ui_font;
+static int zam_ui_font_loaded;
+static uiDrawTextLayout *zam_ui_layout(const char *text, double size, int bold, double width, int64_t align,
+                                       double r, double g, double b, double a) {
+    uiFontDescriptor font;
+    uiDrawTextLayoutParams params;
+    uiAttributedString *s = uiNewAttributedString(text);
+    uiDrawTextLayout *layout;
+    if (!zam_ui_font_loaded) { uiLoadControlFont(&zam_ui_font); zam_ui_font_loaded = 1; }
+    font = zam_ui_font;
+    font.Size = size;
+    font.Weight = bold ? uiTextWeightBold : uiTextWeightNormal;
+    if (strlen(text) > 0) uiAttributedStringSetAttribute(s, uiNewColorAttribute(r, g, b, a), 0, strlen(text));
+    params.String = s; params.DefaultFont = &font;
+    params.Width = width > 0 ? width : 1e6;
+    params.Align = align == 1 ? uiDrawTextAlignCenter : align == 2 ? uiDrawTextAlignRight : uiDrawTextAlignLeft;
+    layout = uiDrawNewTextLayout(&params);
+    uiFreeAttributedString(s);
+    return layout;
+}
+void zam_ui_paint_text(int64_t p, double x, double y, const char *text, double size, int bold, double width, int64_t align,
+                       double r, double g, double b, double a) {
+    uiDrawTextLayout *layout = zam_ui_layout(text, size, bold, width, align, r, g, b, a);
+    uiDrawText(ZAM_PAINT->ctx, layout, x, y);
+    uiDrawFreeTextLayout(layout);
+}
+// 文字排出来的宽（which 为 0）或高（which 为 1）。
+double zam_ui_text_extent(const char *text, double size, int bold, double width, int64_t which) {
+    double w = 0, h = 0;
+    uiDrawTextLayout *layout = zam_ui_layout(text, size, bold, width, 0, 0, 0, 0, 1);
+    uiDrawTextLayoutExtents(layout, &w, &h);
+    uiDrawFreeTextLayout(layout);
+    return which ? h : w;
+}
+#define ZAM_MOUSE ((uiAreaMouseEvent *)ZAM_UI(e))
+double zam_ui_mouse_x(int64_t e) { return ZAM_MOUSE->X; }
+double zam_ui_mouse_y(int64_t e) { return ZAM_MOUSE->Y; }
+int64_t zam_ui_mouse_down(int64_t e) { return ZAM_MOUSE->Down; }
+int64_t zam_ui_mouse_up(int64_t e) { return ZAM_MOUSE->Up; }
+int64_t zam_ui_mouse_count(int64_t e) { return ZAM_MOUSE->Count; }
+int zam_ui_mouse_held(int64_t e) { return ZAM_MOUSE->Held1To64 != 0; }
+#define ZAM_KEY ((uiAreaKeyEvent *)ZAM_UI(e))
+int zam_ui_key_up(int64_t e) { return ZAM_KEY->Up; }
+// 按下的键：可打印字符就是这个字符，其他键是名字（"Escape"、"Left"、"F1"……），只按了修饰键时是空串。
+const char *zam_ui_key_name(int64_t e) {
+    static ZAM_THREAD char one[2];
+    static const char *names[] = { "", "Escape", "Insert", "Delete", "Home", "End", "PageUp", "PageDown", "Up", "Down", "Left", "Right",
+        "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12" };
+    if (ZAM_KEY->Key) { one[0] = ZAM_KEY->Key; one[1] = 0; return one; }
+    if (ZAM_KEY->ExtKey > 0 && ZAM_KEY->ExtKey < (int)(sizeof names / sizeof names[0])) return names[ZAM_KEY->ExtKey];
+    return "";
+}
+// 按住的修饰键：1 Ctrl、2 Alt、4 Shift、8 Super（Windows 键 / Command），可以相加。
+int64_t zam_ui_key_modifiers(int64_t e) { return ZAM_KEY->Modifiers; }
+int64_t zam_ui_mouse_modifiers(int64_t e) { return ZAM_MOUSE->Modifiers; }
+static void zam_ui_connect_event(void *handle, int64_t kind, int64_t canvas, const void *function, size_t size, void (*event)(void *, void *, int64_t)) {
+    zam_ui_app *app = (zam_ui_app *)handle;
+    zam_ui_canvas_data *c = (zam_ui_canvas_data *)ZAM_UI(canvas);
+    zam_ui_handler *h = (zam_ui_handler *)calloc(1, sizeof *h);
+    if (!h || size > sizeof h->function) { zam_panic_one("allocation failed"); exit(1); }
+    h->app = app; h->event = event;
+    memcpy(h->function, function, size);
+    h->next = app->handlers; app->handlers = h;
+    if (kind == ZAM_UI_DRAW) c->draw = h;
+    else if (kind == ZAM_UI_MOUSE) c->mouse = h;
+    else c->key = h;
 }
 // 关窗口就结束：先调用 on_close 的回调（如果有），再退出主循环。窗口由 libui 销毁。
 static int zam_ui_on_closing(uiWindow *w, void *data) {
@@ -2643,6 +2960,25 @@ static S zam_pad(S *s, int64_t width, int left) {
     if (!out.data) zam_alloc_failed();
     memset(out.data + (left ? 0 : s->len), ' ', extra);
     if (s->len) memcpy(out.data + (left ? extra : 0), s->data, s->len);
+    return out;
+}
+// 用 fill（正好一个字符，可以是多字节的 UTF-8）补到 width 个字符：where 为 0 时补在右边（ljust），
+// 1 时补在左边（rjust），2 时两边补（center，多出的一个按 Python 的规则放在左边或右边）。
+static S zam_pad_with(S *s, int64_t width, int where, S *fill) {
+    size_t chars = 0, i, extra, left, at = 0; S out; out.chars = 0;
+    if (zam_chars(fill) != 1) { zam_panic_one("the fill character must be exactly one character"); exit(1); }
+    for (i = 0; i < s->len; i++) if ((s->data[i] & 0xC0) != 0x80) chars++;
+    if (width <= 0 || (uint64_t)width <= chars) return copy(s);
+    extra = (size_t)width - chars;
+    left = where == 1 ? extra : where == 2 ? extra / 2 + (extra & (size_t)width & 1) : 0;
+    if (extra > (SIZE_MAX - s->len) / fill->len) zam_alloc_failed();
+    out.len = s->len + extra * fill->len;
+    out.data = (unsigned char*)malloc(out.len);
+    if (!out.data) zam_alloc_failed();
+    for (i = 0; i < left; i++, at += fill->len) memcpy(out.data + at, fill->data, fill->len);
+    if (s->len) memcpy(out.data + at, s->data, s->len);
+    at += s->len;
+    for (i = left; i < extra; i++, at += fill->len) memcpy(out.data + at, fill->data, fill->len);
     return out;
 }
 static S zam_message(const char *text, S *detail) {
@@ -4094,6 +4430,28 @@ return (int64_t)n;"#,
         result: Type::Owned,
         fallible: false,
         body: "return zam_pad(p0, p1, 0);",
+    },
+    // `s.ljust(5, "0")`、`s.rjust(5, "0")`、`s.center(9, "*")`：用给定的一个字符补，同 Python。
+    Builtin {
+        name: "std/string:pad_right_with",
+        params: &[Type::Shared, Type::Int, Type::Shared],
+        result: Type::Owned,
+        fallible: false,
+        body: "return zam_pad_with(p0, p1, 0, p2);",
+    },
+    Builtin {
+        name: "std/string:pad_left_with",
+        params: &[Type::Shared, Type::Int, Type::Shared],
+        result: Type::Owned,
+        fallible: false,
+        body: "return zam_pad_with(p0, p1, 1, p2);",
+    },
+    Builtin {
+        name: "std/string:center_with",
+        params: &[Type::Shared, Type::Int, Type::Shared],
+        result: Type::Owned,
+        fallible: false,
+        body: "return zam_pad_with(p0, p1, 2, p2);",
     },
     Builtin {
         name: "std/string:find",
@@ -7864,17 +8222,14 @@ pub fn generate_with(
                     );
                 }
                 // 方法调用要到生成时才知道接收者类型：同名的结构体方法都带上原型。
-                Expr::Method(_, method, _)
-                | Expr::ElementMethod(_, _, _, method, _)
-                | Expr::Chain(_, method, _) => {
-                    // 字符串上的方法就是 std/string 的同名函数：把它的 C 实现一并带上。
-                    let string = format!("std/string:{}", string_alias(method));
+                Expr::Method(_, method, args)
+                | Expr::ElementMethod(_, _, _, method, args)
+                | Expr::Chain(_, method, args) => {
+                    // 字符串上的方法就是 std/string 的同名函数：把它的 C 实现一并带上
+                    // （按实参个数选的版本，如 find_from，见 compiler::string_function）。
+                    let string = crate::compiler::string_function(method, args.len());
                     if module.functions.contains_key(&string) {
                         needed.insert(string);
-                    }
-                    // `s.find(sub, start)` 调用的是 find_from。
-                    if method == "find" && module.functions.contains_key("std/string:find_from") {
-                        needed.insert("std/string:find_from".to_owned());
                     }
                     let bytes = format!("std/bytes:{method}");
                     if module.functions.contains_key(&bytes) {
@@ -8770,6 +9125,26 @@ fn intrinsic(
             format!("zam_ui_run({}, p1, &p2);\nreturn p2;\n", handle(0)),
         )),
         // 回调：保存函数值，按 T 生成调用器，把 C 里存的状态当成 &mut T 交给它。
+        // 画布的回调：第二个参数是画笔或事件，C 里传来的是地址，包成只有一个字段的结构体交给它。
+        "std/ui:_connect_event" => {
+            let Type::Func(id) = param(3) else {
+                unreachable!("kept handler")
+            };
+            let (params, _) = func_sig(id);
+            let state = ctype(params[0]);
+            let Type::RecordRef(event, _) = params[1] else {
+                unreachable!("event parameter is a borrowed struct")
+            };
+            Some((
+                format!(
+                    "static void {symbol}_event(void *f, void *state, int64_t arg) {{ F{id} *g = (F{id} *)f; R{event} e; memset(&e, 0, sizeof e); e.m0 = arg; g->call(g->env, ({state})state, &e); }}\n"
+                ),
+                format!(
+                    "zam_ui_connect_event({}, p1, p2, &p3, sizeof p3, {symbol}_event);\n",
+                    handle(0)
+                ),
+            ))
+        }
         "std/ui:_connect" => {
             let Type::Func(id) = param(3) else {
                 unreachable!("kept handler")

@@ -784,6 +784,12 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
             "type",
             Some("match the expression type to the declared type"),
         )
+    } else if message.contains("would hold no value") {
+        (
+            "ZM200",
+            "type",
+            Some("drop the let and call the function as a statement"),
+        )
     } else if message.contains("unknown field ") {
         (
             "ZM202",

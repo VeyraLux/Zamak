@@ -54,8 +54,16 @@ Here's what each part does:
 | `ui.slider(low, high)`, `ui.spinbox(low, high)` | Whole number | `value()`, `set_value(n)` |
 | `ui.progress()` | Progress bar, 0 to 100 | `value()`, `set_value(n)`; -1 shows unknown progress |
 | `ui.separator(vertical=false)` | Line | |
+| `ui.table(columns)` | Read-only table of text | `set_rows(rows)`, `selected()`, `set_selected(i)`; -1 means no row |
 
 `ui.show(c)`, `ui.hide(c)`, and `ui.set_enabled(c, on)` work with any control.
+
+A table takes a list of rows, each a list of strings, one per column. `table.set_rows(rows)` replaces all the rows at once, and returns an error, leaving the table as it was, if a row has the wrong number of cells:
+
+```zamak,ignore
+let table = ui.table(["Date", "Item", "Amount"])
+table.set_rows([["2026-10-24", "milk", "3.50"], ["2026-10-25", "bus", "2.00"]])?
+```
 
 ## Layout
 
@@ -75,7 +83,7 @@ A control added with `stretchy=true` takes the extra space, such as a text area 
 | Method | Calls the handler when |
 | --- | --- |
 | `app.on_click(button, f)` | The button is clicked. |
-| `app.on_change(control, f)` | The user changes an entry, text area, check box, slider, spin box, drop-down list, or option buttons. |
+| `app.on_change(control, f)` | The user changes an entry, text area, check box, slider, spin box, drop-down list, or option buttons, or selects another row of a table. |
 | `app.every(milliseconds, f)` | The time passes, again and again. |
 | `app.on_close(f)` | The window is about to close. |
 
@@ -99,6 +107,59 @@ match app.window.open_file():
 ## Build your own controls
 
 To make a control of your own, combine existing ones: write a function that builds a `column` or `grid` of controls and returns a struct that holds their handles. Every control has a `handle()` method, so a struct with one can be added to a layout like any built-in control.
+
+[`examples/apps/ledger`](https://github.com/VeyraLux/Zamak/tree/main/examples/apps/ledger) is a complete desktop program: a form, a table, and a summary, with the data in SQLite.
+
+## Draw your own controls
+
+`ui.canvas()` is an empty area that you draw yourself. `app.on_draw(canvas, f)` calls `f` with a `Painter` whenever the area needs drawing, and `app.on_mouse` and `app.on_key` deliver mouse and keyboard events. When your state changes, call `canvas.redraw()`, and `on_draw` runs again.
+
+`std/widgets` is a set of controls drawn this way: switches, buttons, sliders, check boxes, progress bars and rings, line and bar charts, cards, and badges, in a light and a dark theme. Each one is an ordinary function that draws from the values you pass in, so the state stays in your own struct:
+
+```zamak,ignore
+use std/ui
+use std/widgets
+
+struct State:
+    canvas: ui.Canvas
+    on: bool
+    hover: bool
+
+fn switch_box() -> ui.Rect:
+    ui.rect(20.0, 20.0, 44.0, 24.0)
+
+fn draw(s: &mut State, p: &ui.Painter):
+    let t = widgets.light()
+    widgets.draw_background(p, t)
+    widgets.draw_switch(p, switch_box(), s.on, t, hover=s.hover)
+    p.text(76.0, 23.0, if s.on: "On" else: "Off", t.text)
+
+fn mouse(s: &mut State, m: &ui.Mouse):
+    let over = switch_box().contains(m.x(), m.y())
+    let clicked = over and m.down() == 1
+    if clicked:
+        s.on = not s.on
+    if clicked or over != s.hover:
+        s.hover = over
+        s.canvas.redraw()
+
+fn main():
+    let window = ui.window("Switch", 240, 80)
+    let canvas = ui.canvas()
+    window.set_child(canvas)
+    let app: ui.App[State] = ui.app()
+    app.on_draw(canvas, draw)
+    app.on_mouse(canvas, mouse)
+    app.run(window, State(canvas: canvas, on: false, hover: false))
+```
+
+- The `Painter` draws paths (`move_to`, `line_to`, `curve_to`, `arc`, `add_rect`, `add_round_rect`, `add_circle`) and fills them with a color, a linear gradient, or a radial gradient, or strokes them. `fill_rect`, `fill_round_rect`, `fill_circle`, `line`, `text`, and `text_in` do it in one call. `save`, `translate`, `rotate`, `scale`, `clip`, and `restore` change where you draw.
+- Colors come from `ui.rgb(0x4F6BED)` or `ui.rgba(hex, alpha)`; `color.mix(other, t)`, `lighter`, `darker`, and `alpha` derive new ones. `ui.rect(x, y, w, h)` has `contains(x, y)` for hit testing.
+- A `Mouse` has `x()`, `y()`, `down()` and `up()` (1 is the left button), `clicks()`, and `dragging()`. A `Key` has `name()`, such as `"a"` or `"Left"`, `released()`, and `modifiers()`.
+- Every widget is a few lines of code in `std/widgets`. To change how one looks, copy it into your program and edit it; to add a new one, write a function that draws on a `Painter`. Fields of `widgets.Theme` are public, so `widgets.dark()` with a different `accent` is your own theme.
+- Redraw only when something changed. Drawing text and shapes is fast, but a canvas that redraws on every mouse move does work for nothing.
+
+[`examples/ui/widgets.zm`](https://github.com/VeyraLux/Zamak/tree/main/examples/ui/widgets.zm) puts every widget on one canvas, with a dark-mode switch that fades the whole theme.
 
 ## Building and running
 

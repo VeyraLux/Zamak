@@ -1,0 +1,52 @@
+# 金额一律用整数“分”保存和计算，不用浮点数：0.1 + 0.2 这样的误差不会出现。
+# 读入时最多两位小数，多一位就报错，不悄悄四舍五入。
+
+# "12.34" → 1234。前后空格可以有；负数、千分位、超过两位小数都是错误。
+pub fn parse(text: &string) -> i64!string:
+    let t = text.strip()
+
+    if t == "":
+        fail "the amount is empty"
+
+    let dot = t.find(".")
+    let whole = if dot < 0: copy(t) else: t[:dot]
+    let fraction = if dot < 0: "" else: t[dot + 1:]
+
+    if whole == "" or not whole.isdigit():
+        fail f"{t} is not an amount; write it like 12.34"
+
+    if fraction != "" and not fraction.isdigit():
+        fail f"{t} is not an amount; write it like 12.34"
+
+    if len(fraction) > 2:
+        fail f"{t} has more than two decimal places"
+
+    let cents = int(whole)? * 100 + int(fraction.ljust(2, "0"))?
+
+    if cents == 0:
+        fail "the amount is zero"
+
+    cents
+
+# 1234 → "12.34"，-50 → "-0.50"。
+pub fn show(cents: i64) -> string:
+    let sign = if cents < 0: "-" else: ""
+    let n = abs(cents)
+    f"{sign}{n // 100}.{n % 100:02}"
+
+fn test_parses_whole_and_fractional_amounts() -> !string:
+    assert parse("12")? == 1200
+    assert parse(" 12.3 ")? == 1230
+    assert parse("0.05")? == 5
+    assert parse("1999.99")? == 199999
+
+fn test_rejects_what_it_cannot_store_exactly():
+    for bad in ["", "abc", "1.234", "-5", "1,000", "1.2.3", "0", ".5"]:
+        let ok = parse(bad) catch e: -1
+        assert ok == -1
+
+fn test_shows_cents():
+    assert show(1234) == "12.34"
+    assert show(5) == "0.05"
+    assert show(-50) == "-0.50"
+    assert show(0) == "0.00"

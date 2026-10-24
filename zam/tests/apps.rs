@@ -309,3 +309,39 @@ fn notes_serves_a_rest_api_backed_by_sqlite() {
     let _ = server.wait();
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn ledger_keeps_exact_amounts_and_adds_from_the_window() {
+    let root = std::env::temp_dir().join(format!("zam-apps-ledger-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    // 金额解析与数据库层的测试不需要图形环境。
+    let tested = zam(&["test", "../examples/apps/ledger"], &root.join("cache"));
+    let stdout = String::from_utf8_lossy(&tested.stdout).replace("\r\n", "\n");
+    assert!(
+        tested.status.success() && stdout.contains("test result: ok. 6 passed"),
+        "{stdout}{}",
+        String::from_utf8_lossy(&tested.stderr)
+    );
+    // LEDGER_SMOKE=1：程序自己在窗口里填一笔、加上、打印汇总后退出。没有图形环境时跳过。
+    let output = Command::new(env!("CARGO_BIN_EXE_zam"))
+        .args(["run", "../examples/apps/ledger"])
+        .env("ZAMAK_CACHE_DIR", root.join("cache"))
+        .env("ZAMAK_LANG", "en")
+        .env("LEDGER_DB", root.join("ledger.db"))
+        .env("LEDGER_SMOKE", "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("cannot start the user interface") || stderr.contains("std/ui needs GTK 3") {
+        eprintln!("skipping the window: {}", stderr.trim());
+    } else {
+        assert!(output.status.success(), "{stderr}");
+        let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+        assert!(
+            stdout.ends_with(": income 0.00, spent 3.80, balance -3.80\n1\n"),
+            "{stdout}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}

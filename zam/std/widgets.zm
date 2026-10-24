@@ -1,0 +1,253 @@
+# 默认组件：开关、按钮、滑块、复选框、进度条、进度环、折线图、柱状图、卡片、徽章，配一套浅色与深色主题。
+# 它们都是用 ui.Painter 画出来的普通函数，和你自己写的组件用的是同一套画法：想要不一样的样子，
+# 复制一个改改，或者照着写新的。
+#
+# 组件不藏状态：开没开、值是多少、鼠标在不在上面，都放在你自己的结构体里，画的时候传进来。
+# 判断点到了哪里用 Rect.contains（滑块用 widgets.slider_value 把鼠标位置换成 0 到 1 的值）。
+#
+#     fn draw(s: &mut State, p: &ui.Painter):
+#         let t = widgets.light()
+#         widgets.draw_background(p, t)
+#         widgets.draw_switch(p, s.switch_box, s.on, t, hover=s.hover)
+#
+#     fn mouse(s: &mut State, m: &ui.Mouse):
+#         s.hover = s.switch_box.contains(m.x(), m.y())
+#         if m.down() == 1 and s.hover:
+#             s.on = not s.on
+#         s.canvas.redraw()
+use std/ui
+
+pub const PI = 3.141592653589793
+
+# 一套配色与圆角。字段都是公开的：拿 light() 或 dark() 改几个颜色，就是你自己的主题。
+pub struct Theme:
+    background: ui.Color
+    surface: ui.Color
+    border: ui.Color
+    text: ui.Color
+    muted: ui.Color
+    accent: ui.Color
+    good: ui.Color
+    bad: ui.Color
+    radius: f64
+
+pub fn light() -> Theme:
+    Theme(background: ui.rgb(0xF4F5F7), surface: ui.rgb(0xFFFFFF), border: ui.rgb(0xE2E5EA), text: ui.rgb(0x1F2328), muted: ui.rgb(0x6B7280), accent: ui.rgb(0x4F6BED), good: ui.rgb(0x16A34A), bad: ui.rgb(0xDC2626), radius: 10.0)
+
+pub fn dark() -> Theme:
+    Theme(background: ui.rgb(0x15171C), surface: ui.rgb(0x1F232B), border: ui.rgb(0x2E3440), text: ui.rgb(0xE6E8EC), muted: ui.rgb(0x9097A3), accent: ui.rgb(0x7C93FF), good: ui.rgb(0x34D399), bad: ui.rgb(0xF87171), radius: 10.0)
+
+# 整块画布涂成背景色。
+pub fn draw_background(p: &ui.Painter, t: &Theme):
+    p.fill_rect(p.bounds(), t.background)
+
+# 卡片：圆角面板，有标题时标题画在顶部。返回放内容的区域。
+pub fn draw_card(p: &ui.Painter, r: &ui.Rect, title: &string, t: &Theme) -> ui.Rect:
+    p.fill_round_rect(ui.rect(r.x, r.y + 2.0, r.w, r.h), t.radius, t.border.alpha(0.6))
+    p.fill_round_rect(r, t.radius, t.surface)
+    p.stroke_round_rect(r.inset(0.5), t.radius, t.border)
+
+    if title == "":
+        return r.inset(16.0)
+
+    p.text(r.x + 16.0, r.y + 14.0, title, t.text, size=13.0, bold=true)
+    ui.rect(r.x + 16.0, r.y + 40.0, r.w - 32.0, r.h - 56.0)
+
+# 按钮。primary 为 true 时用强调色填满，否则是描边按钮；hover、pressed 改变深浅。
+pub fn draw_button(p: &ui.Painter, r: &ui.Rect, label: &string, t: &Theme, hover: bool = false, pressed: bool = false, primary: bool = true):
+    let k = if pressed: 0.18 elif hover: 0.08 else: 0.0
+
+    if primary:
+        p.fill_round_rect(r, t.radius * 0.8, t.accent.darker(k))
+        p.text_in(r, label, ui.rgb(0xFFFFFF), size=13.0, bold=true)
+    else:
+        p.fill_round_rect(r, t.radius * 0.8, t.surface.mix(t.accent, k))
+        p.stroke_round_rect(r.inset(0.5), t.radius * 0.8, t.border)
+        p.text_in(r, label, t.text, size=13.0, bold=true)
+
+# 开关：r 是开关本身（建议 44 × 24）。knob 是滑块的位置（0 在左、1 在右），不做动画时传
+# if on: 1.0 else: 0.0；要动画就在定时器里把它慢慢推到目标值。
+pub fn draw_switch(p: &ui.Painter, r: &ui.Rect, on: bool, t: &Theme, hover: bool = false, knob: f64 = -1.0):
+    let at = if knob < 0.0: (if on: 1.0 else: 0.0) else: max(0.0, min(1.0, knob))
+    let off = t.border.darker(if hover: 0.12 else: 0.05)
+    p.fill_round_rect(r, r.h / 2.0, off.mix(t.accent, at))
+    let d = r.h - 6.0
+    let x = r.x + 3.0 + (r.w - 6.0 - d) * at
+    p.fill_circle(x + d / 2.0, r.center_y() + 0.8, d / 2.0, ui.rgba(0x000000, 0.12))
+    p.fill_circle(x + d / 2.0, r.center_y(), d / 2.0, ui.rgb(0xFFFFFF))
+
+# 一行文字加一个靠右的开关。返回开关的区域，用来判断点击。
+pub fn draw_switch_row(p: &ui.Painter, r: &ui.Rect, label: &string, on: bool, t: &Theme, hover: bool = false, knob: f64 = -1.0) -> ui.Rect:
+    p.text_in(ui.rect(r.x, r.y, r.w - 56.0, r.h), label, t.text, size=13.0, align=ui.LEFT)
+    let box = ui.rect(r.right() - 44.0, r.center_y() - 12.0, 44.0, 24.0)
+    draw_switch(p, box, on, t, hover=hover, knob=knob)
+    box
+
+# 复选框：r 是方框（建议 18 × 18）。
+pub fn draw_checkbox(p: &ui.Painter, r: &ui.Rect, checked: bool, t: &Theme, hover: bool = false):
+    if checked:
+        p.fill_round_rect(r, 4.0, t.accent.darker(if hover: 0.08 else: 0.0))
+        p.begin()
+        p.move_to(r.x + r.w * 0.24, r.y + r.h * 0.52)
+        p.line_to(r.x + r.w * 0.43, r.y + r.h * 0.70)
+        p.line_to(r.x + r.w * 0.77, r.y + r.h * 0.32)
+        p.stroke(ui.rgb(0xFFFFFF), 2.0)
+    else:
+        p.fill_round_rect(r, 4.0, t.surface)
+        p.stroke_round_rect(r.inset(0.5), 4.0, if hover: t.accent else: t.border.darker(0.15), 1.5)
+
+# 滑块：value 在 0 到 1 之间。r 是整条轨道的区域（高度建议 24）。
+pub fn draw_slider(p: &ui.Painter, r: &ui.Rect, value: f64, t: &Theme, hover: bool = false):
+    let v = max(0.0, min(1.0, value))
+    let y = r.center_y()
+    let left = r.x + 9.0
+    let width = r.w - 18.0
+    p.fill_round_rect(ui.rect(left, y - 3.0, width, 6.0), 3.0, t.border)
+    p.fill_round_rect(ui.rect(left, y - 3.0, width * v, 6.0), 3.0, t.accent)
+    let x = left + width * v
+
+    if hover:
+        p.fill_circle(x, y, 13.0, t.accent.alpha(0.15))
+
+    p.fill_circle(x, y + 0.8, 9.0, ui.rgba(0x000000, 0.15))
+    p.fill_circle(x, y, 9.0, ui.rgb(0xFFFFFF))
+    p.stroke_circle(x, y, 9.0, t.accent, 2.0)
+
+# 鼠标的横坐标 x 在滑块 r 上对应的值（0 到 1）。
+pub fn slider_value(x: f64, r: &ui.Rect) -> f64:
+    max(0.0, min(1.0, (x - r.x - 9.0) / (r.w - 18.0)))
+
+# 进度条：value 在 0 到 1 之间。
+pub fn draw_progress(p: &ui.Painter, r: &ui.Rect, value: f64, t: &Theme):
+    let v = max(0.0, min(1.0, value))
+    p.fill_round_rect(r, r.h / 2.0, t.border)
+
+    if v > 0.0:
+        p.begin()
+        p.add_round_rect(ui.rect(r.x, r.y, max(r.h, r.w * v), r.h), r.h / 2.0)
+        p.fill_linear(r.x, r.y, r.x + r.w, r.y, t.accent.lighter(0.25), t.accent)
+
+# 进度环：圆心 (cx, cy)，半径 radius，value 在 0 到 1 之间；中间写百分比，label 写在下面一行。
+pub fn draw_ring(p: &ui.Painter, cx: f64, cy: f64, radius: f64, value: f64, t: &Theme, label: &string = ""):
+    let v = max(0.0, min(1.0, value))
+    let width = max(4.0, radius * 0.16)
+    p.stroke_circle(cx, cy, radius, t.border, width)
+
+    if v > 0.0:
+        p.begin()
+        p.arc(cx, cy, radius, -PI / 2.0, 2.0 * PI * v)
+        p.stroke(t.accent, width)
+
+    let percent = f"{int(v * 100.0 + 0.5)}%"
+    let size = radius * 0.42
+    let box = ui.rect(cx - radius, cy - radius, radius * 2.0, radius * 2.0)
+
+    if label == "":
+        p.text_in(box, percent, t.text, size=size, bold=true)
+        return
+
+    p.text_in(ui.rect(box.x, box.y - size * 0.35, box.w, box.h), percent, t.text, size=size, bold=true)
+    p.text_in(ui.rect(box.x, box.y + size * 0.75, box.w, box.h), label, t.muted, size=max(10.0, size * 0.4))
+
+# 折线图：values 从左到右画，下面填一层渐变；左边标出最大值与最小值。
+pub fn draw_line_chart(p: &ui.Painter, r: &ui.Rect, values: &[f64], t: &Theme):
+    if len(values) == 0:
+        p.text_in(r, "no data", t.muted)
+        return
+
+    let mut low = values[0]
+    let mut high = values[0]
+
+    for v in values:
+        low = min(low, v)
+        high = max(high, v)
+
+    if high == low:
+        high = low + 1.0
+
+    let plot = ui.rect(r.x + 40.0, r.y + 6.0, r.w - 46.0, r.h - 12.0)
+
+    for i in range(4):
+        let y = plot.y + plot.h * float(i) / 3.0
+        p.line(plot.x, y, plot.right(), y, t.border, 1.0)
+
+    p.text(r.x, plot.y - 7.0, short_number(high), t.muted, size=10.0)
+    p.text(r.x, plot.bottom() - 7.0, short_number(low), t.muted, size=10.0)
+    let step = if len(values) > 1: plot.w / float(len(values) - 1) else: 0.0
+    let mut xs: [f64] = []
+    let mut ys: [f64] = []
+
+    for i, v in values:
+        xs.append(plot.x + step * float(i))
+        ys.append(plot.bottom() - (v - low) / (high - low) * plot.h)
+
+    p.begin()
+    p.move_to(xs[0], plot.bottom())
+
+    for i in range(len(xs)):
+        p.line_to(xs[i], ys[i])
+
+    p.line_to(xs[len(xs) - 1], plot.bottom())
+    p.close()
+    p.fill_linear(0.0, plot.y, 0.0, plot.bottom(), t.accent.alpha(0.30), t.accent.alpha(0.0))
+    p.begin()
+
+    for i in range(len(xs)):
+        p.line_to(xs[i], ys[i])
+
+    p.stroke(t.accent, 2.5)
+    let last = len(xs) - 1
+    p.fill_circle(xs[last], ys[last], 6.0, t.accent.alpha(0.25))
+    p.fill_circle(xs[last], ys[last], 3.5, t.accent)
+
+# 柱状图：每个值一根圆角柱子，labels 写在下面（可以比 values 少）。
+pub fn draw_bar_chart(p: &ui.Painter, r: &ui.Rect, values: &[f64], labels: &[string], t: &Theme):
+    if len(values) == 0:
+        p.text_in(r, "no data", t.muted)
+        return
+
+    let mut high = 0.0
+
+    for v in values:
+        high = max(high, v)
+
+    if high <= 0.0:
+        high = 1.0
+
+    let plot = ui.rect(r.x, r.y, r.w, r.h - 20.0)
+    let slot = plot.w / float(len(values))
+    let bar = min(36.0, slot * 0.6)
+
+    for i, v in values:
+        let h = max(2.0, v / high * plot.h)
+        let x = plot.x + slot * float(i) + (slot - bar) / 2.0
+        let top = plot.bottom() - h
+        p.begin()
+        p.add_round_rect(ui.rect(x, top, bar, h), min(6.0, bar / 2.0))
+        p.fill_linear(0.0, top, 0.0, plot.bottom(), t.accent.lighter(0.15), t.accent)
+
+        if i < len(labels):
+            p.text_in(ui.rect(plot.x + slot * float(i), plot.bottom() + 2.0, slot, 18.0), labels[i], t.muted, size=11.0)
+
+# 徽章：小圆角标签，左上角在 (x, y)。返回它的宽度，方便排下一个。
+pub fn draw_badge(p: &ui.Painter, x: f64, y: f64, text: &string, color: &ui.Color) -> f64:
+    let w = ui.text_width(text, 11.0, true) + 16.0
+    let r = ui.rect(x, y, w, 20.0)
+    p.fill_round_rect(r, 10.0, color.alpha(0.15))
+    p.text_in(r, text, color, size=11.0, bold=true)
+    w
+
+# 坐标轴上的数字：整数不带小数点，大数用 k、M。
+fn short_number(v: f64) -> string:
+    let a = abs(v)
+
+    if a >= 1000000.0:
+        return f"{v / 1000000.0:.1}M"
+
+    if a >= 1000.0:
+        return f"{v / 1000.0:.1}k"
+
+    if v == float(int(v)):
+        return str(int(v))
+
+    f"{v:.1}"

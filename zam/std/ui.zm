@@ -86,6 +86,45 @@ extern fn zam_ui_radio() -> i64
 extern fn zam_ui_radio_add(r: i64, text: &string)
 extern fn zam_ui_radio_selected(r: i64) -> i64
 extern fn zam_ui_radio_set_selected(r: i64, index: i64)
+extern fn zam_ui_table(columns: i64) -> i64
+extern fn zam_ui_table_control(data: i64) -> i64
+extern fn zam_ui_table_add_column(data: i64, name: &string, index: i64)
+extern fn zam_ui_table_set_count(data: i64, n: i64)
+extern fn zam_ui_table_set_cell(data: i64, row: i64, column: i64, text: &string)
+extern fn zam_ui_table_changed(data: i64, row: i64)
+extern fn zam_ui_table_selected(data: i64) -> i64
+extern fn zam_ui_table_set_selected(data: i64, row: i64)
+extern fn zam_ui_canvas() -> i64
+extern fn zam_ui_canvas_control(c: i64) -> i64
+extern fn zam_ui_canvas_redraw(c: i64)
+extern fn zam_ui_paint_width(p: i64) -> f64
+extern fn zam_ui_paint_height(p: i64) -> f64
+extern fn zam_ui_paint_begin(p: i64)
+extern fn zam_ui_paint_move_to(p: i64, x: f64, y: f64)
+extern fn zam_ui_paint_line_to(p: i64, x: f64, y: f64)
+extern fn zam_ui_paint_curve_to(p: i64, c1x: f64, c1y: f64, c2x: f64, c2y: f64, x: f64, y: f64)
+extern fn zam_ui_paint_arc(p: i64, cx: f64, cy: f64, r: f64, start: f64, sweep: f64)
+extern fn zam_ui_paint_rect(p: i64, x: f64, y: f64, w: f64, h: f64)
+extern fn zam_ui_paint_close(p: i64)
+extern fn zam_ui_paint_fill(p: i64, r: f64, g: f64, b: f64, a: f64)
+extern fn zam_ui_paint_stroke(p: i64, width: f64, r: f64, g: f64, b: f64, a: f64)
+extern fn zam_ui_paint_gradient(p: i64, radial: i64, x0: f64, y0: f64, x1: f64, y1: f64, radius: f64, r0: f64, g0: f64, b0: f64, a0: f64, r1: f64, g1: f64, b1: f64, a1: f64)
+extern fn zam_ui_paint_clip(p: i64)
+extern fn zam_ui_paint_save(p: i64)
+extern fn zam_ui_paint_restore(p: i64)
+extern fn zam_ui_paint_transform(p: i64, kind: i64, a: f64, b: f64)
+extern fn zam_ui_paint_text(p: i64, x: f64, y: f64, text: &string, size: f64, bold: bool, width: f64, align: i64, r: f64, g: f64, b: f64, a: f64)
+extern fn zam_ui_text_extent(text: &string, size: f64, bold: bool, width: f64, which: i64) -> f64
+extern fn zam_ui_mouse_x(e: i64) -> f64
+extern fn zam_ui_mouse_y(e: i64) -> f64
+extern fn zam_ui_mouse_down(e: i64) -> i64
+extern fn zam_ui_mouse_up(e: i64) -> i64
+extern fn zam_ui_mouse_count(e: i64) -> i64
+extern fn zam_ui_mouse_held(e: i64) -> bool
+extern fn zam_ui_mouse_modifiers(e: i64) -> i64
+extern fn zam_ui_key_up(e: i64) -> bool
+extern fn zam_ui_key_name(e: i64) -> string
+extern fn zam_ui_key_modifiers(e: i64) -> i64
 extern fn zam_ui_message(w: i64, title: &string, text: &string, error: bool)
 extern fn zam_ui_pick(w: i64, kind: i64) -> string
 extern fn zam_ui_app_new(out: &mut Option[AppHandle]) -> i64
@@ -102,6 +141,10 @@ const CHOOSE = 6
 const RADIO = 7
 const TIMER = 8
 const CLOSE = 9
+const SELECT = 10
+const DRAW = 11
+const MOUSE = 12
+const KEY = 13
 
 # 所有控件：能放进窗口与容器。
 pub interface Control:
@@ -434,6 +477,323 @@ pub struct Progress:
 pub fn progress() -> Progress:
     Progress(id: zam_ui_progress())
 
+# ---- 画布：自己画 ----
+#
+# ui.canvas() 是一块空白区域，画什么由你决定：app.on_draw(canvas, f) 的 f 收到一支 Painter，
+# 用它画形状、渐变和文字；app.on_mouse / app.on_key 收到鼠标与键盘事件。内容要变时调用
+# canvas.redraw()，界面会再调用一次 on_draw。坐标单位是像素，原点在左上角，y 向下。
+# std/widgets 里的开关、按钮、图表等都是用这些画出来的，可以照着写自己的组件。
+
+# 颜色：r、g、b、a 都在 0 到 1 之间。ui.rgb(0x3B82F6) 按十六进制写。
+pub struct Color:
+    r: f64
+    g: f64
+    b: f64
+    a: f64
+
+    # 同样的颜色，换一个不透明度。
+    pub fn alpha(&self, a: f64) -> Color:
+        Color(r: self.r, g: self.g, b: self.b, a: a)
+
+    # 和 other 按 t（0 到 1）混合：t 为 0 是自己，1 是 other。做渐变动画、悬停变色时用。
+    pub fn mix(&self, other: &Color, t: f64) -> Color:
+        let k = max(0.0, min(1.0, t))
+        Color(r: self.r + (other.r - self.r) * k, g: self.g + (other.g - self.g) * k, b: self.b + (other.b - self.b) * k, a: self.a + (other.a - self.a) * k)
+
+    pub fn lighter(&self, t: f64) -> Color:
+        self.mix(Color(r: 1.0, g: 1.0, b: 1.0, a: self.a), t)
+
+    pub fn darker(&self, t: f64) -> Color:
+        self.mix(Color(r: 0.0, g: 0.0, b: 0.0, a: self.a), t)
+
+# 0xRRGGBB 写的颜色，不透明。
+pub fn rgb(hex: i64) -> Color:
+    rgba(hex, 1.0)
+
+pub fn rgba(hex: i64, a: f64) -> Color:
+    Color(r: float((hex >> 16) & 255) / 255.0, g: float((hex >> 8) & 255) / 255.0, b: float(hex & 255) / 255.0, a: a)
+
+# 矩形区域：左上角 (x, y)，宽 w、高 h。
+pub struct Rect:
+    x: f64
+    y: f64
+    w: f64
+    h: f64
+
+    pub fn contains(&self, x: f64, y: f64) -> bool:
+        x >= self.x and x < self.x + self.w and y >= self.y and y < self.y + self.h
+
+    # 四边各收进 d（d 为负时往外扩）。
+    pub fn inset(&self, d: f64) -> Rect:
+        Rect(x: self.x + d, y: self.y + d, w: max(0.0, self.w - 2.0 * d), h: max(0.0, self.h - 2.0 * d))
+
+    pub fn right(&self) -> f64:
+        self.x + self.w
+
+    pub fn bottom(&self) -> f64:
+        self.y + self.h
+
+    pub fn center_x(&self) -> f64:
+        self.x + self.w / 2.0
+
+    pub fn center_y(&self) -> f64:
+        self.y + self.h / 2.0
+
+pub fn rect(x: f64, y: f64, w: f64, h: f64) -> Rect:
+    Rect(x: x, y: y, w: w, h: h)
+
+# 文字对齐（Painter.text_in 的 align）。
+pub const LEFT = 0
+pub const CENTER = 1
+pub const RIGHT = 2
+
+# 画笔：只在 on_draw 的回调里有效。先用 begin、move_to、line_to、arc、add_rect 等拼路径，
+# 再 fill 或 stroke；fill_rect、fill_circle、text 这些是一步画好的写法。角度是弧度，顺时针。
+pub struct Painter:
+    p: i64
+
+    # 画布当前的宽和高。
+    pub fn width(&self) -> f64:
+        zam_ui_paint_width(self.p)
+
+    pub fn height(&self) -> f64:
+        zam_ui_paint_height(self.p)
+
+    pub fn bounds(&self) -> Rect:
+        Rect(x: 0.0, y: 0.0, w: self.width(), h: self.height())
+
+    # ---- 路径 ----
+    pub fn begin(&self):
+        zam_ui_paint_begin(self.p)
+
+    pub fn move_to(&self, x: f64, y: f64):
+        zam_ui_paint_move_to(self.p, x, y)
+
+    pub fn line_to(&self, x: f64, y: f64):
+        zam_ui_paint_line_to(self.p, x, y)
+
+    # 三次贝塞尔曲线：两个控制点，然后是终点。
+    pub fn curve_to(&self, c1x: f64, c1y: f64, c2x: f64, c2y: f64, x: f64, y: f64):
+        zam_ui_paint_curve_to(self.p, c1x, c1y, c2x, c2y, x, y)
+
+    pub fn arc(&self, cx: f64, cy: f64, r: f64, start: f64, sweep: f64):
+        zam_ui_paint_arc(self.p, cx, cy, r, start, sweep)
+
+    pub fn add_rect(&self, r: &Rect):
+        zam_ui_paint_rect(self.p, r.x, r.y, r.w, r.h)
+
+    # 圆角矩形：radius 超过短边一半时按一半算。
+    pub fn add_round_rect(&self, r: &Rect, radius: f64):
+        let k = max(0.0, min(radius, min(r.w, r.h) / 2.0))
+        let half = 1.5707963267948966
+        zam_ui_paint_arc(self.p, r.x + r.w - k, r.y + k, k, -half, half)
+        zam_ui_paint_arc(self.p, r.x + r.w - k, r.y + r.h - k, k, 0.0, half)
+        zam_ui_paint_arc(self.p, r.x + k, r.y + r.h - k, k, half, half)
+        zam_ui_paint_arc(self.p, r.x + k, r.y + k, k, 2.0 * half, half)
+        zam_ui_paint_close(self.p)
+
+    pub fn add_circle(&self, cx: f64, cy: f64, r: f64):
+        zam_ui_paint_arc(self.p, cx, cy, r, 0.0, 6.283185307179586)
+        zam_ui_paint_close(self.p)
+
+    pub fn close(&self):
+        zam_ui_paint_close(self.p)
+
+    # 用颜色填满当前路径。
+    pub fn fill(&self, color: &Color):
+        zam_ui_paint_fill(self.p, color.r, color.g, color.b, color.a)
+
+    # 沿当前路径描边，width 是线宽。
+    pub fn stroke(&self, color: &Color, width: f64 = 1.0):
+        zam_ui_paint_stroke(self.p, width, color.r, color.g, color.b, color.a)
+
+    # 线性渐变填满当前路径：从 (x0, y0) 的 start 渐变到 (x1, y1) 的 end。
+    pub fn fill_linear(&self, x0: f64, y0: f64, x1: f64, y1: f64, start: &Color, end: &Color):
+        zam_ui_paint_gradient(self.p, 0, x0, y0, x1, y1, 0.0, start.r, start.g, start.b, start.a, end.r, end.g, end.b, end.a)
+
+    # 径向渐变：圆心 (cx, cy) 是 inner，到半径 radius 处是 outer。
+    pub fn fill_radial(&self, cx: f64, cy: f64, radius: f64, inner: &Color, outer: &Color):
+        zam_ui_paint_gradient(self.p, 1, cx, cy, cx, cy, radius, inner.r, inner.g, inner.b, inner.a, outer.r, outer.g, outer.b, outer.a)
+
+    # 之后只画在当前路径里面（save/restore 之间有效）。
+    pub fn clip(&self):
+        zam_ui_paint_clip(self.p)
+
+    # ---- 一步画好 ----
+    pub fn fill_rect(&self, r: &Rect, color: &Color):
+        self.begin()
+        self.add_rect(r)
+        self.fill(color)
+
+    pub fn fill_round_rect(&self, r: &Rect, radius: f64, color: &Color):
+        self.begin()
+        self.add_round_rect(r, radius)
+        self.fill(color)
+
+    pub fn stroke_round_rect(&self, r: &Rect, radius: f64, color: &Color, width: f64 = 1.0):
+        self.begin()
+        self.add_round_rect(r, radius)
+        self.stroke(color, width)
+
+    pub fn fill_circle(&self, cx: f64, cy: f64, r: f64, color: &Color):
+        self.begin()
+        self.add_circle(cx, cy, r)
+        self.fill(color)
+
+    pub fn stroke_circle(&self, cx: f64, cy: f64, r: f64, color: &Color, width: f64 = 1.0):
+        self.begin()
+        self.add_circle(cx, cy, r)
+        self.stroke(color, width)
+
+    pub fn line(&self, x1: f64, y1: f64, x2: f64, y2: f64, color: &Color, width: f64 = 1.0):
+        self.begin()
+        self.move_to(x1, y1)
+        self.line_to(x2, y2)
+        self.stroke(color, width)
+
+    # ---- 文字（系统界面字体）----
+    # 左上角在 (x, y)。
+    pub fn text(&self, x: f64, y: f64, text: &string, color: &Color, size: f64 = 13.0, bold: bool = false):
+        zam_ui_paint_text(self.p, x, y, text, size, bold, 0.0, 0, color.r, color.g, color.b, color.a)
+
+    # 在矩形里排版：横向按 align（ui.LEFT、ui.CENTER、ui.RIGHT），纵向居中；太长时换行。
+    pub fn text_in(&self, r: &Rect, text: &string, color: &Color, size: f64 = 13.0, bold: bool = false, align: i64 = 1):
+        let h = zam_ui_text_extent(text, size, bold, r.w, 1)
+        zam_ui_paint_text(self.p, r.x, r.y + (r.h - h) / 2.0, text, size, bold, r.w, align, color.r, color.g, color.b, color.a)
+
+    # ---- 变换（save 与 restore 成对用）----
+    pub fn save(&self):
+        zam_ui_paint_save(self.p)
+
+    pub fn restore(&self):
+        zam_ui_paint_restore(self.p)
+
+    pub fn translate(&self, x: f64, y: f64):
+        zam_ui_paint_transform(self.p, 0, x, y)
+
+    # 绕原点顺时针转 radians 弧度（先 translate 到中心再转，就是绕中心转）。
+    pub fn rotate(&self, radians: f64):
+        zam_ui_paint_transform(self.p, 1, radians, 0.0)
+
+    pub fn scale(&self, sx: f64, sy: f64):
+        zam_ui_paint_transform(self.p, 2, sx, sy)
+
+# 文字排出来的宽和高（不用画笔，布局时用）。
+pub fn text_width(text: &string, size: f64 = 13.0, bold: bool = false) -> f64:
+    zam_ui_text_extent(text, size, bold, 0.0, 0)
+
+pub fn text_height(text: &string, size: f64 = 13.0, bold: bool = false, width: f64 = 0.0) -> f64:
+    zam_ui_text_extent(text, size, bold, width, 1)
+
+# 修饰键（Mouse.modifiers()、Key.modifiers() 的各位）。
+pub const CTRL = 1
+pub const ALT = 2
+pub const SHIFT = 4
+pub const SUPER = 8
+
+# 鼠标事件：只在 on_mouse 的回调里有效。移动时 down() 和 up() 都是 0。
+pub struct Mouse:
+    e: i64
+
+    pub fn x(&self) -> f64:
+        zam_ui_mouse_x(self.e)
+
+    pub fn y(&self) -> f64:
+        zam_ui_mouse_y(self.e)
+
+    # 这次按下的键：1 左键、2 中键、3 右键；不是按下事件时是 0。
+    pub fn down(&self) -> i64:
+        zam_ui_mouse_down(self.e)
+
+    # 这次松开的键，同 down。
+    pub fn up(&self) -> i64:
+        zam_ui_mouse_up(self.e)
+
+    # 连击次数：双击时第二次按下是 2。
+    pub fn clicks(&self) -> i64:
+        zam_ui_mouse_count(self.e)
+
+    # 移动时有没有键按着（拖动）。
+    pub fn dragging(&self) -> bool:
+        zam_ui_mouse_held(self.e)
+
+    pub fn modifiers(&self) -> i64:
+        zam_ui_mouse_modifiers(self.e)
+
+# 键盘事件：只在 on_key 的回调里有效。画布要先被点一下（得到焦点）才收得到。
+pub struct Key:
+    e: i64
+
+    # 可打印的键是那个字符（"a"、"1"、" "），其他是名字："Escape"、"Left"、"F1"……
+    pub fn name(&self) -> string:
+        zam_ui_key_name(self.e)
+
+    pub fn released(&self) -> bool:
+        zam_ui_key_up(self.e)
+
+    pub fn modifiers(&self) -> i64:
+        zam_ui_key_modifiers(self.e)
+
+pub struct Canvas:
+    id: i64
+    data: i64
+
+    pub fn handle(&self) -> i64:
+        self.id
+
+    # 让界面重画（之后会调用 on_draw）。状态变了、要更新画面时调用。
+    pub fn redraw(&self):
+        zam_ui_canvas_redraw(self.data)
+
+pub fn canvas() -> Canvas:
+    let data = zam_ui_canvas()
+    Canvas(id: zam_ui_canvas_control(data), data: data)
+
+# ---- 表格 ----
+
+# 只读的文字表格：columns 是各列的标题，set_rows 整体换掉数据（每行的格数要等于列数）。
+# 一次最多选中一行，selected() 是选中行的下标，没有选中时是 -1。用户选中别的行时 on_change 收到通知
+# （程序自己调用 set_selected 不算）。
+pub struct Table:
+    id: i64
+    data: i64
+    columns: i64
+
+    pub fn handle(&self) -> i64:
+        self.id
+
+    pub fn change_kind(&self) -> i64:
+        SELECT
+
+    # 换成 rows 里的数据。某一行的格数不等于列数时返回错误，表格不变。
+    pub fn set_rows(&self, rows: &[[string]]) -> !string:
+        for i, row in rows:
+            if len(row) != self.columns:
+                fail f"row {i} has {len(row)} cells, but the table has {self.columns} columns"
+
+        zam_ui_table_set_count(self.data, len(rows))
+
+        for i, row in rows:
+            for j, cell in row:
+                zam_ui_table_set_cell(self.data, i, j, cell)
+
+            zam_ui_table_changed(self.data, i)
+
+    pub fn selected(&self) -> i64:
+        zam_ui_table_selected(self.data)
+
+    # 选中第 row 行；-1 取消选中。
+    pub fn set_selected(&self, row: i64):
+        zam_ui_table_set_selected(self.data, row)
+
+pub fn table(columns: &[string]) -> Table:
+    let data = zam_ui_table(len(columns))
+
+    for i, name in columns:
+        zam_ui_table_add_column(data, name, i)
+
+    Table(id: zam_ui_table_control(data), data: data, columns: len(columns))
+
 # 下拉选择框，一开始选中第一项。selected() 是选中项的下标，没有选中时是 -1。
 pub struct Choice:
     id: i64
@@ -525,6 +885,24 @@ pub struct App[T]:
     pub fn on_change[C: Changing](&self, control: &C, handler: kept fn(&mut T)):
         self.connect(control.change_kind(), control.handle(), handler)
 
+    # 画布需要画的时候调用 handler：第二个参数是画笔。
+    pub fn on_draw(&self, canvas: &Canvas, handler: kept fn(&mut T, &Painter)):
+        match self.handle:
+            Some(h): _connect_event(h, DRAW, canvas.data, handler)
+            None: pass
+
+    # 鼠标在画布上移动、按下、松开时调用 handler。
+    pub fn on_mouse(&self, canvas: &Canvas, handler: kept fn(&mut T, &Mouse)):
+        match self.handle:
+            Some(h): _connect_event(h, MOUSE, canvas.data, handler)
+            None: pass
+
+    # 画布有焦点时按键或松开时调用 handler。
+    pub fn on_key(&self, canvas: &Canvas, handler: kept fn(&mut T, &Key)):
+        match self.handle:
+            Some(h): _connect_event(h, KEY, canvas.data, handler)
+            None: pass
+
     # 窗口关闭之前调用 handler。
     pub fn on_close(&self, handler: kept fn(&mut T)):
         self.connect(CLOSE, 0, handler)
@@ -562,4 +940,7 @@ fn _run[T](app: &AppHandle, window: i64, state: T) -> T:
     state
 
 fn _connect[T](app: &AppHandle, kind: i64, control: i64, handler: kept fn(&mut T)):
+    pass
+
+fn _connect_event[T, E](app: &AppHandle, kind: i64, canvas: i64, handler: kept fn(&mut T, &E)):
     pass

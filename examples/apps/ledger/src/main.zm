@@ -1,0 +1,164 @@
+# ledger：桌面记账本。每一笔记在 SQLite 数据库里（默认 ~/.zamak-ledger.db，可以用环境变量
+# LEDGER_DB 指定），金额是整数分，不会有浮点误差。按月份查看、删除选中的一笔、导出 CSV。
+# 环境变量 LEDGER_SMOKE=1 时程序自己填一笔、打印汇总后退出（给没有人点的自动测试用）。
+use std/datetime
+use std/env
+use std/fs
+use std/path
+use std/sqlite
+use std/ui
+use books
+use money
+
+struct Ledger:
+    db: sqlite.Connection
+    window: ui.Window
+    day: ui.Entry
+    text: ui.Entry
+    amount: ui.Entry
+    kind: ui.Choice
+    category: ui.Choice
+    month: ui.Entry
+    table: ui.Table
+    summary: ui.Label
+    shown: [books.Item]
+
+fn categories() -> [string]:
+    ["Food", "Home", "Transport", "Fun", "Health", "Work", "Other"]
+
+fn database() -> string:
+    let chosen = env.var("LEDGER_DB") catch e: ""
+
+    if chosen != "":
+        return chosen
+
+    let home = env.var("HOME") catch e: env.var("USERPROFILE") catch e: "."
+    path.join(home, ".zamak-ledger.db")
+
+# 按月份框里的月份重新读一遍，填进表格和汇总。
+fn refresh(l: &mut Ledger):
+    let month = l.month.text().strip()
+    let list = books.items(l.db, month) catch e:
+        l.window.error("Can't read the ledger", e)
+        return
+
+    let mut rows: [[string]] = []
+
+    for item in list:
+        rows.append([copy(item.day), copy(item.text), copy(item.category), money.show(item.cents)])
+
+    l.table.set_rows(rows) catch e:
+        l.window.error("Can't show the ledger", e)
+        return
+
+    let t = books.totals(list)
+    let shown = if month == "": "all months" else: month
+    l.summary.set_text(f"{shown}: income {money.show(t.income)}, spent {money.show(t.spent)}, balance {money.show(t.balance())}")
+    l.shown = list
+
+fn add(l: &mut Ledger):
+    let cents = money.parse(l.amount.text()) catch e:
+        l.window.error("Can't add this", e)
+        return
+
+    let signed = if l.kind.selected() == 1: cents else: -cents
+    let names = categories()
+    books.add(l.db, l.day.text(), l.text.text(), names[max(l.category.selected(), 0)], signed) catch e:
+        l.window.error("Can't add this", e)
+        return
+
+    l.text.set_text("")
+    l.amount.set_text("")
+    refresh(l)
+
+fn remove(l: &mut Ledger):
+    let row = l.table.selected()
+
+    if row < 0 or row >= len(l.shown):
+        l.window.message("Delete", "Select a row in the table first.")
+        return
+
+    books.remove(l.db, l.shown[row].id) catch e:
+        l.window.error("Can't delete this", e)
+        return
+
+    refresh(l)
+
+fn export(l: &mut Ledger):
+    match l.window.save_file():
+        Some(file):
+            fs.write(file, books.csv(l.shown)) catch e:
+                l.window.error("Can't save", e)
+                return
+
+            l.window.message("Export", f"Saved {len(l.shown)} items to {file}.")
+        None: pass
+
+# 月份框改了：空的（全部）或写完整（YYYY-MM）时刷新。
+fn month_changed(l: &mut Ledger):
+    let month = l.month.text().strip()
+
+    if month == "" or len(month) == 7:
+        refresh(l)
+
+fn smoke(l: &mut Ledger):
+    l.text.set_text("coffee")
+    l.amount.set_text("3.80")
+    add(l)
+    println(l.summary.text())
+    println(len(l.shown))
+    ui.quit()
+
+fn main() -> !string:
+    let db = books.open(database())?
+    let today = datetime.today().isoformat()
+    let window = ui.window("Ledger", 720, 480)
+
+    let day = ui.entry(today)
+    let text = ui.entry()
+    let amount = ui.entry()
+    let kind = ui.choice(["Expense", "Income"])
+    let category = ui.choice(categories())
+    let add_button = ui.button("Add")
+    let form = ui.form()
+    form.add("Date", day)
+    form.add("Description", text)
+    form.add("Amount", amount)
+    form.add("Kind", kind)
+    form.add("Category", category)
+
+    let month = ui.entry(today[:7])
+    let top = ui.row()
+    top.add(ui.label("Month (YYYY-MM, empty for all)"))
+    top.add(month, stretchy=true)
+
+    let table = ui.table(["Date", "Description", "Category", "Amount"])
+    let summary = ui.label("")
+    let delete_button = ui.button("Delete selected")
+    let export_button = ui.button("Export CSV…")
+    let bottom = ui.row()
+    bottom.add(summary, stretchy=true)
+    bottom.add(delete_button)
+    bottom.add(export_button)
+
+    let column = ui.column()
+    column.add(form)
+    column.add(add_button)
+    column.add(ui.separator())
+    column.add(top)
+    column.add(table, stretchy=true)
+    column.add(bottom)
+    window.set_child(column)
+
+    let app: ui.App[Ledger] = ui.app()
+    app.on_click(add_button, add)
+    app.on_click(delete_button, remove)
+    app.on_click(export_button, export)
+    app.on_change(month, month_changed)
+
+    if (env.var("LEDGER_SMOKE") catch e: "") == "1":
+        app.every(200, smoke)
+
+    let mut state = Ledger(db: db, window: window, day: day, text: text, amount: amount, kind: kind, category: category, month: month, table: table, summary: summary, shown: [])
+    refresh(&mut state)
+    app.run(window, state)

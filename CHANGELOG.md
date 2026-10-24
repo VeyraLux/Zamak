@@ -101,6 +101,17 @@ and this file is the source for the text of each GitHub release.
 - `match` on the result of a call gives the arm its own copy of the data: you can change it or move it, as in
   `match jobs.get(): Some(job): done.append(job)`. `match` on a variable still borrows.
 - `examples/apps/notes` is a REST service for notes, backed by SQLite.
+- **`ui.table(columns)`** shows a read-only table: `set_rows(rows)`, `selected()`, `set_selected(i)`, and `app.on_change`
+  when the user selects another row.
+- **Draw your own controls.** `ui.canvas()` with `app.on_draw`, `app.on_mouse`, and `app.on_key`; the `Painter` draws paths,
+  rounded rectangles, circles, linear and radial gradients, and text, and can translate, rotate, scale, and clip.
+- **`std/widgets`**: default controls drawn on a canvas, which you can copy and change: switches, buttons, sliders, check boxes,
+  progress bars and rings, line and bar charts, cards, and badges, with light and dark themes. See `examples/ui/widgets.zm`.
+- `examples/apps/ledger` is a desktop ledger: a form, a table, monthly totals, and CSV export, with amounts kept in whole cents.
+- `s.ljust(width, fill)`, `s.rjust(width, fill)`, and `s.center(width, fill)` take a fill character, as in Python.
+- `let x = f()` where `f` returns nothing now says so, instead of reporting a borrow error.
+- Fixed on Linux: a control set as a window's child, such as a canvas, filled only its natural width; it now fills the window,
+  as on Windows and macOS. Changing a table's rows or selection in code no longer calls `on_change` on Linux, as on Windows.
 - Fixed: `catch` inside a call that takes a borrowed argument, such as `int(env.var("PORT") catch e: "8080")`, was rejected.
 - Fixed: `datetime.now()` and other local-time functions could return a wrong offset when several threads called them at once.
 - Fixed: a `CC` wrapper script that adds flags (such as `exec gcc -fsanitize=thread "$@"`) shared cached objects with plain `gcc`.
@@ -323,6 +334,16 @@ this preview.
 - 对调用结果做 `match` 时，分支拿到的数据归自己：可以修改、移走，如 `match jobs.get(): Some(job): done.append(job)`。
   对变量做 `match` 仍然是借用。
 - `examples/apps/notes`：存笔记的 REST 服务，数据在 SQLite 里。
+- **`ui.table(columns)`**：只读表格，`set_rows(rows)`、`selected()`、`set_selected(i)`；用户选中别的行时触发 `app.on_change`。
+- **自己画控件。** `ui.canvas()` 配合 `app.on_draw`、`app.on_mouse`、`app.on_key`；`Painter` 能画路径、圆角矩形、圆、
+  线性与径向渐变和文字，还能平移、旋转、缩放、裁剪。
+- **`std/widgets`**：画在画布上的默认组件，可以复制了改：开关、按钮、滑块、复选框、进度条与进度环、折线图与柱状图、
+  卡片、徽章，配浅色与深色主题。见 `examples/ui/widgets.zm`。
+- `examples/apps/ledger`：桌面记账本，表单、表格、按月汇总、导出 CSV，金额按整数分保存。
+- `s.ljust(width, fill)`、`s.rjust(width, fill)`、`s.center(width, fill)` 可以指定填充字符，同 Python。
+- `let x = f()` 而 `f` 什么也不返回时，报错直接说明这一点，不再报借用错误。
+- 修复（Linux）：直接放进窗口的控件（如画布）只有自然宽度，现在和 Windows、macOS 一样铺满窗口。程序自己改表格的数据或选中行
+  时，Linux 上也不再调用 `on_change`（同 Windows）。
 - 修复：`catch` 放在借用参数的调用里（如 `int(env.var("PORT") catch e: "8080")`）会被拒绝。
 - 修复：几个线程同时调用 `datetime.now()` 等本地时间函数时，可能得到错误的时区偏移。
 - 修复：加了参数的 `CC` 包装脚本（如 `exec gcc -fsanitize=thread "$@"`）与普通 `gcc` 共用缓存的目标文件。
