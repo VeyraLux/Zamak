@@ -770,7 +770,8 @@ pub fn method_signature(receiver: Type, method: &str) -> Option<(bool, Vec<Type>
             "sorted" => (false, Vec::new(), Type::List(key)),
             _ => return None,
         },
-        (Type::List(elem), "push") => (true, vec![elem.ty()], Type::Unit),
+        // `append` 是 Python 的写法，与 `push` 相同。
+        (Type::List(elem), "push" | "append") => (true, vec![elem.ty()], Type::Unit),
         (Type::List(elem), "pop") => (true, Vec::new(), elem.ty()),
         (Type::List(_), "swap") => (true, vec![Type::Int, Type::Int], Type::Unit),
         (Type::List(elem), "insert") => (true, vec![Type::Int, elem.ty()], Type::Unit),
@@ -1747,11 +1748,8 @@ fn derive_json(name: &str, ty: Type) -> Result<Option<Block>, String> {
     };
     let body: Block = if name == TO_JSON {
         match ty {
-            Type::Int => vec![ret(json(
-                "Number",
-                vec![Expr::Call("std/core:float".into(), vec![var("value")])],
-            ))],
-            Type::Float => vec![ret(json("Number", vec![var("value")]))],
+            Type::Int => vec![ret(json("Int", vec![var("value")]))],
+            Type::Float => vec![ret(json("Float", vec![var("value")]))],
             Type::Bool => vec![ret(json("Bool", vec![var("value")]))],
             Type::Owned => vec![ret(json(
                 "Str",
@@ -2347,6 +2345,39 @@ pub fn rewrite_block(
     visit_exprs_mut(block, &mut |expr| rewrite_spawn(functions, expr))
 }
 
+/// 有类型参数只出现在返回类型里（`fn decode[T](text: &string) -> T`），调用点推断不出来，
+/// 要靠接收结果的变量的标注。
+fn hidden_generics(template: &Function) -> bool {
+    template.generics.iter().any(|g| {
+        let param = BTreeSet::from([type_param(g)]);
+        !template
+            .params
+            .iter()
+            .any(|(_, ty)| mentions_any(*ty, &param))
+    })
+}
+
+/// `let notes: [Note] = db.query(sql, [])`：这时还不知道 `db` 的类型，所以按方法名找。
+/// 整个程序里只有一个非泛型结构体有叫这个名字、带隐藏类型参数的 `&self` 方法时，返回它在
+/// 函数表里的名字（`std/sqlite:Connection.query`）；有歧义或没有时返回 None，照常检查。
+fn annotated_method<'f>(
+    functions: &'f BTreeMap<String, Function>,
+    method: &str,
+) -> Option<&'f str> {
+    let table = STRUCT_TABLE.read().expect("struct table");
+    let mut found = functions.iter().filter(|(name, function)| {
+        name.rsplit_once('.').is_some_and(|(owner, m)| {
+            m == method
+                && table
+                    .values()
+                    .any(|(n, s)| n == owner && s.generics.is_empty())
+        }) && matches!(function.params.first(), Some((s, Type::RecordRef(_, false))) if s == "self")
+            && hidden_generics(function)
+    });
+    let (name, _) = found.next()?;
+    found.next().is_none().then_some(name.as_str())
+}
+
 fn rewrite_let(
     functions: &BTreeMap<String, Function>,
     instruction: &mut Instruction,
@@ -2357,6 +2388,27 @@ fn rewrite_let(
                 Expr::Try(inner) | Expr::Catch(inner, _, _) => inner.as_mut(),
                 other => other,
             };
+            if let Expr::Method(receiver, method, args) = call {
+                let Some(template) = annotated_method(functions, method) else {
+                    return Ok(());
+                };
+                let actuals = vec![None; args.len() + 1];
+                let name = instance_full(
+                    functions,
+                    template,
+                    &actuals,
+                    &|_, _| None,
+                    Some(*annotation),
+                )?;
+                // `&self` 的方法：接收者当第一个实参，传给 `&` 参数时自动借用。
+                let first = match receiver.split_once('.') {
+                    Some((root, rest)) => Expr::Field(root.into(), rest.into()),
+                    None => Expr::Variable(receiver.clone()),
+                };
+                let args = std::iter::once(first).chain(args.drain(..)).collect();
+                *call = Expr::Call(name, args);
+                return Ok(());
+            }
             let Expr::Call(name, args) = call else {
                 return Ok(());
             };
@@ -2366,15 +2418,8 @@ fn rewrite_let(
             else {
                 return Ok(());
             };
-            let params: BTreeSet<u64> = template.generics.iter().map(|g| type_param(g)).collect();
             // 每个类型参数都出现在参数里时照常按实参推断（检查时才知道实参的类型）。
-            let hidden = params.iter().any(|param| {
-                !template
-                    .params
-                    .iter()
-                    .any(|(_, ty)| mentions_any(*ty, &BTreeSet::from([*param])))
-            });
-            if !hidden {
+            if !hidden_generics(template) {
                 return Ok(());
             }
             let actuals = vec![None; args.len()];
@@ -6742,8 +6787,14 @@ impl<'a> Checker<'a> {
         }
         Ok((id, root))
     }
-    /// 一个分支绑定的变量：标量载荷按值，其他载荷是只读借用。
-    fn arm_bindings(&self, id: u64, pattern: &Pattern) -> Result<Vec<(String, Type)>, String> {
+    /// 一个分支绑定的变量：标量载荷按值，其他载荷是只读借用。`owned` 时（match 语句匹配的是
+    /// 调用结果之类的临时值）载荷归绑定所有：可以修改、移走，分支结束时释放。
+    fn arm_bindings(
+        &self,
+        id: u64,
+        pattern: &Pattern,
+        owned: bool,
+    ) -> Result<Vec<(String, Type)>, String> {
         let (name, declaration) = self.enumeration(Type::Record(id)).expect("checked enum");
         let Some(variant) = &pattern.0 else {
             return Ok(Vec::new());
@@ -6768,7 +6819,7 @@ impl<'a> Checker<'a> {
             if self.locals.contains_key(binding) || bindings.iter().any(|(b, _)| b == binding) {
                 return Err(format!("duplicate binding {binding}"));
             }
-            let ty = if copied(*ty) {
+            let ty = if copied(*ty) || owned {
                 *ty
             } else {
                 borrow_of(*ty, false).expect("enum payloads are owned values")
@@ -7466,7 +7517,7 @@ impl<'a> Checker<'a> {
                 };
                 let (pattern, value) = arms.first().ok_or("a match needs at least one arm")?;
                 let mut locals = self.locals.clone();
-                for (binding, ty) in self.arm_bindings(record_id(name), pattern)? {
+                for (binding, ty) in self.arm_bindings(record_id(name), pattern, false)? {
                     locals.insert(
                         binding,
                         Binding {
@@ -7886,7 +7937,7 @@ impl<'a> Checker<'a> {
                 let mut states = Vec::new();
                 for (pattern, value) in arms {
                     self.locals = before.clone();
-                    let bindings = self.arm_bindings(id, pattern)?;
+                    let bindings = self.arm_bindings(id, pattern, false)?;
                     for (name, ty) in &bindings {
                         self.locals.insert(
                             name.clone(),
@@ -8619,6 +8670,15 @@ impl<'a> Checker<'a> {
                 self.call(name, &callee, args, expected, loans)
             }
             Expr::Catch(inner, binding, block) => {
+                // `int(env.var("PORT") catch e: "8080")`：catch 的值是临时值，传给只读借用的参数时
+                // 先按拥有的类型检查，再借出去（同普通调用的结果）。
+                let expected = match expected {
+                    Type::Shared => Type::Owned,
+                    Type::RecordRef(id, false) => Type::Record(id),
+                    Type::ListRef(elem, false) => Type::List(elem),
+                    Type::MapRef(key, value, false) => Type::Map(key, value),
+                    other => other,
+                };
                 let discarded = std::mem::take(&mut self.discarded);
                 let (name, error, success) = match self.value_call(inner, expected, loans)? {
                     Some(found) => found,
@@ -8965,15 +9025,17 @@ impl<'a> Checker<'a> {
                     self.arms_cover(id, arms.iter().map(|(pattern, _)| pattern))?;
                     let before = self.locals.clone();
                     let mut states = Vec::new();
+                    // 匹配临时值（`match jobs.get():`）时，绑定拥有载荷：没有别人能看到这个值。
+                    let owned = root.is_none();
                     for (pattern, body) in arms {
                         self.locals = before.clone();
-                        let bindings = self.arm_bindings(id, pattern)?;
+                        let bindings = self.arm_bindings(id, pattern, owned)?;
                         for (name, ty) in &bindings {
                             self.locals.insert(
                                 name.clone(),
                                 Binding {
                                     ty: *ty,
-                                    mutable: false,
+                                    mutable: owned,
                                     live: true,
                                 },
                             );

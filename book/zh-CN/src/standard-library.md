@@ -267,9 +267,10 @@ Zamak
 {"name": "Ada", "langs": ["Zamak", "C"]}
 ```
 
-- `Json` 是枚举：`Null`、`Bool`、`Number`、`Str`、`Array`、`Object`，可以直接构造，例如 `json.Json.Number(1.0)`。
+- `Json` 是枚举：`Null`、`Bool`、`Int`、`Float`、`Str`、`Array`、`Object`，可以直接构造，例如 `json.Json.Int(1)`。
 - 取值：`get(key)`、`item(index)`、`as_str()`、`as_f64()`、`as_i64()`、`as_bool()`、`is_null()`、`len()`、`keys()`。
-- 数字按 `f64` 保存；整数值输出时不带小数点。`json.dumps(value, indent=2)` 分行缩进。
+- 数字和 Python 一样分两种：没有小数点和指数的是 `Int`（`i64`），其余是 `Float`（`f64`）。写出时原样保留，`1` 还是 `1`，`1.0` 还是 `1.0`。超出 `i64` 的整数报错，不会变成四舍五入的浮点数。`as_f64()` 也接受 `Int`；`as_i64()` 只接受 `Int`，`1.5` 和 `1.0` 都报错。
+- `json.dumps(value, indent=2)` 分行缩进。
 
 ### 结构体与 JSON 互相转换
 
@@ -306,6 +307,59 @@ write
 - 文字和类型对不上时，错误里带着位置：`[0].tags[0]`、`.shape.h: missing`。
 - `json.to_json(value)` 与 `json.from_json(j)` 在值和 `Json` 之间转换（不经过文字）。
 - 所有字符串都会做 `{...}` 插值，所以 JSON 字面量要写成原始字符串：`r"""{"id": 1}"""`。
+
+## 数据库：std/sqlite
+
+`std/sqlite` 就是 SQLite，已经编进了 `zam`，不用另装。`sqlite.connect(path)` 打开数据库文件，没有就新建；`":memory:"` 打开一个只在内存里的数据库。连接离开作用域时自动关闭。
+
+```zamak
+use std/sqlite
+
+struct Note:
+    id: i64
+    title: string
+    pinned: bool
+    body: Option[string]
+
+struct Draft:
+    title: string
+    pinned: bool
+
+fn main() -> !string:
+    let db = sqlite.connect(":memory:")?
+    db.execute_script("CREATE TABLE notes (id INTEGER PRIMARY KEY, title TEXT NOT NULL, pinned BOOLEAN NOT NULL DEFAULT 0, body TEXT)")?
+    db.execute("INSERT INTO notes (title, body) VALUES (?, ?)", [sqlite.text("milk"), sqlite.text("2 L")])?
+    db.execute_named("INSERT INTO notes (title, pinned) VALUES (:title, :pinned)", &Draft(title: "rent", pinned: true))?
+    let notes: [Note] = db.query("SELECT * FROM notes ORDER BY id", [])?
+    for note in notes:
+        println(f"{note.id} {note.title} {note.pinned} {note.body}")
+```
+
+```text
+1 milk false Option.Some("2 L")
+2 rent true Option.None
+```
+
+| 方法 | 作用 |
+| --- | --- |
+| `db.execute(sql, params)` | 执行一条带 `?` 参数的语句，返回改动的行数。 |
+| `db.execute_named(sql, &value)` | 执行一条语句，每个 `:name` 参数取结构体或字典里同名字段的值。 |
+| `db.execute_script(sql)` | 执行几条用分号隔开的语句，不带参数。 |
+| `let rows: [T] = db.query(sql, params)?` | 把每一行读成 `T`，列名对应字段名。 |
+| `db.query_rows(sql, params)` | 每一行是按列顺序排的 `sqlite.Value` 列表。 |
+| `db.query_json(sql, params)` | 结果是 `Json` 数组，每一行是一个对象。 |
+| `db.last_id()`、`db.changes()` | 最近一条 `INSERT` 的行号，以及最近一条语句改动的行数。 |
+
+参数用 `sqlite.integer(n)`、`sqlite.real(x)`、`sqlite.text(s)`、`sqlite.null()` 写，名字和 SQLite 的列类型一样。
+
+存进去什么，读出来就是什么；放不进去的直接报错，绝不悄悄改值：
+
+- 整数保留 `i64` 的每一位。
+- `bool` 存成 `0` 或 `1`；声明成 `BOOLEAN` 的列读回 `true` 或 `false`。
+- `NULL` 读成 `Option.None`；字段不是 `Option` 时报错。
+- 列表或结构体字段放不进一列。把 `json.encode(...)` 存进字符串字段，或者另建一张表。
+- `execute` 和各个查询方法只执行一条语句；要执行几条，用 `execute_script`。
+- 另一个连接正在写时，语句最多等 5 秒，之后才报告数据库被锁住。
 
 ## 正则表达式：std/re
 
@@ -357,7 +411,7 @@ fn main() -> !string:
 | `http.urljoin(base, link)` | 按网页地址补全链接，与 Python 的 `urllib.parse.urljoin` 相同。 |
 | `Response` | `status`、`reason`、`headers`（键是小写）、`body`，以及 `text()`、`json()`、`ok()`。 |
 
-服务端：`http.serve(host, port, handler)` 一直处理请求，每个请求交给 `handler`，它返回的 `Response` 发回给客户端：
+服务端：`http.serve(host, port, handler)` 一直处理请求，每个请求交给 `handler`，它返回的 `Response` 发回给客户端。几个线程同时处理请求，一个慢请求不会挡住别的请求：
 
 ```zamak,ignore
 use std/http
@@ -371,9 +425,13 @@ fn main() -> !string:
 
 请求会跟随重定向（301、302、303、307、308，最多 10 次），与 `requests` 相同；传 `follow=false` 可以拿到重定向本身。
 
-`http.respond(status, text)` 与 `http.respond_json(status, value)` 构造响应；`Request` 有 `method`、`path`、`query`、`headers`、`body`。
+`http.respond(status, text)` 与 `http.respond_json(status, value)` 构造响应，`value` 可以是 `Json`，也可以是结构体、列表等任何能写成 JSON 的值。`Request` 有 `method`、`path`、`query`、`headers`、`body`，还有 `text()`、`json()`、解码好的查询参数 `args()`，以及取其中一个的 `arg(name, default="")`。
 
-`std/net` 是更底层的 TCP：`net.connect(host, port)` 得到连接，`net.listen(host, port)` 得到监听器，连接有 `send`、`recv`、`recv_all`、`set_timeout`。连接与监听器离开作用域时自动关闭。服务端一次处理一个请求。
+- `handler` 同时在几个线程里运行，所以它不能捕获局部变量，传一个有名字的函数。用 `workers=n` 指定线程数；默认是处理器个数的两倍，至少 8 个。
+- `http.quote(text)`、`http.unquote(text)`、`http.parse_query(query)` 对应 Python 的 `urllib.parse.quote`、`unquote`、`parse_qs`。
+- [`examples/apps/notes`](https://github.com/VeyraLux/Zamak/tree/main/examples/apps/notes) 是一个完整的 REST 服务，笔记存在 SQLite 里。
+
+`std/net` 是更底层的 TCP：`net.connect(host, port)` 得到连接，`net.listen(host, port)` 得到监听器，连接有 `send`、`recv`、`recv_all`、`set_timeout`。连接与监听器离开作用域时自动关闭。
 
 ### HTTPS 与 TLS
 
@@ -474,5 +532,6 @@ hello
 - `std/io`、`std/env`、`std/fs`、`std/path` 处理输入、参数和文件；`std/bytes` 处理原始字节。
 - `std/math`、`std/fmt`、`std/time`、`std/random` 处理数字、格式、时钟和随机数。
 - `std/process`、`std/json`、`std/re`、`std/hashlib`、`std/base64` 运行程序、读写 JSON、匹配文字、计算哈希。
+- `std/sqlite` 把数据存进 SQLite 数据库，查询结果直接读成结构体。
 - `std/thread` 启动线程（`thread.spawn`），线程之间用 `Queue` 传递数据。
 - 可能失败的函数返回错误，用 `?` 或 `catch` 处理。

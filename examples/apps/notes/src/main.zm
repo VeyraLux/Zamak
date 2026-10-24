@@ -1,0 +1,133 @@
+# notes：一个存笔记的 REST 服务。数据存在 SQLite 数据库里（默认 notes.db，可以用环境变量 NOTES_DB
+# 指定），端口默认 8080（环境变量 PORT）。几个线程同时处理请求，每个请求用自己的数据库连接。
+#
+#     GET    /notes?q=milk   列出笔记（q 按标题和正文搜索）
+#     POST   /notes          新建：{"title": "...", "body": "..."}
+#     GET    /notes/1        读一条
+#     PUT    /notes/1        改一条
+#     DELETE /notes/1        删一条
+use std/datetime
+use std/env
+use std/http
+use std/json
+use std/sqlite
+
+struct Note:
+    id: i64
+    title: string
+    body: string
+    created: string
+    updated: string
+
+# 客户端发来的内容。
+struct Draft:
+    title: string
+    body: string
+
+struct Problem:
+    error: string
+
+fn database() -> string:
+    env.var("NOTES_DB") catch e: "notes.db"
+
+fn open() -> sqlite.Connection!string:
+    sqlite.connect(database())?
+
+fn problem(status: i64, message: &string) -> http.Response:
+    http.respond_json(status, Problem(error: copy(message)))
+
+fn handle(req: &http.Request) -> http.Response:
+    route(req) catch e: problem(500, e)
+
+fn route(req: &http.Request) -> http.Response!string:
+    let path = req.path.removeprefix("/").removesuffix("/")
+    let parts = path.split("/")
+
+    if path == "health":
+        return http.respond(200, "ok")
+
+    if parts[0] != "notes" or len(parts) > 2:
+        return problem(404, f"no route for {req.path}")
+
+    let db = open()?
+
+    if len(parts) == 1:
+        if req.method == "GET":
+            return list(db, req.arg("q")?)?
+
+        if req.method == "POST":
+            return create(db, req)?
+
+        return problem(405, f"{req.method} is not allowed on /notes")
+
+    let id = parts[1].parse_i64() catch e:
+        return problem(404, f"{parts[1]} is not a note id")
+
+    if req.method == "GET":
+        return show(db, id)?
+
+    if req.method == "PUT":
+        return update(db, id, req)?
+
+    if req.method == "DELETE":
+        return remove(db, id)?
+
+    problem(405, f"{req.method} is not allowed on /notes/{id}")
+
+fn list(db: &sqlite.Connection, search: &string) -> http.Response!string:
+    if search == "":
+        let notes: [Note] = db.query("SELECT * FROM notes ORDER BY id", [])?
+        return http.respond_json(200, notes)
+
+    let like = f"%{search}%"
+    let notes: [Note] = db.query("SELECT * FROM notes WHERE title LIKE ? OR body LIKE ? ORDER BY id", [sqlite.text(like), sqlite.text(like)])?
+    http.respond_json(200, notes)
+
+fn draft(req: &http.Request) -> Draft!string:
+    let text = req.text()?
+    let value: Draft = json.decode(text) catch e: fail f"the body must be a JSON object with title and body ({e})"
+
+    if value.title.strip() == "":
+        fail "the title is empty"
+
+    value
+
+fn create(db: &sqlite.Connection, req: &http.Request) -> http.Response!string:
+    let value = draft(req) catch e:
+        return problem(400, e)
+
+    let now = datetime.now().isoformat()
+    db.execute("INSERT INTO notes (title, body, created, updated) VALUES (?, ?, ?, ?)", [sqlite.text(value.title), sqlite.text(value.body), sqlite.text(now), sqlite.text(now)])?
+    show(db, db.last_id(), status=201)?
+
+fn show(db: &sqlite.Connection, id: i64, status: i64 = 200) -> http.Response!string:
+    let found: [Note] = db.query("SELECT * FROM notes WHERE id = ?", [sqlite.integer(id)])?
+
+    if len(found) == 0:
+        return problem(404, f"no note {id}")
+
+    http.respond_json(status, found[0])
+
+fn update(db: &sqlite.Connection, id: i64, req: &http.Request) -> http.Response!string:
+    let value = draft(req) catch e:
+        return problem(400, e)
+
+    let changed = db.execute("UPDATE notes SET title = ?, body = ?, updated = ? WHERE id = ?", [sqlite.text(value.title), sqlite.text(value.body), sqlite.text(datetime.now().isoformat()), sqlite.integer(id)])?
+
+    if changed == 0:
+        return problem(404, f"no note {id}")
+
+    show(db, id)?
+
+fn remove(db: &sqlite.Connection, id: i64) -> http.Response!string:
+    if db.execute("DELETE FROM notes WHERE id = ?", [sqlite.integer(id)])? == 0:
+        return problem(404, f"no note {id}")
+
+    http.respond(204, "")
+
+fn main() -> !string:
+    let db = open()?
+    db.execute_script("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL)")?
+    let port = int(env.var("PORT") catch e: "8080")?
+    println(f"notes: listening on http://127.0.0.1:{port} (database {database()})")
+    http.serve("127.0.0.1", port, handle)?

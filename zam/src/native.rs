@@ -2107,7 +2107,85 @@ const UNIT_PRELUDES: &[(&str, &[&str])] = &[
     ("std/net", &[NET_PRELUDE, TLS_PRELUDE]),
     ("std/thread", &[THREAD_PRELUDE]),
     ("std/ui", &[UI_PRELUDE]),
+    ("std/sqlite", &[SQLITE_PRELUDE]),
 ];
+const SQLITE_PRELUDE: &str = r#"// std/sqlite 的 C 部分：SQLite 接口的薄包装。连接与语句是 C 句柄，离开作用域时关闭。
+// 打开或准备失败时句柄留空、返回 -1，原因放在 zam_sqlite_failure 里。
+#include "sqlite3.h"
+static ZAM_THREAD char zam_sqlite_failure[512];
+static int64_t zam_sqlite_fail(const char *message) {
+    snprintf(zam_sqlite_failure, sizeof zam_sqlite_failure, "%s", message ? message : "unknown SQLite error");
+    return -1;
+}
+const char *zam_sqlite_last_error(void) { return zam_sqlite_failure; }
+int64_t zam_sqlite_open(const char *path, void **out) {
+    sqlite3 *db = NULL;
+    int rc = sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_URI, NULL);
+    if (rc != SQLITE_OK) {
+        zam_sqlite_fail(db ? sqlite3_errmsg(db) : sqlite3_errstr(rc));
+        sqlite3_close_v2(db);
+        return -1;
+    }
+    // 另一个连接正在写时最多等 5 秒，而不是马上报 database is locked。
+    sqlite3_busy_timeout(db, 5000);
+    *out = db;
+    return 0;
+}
+void zam_sqlite_close(void *db) { sqlite3_close_v2((sqlite3 *)db); }
+int64_t zam_sqlite_exec(void *db, const char *sql) {
+    char *message = NULL;
+    if (sqlite3_exec((sqlite3 *)db, sql, NULL, NULL, &message) != SQLITE_OK) {
+        zam_sqlite_fail(message ? message : sqlite3_errmsg((sqlite3 *)db));
+        sqlite3_free(message);
+        return -1;
+    }
+    return 0;
+}
+int64_t zam_sqlite_prepare(void *db, const char *sql, void **out) {
+    sqlite3_stmt *st = NULL;
+    const char *rest = NULL;
+    if (sqlite3_prepare_v2((sqlite3 *)db, sql, -1, &st, &rest) != SQLITE_OK) {
+        return zam_sqlite_fail(sqlite3_errmsg((sqlite3 *)db));
+    }
+    if (!st) return zam_sqlite_fail("the SQL text has no statement");
+    while (rest && (*rest == ' ' || *rest == '\t' || *rest == '\n' || *rest == '\r' || *rest == ';')) rest++;
+    if (rest && *rest) {
+        sqlite3_finalize(st);
+        return zam_sqlite_fail("the SQL text has more than one statement; use execute_script for several");
+    }
+    *out = st;
+    return 0;
+}
+void zam_sqlite_finalize(void *st) { sqlite3_finalize((sqlite3_stmt *)st); }
+static int64_t zam_sqlite_bound(void *st, int rc) {
+    return rc == SQLITE_OK ? 0 : zam_sqlite_fail(sqlite3_errmsg(sqlite3_db_handle((sqlite3_stmt *)st)));
+}
+int64_t zam_sqlite_bind_int(void *st, int64_t i, int64_t v) { return zam_sqlite_bound(st, sqlite3_bind_int64((sqlite3_stmt *)st, (int)i, v)); }
+int64_t zam_sqlite_bind_real(void *st, int64_t i, double v) { return zam_sqlite_bound(st, sqlite3_bind_double((sqlite3_stmt *)st, (int)i, v)); }
+// 文字参数在调用后就释放，所以让 SQLite 复制一份。
+int64_t zam_sqlite_bind_text(void *st, int64_t i, const char *v) { return zam_sqlite_bound(st, sqlite3_bind_text((sqlite3_stmt *)st, (int)i, v, -1, SQLITE_TRANSIENT)); }
+int64_t zam_sqlite_bind_null(void *st, int64_t i) { return zam_sqlite_bound(st, sqlite3_bind_null((sqlite3_stmt *)st, (int)i)); }
+int64_t zam_sqlite_params(void *st) { return sqlite3_bind_parameter_count((sqlite3_stmt *)st); }
+const char *zam_sqlite_param_name(void *st, int64_t i) { return sqlite3_bind_parameter_name((sqlite3_stmt *)st, (int)i); }
+// 1 表示有一行，0 表示执行完了，-1 表示出错。
+int64_t zam_sqlite_step(void *st) {
+    int rc = sqlite3_step((sqlite3_stmt *)st);
+    if (rc == SQLITE_ROW) return 1;
+    if (rc == SQLITE_DONE) return 0;
+    return zam_sqlite_fail(sqlite3_errmsg(sqlite3_db_handle((sqlite3_stmt *)st)));
+}
+int64_t zam_sqlite_columns(void *st) { return sqlite3_column_count((sqlite3_stmt *)st); }
+const char *zam_sqlite_column_name(void *st, int64_t i) { return sqlite3_column_name((sqlite3_stmt *)st, (int)i); }
+// SQLITE_INTEGER 1、SQLITE_FLOAT 2、SQLITE_TEXT 3、SQLITE_BLOB 4、SQLITE_NULL 5。
+int64_t zam_sqlite_column_type(void *st, int64_t i) { return sqlite3_column_type((sqlite3_stmt *)st, (int)i); }
+int64_t zam_sqlite_column_int(void *st, int64_t i) { return sqlite3_column_int64((sqlite3_stmt *)st, (int)i); }
+double zam_sqlite_column_real(void *st, int64_t i) { return sqlite3_column_double((sqlite3_stmt *)st, (int)i); }
+const char *zam_sqlite_column_text(void *st, int64_t i) { return (const char *)sqlite3_column_text((sqlite3_stmt *)st, (int)i); }
+// 建表时声明的列类型（`BOOLEAN`）；表达式算出来的列没有，得到空串。
+const char *zam_sqlite_column_decl(void *st, int64_t i) { return sqlite3_column_decltype((sqlite3_stmt *)st, (int)i); }
+int64_t zam_sqlite_changes(void *db) { return sqlite3_changes64((sqlite3 *)db); }
+int64_t zam_sqlite_last_id(void *db) { return sqlite3_last_insert_rowid((sqlite3 *)db); }
+"#;
 const UI_PRELUDE: &str = r#"// std/ui 的 C 部分：libui-ng 的薄包装。控件在 Zamak 里是整数句柄（控件指针），归父容器所有，
 // 窗口关闭时一起销毁，所以句柄本身不释放。App 持有程序状态（按值复制进来的 T）与回调：
 // 回调是不捕获局部变量的 Zamak 函数值，经按 T 生成的调用器（见 native.rs 的 intrinsic）调用。
@@ -2407,11 +2485,16 @@ static S zam_time_text(double t, int64_t offset, const char *zone) {
     return own((const unsigned char *)text, (size_t)n);
 }
 // 本地时区在 t 时刻相对 UTC 的偏移（秒），由 localtime 的日期反推，各平台都能用。
+// localtime 的结果放在共用的静态缓冲区里，几个线程同时调用会互相覆盖：用各平台可重入的版本。
 static int64_t zam_local_offset(double t) {
-    time_t when = (time_t)floor(t); struct tm *local = localtime(&when);
-    if (!local) return 0;
-    return zam_days(local->tm_year + 1900, local->tm_mon + 1, local->tm_mday) * 86400
-        + local->tm_hour * 3600 + local->tm_min * 60 + local->tm_sec - (int64_t)when;
+    time_t when = (time_t)floor(t); struct tm local;
+#if defined(_WIN32)
+    if (localtime_s(&local, &when) != 0) return 0;
+#else
+    if (!localtime_r(&when, &local)) return 0;
+#endif
+    return zam_days(local.tm_year + 1900, local.tm_mon + 1, local.tm_mday) * 86400
+        + local.tm_hour * 3600 + local.tm_min * 60 + local.tm_sec - (int64_t)when;
 }
 // xoshiro256**：快、周期长、统计性质好，不适合密码学用途。种子用 splitmix64 展开。
 static uint64_t zam_splitmix(uint64_t *x) {
@@ -5342,7 +5425,7 @@ impl<'a> Generator<'a> {
                 let id = self.scrutinee_id(scrutinee);
                 let (pattern, value) = &arms[0];
                 let mut locals = self.locals.clone();
-                for (name, _, ty) in self.arm_bindings(id, pattern) {
+                for (name, _, ty) in self.arm_bindings(id, pattern, false) {
                     locals.insert(name, (String::new(), ty));
                 }
                 Generator {
@@ -6100,7 +6183,7 @@ impl<'a> Generator<'a> {
                     let opener =
                         self.arm_opener(&handle, id, pattern, index, index + 1 == arms.len());
                     self.code.push_str(&opener);
-                    let names = self.bind(&handle, id, pattern);
+                    let names = self.bind(&handle, id, pattern, false);
                     self.branch_into(&result, value, ty);
                     for name in names {
                         self.locals.remove(&name);
@@ -6458,7 +6541,7 @@ impl<'a> Generator<'a> {
         }
     }
     /// 分支的绑定：（名字, 载荷成员下标, 类型）；标量按值，其他载荷是只读借用。
-    fn arm_bindings(&self, id: u64, pattern: &Pattern) -> Vec<(String, usize, Type)> {
+    fn arm_bindings(&self, id: u64, pattern: &Pattern, owned: bool) -> Vec<(String, usize, Type)> {
         let Some(variant) = &pattern.0 else {
             return Vec::new();
         };
@@ -6478,7 +6561,7 @@ impl<'a> Generator<'a> {
             .filter(|(_, binding)| *binding != "_")
             .map(|(j, binding)| {
                 let ty = fields[first + j].1;
-                let bound = if by_value(ty) {
+                let bound = if by_value(ty) || owned {
                     ty
                 } else {
                     borrow_of(ty, false).expect("owned payload")
@@ -6486,6 +6569,16 @@ impl<'a> Generator<'a> {
                 (binding.clone(), first + j, bound)
             })
             .collect()
+    }
+    /// 被匹配的是不是位置（变量、字段、容器元素）；不是位置的是临时值。与检查器的 `scrutinee` 一致。
+    fn place_scrutinee(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::Variable(_) | Expr::Field(_, _) => true,
+            Expr::Index(path, _) | Expr::IndexField(path, _, _) => {
+                self.place_ty(path).container().is_some()
+            }
+            _ => false,
+        }
     }
     /// 求出被匹配值，返回指向它的 C 变量：位置直接取地址，其他表达式先求值成临时值。
     fn scrutinee(&mut self, expr: &Expr, id: u64) -> String {
@@ -6529,12 +6622,18 @@ impl<'a> Generator<'a> {
         }
     }
     /// 在分支开头声明绑定，返回绑定名，分支结束后由调用方移除。
-    fn bind(&mut self, handle: &str, id: u64, pattern: &Pattern) -> Vec<String> {
+    /// 分支绑定的变量。`owned` 时（匹配的是临时值）把载荷取出来交给绑定：原位置清零，
+    /// 绑定登记在 owners 里，分支结束时释放（移走了就是空值）。
+    fn bind(&mut self, handle: &str, id: u64, pattern: &Pattern, owned: bool) -> Vec<String> {
         let mut names = Vec::new();
-        for (name, member, ty) in self.arm_bindings(id, pattern) {
+        for (name, member, ty) in self.arm_bindings(id, pattern, owned) {
             let access = format!("{handle}->m{member}");
             let value = if ty.is_reference() {
                 self.scalar(&format!("&{access}"), ty)
+            } else if owned && !by_value(ty) {
+                let value = self.scalar(&format!("{}(&{access})", take_fn(ty)), ty);
+                self.owners.push((value.clone(), ty));
+                value
             } else {
                 self.scalar(&access, ty)
             };
@@ -6561,6 +6660,7 @@ impl<'a> Generator<'a> {
         }
         let name = match method {
             "contains" => "has",
+            "append" => "push",
             "get" => "getor",
             "remove" if list => "removeat",
             "remove" | "discard" => "del",
@@ -6708,19 +6808,22 @@ impl<'a> Generator<'a> {
         // 只有模板真的带了自己的类型参数才去估实参类型：这一步有副作用（会走到构造器的
         // 期望类型推断上），普通方法不该多算一遍。匿名函数实参也跳过——它的类型由期望
         // 类型决定，生成器单独取会走到 `lambda_type` 的断言上。
+        // 只和方法所属的那个结构体比：别的类型（如 `Option[T]`）也叫 T 的类型参数不算。
         let (name, callee) = {
-            let owner_generics: std::collections::BTreeSet<&String> = self
-                .module
-                .structs
-                .values()
-                .flat_map(|s| s.generics.iter())
-                .collect();
             let own = self
                 .module
                 .functions
                 .iter()
-                .filter(|(fname, _)| fname.ends_with(&format!(".{method}")))
-                .any(|(_, function)| {
+                .filter_map(|(fname, function)| {
+                    let (owner, m) = fname.rsplit_once('.')?;
+                    (m == method).then_some((owner, function))
+                })
+                .any(|(owner, function)| {
+                    let owner_generics = self
+                        .module
+                        .structs
+                        .get(owner)
+                        .map_or(&[][..], |s| s.generics.as_slice());
                     function
                         .generics
                         .iter()
@@ -6808,14 +6911,23 @@ impl<'a> Generator<'a> {
                 }
                 Instruction::Match(scrutinee, arms) => {
                     let id = self.scrutinee_id(scrutinee);
+                    let owned = !self.place_scrutinee(scrutinee);
                     let handle = self.scrutinee(scrutinee, id);
                     let mut all = true;
                     for (index, (pattern, body)) in arms.iter().enumerate() {
                         let opener =
                             self.arm_opener(&handle, id, pattern, index, index + 1 == arms.len());
                         self.code.push_str(&opener);
-                        let names = self.bind(&handle, id, pattern);
-                        all &= self.block(body, result_type);
+                        let owners = self.owners.len();
+                        let names = self.bind(&handle, id, pattern, owned);
+                        let returns = self.block(body, result_type);
+                        if !returns {
+                            for (name, ty) in &self.owners[owners..] {
+                                self.code.push_str(&format!("{}(&{name});\n", drop_fn(*ty)));
+                            }
+                        }
+                        self.owners.truncate(owners);
+                        all &= returns;
                         for name in names {
                             self.locals.remove(&name);
                         }
@@ -8698,8 +8810,12 @@ pub fn uses_msvc(tool: &str) -> bool {
 }
 
 pub fn tool() -> Result<(String, String)> {
+    // `CC=`（空串）和没设一样，同 make 等工具的习惯。
     select(
-        std::env::var("CC").ok().as_deref(),
+        std::env::var("CC")
+            .ok()
+            .filter(|cc| !cc.is_empty())
+            .as_deref(),
         cfg!(windows),
         msvc,
         gnu,
@@ -8811,9 +8927,11 @@ fn gnu(compiler: &str) -> Result<(String, String)> {
     if !output.status.success() {
         return Err("C compiler version query failed".into());
     }
+    // 身份里带上命令本身：`CC=tsancc`（`exec gcc -fsanitize=thread "$@"` 这样的包装）报的版本与
+    // gcc 一样，只看版本会让两者共用缓存键，得到不同的目标文件。
     Ok((
         compiler.to_owned(),
-        String::from_utf8_lossy(&output.stdout).into_owned(),
+        format!("{compiler}\n{}", String::from_utf8_lossy(&output.stdout)),
     ))
 }
 

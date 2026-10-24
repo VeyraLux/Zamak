@@ -56,6 +56,30 @@ fn main():
 
 `match` 借用这个值，所以分支读取数据时不会把它移走。不需要的数据用 `_` 代替名字跳过。
 
+对调用结果做 `match` 时，别处都看不到这个值，所以分支里的名字拥有它的数据：可以修改，也可以移走，例如放进列表：
+
+```zamak
+struct Task:
+    title: string
+    tags: [string]
+
+fn next_task() -> Option[Task]:
+    Option.Some(Task(title: "write", tags: []))
+
+fn main():
+    let mut done: [Task] = []
+    match next_task():
+        Some(task):
+            task.tags.append("today")
+            done.append(task)
+        None: pass
+    println(done)
+```
+
+```text
+[Task(title: "write", tags: ["today"])]
+```
+
 ## 每种情况都要处理
 
 `match` 漏掉某个变体时，程序无法通过编译：

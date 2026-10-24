@@ -56,7 +56,7 @@ invalid JSON at position 6: expected a value\n"
     );
     assert_eq!(
         stdout(&output),
-        "{\"k\": \"é😀\\n\\\"q\\\"\", \"n\": -150, \"e\": [], \"o\": {}}\n-150.0\n\
+        "{\"k\": \"é😀\\n\\\"q\\\"\", \"n\": -150.0, \"e\": [], \"o\": {}}\n-150.0\n\
 invalid JSON at position 6: expected a value\n\
 invalid JSON at position 1: extra data after the value\n\
 invalid JSON at position 3: expected true\n\
@@ -147,6 +147,38 @@ fn datetime_matches_python() {
 }
 
 #[test]
+fn sqlite_stores_and_reads_structs_exactly() {
+    let case = Case::new("std", "sqlite");
+    let output = case.run(include_str!("../../examples/values/sqlite.zm"));
+    assert_eq!(
+        stdout(&output),
+        concat!(
+            "2\n",
+            "1 milk pinned=false body=Option.Some(\"2 L\")\n",
+            "2 rent pinned=true body=Option.None\n",
+            "updated 1\n",
+            "2\n",
+            "9007199254740993\n",
+            "error: no such table: nope\n",
+            "error: wrong number of parameters: the statement takes 1, but 0 were given\n",
+            "error: the SQL text has more than one statement; use execute_script for several\n",
+            "error: :name: the value has no field name\n",
+            "error: in the query result: [0].id: the value is not a number\n",
+        ),
+        "{}",
+        stderr(&output)
+    );
+    // 列表字段没有对应的列类型：直接报错，不悄悄转成文字。
+    let output = case.run("use std/sqlite\n\nstruct T:\n    tags: [string]\n\nfn main() -> !string:\n    let db = sqlite.connect(\":memory:\")?\n    db.execute_script(\"CREATE TABLE t (tags TEXT)\")?\n    db.execute_named(\"INSERT INTO t VALUES (:tags)\", &T(tags: [\"a\"])) catch e:\n        println(e)\n");
+    assert_eq!(
+        stdout(&output),
+        "a list can't go in one column; store json.encode(...) in a string field, or use a second table\n",
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
 fn json_converts_structs_lists_maps_options_and_enums() {
     let case = Case::new("std", "json-structs");
     let output = case.run(include_str!("../../examples/values/json_structs.zm"));
@@ -163,6 +195,14 @@ fn json_converts_structs_lists_maps_options_and_enums() {
             "[[1, 2], [3]]\n",
             "{\n  \"1\": \"one\",\n  \"2\": \"two\"\n}\n"
         )
+    );
+    // 整数与浮点数分开：读回来类型不变，超出 i64 的整数报错。
+    let output = case.run("use std/json\n\nstruct R:\n    n: i64\n    x: f64\n\nfn main() -> !string:\n    let r: R = json.decode(r\"\"\"{\"n\": 9007199254740993, \"x\": 3}\"\"\")?\n    println(r.n)\n    println(json.encode(r))\n    println(json.dumps(json.loads(\"[1, 1.0, 2.5e3]\")?))\n    let big = json.loads(\"99999999999999999999\") catch e:\n        println(e)\n        return\n");
+    assert_eq!(
+        stdout(&output),
+        "9007199254740993\n{\"n\": 9007199254740993, \"x\": 3.0}\n[1, 1.0, 2500.0]\ninvalid JSON at position 20: the integer 99999999999999999999 doesn't fit in i64\n",
+        "{}",
+        stderr(&output)
     );
     // 函数值没法写成 JSON：在编译时报错。
     let output = case.run("use std/json\n\nstruct S:\n    f: fn(i64) -> i64\n\nfn twice(n: i64) -> i64: n * 2\n\nfn main():\n    println(json.encode(S(f: twice)))\n");

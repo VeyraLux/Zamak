@@ -259,6 +259,11 @@ fn list_and_map_methods() {
         "use std/math\nfn main():\n    let mut xs: [f64] = [0.0, -0.0, math.inf - math.inf, -2.0, 0.0]\n    xs.sort()\n    println(\"{xs[0]} {xs[1]} {xs[2]} {xs[3]} {xs[4]}\")\n    let mut words: [string] = [\"b\", \"a\"]\n    words.insert(1, \"c\")\n    let w = words.remove(0)\n    println(w)\n    let tail = words.slice(1, 2)\n    words.extend(tail)\n    println(\"{words[0]}{words[1]}{words[2]}\")\n    words.clear()\n    println(words.len())\n",
     );
     assert_eq!(stdout(&output), "-2.0 0.0 -0.0 0.0 NaN\nb\ncaa\n0\n");
+    // `append` 是 Python 的写法，与 `push` 相同；结构体字段上的列表也一样。
+    let output = case.run(
+        "struct Bag:\n    items: [string]\nfn main():\n    let mut xs: [i64] = []\n    xs.append(1)\n    xs.append(2)\n    let mut bag = Bag(items: [])\n    bag.items.append(\"pen\")\n    println(xs)\n    println(bag.items)\n",
+    );
+    assert_eq!(stdout(&output), "[1, 2]\n[\"pen\"]\n");
     for (body, message) in [
         (
             "let mut xs: [i64] = [1]\n    println(xs.remove(1))",

@@ -12,7 +12,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-73");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-74");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -185,6 +185,7 @@ const STD_SOURCES: &[(&str, &str)] = &[
     ("std/thread", include_str!("../std/thread.zm")),
     ("std/ui", include_str!("../std/ui.zm")),
     ("std/datetime", include_str!("../std/datetime.zm")),
+    ("std/sqlite", include_str!("../std/sqlite.zm")),
 ];
 
 /// Mbed TLS 的源码（vendor/mbedtls，build.rs 压缩后嵌进来）：程序用到 std/net 时解压到缓存编译。
@@ -247,6 +248,35 @@ fn unpack_vendor(
         }
     }
     Ok((dir, files.into_iter().map(|(name, _, _)| name).collect()))
+}
+
+/// SQLite 的合并源码（vendor/sqlite）：程序用到 std/sqlite 时解压到缓存编译。
+const SQLITE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/sqlite.bin"));
+
+/// SQLite 经一个包装文件编译：关掉可加载扩展（不用链接 libdl），其余保持默认（线程安全）。
+const SQLITE_WRAPPER: &str = r#"/* Zamak: SQLite without loadable extensions. */
+#define SQLITE_OMIT_LOAD_EXTENSION 1
+#include "../sqlite3.c"
+"#;
+
+fn sqlite_native() -> Result<(PathBuf, package::Native)> {
+    let (dir, _) = unpack_vendor(
+        SQLITE,
+        "sqlite",
+        "SQLite",
+        &[("zamconfig/zam_sqlite.c", SQLITE_WRAPPER)],
+    )?;
+    let native = package::Native {
+        sources: vec![PathBuf::from("zamconfig/zam_sqlite.c")],
+        include: vec![PathBuf::from(".")],
+        libraries: if cfg!(windows) {
+            Vec::new()
+        } else {
+            vec!["pthread".into(), "m".into()]
+        },
+        ..Default::default()
+    };
+    Ok((dir, native))
 }
 
 /// libui-ng 的源码（vendor/libui-ng）：程序用到 std/ui 时解压到缓存编译。
@@ -1868,6 +1898,9 @@ impl Project {
         }
         if self.modules.contains_key("std/ui") {
             natives.push(libui_native(native::uses_msvc(&tool))?);
+        }
+        if self.modules.contains_key("std/sqlite") {
+            natives.push(sqlite_native()?);
         }
         // std/thread 在 Windows 之外用 pthread。
         if self.modules.contains_key("std/thread") && !cfg!(windows) {

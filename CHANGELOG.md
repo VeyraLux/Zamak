@@ -89,6 +89,25 @@ and this file is the source for the text of each GitHub release.
   `[0].tags[1]: the JSON value is not a string`. `Json` also has `as_list`, `lookup`, and `is_str`.
 - Moving a list, map, or struct field out of a struct you own uses up the struct: `let tasks = store.tasks`.
 - `[]` and `{}` work as a `catch` fallback value.
+- **`std/sqlite`**: SQLite 3.54.1 is built into `zam`. `db.execute(sql, params)`, `db.execute_named(sql, &value)`,
+  and `let rows: [T] = db.query(sql, params)?` store structs and read rows back as structs. Integers keep every digit,
+  `BOOLEAN` columns read back as `bool`, and anything that doesn't fit is an error.
+- **Breaking:** `Json.Number(f64)` is now two variants, `Json.Int(i64)` and `Json.Float(f64)`, as in Python.
+  `1` and `1.0` keep their types through `loads` and `dumps`, and an integer that doesn't fit in `i64` is an error.
+- Lists have `append`, the same as `push`.
+- **`http.serve` handles requests on several threads at once** (`workers=n`, by default twice the number of processors and at least 8),
+  and HTTPS handshakes happen on those threads too. `Request` has `args()` and `arg(name)` for query parameters,
+  `http.quote`, `http.unquote`, and `http.parse_query` match Python's `urllib.parse`, and `http.respond_json` takes any value.
+- `match` on the result of a call gives the arm its own copy of the data: you can change it or move it, as in
+  `match jobs.get(): Some(job): done.append(job)`. `match` on a variable still borrows.
+- `examples/apps/notes` is a REST service for notes, backed by SQLite.
+- Fixed: `catch` inside a call that takes a borrowed argument, such as `int(env.var("PORT") catch e: "8080")`, was rejected.
+- Fixed: `datetime.now()` and other local-time functions could return a wrong offset when several threads called them at once.
+- Fixed: a `CC` wrapper script that adds flags (such as `exec gcc -fsanitize=thread "$@"`) shared cached objects with plain `gcc`.
+  An empty `CC` now means the default compiler, as in `make`.
+- `let x: T = obj.method(...)` infers a method's type parameter from the annotation, as it already did for functions.
+- Fixed: `obj.method(x)?` crashed the compiler when the method's type parameter had the same name as another type's,
+  such as `T` in `Option[T]`.
 - A parenthesized value can take a method call: `(a + b).upper()`.
 
 ## 0.1.1
@@ -292,6 +311,24 @@ this preview.
   `Json` 还新增了 `as_list`、`lookup`、`is_str`。
 - 从自己拥有的结构体里移出列表、字典或结构体字段，会用掉整个结构体：`let tasks = store.tasks`。
 - `[]` 和 `{}` 可以当 `catch` 的回退值。
+- **`std/sqlite`**：SQLite 3.54.1 编进了 `zam`。`db.execute(sql, params)`、`db.execute_named(sql, &value)` 与
+  `let rows: [T] = db.query(sql, params)?` 直接存结构体、把结果行读成结构体。整数保留每一位，`BOOLEAN` 列读回 `bool`，
+  放不进去的直接报错。
+- **不兼容：** `Json.Number(f64)` 拆成 `Json.Int(i64)` 和 `Json.Float(f64)` 两个变体，和 Python 一样。
+  `1` 与 `1.0` 经过 `loads`、`dumps` 类型不变；超出 `i64` 的整数报错。
+- 列表有了 `append`，与 `push` 相同。
+- **`http.serve` 用几个线程同时处理请求**（`workers=n`，默认是处理器个数的两倍，至少 8 个），HTTPS 握手也在这些线程里做。
+  `Request` 有 `args()` 与 `arg(name)` 读查询参数，`http.quote`、`http.unquote`、`http.parse_query` 对应 Python 的
+  `urllib.parse`，`http.respond_json` 可以直接传任何值。
+- 对调用结果做 `match` 时，分支拿到的数据归自己：可以修改、移走，如 `match jobs.get(): Some(job): done.append(job)`。
+  对变量做 `match` 仍然是借用。
+- `examples/apps/notes`：存笔记的 REST 服务，数据在 SQLite 里。
+- 修复：`catch` 放在借用参数的调用里（如 `int(env.var("PORT") catch e: "8080")`）会被拒绝。
+- 修复：几个线程同时调用 `datetime.now()` 等本地时间函数时，可能得到错误的时区偏移。
+- 修复：加了参数的 `CC` 包装脚本（如 `exec gcc -fsanitize=thread "$@"`）与普通 `gcc` 共用缓存的目标文件。
+  `CC` 为空时和没设一样，用默认编译器（同 `make`）。
+- `let x: T = obj.method(...)` 可以按标注推断方法的类型参数，和函数一样。
+- 修复：方法的类型参数与别的类型的同名（如 `Option[T]` 的 `T`）时，`obj.method(x)?` 让编译器崩溃。
 - 括号里的值也能接方法调用：`(a + b).upper()`。
 
 ## 0.1.1（中文）

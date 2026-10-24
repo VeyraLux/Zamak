@@ -56,6 +56,30 @@ fn main():
 
 `match` borrows the value, so arms read the data without moving it. Use `_` in place of a name to skip a piece of data.
 
+When you match the result of a call, nothing else can see that value, so the names in the arm own its data. You can change the data or move it, for example into a list:
+
+```zamak
+struct Task:
+    title: string
+    tags: [string]
+
+fn next_task() -> Option[Task]:
+    Option.Some(Task(title: "write", tags: []))
+
+fn main():
+    let mut done: [Task] = []
+    match next_task():
+        Some(task):
+            task.tags.append("today")
+            done.append(task)
+        None: pass
+    println(done)
+```
+
+```text
+[Task(title: "write", tags: ["today"])]
+```
+
 ## Every case must be handled
 
 If a `match` misses a variant, the program doesn't compile:

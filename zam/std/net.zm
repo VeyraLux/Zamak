@@ -41,6 +41,18 @@ pub struct Conn:
 
         self.tls = tls
 
+    # 在接受下来的连接上完成 TLS 握手（服务端）：cert_file 是 PEM 格式的证书链，key_file 是私钥。
+    pub fn accept_tls(&mut self, cert_file: &string, key_file: &string) -> !string:
+        let mut tls: Option[Tls] = Option.None
+
+        match self.socket:
+            Some(s):
+                if zam_tls_accept(s, cert_file, key_file, &mut tls) < 0:
+                    fail zam_tls_error()
+            None: fail "the connection is closed"
+
+        self.tls = tls
+
     # 把 data 全部发出去。
     pub fn send(&self, data: &bytes) -> !string:
         match self.tls:
@@ -124,15 +136,7 @@ pub struct Listener:
     # 等下一条连接，并用 cert_file（PEM 格式的证书链）与 key_file（私钥）完成 TLS 握手。
     pub fn accept_tls(&self, cert_file: &string, key_file: &string) -> Conn!string:
         let mut conn = self.accept()?
-        let mut tls: Option[Tls] = Option.None
-
-        match conn.socket:
-            Some(s):
-                if zam_tls_accept(s, cert_file, key_file, &mut tls) < 0:
-                    fail zam_tls_error()
-            None: fail "the connection is closed"
-
-        conn.tls = tls
+        conn.accept_tls(cert_file, key_file)?
         conn
 
     # 实际监听的端口（监听 0 号端口时由系统挑选）。

@@ -534,7 +534,6 @@ fn with_python_hint(message: String) -> String {
         Some("input") => "read a line with io.read_line()? and use std/io",
         Some("None") => "an optional value is written Option.None, or use a default value",
         Some("self") => "methods take the value as a normal parameter, such as fn area(p: &Point)",
-        _ if message.contains(".append:") => "use .push(v) to add to the end",
         _ => return message,
     };
     format!("{message}; {hint}")

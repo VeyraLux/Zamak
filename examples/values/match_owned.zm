@@ -1,0 +1,48 @@
+# match 调用结果时，分支里的绑定拥有这个值：可以修改，也可以移走（比如放进列表、交给别的函数）。
+# match 局部变量时，绑定只是借用，变量在 match 之后照样能用。
+use std/thread
+
+struct Job:
+    id: i64
+    tags: [string]
+
+fn find(id: i64) -> Option[Job]:
+    if id < 0:
+        return Option.None
+
+    Option.Some(Job(id: id, tags: ["a"]))
+
+fn count(job: Job) -> i64:
+    len(job.tags)
+
+fn main() -> !string:
+    match find(1):
+        Some(job):
+            job.tags.append("b")
+            println(job.tags)
+            println(count(job))
+        None: println("none")
+
+    let q: thread.Queue[Job] = thread.queue()
+    q.put(Job(id: 3, tags: []))?
+    q.put(Job(id: 4, tags: ["x"]))?
+    q.close()
+    let mut kept: [Job] = []
+
+    while true:
+        match q.get():
+            Some(job):
+                if job.id == 3:
+                    continue
+
+                kept.append(job)
+            None: break
+
+    println(kept)
+    let local = find(5)
+
+    match local:
+        Some(job): println(job.tags)
+        None: pass
+
+    println(local)

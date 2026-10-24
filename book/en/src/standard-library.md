@@ -267,9 +267,10 @@ Zamak
 {"name": "Ada", "langs": ["Zamak", "C"]}
 ```
 
-- `Json` is an enum with `Null`, `Bool`, `Number`, `Str`, `Array`, and `Object`. You can build values directly, such as `json.Json.Number(1.0)`.
-- Accessors: `get(key)`, `item(index)`, `as_str()`, `as_f64()`, `as_i64()`, `as_bool()`, `is_null()`, `len()`, and `keys()`.
-- Numbers are stored as `f64`, and whole numbers are written without a decimal point. `json.dumps(value, indent=2)` writes one item per line.
+- `Json` is an enum with `Null`, `Bool`, `Int`, `Float`, `Str`, `Array`, and `Object`. You can build values directly, such as `json.Json.Int(1)`.
+- Accessors: `get(key)`, `item(index)`, `as_str()`, `as_f64()`, `as_i64()`, `as_bool()`, `is_null()`, `len()`, and `keys()`. `as_f64()` also accepts an `Int`. `as_i64()` accepts only an `Int`, so `1.5` and `1.0` are errors.
+- Numbers work as in Python. A number without a decimal point or an exponent is an `Int` (`i64`), and any other number is a `Float` (`f64`). Each is written back the way it was read, so `1` stays `1` and `1.0` stays `1.0`. An integer that doesn't fit in `i64` is an error, not a rounded float.
+- `json.dumps(value, indent=2)` writes one item per line.
 
 ### Structs to and from JSON
 
@@ -306,6 +307,59 @@ write
 - When the text doesn't match the type, the error shows where: `[0].tags[0]`, `.shape.h: missing`.
 - `json.to_json(value)` and `json.from_json(j)` convert to and from a `Json` value instead of text.
 - Every string interpolates `{...}`, so write JSON literals as raw strings: `r"""{"id": 1}"""`.
+
+## Databases: std/sqlite
+
+`std/sqlite` is SQLite, built into `zam`, so you don't install anything. `sqlite.connect(path)` opens a database file and creates it when it doesn't exist, and `":memory:"` opens a database that lives only in memory. The connection closes when it goes out of scope.
+
+```zamak
+use std/sqlite
+
+struct Note:
+    id: i64
+    title: string
+    pinned: bool
+    body: Option[string]
+
+struct Draft:
+    title: string
+    pinned: bool
+
+fn main() -> !string:
+    let db = sqlite.connect(":memory:")?
+    db.execute_script("CREATE TABLE notes (id INTEGER PRIMARY KEY, title TEXT NOT NULL, pinned BOOLEAN NOT NULL DEFAULT 0, body TEXT)")?
+    db.execute("INSERT INTO notes (title, body) VALUES (?, ?)", [sqlite.text("milk"), sqlite.text("2 L")])?
+    db.execute_named("INSERT INTO notes (title, pinned) VALUES (:title, :pinned)", &Draft(title: "rent", pinned: true))?
+    let notes: [Note] = db.query("SELECT * FROM notes ORDER BY id", [])?
+    for note in notes:
+        println(f"{note.id} {note.title} {note.pinned} {note.body}")
+```
+
+```text
+1 milk false Option.Some("2 L")
+2 rent true Option.None
+```
+
+| Method | What it does |
+| --- | --- |
+| `db.execute(sql, params)` | Runs one statement with `?` parameters, and returns the number of rows it changed. |
+| `db.execute_named(sql, &value)` | Runs one statement, and fills each `:name` parameter from the field of the same name in a struct or map. |
+| `db.execute_script(sql)` | Runs several statements separated by semicolons, without parameters. |
+| `let rows: [T] = db.query(sql, params)?` | Reads each result row as a `T`. Column names match field names. |
+| `db.query_rows(sql, params)` | Returns each row as a list of `sqlite.Value` in column order. |
+| `db.query_json(sql, params)` | Returns the rows as a `Json` array of objects. |
+| `db.last_id()`, `db.changes()` | The row ID of the last `INSERT`, and the number of rows the last statement changed. |
+
+Write parameters with `sqlite.integer(n)`, `sqlite.real(x)`, `sqlite.text(s)`, and `sqlite.null()`, which are named after SQLite's column types.
+
+Values go in and come back exactly. Anything that doesn't fit is an error, never a silent change:
+
+- An integer keeps every digit of its `i64`.
+- A `bool` is stored as `0` or `1`, and a column declared `BOOLEAN` reads back as `true` or `false`.
+- `NULL` reads as `Option.None`. For a field that isn't an `Option`, it's an error.
+- A list or struct field can't go in one column. Store `json.encode(...)` in a string field, or use a second table.
+- `execute` and the query methods run exactly one statement. To run several, use `execute_script`.
+- While another connection is writing, a statement waits up to 5 seconds before it reports that the database is locked.
 
 ## Regular expressions: std/re
 
@@ -357,7 +411,7 @@ fn main() -> !string:
 | `http.urljoin(base, link)` | Resolves a link against a page's URL, like Python's `urllib.parse.urljoin`. |
 | `Response` | `status`, `reason`, `headers` (lowercase keys), and `body`, plus `text()`, `json()`, and `ok()`. |
 
-On the server side, `http.serve(host, port, handler)` handles requests until the program stops. Each request goes to `handler`, and the `Response` it returns goes back to the client:
+On the server side, `http.serve(host, port, handler)` handles requests until the program stops. Each request goes to `handler`, and the `Response` it returns goes back to the client. Several threads handle requests at the same time, so one slow request doesn't hold up the others:
 
 ```zamak,ignore
 use std/http
@@ -371,9 +425,13 @@ fn main() -> !string:
 
 Requests follow redirects (301, 302, 303, 307, and 308, up to 10 times), as `requests` does; pass `follow=false` to get the redirect itself.
 
-`http.respond(status, text)` and `http.respond_json(status, value)` build responses. A `Request` has `method`, `path`, `query`, `headers`, and `body`.
+`http.respond(status, text)` and `http.respond_json(status, value)` build responses; `value` can be a `Json` value, a struct, a list, or anything else that converts to JSON. A `Request` has `method`, `path`, `query`, `headers`, and `body`, plus `text()`, `json()`, `args()` for the decoded query parameters, and `arg(name, default="")` for one of them.
 
-`std/net` is plain TCP underneath: `net.connect(host, port)` returns a connection, and `net.listen(host, port)` returns a listener. A connection has `send`, `recv`, `recv_all`, and `set_timeout`. Connections and listeners close when they go out of scope. The server handles one request at a time.
+- `handler` runs on several threads at once, so it can't capture local variables; pass a named function. Pass `workers=n` to choose the number of threads; by default it's twice the number of processors, and at least 8.
+- `http.quote(text)`, `http.unquote(text)`, and `http.parse_query(query)` work like Python's `urllib.parse.quote`, `unquote`, and `parse_qs`.
+- [`examples/apps/notes`](https://github.com/VeyraLux/Zamak/tree/main/examples/apps/notes) is a complete REST service that stores notes in SQLite.
+
+`std/net` is plain TCP underneath: `net.connect(host, port)` returns a connection, and `net.listen(host, port)` returns a listener. A connection has `send`, `recv`, `recv_all`, and `set_timeout`. Connections and listeners close when they go out of scope.
 
 ### HTTPS and TLS
 
@@ -474,5 +532,6 @@ hello
 - `std/io`, `std/env`, `std/fs`, and `std/path` handle input, arguments, and files; `std/bytes` handles raw bytes.
 - `std/math`, `std/fmt`, `std/time`, and `std/random` handle numbers, formatting, clocks, and randomness.
 - `std/process`, `std/json`, `std/re`, `std/hashlib`, and `std/base64` run programs, read and write JSON, match text, and compute hashes.
+- `std/sqlite` stores data in a SQLite database and reads rows back as structs.
 - `std/thread` starts threads with `thread.spawn`, and threads pass data through a `Queue`.
 - Functions that can fail return errors that you handle with `?` or `catch`.

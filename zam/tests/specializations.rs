@@ -174,4 +174,22 @@ fn generic_type_methods_can_have_their_own_type_parameters() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("cannot infer U"), "{stderr}");
+
+    // 方法的类型参数与别的类型（std/core 的 `Option[T]`）的同名：照样从实参推断，后面也能接 `?`。
+    let output = case.run("struct Store:\n    n: i64\n\n    fn put[T](&self, value: &T) -> !string:\n        println(self.n)\n\nfn main() -> !string:\n    let s = Store(n: 7)\n    s.put(\"x\")?\n    s.put(3)?\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "7\n7\n",
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // 类型参数只出现在返回类型里：按接收结果的变量的标注推断（`let rows: [Row] = db.query(...)`）。
+    let output = case.run("struct Maker:\n    n: i64\n\n    fn make[T](&self, text: &string) -> T!string:\n        let value: T = parse(text)?\n        value\n\nfn parse[T](text: &string) -> T!string:\n    fail f\"cannot parse {text}\"\n\nfn main():\n    let m = Maker(n: 1)\n    let x: i64 = m.make(\"5\") catch e:\n        println(e)\n        return\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "cannot parse 5\n",
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

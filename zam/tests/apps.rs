@@ -174,3 +174,138 @@ fn todo_adds_lists_edits_and_saves_tasks() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// 发一个 HTTP/1.1 请求，返回（状态码, 响应体）。服务端用 Connection: close，读到对端关闭为止。
+fn request(port: u16, method: &str, path: &str, body: &str) -> (u16, String) {
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    write!(
+        stream,
+        "{method} {path} HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    )
+    .unwrap();
+    let mut reply = String::new();
+    stream.read_to_string(&mut reply).unwrap();
+    let status = reply
+        .split(' ')
+        .nth(1)
+        .and_then(|code| code.parse().ok())
+        .unwrap_or(0);
+    let body = reply
+        .split_once("\r\n\r\n")
+        .map_or("", |(_, body)| body)
+        .to_owned();
+    (status, body)
+}
+
+#[test]
+fn notes_serves_a_rest_api_backed_by_sqlite() {
+    let root = std::env::temp_dir().join(format!("zam-apps-notes-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let built = zam(&["build", "../examples/apps/notes"], &root.join("cache"));
+    let stderr = String::from_utf8_lossy(&built.stderr).to_string();
+    assert!(built.status.success(), "{stderr}");
+    let exe = stderr
+        .lines()
+        .find_map(|line| line.strip_prefix("OUTPUT "))
+        .expect("OUTPUT line")
+        .trim()
+        .to_owned();
+    let port = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let mut server = Command::new(&exe)
+        .env("NOTES_DB", root.join("notes.db"))
+        .env("PORT", port.to_string())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    // 等它开始监听。
+    let mut ready = false;
+    for _ in 0..100 {
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            ready = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(ready, "the notes server did not start");
+    let (status, body) = request(
+        port,
+        "POST",
+        "/notes",
+        r#"{"title": "milk", "body": "2 L"}"#,
+    );
+    assert_eq!(status, 201, "{body}");
+    assert!(
+        body.starts_with(r#"{"id": 1, "title": "milk", "body": "2 L", "created": ""#),
+        "{body}"
+    );
+    assert_eq!(
+        request(
+            port,
+            "POST",
+            "/notes",
+            r#"{"title": "笔记", "body": "不含糊"}"#
+        )
+        .0,
+        201
+    );
+    let (_, found) = request(port, "GET", "/notes?q=%E4%B8%8D%E5%90%AB", "");
+    assert!(
+        found.starts_with(r#"[{"id": 2, "title": "笔记""#),
+        "{found}"
+    );
+    let (status, body) = request(
+        port,
+        "PUT",
+        "/notes/1",
+        r#"{"title": "oat milk", "body": "1 L"}"#,
+    );
+    assert_eq!(status, 200);
+    assert!(body.contains(r#""title": "oat milk""#), "{body}");
+    assert_eq!(request(port, "DELETE", "/notes/2", "").0, 204);
+    assert_eq!(
+        request(port, "GET", "/notes/2", ""),
+        (404, r#"{"error": "no note 2"}"#.to_owned())
+    );
+    assert_eq!(request(port, "GET", "/notes/x", "").0, 404);
+    assert_eq!(
+        request(port, "POST", "/notes", r#"{"title": "x"}"#),
+        (
+            400,
+            r#"{"error": "the body must be a JSON object with title and body (body: missing)"}"#
+                .to_owned()
+        )
+    );
+    assert_eq!(request(port, "PATCH", "/notes", "").0, 405);
+    // 几个客户端同时写：每个请求都成功，一条不少。
+    let writers: Vec<_> = (0..8)
+        .map(|i| {
+            std::thread::spawn(move || {
+                (0..4)
+                    .map(|j| {
+                        request(
+                            port,
+                            "POST",
+                            "/notes",
+                            &format!(r#"{{"title": "t{i}-{j}", "body": ""}}"#),
+                        )
+                        .0
+                    })
+                    .collect::<Vec<_>>()
+            })
+        })
+        .collect();
+    for writer in writers {
+        assert!(writer.join().unwrap().iter().all(|status| *status == 201));
+    }
+    let (_, all) = request(port, "GET", "/notes", "");
+    assert_eq!(all.matches(r#""id": "#).count(), 33, "{all}");
+    let _ = server.kill();
+    let _ = server.wait();
+    let _ = std::fs::remove_dir_all(&root);
+}

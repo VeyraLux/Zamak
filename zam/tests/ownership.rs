@@ -156,6 +156,34 @@ fn main():
 }
 
 #[test]
+fn matching_a_call_result_owns_the_payload() {
+    // match 调用结果：绑定拥有载荷，可以修改、移走；match 局部变量：绑定是借用，不能修改。
+    let root = std::env::temp_dir().join(format!("zam-match-owned-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("main.zm");
+    let run = |source: &str| {
+        fs::write(&path, source).unwrap();
+        Command::new(env!("CARGO_BIN_EXE_zam"))
+            .arg("run")
+            .arg(&path)
+            .env("ZAMAK_CACHE_DIR", root.join("cache"))
+            .env("ZAMAK_LANG", "en")
+            .output()
+            .unwrap()
+    };
+    let output = run(include_str!("../../examples/values/match_owned.zm"));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "[\"a\", \"b\"]\n2\n[Job(id: 4, tags: [\"x\"])]\n[\"a\"]\nOption.Some(Job(id: 5, tags: [\"a\"]))\n",
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = run("struct Job:\n    tags: [string]\n\nfn main():\n    let local = Option.Some(Job(tags: []))\n    match local:\n        Some(job): job.tags.append(\"x\")\n        None: pass\n");
+    assert!(!output.status.success(), "changed a borrowed binding");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn moving_a_field_uses_up_the_struct() {
     // 从局部结构体里移出列表、字典或结构体字段会用掉整个结构体；之后再用它是编译错误。
     let root = std::env::temp_dir().join(format!("zam-field-move-{}", std::process::id()));

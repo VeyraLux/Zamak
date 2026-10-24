@@ -1,8 +1,8 @@
 //! 构建时做两件事：
 //! 1. Windows 上给 zam.exe 写入文件信息（产品名、版本、图标）。资源管理器的“属性 → 详细信息”里能看到
 //!    产品名与版本号，以后申请代码签名时也需要它们。
-//! 2. 把 vendor/ 下的第三方源码（Mbed TLS、libui-ng）各打成一个压缩包嵌进 zam：程序用到 TLS 或
-//!    界面时，zam 解压到缓存再编译。
+//! 2. 把 vendor/ 下的第三方源码（Mbed TLS、libui-ng、SQLite）各打成一个压缩包嵌进 zam：程序用到
+//!    TLS、界面或数据库时，zam 解压到缓存再编译。
 use std::path::Path;
 
 fn main() {
@@ -27,6 +27,7 @@ fn main() {
     }
     vendor_archive("mbedtls", "mbedtls.bin");
     vendor_archive("libui-ng", "libui.bin");
+    vendor_archive("sqlite", "sqlite.bin");
 }
 
 /// 打包格式：每个文件依次是 路径（UTF-8）、`\0`、长度（4 字节小端）、内容；整体用 deflate 压缩。

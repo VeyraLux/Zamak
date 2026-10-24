@@ -1,0 +1,48 @@
+# SQLite 数据库：sqlite.connect 打开（没有就新建）数据库，":memory:" 只在内存里。
+# execute 用 ? 占位传参数；execute_named 用结构体的字段填 :name 参数；query 把结果行直接读成结构体。
+# 规则不含糊：整数原样存取（任意大小的 i64），BOOLEAN 列读回 true/false，对不上的地方直接报错。
+use std/sqlite
+
+struct Note:
+    id: i64
+    title: string
+    pinned: bool
+    body: Option[string]
+
+struct Draft:
+    title: string
+    pinned: bool
+
+fn main() -> !string:
+    let db = sqlite.connect(":memory:")?
+    db.execute_script("CREATE TABLE notes (id INTEGER PRIMARY KEY, title TEXT NOT NULL, pinned BOOLEAN NOT NULL DEFAULT 0, body TEXT)")?
+
+    db.execute("INSERT INTO notes (title, body) VALUES (?, ?)", [sqlite.text("milk"), sqlite.text("2 L")])?
+    db.execute_named("INSERT INTO notes (title, pinned) VALUES (:title, :pinned)", &Draft(title: "rent", pinned: true))?
+    println(db.last_id())
+
+    let notes: [Note] = db.query("SELECT * FROM notes ORDER BY id", [])?
+
+    for note in notes:
+        println(f"{note.id} {note.title} pinned={note.pinned} body={note.body}")
+
+    let changed = db.execute("UPDATE notes SET pinned = 1 WHERE id = ?", [sqlite.integer(1)])?
+    println(f"updated {changed}")
+    let pinned: [Note] = db.query("SELECT * FROM notes WHERE pinned = ?", [sqlite.integer(1)])?
+    println(len(pinned))
+
+    db.execute("INSERT INTO notes (id, title) VALUES (?, 'big')", [sqlite.integer(9007199254740993)])?
+    let big: [Note] = db.query("SELECT * FROM notes WHERE title = 'big'", [])?
+    println(big[0].id)
+
+    for sql in ["INSERT INTO nope VALUES (1)", "SELECT ?", "SELECT 1; SELECT 2"]:
+        db.execute(sql, []) catch e:
+            println(f"error: {e}")
+            continue
+
+    db.execute_named("INSERT INTO notes (title) VALUES (:name)", &Draft(title: "x", pinned: false)) catch e:
+        println(f"error: {e}")
+
+    let wrong: [Note] = db.query("SELECT title AS id, title, pinned, body FROM notes", []) catch e:
+        println(f"error: {e}")
+        return

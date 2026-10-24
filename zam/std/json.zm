@@ -1,5 +1,6 @@
 # JSON 读写，接口照 Python 的 json 模块：loads 把文字变成 Json，dumps 把 Json 变成文字。
-# 数字一律按 f64 保存（同 JavaScript）；整数值输出时不带小数点。
+# 数字分两种，同 Python：没有小数点和指数的是 Int（i64），其余是 Float（f64）；写出时原样保留，
+# 所以读回来类型不变。超出 i64 的整数报错，不悄悄变成浮点数。
 #
 # 结构体、列表、字典与 JSON 之间可以直接转换，不用手写 Json 值：
 #
@@ -15,7 +16,8 @@ use std/string
 pub enum Json:
     Null
     Bool(value: bool)
-    Number(value: f64)
+    Int(value: i64)
+    Float(value: f64)
     Str(value: string)
     Array(items: [Json])
     Object(fields: {string: Json})
@@ -47,19 +49,18 @@ pub enum Json:
             Str(value): return value
             _: fail "the JSON value is not a string"
 
+    # 浮点数：Int 也行（整数总能当浮点数用）。
     pub fn as_f64(&self) -> f64!string:
         match self:
-            Number(value): return value
+            Float(value): return value
+            Int(value): return float(value)
             _: fail "the JSON value is not a number"
 
-    # 整数：数字有小数部分时返回错误。
+    # 整数：只认 Int，1.5 和 1.0 这样带小数点的数都返回错误。
     pub fn as_i64(&self) -> i64!string:
         match self:
-            Number(value):
-                if value != math.floor(value) or math.abs(value) > 9007199254740992.0:
-                    fail f"the JSON number {value} is not an integer"
-
-                return i64(value)
+            Int(value): return value
+            Float(value): fail f"the JSON number {value} is not an integer"
             _: fail "the JSON value is not a number"
 
     pub fn as_bool(&self) -> bool!string:
@@ -196,7 +197,7 @@ struct Reader:
             return Json.Null
 
         if c == '-' or (c >= '0' and c <= '9'):
-            return Json.Number(self.number()?)
+            return self.number()?
 
         if c == -1:
             fail self.message("expected a value, found the end of the text")
@@ -219,8 +220,10 @@ struct Reader:
         self.pos - start
 
     # 数字的写法严格按 JSON：没有前导零、没有 +、小数点和指数后面都要有数字。
-    fn number(&mut self) -> f64!string:
+    # 没有小数点和指数的是 Int，超出 i64 时报错。
+    fn number(&mut self) -> Json!string:
         let start = self.pos
+        let mut whole = true
 
         if self.peek() == '-':
             self.pos += 1
@@ -232,12 +235,14 @@ struct Reader:
 
         if self.peek() == '.':
             self.pos += 1
+            whole = false
 
             if self.digits() == 0:
                 fail self.message("expected a digit after the decimal point")
 
         if self.peek() == 'e' or self.peek() == 'E':
             self.pos += 1
+            whole = false
 
             if self.peek() == '+' or self.peek() == '-':
                 self.pos += 1
@@ -246,7 +251,12 @@ struct Reader:
                 fail self.message("expected a digit in the exponent")
 
         let text = self.data[start:self.pos].decode()?
-        float(text)?
+
+        if whole:
+            let n = text.parse_i64() catch e: fail self.message(f"the integer {text} doesn't fit in i64")
+            return Json.Int(n)
+
+        Json.Float(float(text)?)
 
     fn hex4(&mut self) -> i64!string:
         let mut value = 0
@@ -390,9 +400,6 @@ fn number_text(n: f64) -> string:
     if math.is_nan(n) or n == math.inf or n == -math.inf:
         return "null"
 
-    if n == math.floor(n) and math.abs(n) < 9007199254740992.0:
-        return str(i64(n))
-
     str(n)
 
 fn quote(s: &string) -> string:
@@ -429,7 +436,8 @@ fn write(value: &Json, indent: i64, depth: i64, out: &mut [string]):
     match value:
         Null: out.push("null")
         Bool(b): out.push(if b: "true" else: "false")
-        Number(n): out.push(number_text(n))
+        Int(n): out.push(str(n))
+        Float(n): out.push(number_text(n))
         Str(s): out.push(quote(s))
         Array(items):
             if len(items) == 0:

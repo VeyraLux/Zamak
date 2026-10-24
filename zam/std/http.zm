@@ -1,8 +1,9 @@
 # HTTP/1.1 客户端与服务端。客户端的形状参考 Python 的 requests：http.get(url)、http.post(url, body)，
-# 响应有 status、headers、text()、json()。服务端：http.serve(host, port, handler)。
+# 响应有 status、headers、text()、json()。服务端：http.serve(host, port, handler)，几个线程同时处理请求。
 # https:// 用 TLS，校验服务器证书（根证书来自系统，或环境变量 SSL_CERT_FILE 指定的文件）。
 use std/net
 use std/json
+use std/thread
 
 # 服务器返回的响应。headers 的键都是小写。
 pub struct Response:
@@ -36,6 +37,19 @@ pub struct Request:
 
     pub fn json(&self) -> json.Json!string:
         json.loads(self.body.decode()?)?
+
+    # 查询串里的参数（`?q=milk&page=2`），值已经解码（%xx 与 +）。同名参数取最后一个。
+    pub fn args(&self) -> {string: string}!string:
+        parse_query(self.query)?
+
+    # 查询串里名为 name 的参数；没有时是 default。
+    pub fn arg(&self, name: &string, default: &string = "") -> string!string:
+        let all = self.args()?
+
+        if name in all:
+            return copy(&all[name])
+
+        copy(default)
 
 # 发一个 GET 请求。
 # follow 为 true（默认）时跟随重定向（301、302、303、307、308，最多 10 次），与 requests 相同。
@@ -186,17 +200,39 @@ fn send(method: &string, url: &string, body: &bytes, headers: &{string: string},
     parse_response(conn.recv_all()?)?
 
 # 在 host 的 port 端口上一直处理请求：每个请求交给 handler，把它返回的响应发回去。
-# 给出 cert_file 与 key_file（PEM 文件）时用 HTTPS。
-pub fn serve(host: &string, port: i64, handler: fn(&Request) -> Response, cert_file: &string = "", key_file: &string = "") -> !string:
+# workers 个线程同时处理请求（0 表示按处理器个数决定，至少 8 个），所以一个慢请求不会挡住别的请求；
+# handler 在这些线程里运行，同一时间可能有几个在跑。给出 cert_file 与 key_file（PEM 文件）时用 HTTPS。
+pub fn serve(host: &string, port: i64, handler: kept fn(&Request) -> Response, cert_file: &string = "", key_file: &string = "", workers: i64 = 0) -> !string:
     let listener = net.listen(host, port)?
+    let count = if workers > 0: workers else: max(8, thread.cpu_count() * 2)
+    let jobs: thread.Queue[net.Conn] = thread.queue()
+    let mut pool: [thread.Thread] = []
+
+    for _ in range(count):
+        pool.append(thread.spawn(work, jobs.clone(), handler, copy(cert_file), copy(key_file)))
 
     while true:
-        serve_one(listener, handler, cert_file, key_file) catch e:
-            continue
+        let conn = listener.accept() catch e: continue
+        jobs.put(conn)?
 
-# 接受一条连接、处理一个请求。测试或自己控制循环时用。
+# 工作线程：从队列里取连接，握手（HTTPS 时）后处理一个请求。出错的连接直接关掉。
+fn work(jobs: thread.Queue[net.Conn], handler: kept fn(&Request) -> Response, cert_file: string, key_file: string):
+    while true:
+        match jobs.get():
+            Some(conn):
+                if cert_file != "":
+                    conn.accept_tls(cert_file, key_file) catch e: continue
+
+                answer(conn, handler) catch e: continue
+            None: break
+
+# 接受一条连接、处理一个请求，在当前线程里。测试或自己控制循环时用。
 pub fn serve_one(listener: &net.Listener, handler: fn(&Request) -> Response, cert_file: &string = "", key_file: &string = "") -> !string:
     let conn = if cert_file == "": listener.accept()? else: listener.accept_tls(cert_file, key_file)?
+    answer(conn, handler)?
+
+# 在一条连接上读一个请求、交给 handler、把响应发回去。
+fn answer(conn: &net.Conn, handler: fn(&Request) -> Response) -> !string:
     conn.set_timeout(30.0)
     let mut raw: bytes = []
     let mut end = -1
@@ -249,9 +285,78 @@ pub fn respond(status: i64, body: &string, content_type: &string = "text/plain; 
     headers["content-type"] = content_type
     Response(status=status, reason=reason(status), headers=headers, body=body.encode())
 
-# JSON 响应。
-pub fn respond_json(status: i64, value: &json.Json) -> Response:
-    respond(status, json.dumps(value), content_type="application/json")
+# JSON 响应：value 可以是 Json，也可以是结构体、列表等任何能写成 JSON 的值。
+pub fn respond_json[T](status: i64, value: &T) -> Response:
+    respond(status, json.encode(value), content_type="application/json")
+
+# 查询串变成参数字典（同 Python 的 urllib.parse.parse_qs，但每个名字只留最后一个值）。
+pub fn parse_query(query: &string) -> {string: string}!string:
+    let mut out: {string: string} = {}
+
+    for pair in query.split("&"):
+        if pair == "":
+            continue
+
+        let eq = pair.find("=")
+
+        if eq < 0:
+            out[unquote(pair, plus=true)?] = ""
+        else:
+            out[unquote(pair[:eq], plus=true)?] = unquote(pair[eq + 1:], plus=true)?
+
+    out
+
+# 把 %xx 换回原来的字节（同 Python 的 urllib.parse.unquote）；plus 为 true 时 + 也换成空格
+# （查询串的写法，同 unquote_plus）。%xx 后面不是两个十六进制数字时原样保留。
+# 换回来的字节不是 UTF-8 时返回错误。
+pub fn unquote(text: &string, plus: bool = false) -> string!string:
+    let raw = text.encode()
+    let mut out: bytes = []
+    let mut i = 0
+
+    while i < len(raw):
+        let c = raw[i]
+
+        if c == '%' and i + 2 < len(raw) and hex_digit(raw[i + 1]) >= 0 and hex_digit(raw[i + 2]) >= 0:
+            out.push(hex_digit(raw[i + 1]) * 16 + hex_digit(raw[i + 2]))
+            i += 3
+        elif c == '+' and plus:
+            out.push(' ')
+            i += 1
+        else:
+            out.push(c)
+            i += 1
+
+    out.decode() catch e: fail f"the decoded text of {text} is not valid UTF-8"
+
+# 把文字写成能放进 URL 的样子（同 Python 的 urllib.parse.quote）：字母、数字和 _.-~ 以及 safe
+# 里的字符原样保留，其余字节写成 %XX。
+pub fn quote(text: &string, safe: &string = "/") -> string:
+    let keep = safe.encode()
+    let digits = b"0123456789ABCDEF"
+    let mut out: bytes = []
+
+    for c in text.encode():
+        if (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '_' or c == '.' or c == '-' or c == '~' or keep.contains(c):
+            out.push(c)
+        else:
+            out.push('%')
+            out.push(digits[c // 16])
+            out.push(digits[c % 16])
+
+    out.decode() catch e: ""
+
+fn hex_digit(c: i64) -> i64:
+    if c >= '0' and c <= '9':
+        return c - '0'
+
+    if c >= 'a' and c <= 'f':
+        return c - 'a' + 10
+
+    if c >= 'A' and c <= 'F':
+        return c - 'A' + 10
+
+    -1
 
 struct Target:
     secure: bool

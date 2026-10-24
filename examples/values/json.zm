@@ -12,7 +12,7 @@ fn main() -> !string:
 
     let mut fields: {string: json.Json} = {}
     fields["ok"] = json.Json.Bool(true)
-    fields["count"] = json.Json.Number(3.0)
+    fields["count"] = json.Json.Int(3)
     fields["tags"] = json.Json.Array([json.Json.Str("a"), json.Json.Null])
     let reply = json.Json.Object(fields)
     println(json.dumps(reply))

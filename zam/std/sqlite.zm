@@ -1,0 +1,264 @@
+# SQLite 数据库：形状参考 Python 的 sqlite3 模块。SQLite 编进了 zam，不用另装。
+# sqlite.connect(path) 打开（没有就新建）数据库文件，":memory:" 是只在内存里的数据库；连接离开作用域时关闭。
+# db.execute(sql, params) 执行一条语句，参数用 ? 占位；db.query(sql, params) 把结果行直接读成结构体列表，
+# 列名对应字段名（同 json.from_json 的规则，NULL 读成 Option.None）。
+# db.execute_named(sql, &value) 用结构体的字段填 :name 形式的参数，插入一条记录不用逐个写参数。
+use std/json
+
+extern type Db: "void", close = zam_sqlite_close
+extern type Stmt: "void", close = zam_sqlite_finalize
+
+extern fn zam_sqlite_open(path: &string, out: &mut Option[Db]) -> i64
+extern fn zam_sqlite_exec(db: &Db, sql: &string) -> i64
+extern fn zam_sqlite_prepare(db: &Db, sql: &string, out: &mut Option[Stmt]) -> i64
+extern fn zam_sqlite_bind_int(st: &Stmt, i: i64, v: i64) -> i64
+extern fn zam_sqlite_bind_real(st: &Stmt, i: i64, v: f64) -> i64
+extern fn zam_sqlite_bind_text(st: &Stmt, i: i64, v: &string) -> i64
+extern fn zam_sqlite_bind_null(st: &Stmt, i: i64) -> i64
+extern fn zam_sqlite_params(st: &Stmt) -> i64
+extern fn zam_sqlite_param_name(st: &Stmt, i: i64) -> string
+extern fn zam_sqlite_step(st: &Stmt) -> i64
+extern fn zam_sqlite_columns(st: &Stmt) -> i64
+extern fn zam_sqlite_column_name(st: &Stmt, i: i64) -> string
+extern fn zam_sqlite_column_type(st: &Stmt, i: i64) -> i64
+extern fn zam_sqlite_column_int(st: &Stmt, i: i64) -> i64
+extern fn zam_sqlite_column_real(st: &Stmt, i: i64) -> f64
+extern fn zam_sqlite_column_text(st: &Stmt, i: i64) -> string
+extern fn zam_sqlite_column_decl(st: &Stmt, i: i64) -> string
+extern fn zam_sqlite_changes(db: &Db) -> i64
+extern fn zam_sqlite_last_id(db: &Db) -> i64
+extern fn zam_sqlite_last_error() -> string
+
+# 一个 SQL 参数或列值。
+pub enum Value:
+    Null
+    Int(value: i64)
+    Real(value: f64)
+    Text(value: string)
+
+# 参数的简写，名字同 SQLite 的列类型：[sqlite.text(title), sqlite.integer(id)]。
+pub fn integer(value: i64) -> Value:
+    Value.Int(value)
+
+pub fn real(value: f64) -> Value:
+    Value.Real(value)
+
+pub fn text(value: &string) -> Value:
+    Value.Text(copy(value))
+
+pub fn null() -> Value:
+    Value.Null
+
+# 一个数据库连接。
+pub struct Connection:
+    db: Option[Db]
+
+    # 执行一条语句（INSERT、UPDATE、CREATE TABLE 等），返回改动的行数。
+    pub fn execute(&self, sql: &string, params: &[Value]) -> i64!string:
+        let mut st: Option[Stmt] = Option.None
+        self.prepare(sql, &mut st)?
+
+        match st:
+            Some(s):
+                bind_all(s, params)?
+                finish(s)?
+            None: fail "the statement is closed"
+
+        self.changes()
+
+    # 执行一条语句，`:name` 形式的参数取 value（结构体或字典）里同名字段的值。
+    pub fn execute_named[T](&self, sql: &string, value: &T) -> i64!string:
+        let fields = json.to_json(value)
+        let mut st: Option[Stmt] = Option.None
+        self.prepare(sql, &mut st)?
+
+        match st:
+            Some(s):
+                for i in range(1, zam_sqlite_params(s) + 1):
+                    let name = zam_sqlite_param_name(s, i)
+
+                    if len(name) < 2:
+                        fail f"parameter {i} has no name; execute_named needs :name parameters"
+
+                    let field = fields.get(name[1:]) catch e: fail f"{name}: the value has no field {name[1:]}"
+                    bind(s, i, param(field)?)?
+
+                finish(s)?
+            None: fail "the statement is closed"
+
+        self.changes()
+
+    # 执行几条用分号隔开的语句（建表脚本等），不带参数。
+    pub fn execute_script(&self, sql: &string) -> !string:
+        match self.db:
+            Some(d):
+                if zam_sqlite_exec(d, sql) < 0:
+                    fail zam_sqlite_last_error()
+            None: fail "the database is closed"
+
+    # 查询，把每一行读成 T（类型写在标注里：let notes: [Note] = db.query(sql, [])?）。
+    pub fn query[T](&self, sql: &string, params: &[Value]) -> [T]!string:
+        let rows = self.query_json(sql, params)?
+        let out: [T] = json.from_json(rows) catch e: fail f"in the query result: {e.replace("the JSON value", "the value")}"
+        out
+
+    # 查询，结果是 Json 数组，每一行是一个以列名为键的对象。
+    pub fn query_json(&self, sql: &string, params: &[Value]) -> json.Json!string:
+        let mut st: Option[Stmt] = Option.None
+        self.prepare(sql, &mut st)?
+        let mut rows: [json.Json] = []
+
+        match st:
+            Some(s):
+                bind_all(s, params)?
+                let columns = zam_sqlite_columns(s)
+
+                while step(s)?:
+                    let mut row: {string: json.Json} = {}
+
+                    for i in range(columns):
+                        row[zam_sqlite_column_name(s, i)] = column(s, i)
+
+                    rows.append(json.Json.Object(row))
+            None: fail "the statement is closed"
+
+        json.Json.Array(rows)
+
+    # 查询，每一行是按列顺序排的 Value（不需要结构体时用）。
+    pub fn query_rows(&self, sql: &string, params: &[Value]) -> [[Value]]!string:
+        let mut st: Option[Stmt] = Option.None
+        self.prepare(sql, &mut st)?
+        let mut rows: [[Value]] = []
+
+        match st:
+            Some(s):
+                bind_all(s, params)?
+                let columns = zam_sqlite_columns(s)
+
+                while step(s)?:
+                    let mut row: [Value] = []
+
+                    for i in range(columns):
+                        row.append(raw_column(s, i))
+
+                    rows.append(row)
+            None: fail "the statement is closed"
+
+        rows
+
+    # 最近一条 INSERT 得到的行号（INTEGER PRIMARY KEY 列的值）。
+    pub fn last_id(&self) -> i64:
+        match self.db:
+            Some(d): zam_sqlite_last_id(d)
+            None: 0
+
+    # 最近一条语句改动的行数。
+    pub fn changes(&self) -> i64:
+        match self.db:
+            Some(d): zam_sqlite_changes(d)
+            None: 0
+
+    pub fn close(&mut self):
+        self.db = Option.None
+
+    fn prepare(&self, sql: &string, out: &mut Option[Stmt]) -> !string:
+        match self.db:
+            Some(d):
+                if zam_sqlite_prepare(d, sql, out) < 0:
+                    fail zam_sqlite_last_error()
+            None: fail "the database is closed"
+
+# 打开数据库文件，没有就新建。":memory:" 打开一个只在内存里的数据库。
+pub fn connect(path: &string) -> Connection!string:
+    let mut conn = Connection(db: Option.None)
+
+    if zam_sqlite_open(path, &mut conn.db) < 0:
+        fail f"cannot open {path}: {zam_sqlite_last_error()}"
+
+    conn
+
+fn bind_all(st: &Stmt, params: &[Value]) -> !string:
+    let wanted = zam_sqlite_params(st)
+
+    if wanted != len(params):
+        fail f"wrong number of parameters: the statement takes {wanted}, but {len(params)} were given"
+
+    let mut i = 1
+
+    for p in params:
+        bind(st, i, p)?
+        i += 1
+
+fn bind(st: &Stmt, i: i64, value: &Value) -> !string:
+    let rc = match value:
+        Null: zam_sqlite_bind_null(st, i)
+        Int(v): zam_sqlite_bind_int(st, i, v)
+        Real(v): zam_sqlite_bind_real(st, i, v)
+        Text(v): zam_sqlite_bind_text(st, i, v)
+
+    if rc < 0:
+        fail zam_sqlite_last_error()
+
+# 一个 Json 值变成 SQL 参数（execute_named 用）。整数存成 INTEGER，布尔存成 0/1，
+# 列表与嵌套结构体没有对应的列类型，直接报错。
+fn param(value: &json.Json) -> Value!string:
+    match value:
+        Null: return Value.Null
+        Bool(b):
+            if b:
+                return Value.Int(1)
+
+            return Value.Int(0)
+        Int(n): return Value.Int(n)
+        Float(x): return Value.Real(x)
+        Str(s): return Value.Text(copy(s))
+        Array(items): fail "a list can't go in one column; store json.encode(...) in a string field, or use a second table"
+        Object(fields): fail "a struct or map can't go in one column; store json.encode(...) in a string field, or use a second table"
+
+# 执行到下一行：有一行时为 true，执行完了为 false。
+fn step(st: &Stmt) -> bool!string:
+    let rc = zam_sqlite_step(st)
+
+    if rc < 0:
+        fail zam_sqlite_last_error()
+
+    rc == 1
+
+# 执行到底（不返回行的语句）。
+fn finish(st: &Stmt) -> !string:
+    while step(st)?:
+        pass
+
+fn raw_column(st: &Stmt, i: i64) -> Value:
+    let kind = zam_sqlite_column_type(st, i)
+
+    if kind == 1:
+        return Value.Int(zam_sqlite_column_int(st, i))
+
+    if kind == 2:
+        return Value.Real(zam_sqlite_column_real(st, i))
+
+    if kind == 5:
+        return Value.Null
+
+    Value.Text(zam_sqlite_column_text(st, i))
+
+# 一列的值。声明成 BOOLEAN 的列读成 true/false。
+fn column(st: &Stmt, i: i64) -> json.Json:
+    let kind = zam_sqlite_column_type(st, i)
+
+    if kind == 1:
+        let n = zam_sqlite_column_int(st, i)
+
+        if zam_sqlite_column_decl(st, i).upper().starts_with("BOOL"):
+            return json.Json.Bool(n != 0)
+
+        return json.Json.Int(n)
+
+    if kind == 2:
+        return json.Json.Float(zam_sqlite_column_real(st, i))
+
+    if kind == 5:
+        return json.Json.Null
+
+    json.Json.Str(zam_sqlite_column_text(st, i))
