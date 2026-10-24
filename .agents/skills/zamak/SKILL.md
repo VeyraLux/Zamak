@@ -103,6 +103,7 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 - 画布（ui.canvas）：C 里 `zam_ui_canvas_data`（`uiAreaHandler` 放第一个字段）记着 draw/mouse/key 三个回调；画的时候栈上有一支 `zam_ui_paint`（上下文、宽高、当前路径），Zamak 的 `Painter`/`Mouse`/`Key` 都是只有一个 i64 字段（C 指针）的纯数据结构体，只在回调期间有效。回调经泛型 intrinsic `std/ui:_connect_event[T, E]` 生成 `{symbol}_event(f, state, arg)`：把 arg 放进 `R{E}.m0` 再以 `&E` 交给函数值（`zam_ui_handler.event`）。路径 fill/stroke 后保留，可接着描边；`begin` 换新路径；画完一帧释放。文字：`zam_ui_layout` 用缓存的系统字体（`uiLoadControlFont` 在 Windows 上每次重扫字体集合，约 26 ms/次，缓存后快 35 倍）。std/widgets 纯 Zamak，立即模式：组件是 `draw_xxx(p, rect, 状态.., t: &Theme)` 函数，状态在用户结构体里，点击用 `Rect.contains`。表格的程序改动（set_rows/set_selected）用 `zam_ui_table_quiet` 屏蔽选中回调（libui 在 GTK 上会发、Windows 不会）。
 - 列表/字典常量：`fold` 接受 Array/MapLit；用处换成字面量（`constant_use` 允许借用列表/字典常量）。`for n in NAMES` 在 resolve_body 里插入隐藏的 `$for_const_行_列` 局部变量；`NAMES[i]`、`NAMES.m()`、`Call("NAMES.m")`、`GRID[i][j]`（ElementMethod）在 resolve_expr 里改写成对字面量的 `Chain`。整数字面量当接收者或循环元素时 `literal_list` 把定长数组当列表。多行 catch 块以单独的值（不是调用）结尾时，`catch_tail` + 检查器/生成器的 `block_tail`：前面几行执行完、块里的变量释放前求值写进结果。列表 `pop(i)` 在 rewrite_block 里改名 `$pop_at`（record_method_with 对结构体映射回 pop），`remove(x)` 是按值删（`removeval`，没有时运行时错误）。
 - std/cli（纯 Zamak）：`cli.parse[T](args)` 先用 `json.shape(none)`（编译器派生 `derive_shape`：结构体是 `{"字段": "种类"}`，种类 bool/int/float/string/list:x/option:x/struct/other，`shape_kind` 递归）知道每个字段怎么读，按种类把 args 读成 Json 对象，再交给 `json.from_json[T]`（错误 `.f: missing` 换成 `--f is required`）。`parse_or_exit` 的 catch 块以 `env.exit(2)` 结尾（检查器认 env.exit 不返回）。`env.args()` 不含程序名，`env.program()`（新 builtin，Windows 读 `__argv[0]`）去掉目录、.exe 和 zam 构建名后面的 `-<64 位哈希>`。类型参数只出现在返回类型、又没有实参能带出 T 的函数（如曾经的 `usage[T](program)`）写不出来：调用处没法显式写类型实参。
+- 可重现构建：MSVC 编译加 `/cgthreads1`（2026-10-24）。默认多线程代码生成在负载高时会对同一份 C 选不同指令（如 `mov r15d, r12d` 与 `mov r15, r12`），`/Brepro` 只管时间戳，管不到这个；并发构建写同一个缓存键时就报 corrupt cache entry。排查办法：每个进程用独立的 `ZAMAK_CACHE_DIR` 并发构建同一程序，比较各缓存里 .obj 的内容哈希（别把路径算进去），再用 `ZAMAK_DUMP_C=目录` 确认 C 源码是否相同。编译器身份另有缓存（临时目录 `zam-tool-*.txt`，按可执行文件的路径、大小、修改时间失效），什么都没改时的构建因此从约 100 ms 降到约 4 ms。
 - 字符串方法按实参个数选 builtin 由 `compiler::string_function` 统一决定（`find`→find_from，`ljust/rjust/center` 两个实参→`*_with`），检查器与生成器收集 needed 共用；`zam_pad_with` 的填充必须正好一个字符，否则运行时报错（同 Python 的 TypeError）。
 - 检查器的 `Expr::Catch` 在期望只读借用（`&string` 参数）时先按拥有的类型检查（`int(env.var("P") catch e: "8")`）。
 - 字符字面量 `'a'`、`'#'`、`'\n'`、`'\''`：值是 Unicode 码点（`i64`），与 `string.byte_at` 比较只用 ASCII 字符。
@@ -164,7 +165,7 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
    - macOS 本机无法验证，涉及 `cc` 命令行、链接或目标文件后缀的改动，提交前说明「macOS 待 CI 确认」，推送后看 GitHub Actions 结果。
 5. 示例放 `examples/<主题>/*.zm`（多模块项目为 `<主题>/src/main.zm` + `zam.toml`），并在 `zam/tests/<主题>.rs` 里用 `include_str!(...)` 引用示例做正例与反例，真正运行产物并断言 stdout/stderr/退出码。
 6. 文档边界：`README.md`（英文，GitHub 首页）与 `README.zh-CN.md`（中文，更详细）都入库，改能力范围时两份都要同步；`SYNTAX.md`、`ROADMAP.md`、`DESIGN.md`、`NAMING.md`、`MIGRATION.md` 被 `.gitignore` 忽略，只在本地维护。二者都要同步（README 如实标注缺口，ROADMAP 记进度）。
-7. 提交：分支 `main`，信息用 `<type>:中文描述`（feat/fix/test/docs/chore），按主题分批，必要时 `git push origin main`。
+7. 提交：编译器、标准库、测试、示例的改动先上 `dev`，CI 在三个平台通过后再把 `main` 快进到同一提交；只改文档的可以直接上 `main`。提交信息用英文 `<type>: summary`（feat/fix/docs/refactor/test/perf/build/chore），正文说明改了什么、为什么。改完按仓库根目录 `AGENTS.md` 的「Done means everything is in sync」清单同步文档。
 8. 编辑器/AI 生态：`editors/vscode/` 是纯 TextMate 语法扩展（零运行时依赖），改动关键字、符号或类型时要同步 `editors/vscode/syntaxes/zamak.tmLanguage.json` 与 `language-configuration.json`。
 
 ## 参考资料

@@ -65,4 +65,13 @@
         switcher.title = chinese ? "Read this page in English" : "阅读本页的中文版";
         buttons.insertBefore(switcher, buttons.firstChild);
     }
+
+    // 主题菜单只留两项（另外三项在 zamak.css 里藏起来），名字说清楚是浅色还是深色。
+    const zh = document.documentElement.lang.toLowerCase().startsWith("zh");
+    const auto = document.getElementById("mdbook-theme-default_theme");
+    const light = document.getElementById("mdbook-theme-light");
+    const dark = document.getElementById("mdbook-theme-navy");
+    if (auto) auto.textContent = zh ? "跟随系统" : "Auto";
+    if (light) light.textContent = zh ? "浅色" : "Light";
+    if (dark) dark.textContent = zh ? "深色" : "Dark";
 })();

@@ -1,4 +1,4 @@
-// 把 GitHub Release 的三个平台压缩包做成 npm 包：每个平台一个装着 zam 的子包，加上主包 zamak
+// 把 GitHub Release 的各平台压缩包做成 npm 包：每个平台一个装着 zam 的子包，加上主包 zamak
 // （启动器 + optionalDependencies，npm 只装与当前平台匹配的那个子包）。
 //   node tools/package-npm.mjs <版本，如 0.1.0> <放压缩包的目录> <输出目录>
 // 输出目录里每个子目录都是一个可以直接 `npm publish` 的包。
@@ -18,6 +18,8 @@ const PLATFORMS = [
   { name: 'zamak-win32-x64', os: 'win32', cpu: 'x64', archive: 'zamak-windows-x64.zip', binary: 'zam.exe' },
   { name: 'zamak-linux-x64', os: 'linux', cpu: 'x64', archive: 'zamak-linux-x64.tar.gz', binary: 'zam' },
   { name: 'zamak-darwin-arm64', os: 'darwin', cpu: 'arm64', archive: 'zamak-macos-arm64.tar.gz', binary: 'zam' },
+  { name: 'zamak-linux-arm64', os: 'linux', cpu: 'arm64', archive: 'zamak-linux-arm64.tar.gz', binary: 'zam' },
+  { name: 'zamak-darwin-x64', os: 'darwin', cpu: 'x64', archive: 'zamak-macos-x64.tar.gz', binary: 'zam' },
 ];
 const common = {
   version,

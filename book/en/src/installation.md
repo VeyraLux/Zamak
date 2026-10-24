@@ -4,7 +4,7 @@ Zamak is a single command-line program, `zam`. It checks your code, compiles it 
 
 ## Quick install
 
-If you have Node.js (or Bun), this is the shortest way. It installs the prebuilt `zam` for Windows x64, Linux x64, or macOS on Apple silicon:
+If you have Node.js (or Bun), this is the shortest way. It installs the prebuilt `zam` for Windows x64, Linux (x64 or arm64), or macOS (Apple silicon or Intel):
 
 ```sh
 npm install -g @veyralux/zamak      # or: bun add -g @veyralux/zamak

@@ -3999,6 +3999,28 @@ pub fn literal_list(ty: Type, receiver: &Expr) -> Type {
     }
 }
 
+/// 默认值的类型：数字、布尔、字符串、`Option.None`，以及由它们组成的列表与字典（`= []`、`= {}`）。
+fn default_fits(default: &Expr, ty: Type, structs: &BTreeMap<String, Struct>) -> bool {
+    let owned = temporary_borrow(ty).unwrap_or(ty);
+    match (default, owned) {
+        (Expr::Int(_), Type::Int | Type::Float) => true,
+        (Expr::Float(_), Type::Float) => true,
+        (Expr::Bool(_), Type::Bool) => true,
+        (Expr::Text(_), Type::Owned | Type::Shared) => true,
+        (Expr::Array(items), Type::List(elem)) => items
+            .iter()
+            .all(|item| default_fits(item, elem.ty(), structs)),
+        (Expr::MapLit(pairs), Type::Map(key, value)) if value != SET => {
+            pairs.iter().all(|(k, v)| {
+                default_fits(k, key.ty(), structs) && default_fits(v, value.ty(), structs)
+            })
+        }
+        _ => {
+            matches!(ty, Type::Record(id) if struct_of(id, structs).is_some_and(|(n, _)| n.contains(":Option[")))
+        }
+    }
+}
+
 pub fn catch_tail(block: &Block) -> Option<CatchTail<'_>> {
     let ((Instruction::Call(value), position), prefix) = block.split_last()? else {
         return None;
@@ -7909,6 +7931,12 @@ impl<'a> Checker<'a> {
             if matches!(expr, Expr::Array(_)) && matches!(owned, Type::List(_)) {
                 return self.expr(expr, owned, loans);
             }
+            // 字典字面量借给 `&{K: V}`：`show(extra={})`，默认值 `= {}` 也是这样传进来的。
+            if matches!(expr, Expr::MapLit(_))
+                && matches!(owned, Type::Map(_, value) if value != SET)
+            {
+                return self.expr(expr, owned, loans);
+            }
         }
         match expr {
             Expr::FnRef(name) => {
@@ -9695,15 +9723,7 @@ pub fn check(module: &Module, entry: &str) -> Result<(), String> {
         // 默认值在声明处就核对类型：没有调用用到它时也能发现写错。
         for ((param, ty), default) in function.params.iter().zip(&function.defaults) {
             let Some(default) = default else { continue };
-            let fits = match default {
-                Expr::Int(_) => matches!(ty, Type::Int | Type::Float),
-                Expr::Float(_) => *ty == Type::Float,
-                Expr::Bool(_) => *ty == Type::Bool,
-                Expr::Text(_) => matches!(ty, Type::Owned | Type::Shared),
-                _ => {
-                    matches!(ty, Type::Record(id) if struct_of(*id, &module.structs).is_some_and(|(n, _)| n.contains(":Option[")))
-                }
-            };
+            let fits = default_fits(default, *ty, &module.structs);
             if !fits {
                 let (line, column) = function.position;
                 errors.push(format!(

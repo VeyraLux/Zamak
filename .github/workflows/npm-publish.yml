@@ -50,7 +50,7 @@ jobs:
           node tools/package-npm.mjs "$version" assets npm-out
           packages="zamak"
           if [ "${{ inputs.only_main }}" != "true" ]; then
-            packages="zamak-win32-x64 zamak-linux-x64 zamak-darwin-arm64 zamak"
+            packages="zamak-win32-x64 zamak-linux-x64 zamak-linux-arm64 zamak-darwin-arm64 zamak-darwin-x64 zamak"
           fi
           for package in $packages; do
             (cd "npm-out/$package" && npm publish --access public --provenance --tag "$dist")

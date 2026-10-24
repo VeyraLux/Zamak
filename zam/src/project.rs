@@ -2402,10 +2402,12 @@ fn jobs() -> usize {
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)
+        // 留一个核给正在用的其他程序（同时编译太多会让桌面卡顿），最多 8 个。
         .unwrap_or_else(|| {
             std::thread::available_parallelism()
                 .map_or(1, std::num::NonZeroUsize::get)
-                .min(8)
+                .saturating_sub(1)
+                .clamp(1, 8)
         })
 }
 

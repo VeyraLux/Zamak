@@ -112,7 +112,7 @@ zam doc hello           # writes an HTML API page from the pub declarations
   <img src="docs/demo.svg" alt="The Zamak mascot turns a Python function into Zamak, then runs it and prints 13.5" width="720"/>
 </p>
 
-| As fast as C | 16 KB hello world on Linux | 20 MB where Java uses 365 MB | No lifetime annotations | Overflow checked in release builds |
+| As fast as C | 17 KB hello world on Linux | 20 MB where Java uses 365 MB | No lifetime annotations | Overflow checked in release builds |
 | :---: | :---: | :---: | :---: | :---: |
 
 Zamak is built for a way of working where several AI agents edit one project in parallel and build thousands of times a day. When goals conflict it prioritizes build cost, then memory safety, then runtime performance, then expressiveness, which is why there are no macros, no dependent types, and no lifetime annotations.
@@ -156,6 +156,8 @@ not: 1
 - **Checked where it matters.** Integer overflow, division by zero, and out-of-bounds access stop the program in every build, and the compiler removes the checks it can prove redundant.
 - **Fast feedback.** `zam check` needs no C compiler and finishes in under 0.1 s on a 5,000-line project; a one-line edit rebuilds in about 0.75 s.
 - **Native, standalone output.** Zamak generates C and compiles it with MSVC, GCC, or Clang. The executable needs neither Zamak nor Rust.
+- **Batteries included.** HTTP and HTTPS clients and a multithreaded server, threads and queues, SQLite, JSON for any type, regular expressions, dates, and command-line options read into a struct. They're built into `zam`, so there's nothing else to install.
+- **Desktop windows.** Native controls on Windows, macOS, and Linux, plus a canvas and a set of ready-made controls you can restyle or draw yourself.
 
 See [Grammar at a glance](book/en/src/grammar.md) for the syntax and [B. Performance](book/en/src/appendix-performance.md) for build and run numbers.
 
@@ -245,7 +247,7 @@ See [diagnostic codes](book/en/src/appendix-diagnostics.md) and the [agent workf
 
 ## Current limitations
 
-No REPL yet. C functions take numbers, booleans, strings, `bytes` buffers, and C handles declared with `extern type`; pass other structs and callbacks through a small C wrapper. `zam check` reports a diagnostic for anything unsupported instead of compiling it.
+No REPL or debugger yet. On Linux, window programs need GTK 3, and the canvas can't draw images yet. C functions take numbers, booleans, strings, `bytes` buffers, and C handles declared with `extern type`; pass other structs and callbacks through a small C wrapper. `zam check` reports a diagnostic for anything unsupported instead of compiling it.
 
 ## Editor and agent support
 

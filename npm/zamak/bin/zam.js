@@ -10,6 +10,8 @@ const PACKAGES = {
   'win32-x64': 'zamak-win32-x64',
   'linux-x64': 'zamak-linux-x64',
   'darwin-arm64': 'zamak-darwin-arm64',
+  'linux-arm64': 'zamak-linux-arm64',
+  'darwin-x64': 'zamak-darwin-x64',
 };
 
 function fail(message) {

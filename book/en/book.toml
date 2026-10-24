@@ -8,13 +8,16 @@ description = "Learn Zamak: a statically typed language that reads like Python a
 default-theme = "light"
 preferred-dark-theme = "navy"
 git-repository-url = "https://github.com/VeyraLux/Zamak"
-edit-url-template = "https://github.com/VeyraLux/Zamak/edit/main/book/en/{path}"
 site-url = "/"
 additional-css = ["theme/zamak.css"]
 additional-js = ["theme/zamak.js"]
 no-section-label = false
 
 [output.html.fold]
+enable = false
+
+# 打印整本书的按钮几乎没人用，关掉。
+[output.html.print]
 enable = false
 
 [build]

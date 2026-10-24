@@ -8,13 +8,16 @@ description = "学习 Zamak：读起来像 Python、编译成本机代码的静�
 default-theme = "light"
 preferred-dark-theme = "navy"
 git-repository-url = "https://github.com/VeyraLux/Zamak"
-edit-url-template = "https://github.com/VeyraLux/Zamak/edit/main/book/zh-CN/{path}"
 site-url = "/zh-CN/"
 additional-css = ["theme/zamak.css"]
 additional-js = ["theme/zamak.js"]
 no-section-label = false
 
 [output.html.fold]
+enable = false
+
+# 打印整本书的按钮几乎没人用，关掉。
+[output.html.print]
 enable = false
 
 [build]

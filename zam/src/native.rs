@@ -5870,6 +5870,8 @@ impl<'a> Generator<'a> {
                 Type::Map(_, value) | Type::MapRef(_, value, _) => value.ty(),
                 _ => unreachable!(),
             },
+            // 空的 `{}`（如默认值 `= {}`）只在分析时问到类型；真正生成时按期望类型（见 argument）。
+            Expr::MapLit(entries) if entries.is_empty() => Type::Map(Elem::Int, Elem::Int),
             Expr::MapLit(entries) => {
                 let (key, value) = entries.first().expect("checked non-empty map literal");
                 Type::Map(elem_of(self.ty(key)), elem_of(self.ty(value)))
@@ -6033,6 +6035,10 @@ impl<'a> Generator<'a> {
     /// 按形参类型传值：owned 移交，标量按值，借用传指针。
     fn argument(&mut self, arg: &Expr, ty: Type) -> String {
         // 列表字面量借给 `&[T]`：按形参的元素类型生成临时列表，语句结束时释放。
+        if let (Expr::MapLit(_), Type::MapRef(key, value, false)) = (arg, ty) {
+            let value = self.expr_as(arg, Type::Map(key, value));
+            return format!("&{value}");
+        }
         if let (Expr::Array(_), Type::ListRef(elem, false)) = (arg, ty) {
             let value = self.expr_as(arg, Type::List(elem));
             return format!("&{value}");
@@ -9294,21 +9300,113 @@ fn select(
     })
 }
 
+/// 文件的“戳”：完整路径、大小与修改时间。编译器升级或换了一个，这几项总有一个会变。
+fn file_stamp(path: &Path) -> Option<String> {
+    let meta = std::fs::metadata(path).ok()?;
+    let modified = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    Some(format!("{}|{}|{modified}", path.display(), meta.len()))
+}
+
+/// 命令对应的可执行文件：带路径的直接用，否则在 PATH 里找（Windows 按 PATHEXT 补扩展名）。
+fn find_executable(command: &str) -> Option<std::path::PathBuf> {
+    let mut extensions = vec![String::new()];
+    if cfg!(windows) {
+        let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT".into());
+        extensions.extend(
+            pathext
+                .split(';')
+                .filter(|ext| !ext.is_empty())
+                .map(str::to_ascii_lowercase),
+        );
+    }
+    let candidates = |dir: &Path| {
+        extensions
+            .iter()
+            .map(|ext| dir.join(format!("{command}{ext}")))
+            .find(|path| path.is_file())
+    };
+    let path = Path::new(command);
+    if path.is_absolute() || path.components().count() > 1 {
+        return extensions
+            .iter()
+            .map(|ext| std::path::PathBuf::from(format!("{command}{ext}")))
+            .find(|path| path.is_file());
+    }
+    std::env::split_paths(&std::env::var_os("PATH")?).find_map(|dir| candidates(&dir))
+}
+
+/// 编译器身份的缓存文件（临时目录，按键的哈希命名）。认出编译器要启动它一两次，Windows 上
+/// 每次几十毫秒，比整个“全部命中缓存”的构建还慢；编译器没变就不用再问。
+fn identity_cache(key: &str) -> std::path::PathBuf {
+    let name = crate::project::hash(&[key.as_bytes()]);
+    std::env::temp_dir().join(format!("zam-tool-{:.16}.txt", name))
+}
+
+/// 先写临时文件再改名，几个 zam 同时写也不会让别人读到写了一半的文件。
+fn store_text(path: &Path, text: &str) {
+    let scratch = path.with_extension(format!("tmp-{}", std::process::id()));
+    if std::fs::write(&scratch, text).is_ok() && std::fs::rename(&scratch, path).is_err() {
+        let _ = std::fs::remove_file(&scratch);
+    }
+}
+
 fn msvc() -> Result<(String, String)> {
+    // 上次找到的 MSVC：vswhere 与 cl.exe 没变、默认工具版本也没变，就不再启动它们。
+    let cache = identity_cache("msvc");
     let root = std::env::var_os("ProgramFiles(x86)").ok_or("missing ProgramFiles(x86)")?;
-    let output =
-        Command::new(Path::new(&root).join("Microsoft Visual Studio/Installer/vswhere.exe"))
-            .args([
-                "-latest",
-                "-products",
-                "*",
-                "-requires",
-                "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
-                "-property",
-                "installationPath",
-            ])
-            .output()
-            .map_err(|e| format!("MSVC discovery failed: {e}"))?;
+    let vswhere = Path::new(&root).join("Microsoft Visual Studio/Installer/vswhere.exe");
+    if let (Ok(text), Some(finder)) = (std::fs::read_to_string(&cache), file_stamp(&vswhere)) {
+        let parts: Vec<&str> = text.splitn(6, '\n').collect();
+        if let [cached_finder, installation, tools, stamp, setup, identity] = parts[..] {
+            let current = std::fs::read_to_string(
+                Path::new(installation)
+                    .join("VC/Auxiliary/Build/Microsoft.VCToolsVersion.default.txt"),
+            )
+            .ok();
+            let compiler = Path::new(installation)
+                .join("VC/Tools/MSVC")
+                .join(tools)
+                .join("bin/Hostx64/x64/cl.exe");
+            if cached_finder == finder
+                && current.as_deref().map(str::trim) == Some(tools)
+                && file_stamp(&compiler).as_deref() == Some(stamp)
+                && Path::new(setup).is_file()
+                && identity.contains("c2.dll:")
+            {
+                return Ok((setup.to_owned(), identity.to_owned()));
+            }
+        }
+    }
+    let (setup, identity, installation, tools, compiler) = msvc_detect(&vswhere)?;
+    if let (Some(finder), Some(stamp)) = (file_stamp(&vswhere), file_stamp(&compiler)) {
+        store_text(
+            &cache,
+            &format!("{finder}\n{installation}\n{tools}\n{stamp}\n{setup}\n{identity}"),
+        );
+    }
+    Ok((setup, identity))
+}
+
+/// 找 MSVC：vswhere 给出安装位置，默认工具版本定出 cl.exe，`cl /Bv` 报出各部件的版本。
+#[allow(clippy::type_complexity)]
+fn msvc_detect(vswhere: &Path) -> Result<(String, String, String, String, std::path::PathBuf)> {
+    let output = Command::new(vswhere)
+        .args([
+            "-latest",
+            "-products",
+            "*",
+            "-requires",
+            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+            "-property",
+            "installationPath",
+        ])
+        .output()
+        .map_err(|e| format!("MSVC discovery failed: {e}"))?;
     let installation = String::from_utf8(output.stdout)
         .map_err(|e| e.to_string())?
         .trim()
@@ -9333,7 +9431,7 @@ fn msvc() -> Result<(String, String)> {
         .join("VC/Tools/MSVC")
         .join(tools)
         .join("bin/Hostx64/x64/cl.exe");
-    let version = Command::new(compiler)
+    let version = Command::new(&compiler)
         .arg("/Bv")
         .output()
         .map_err(|e| format!("MSVC version query failed: {e}"))?;
@@ -9349,10 +9447,41 @@ fn msvc() -> Result<(String, String)> {
     {
         return Err(format!("MSVC version query failed:\n{identity}"));
     }
-    Ok((setup, identity))
+    Ok((setup, identity, installation, tools.to_owned(), compiler))
 }
 
 fn gnu(compiler: &str) -> Result<(String, String)> {
+    // 同一个编译器文件（路径、大小、修改时间都没变）就用上次问到的版本。在 PATH 里找文件
+    // 本身也要上千次查询（每个目录试一遍 PATHEXT），所以找到的位置按 PATH 也记下来。
+    let lookup = identity_cache(&format!(
+        "find\n{compiler}\n{}\n{}",
+        std::env::var("PATH").unwrap_or_default(),
+        std::env::var("PATHEXT").unwrap_or_default()
+    ));
+    let executable = std::fs::read_to_string(&lookup)
+        .ok()
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_file())
+        .or_else(|| {
+            let found = find_executable(compiler)?;
+            store_text(&lookup, &found.to_string_lossy());
+            Some(found)
+        });
+    let stamp = executable
+        .as_deref()
+        .and_then(file_stamp)
+        .map(|stamp| format!("{compiler}\n{stamp}"));
+    let cache = stamp.as_deref().map(identity_cache);
+    if let (Some(stamp), Some(cache)) = (&stamp, &cache) {
+        if let Some(identity) = std::fs::read_to_string(cache)
+            .ok()
+            .and_then(|text| text.strip_prefix(stamp.as_str()).map(str::to_owned))
+            .and_then(|rest| rest.strip_prefix('\n').map(str::to_owned))
+            .filter(|identity| !identity.is_empty())
+        {
+            return Ok((compiler.to_owned(), identity));
+        }
+    }
     let output = Command::new(compiler)
         .arg("--version")
         .output()
@@ -9362,10 +9491,11 @@ fn gnu(compiler: &str) -> Result<(String, String)> {
     }
     // 身份里带上命令本身：`CC=tsancc`（`exec gcc -fsanitize=thread "$@"` 这样的包装）报的版本与
     // gcc 一样，只看版本会让两者共用缓存键，得到不同的目标文件。
-    Ok((
-        compiler.to_owned(),
-        format!("{compiler}\n{}", String::from_utf8_lossy(&output.stdout)),
-    ))
+    let identity = format!("{compiler}\n{}", String::from_utf8_lossy(&output.stdout));
+    if let (Some(stamp), Some(cache)) = (&stamp, &cache) {
+        store_text(cache, &format!("{stamp}\n{identity}"));
+    }
+    Ok((compiler.to_owned(), identity))
 }
 
 /// MSVC 环境装载一次就够：`vcvars64.bat` 每次执行约 4 秒（它派发一批子脚本与注册表查询），
@@ -9470,7 +9600,7 @@ fn msvc_tool(environment: &BTreeMap<String, String>, name: &str) -> Result<std::
 
 // ponytail: 只有产物字节真变才升版本（会让缓存整体失效）；改了编译/链接命令行但字节不变时，
 // 先用旧缓存跑一次构建、确认仍是 OBJECT HIT 再决定不升。
-pub const OPTIONS: &str = "c11-O2-unroll-MT-Brepro-pathmap-objects-gnu-windows-lm-v8";
+pub const OPTIONS: &str = "c11-O2-unroll-MT-Brepro-cgthreads1-pathmap-objects-gnu-windows-lm-v9";
 pub fn compile(tool: &str, dir: &Path, source: &str) -> Result<Vec<u8>> {
     compile_with(tool, dir, source, &[])
 }
@@ -9513,6 +9643,32 @@ impl Language {
 }
 
 /// 编译一个 C、C++ 或 Objective-C 源文件。`flags` 是额外的编译参数（如 pkg-config 给出的）。
+/// C 编译器与链接器以较低的优先级运行：编译是后台活，冷构建（mbedTLS、SQLite）会同时开好几个
+/// 编译器，正常优先级会让桌面卡顿。编出来的程序本身照常以正常优先级运行。
+fn low(mut command: Command) -> Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
+        command.creation_flags(BELOW_NORMAL_PRIORITY_CLASS);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        extern "C" {
+            fn nice(increment: i32) -> i32;
+        }
+        // SAFETY: 在 fork 之后、exec 之前只调用 nice，它是一个系统调用，不分配内存也不加锁。
+        unsafe {
+            command.pre_exec(|| {
+                nice(10);
+                Ok(())
+            });
+        }
+    }
+    command
+}
+
 pub fn compile_source(
     tool: &str,
     dir: &Path,
@@ -9523,6 +9679,15 @@ pub fn compile_source(
 ) -> Result<Vec<u8>> {
     let file = language.file();
     std::fs::write(dir.join(file), source).map_err(|e| e.to_string())?;
+    // 调试用：ZAMAK_DUMP_C=目录 时把生成的 C 另存一份（按内容哈希命名），看生成了什么、有多大。
+    if let Some(dump) = std::env::var_os("ZAMAK_DUMP_C") {
+        let name = crate::project::hash(&[source.as_bytes()]);
+        let _ = std::fs::create_dir_all(&dump);
+        let _ = std::fs::write(
+            Path::new(&dump).join(format!("{:.12}-{file}", name)),
+            source,
+        );
+    }
     // 编译器记录的是工作目录的写法；临时目录经过 8.3 短名（CI 的 `RUNNER~1`）、联接或
     // 符号链接（macOS 的 /var → /private/var）时，它和规范路径不同，路径映射就会失配，
     // 随机的临时目录名漏进目标文件，破坏「同键 ⇒ 同字节」。统一用规范路径做工作目录与映射源。
@@ -9559,7 +9724,7 @@ pub fn compile_source(
             &[]
         };
         // ponytail: 源码按 UTF-8 写出，cl 默认按本地代码页(如 936)读取会吞掉中文注释后的下一行；/utf-8 固定两端编码。
-        Command::new(msvc_tool(&environment, "cl.exe")?)
+        low(Command::new(msvc_tool(&environment, "cl.exe")?))
             .current_dir(&mapped)
             .envs(&environment)
             .args([
@@ -9567,6 +9732,10 @@ pub fn compile_source(
                 "/O2",
                 "/MT",
                 "/Brepro",
+                // 代码生成只用一个线程：默认的多线程代码生成在机器忙时偶尔挑出不同的指令
+                // （同一份 C 编出不同的字节），并发构建写同一个缓存键时就会报 corrupt cache entry。
+                // 并行靠同时编多个单元（project::jobs）。
+                "/cgthreads1",
                 "/utf-8",
                 "/c",
                 &format!("/d2pathmap:{mapped}=Z:"),
@@ -9588,7 +9757,7 @@ pub fn compile_source(
             Language::Cpp => "-std=c++17",
             Language::ObjectiveC => "-std=gnu11",
         };
-        Command::new(tool)
+        low(Command::new(tool))
             .current_dir(&mapped)
             .args([
                 standard,
@@ -9642,7 +9811,7 @@ pub fn link_with(
     }
     let output = if uses_msvc(tool) {
         let environment = msvc_environment(tool)?;
-        Command::new(msvc_tool(&environment, "link.exe")?)
+        low(Command::new(msvc_tool(&environment, "link.exe")?))
             .current_dir(dir)
             .envs(&environment)
             .args(["/nologo", "/Brepro", "/INCREMENTAL:NO", "/OUT:program.exe"])
@@ -9661,7 +9830,7 @@ pub fn link_with(
         // std/math 的函数在 Linux 上属于 libm，要显式链接；macOS 与 MinGW 也接受 -lm。
         // MinGW 的 ld 默认把链接时间写进 PE 头，同一个链接键两次链接字节不同，
         // 会被缓存当成 corrupt cache entry；关掉时间戳，与 MSVC 的 /Brepro 对应。
-        let mut command = Command::new(tool);
+        let mut command = low(Command::new(tool));
         command.current_dir(dir).args(&names);
         if cfg!(windows) {
             command.arg("-Wl,--no-insert-timestamp");

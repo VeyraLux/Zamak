@@ -58,7 +58,7 @@ example.com:8080 (5.0s)
 example.com:80 (1.5s)
 ```
 
-- A default value is a constant (a literal, a `const`, or an operation on them) or `Option.None`. Each call gets the default afresh, so calls never share a default the way Python's mutable defaults do.
+- A default value is a constant (a literal, a `const`, or an operation on them), a list or map of constants such as `[]` or `{}`, or `Option.None`. Each call gets the default afresh, so calls never share a default the way Python's mutable defaults do.
 - Every parameter after one with a default must have a default too.
 - In a call, write positional arguments first, then `name=value`. Methods work the same way: `p.moved(dy=5)`.
 - You can build a struct the same way: `Point(x=1, y=2)` is the same as `Point(x: 1, y: 2)`.

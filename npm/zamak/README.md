@@ -1,6 +1,6 @@
 # Zamak
 
-[Zamak](https://zamak.veyralux.org) is a programming language that reads like Python and runs like C. This package installs `zam`, the Zamak compiler, for Windows x64, Linux x64, and macOS on Apple silicon.
+[Zamak](https://zamak.veyralux.org) is a programming language that reads like Python and runs like C. This package installs `zam`, the Zamak compiler, for Windows x64, Linux (x64 and arm64), and macOS (Apple silicon and Intel).
 
 ```sh
 npm install -g @veyralux/zamak     # or: bun add -g @veyralux/zamak

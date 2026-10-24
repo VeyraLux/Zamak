@@ -53,21 +53,35 @@ pub struct Request:
 
 # 发一个 GET 请求。
 # follow 为 true（默认）时跟随重定向（301、302、303、307、308，最多 10 次），与 requests 相同。
-pub fn get(url: &string, timeout: f64 = 30.0, follow: bool = true) -> Response!string:
-    let headers: {string: string} = {}
-    request("GET", url, b"", headers, timeout, follow)?
+# params 是查询参数（编码后接在 URL 的 ? 后面），headers 是额外的请求头，同 requests 的写法：
+# http.get(url, params={"q": "zamak"}, headers={"Accept": "application/json"})。
+pub fn get(url: &string, timeout: f64 = 30.0, follow: bool = true, params: &{string: string} = {}, headers: &{string: string} = {}) -> Response!string:
+    request("GET", with_params(url, params), b"", headers, timeout, follow)?
 
 # 发一个 POST 请求，body 是文字。
-pub fn post(url: &string, body: &string, content_type: &string = "text/plain; charset=utf-8", timeout: f64 = 30.0, follow: bool = true) -> Response!string:
-    let mut headers: {string: string} = {}
-    headers["Content-Type"] = content_type
-    request("POST", url, body.encode(), headers, timeout, follow)?
+pub fn post(url: &string, body: &string, content_type: &string = "text/plain; charset=utf-8", timeout: f64 = 30.0, follow: bool = true, params: &{string: string} = {}, headers: &{string: string} = {}) -> Response!string:
+    let mut all = copy(headers)
+    all["Content-Type"] = copy(content_type)
+    request("POST", with_params(url, params), body.encode(), all, timeout, follow)?
 
-# 把 value 写成 JSON，用 POST 发出去。
-pub fn post_json(url: &string, value: &json.Json, timeout: f64 = 30.0, follow: bool = true) -> Response!string:
-    let mut headers: {string: string} = {}
-    headers["Content-Type"] = "application/json"
-    request("POST", url, json.dumps(value).encode(), headers, timeout, follow)?
+# 把 value 写成 JSON（Json，或结构体、列表等任何值），用 POST 发出去。
+pub fn post_json[T](url: &string, value: &T, timeout: f64 = 30.0, follow: bool = true, params: &{string: string} = {}, headers: &{string: string} = {}) -> Response!string:
+    let mut all = copy(headers)
+    all["Content-Type"] = "application/json"
+    request("POST", with_params(url, params), json.encode(value).encode(), all, timeout, follow)?
+
+# 查询参数编码后接在 URL 后面：已经有 ? 时用 & 接上。
+fn with_params(url: &string, params: &{string: string}) -> string:
+    if len(params) == 0:
+        return copy(url)
+
+    let mut pairs: [string] = []
+
+    for key, value in params:
+        pairs.append(f"{quote(key, safe="")}={quote(value, safe="")}")
+
+    let joiner = if "?" in url: "&" else: "?"
+    f"{url}{joiner}{"&".join(pairs)}"
 
 # 任意方法的请求。headers 里的项原样加进请求头。follow 为 true（默认）时跟随重定向：
 # 303，以及 POST 遇到 301、302 时改用 GET 并不再发请求体；307、308 原样重发。最多跳 10 次。

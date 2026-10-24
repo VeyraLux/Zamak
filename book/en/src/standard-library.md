@@ -450,8 +450,8 @@ fn main() -> !string:
 
 | Function | What it does |
 | --- | --- |
-| `http.get(url, timeout=30.0)` | Sends a GET request and returns a `Response`. |
-| `http.post(url, body, content_type="text/plain; charset=utf-8")`, `http.post_json(url, value)` | Posts text or JSON. |
+| `http.get(url, params={}, headers={}, timeout=30.0)` | Sends a GET request and returns a `Response`. `params` are encoded into the query string, as in `requests`. |
+| `http.post(url, body, content_type="text/plain; charset=utf-8")`, `http.post_json(url, value)` | Posts text, or any value as JSON. Both take `params` and `headers` too. |
 | `http.request(method, url, body, headers)` | Any method, with your own headers and a `bytes` body. |
 | `http.urljoin(base, link)` | Resolves a link against a page's URL, like Python's `urllib.parse.urljoin`. |
 | `Response` | `status`, `reason`, `headers` (lowercase keys), and `body`, plus `text()`, `json()`, and `ok()`. |

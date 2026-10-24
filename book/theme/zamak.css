@@ -75,3 +75,10 @@ pre > code.language-text {
 .content p, .content li {
     line-height: 1.7;
 }
+
+/* 主题菜单只留浅色和深色（文字由 zamak.js 改成浅色 / 深色），另外三套配色区别说不清，藏起来。 */
+#mdbook-theme-list li:has(#mdbook-theme-rust),
+#mdbook-theme-list li:has(#mdbook-theme-coal),
+#mdbook-theme-list li:has(#mdbook-theme-ayu) {
+    display: none;
+}

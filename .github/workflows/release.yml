@@ -25,6 +25,13 @@ jobs:
           - os: macos-latest
             name: macos-arm64
             binary: zam
+          # Intel Macs and ARM Linux (Raspberry Pi, ARM servers). Both runners are free for public repositories.
+          - os: macos-15-intel
+            name: macos-x64
+            binary: zam
+          - os: ubuntu-22.04-arm
+            name: linux-arm64
+            binary: zam
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -121,6 +128,8 @@ jobs:
         with:
           path: assets
           merge-multiple: true
+      - name: Release notes from CHANGELOG.md
+        run: python3 tools/release-notes.py "${GITHUB_REF_NAME#v}" > notes.md
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -131,7 +140,7 @@ jobs:
           gh release create "$GITHUB_REF_NAME" assets/* \
             --title "Zamak $GITHUB_REF_NAME" \
             $prerelease \
-            --generate-notes
+            --notes-file notes.md
 
   # npm: `npm install -g @veyralux/zamak`, `npx @veyralux/zamak`, `bunx @veyralux/zamak`, and `zam upgrade`. Each platform gets a
   # package with its zam; the zamak package picks the right one. Skipped until the NPM_TOKEN secret exists.
@@ -170,6 +179,70 @@ jobs:
           tag=latest
           case "$version" in *-*) tag=next ;; esac
           node tools/package-npm.mjs "$version" assets npm-out
-          for package in zamak-win32-x64 zamak-linux-x64 zamak-darwin-arm64 zamak; do
+          for package in zamak-win32-x64 zamak-linux-x64 zamak-linux-arm64 zamak-darwin-arm64 zamak-darwin-x64 zamak; do
             (cd "npm-out/$package" && npm publish --access public --provenance --tag "$tag")
           done
+
+  # VS Code extension: published to the Marketplace with the VSCE_PAT secret (an Azure DevOps token for the
+  # veyralux publisher), and to Open VSX with OVSX_PAT if it exists. The .vsix is attached to the release either way.
+  # Pre-releases (v0.2.0-rc.1) only attach the .vsix.
+  vscode:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Package and publish
+        working-directory: editors/vscode
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          npm ci
+          npm version "$version" --no-git-tag-version --allow-same-version
+          npx --yes @vscode/vsce@3 package --out "zamak-$version.vsix"
+          gh release upload "$GITHUB_REF_NAME" "zamak-$version.vsix" --clobber
+          case "$version" in *-*) echo "pre-release: not publishing the extension"; exit 0 ;; esac
+          if [ -n "$VSCE_PAT" ]; then
+            npx --yes @vscode/vsce@3 publish --packagePath "zamak-$version.vsix" -p "$VSCE_PAT"
+          else
+            echo "VSCE_PAT is not set; upload zamak-$version.vsix to the Marketplace by hand."
+          fi
+          if [ -n "$OVSX_PAT" ]; then
+            npx --yes ovsx@0 publish "zamak-$version.vsix" -p "$OVSX_PAT"
+          fi
+
+  # The Zamak Book at zamak.veyralux.org: deployed with the CLOUDFLARE_API_TOKEN secret (Workers edit permission for
+  # the veyralux.org zone) and the CLOUDFLARE_ACCOUNT_ID secret. Only full releases deploy; pre-releases don't.
+  book:
+    if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-')
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build and deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "CLOUDFLARE_API_TOKEN is not set; deploy the book by hand."
+            exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/mdbook"
+          curl -fsSL https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz \
+            | tar -xz -C "$RUNNER_TEMP/mdbook"
+          export PATH="$RUNNER_TEMP/mdbook:$PATH"
+          python3 book/build.py
+          cd book
+          npx --yes wrangler@4 deploy

@@ -3,7 +3,7 @@
 Zamak is a statically typed programming language that reads like Python and compiles to a small native executable. It's built around three goals:
 
 - **Clear to read.** Blocks use indentation, the operators and built-in functions follow Python, and you never write lifetime annotations.
-- **Fast and small.** Zamak compiles through C to native code. There's no garbage collector and no runtime to install, and a hello world is about 56 KB.
+- **Fast and small.** Zamak compiles through C to native code. There's no garbage collector and no runtime to install, and a hello world is about 17 KB on Linux.
 - **Safe by default.** Ownership rules prevent use-after-free and double frees at compile time. Integer overflow, division by zero, and out-of-bounds indexes stop the program with a clear error instead of corrupting memory.
 
 Here's a complete program:

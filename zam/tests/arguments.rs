@@ -105,7 +105,22 @@ fn wrong_keyword_calls_are_rejected() {
                 "fn h(a: i64 = \"x\") -> i64: a\nfn main(): pass\n",
                 "the default value of a is not i64",
             ),
+            (
+                "fn h(a: &[i64] = [\"x\"]): pass\nfn main(): pass\n",
+                "the default value of a is not &[i64]",
+            ),
         ],
+    );
+}
+
+#[test]
+fn list_and_map_defaults_are_fresh_each_call() {
+    // `= []`、`= {}`、`= [1, 2]`：每次调用都是新的一份（不像 Python 的可变默认值那样被共用）。
+    let case = Case::new("arguments", "collection-defaults");
+    let output = case.run("fn show(name: &string, tags: &[string] = [], extra: &{string: i64} = {}, base: [i64] = [1, 2]):\n    let mut mine = base\n    mine.append(len(tags))\n    println(f\"{name} {tags} {len(extra)} {mine}\")\n\nfn main():\n    show(\"a\")\n    let t: [string] = [\"x\"]\n    let e: {string: i64} = {\"k\": 1}\n    show(\"b\", t, extra=e)\n    show(\"c\")\n");
+    assert_eq!(
+        stdout(&output),
+        "a [] 0 [1, 2, 0]\nb [\"x\"] 1 [1, 2, 1]\nc [] 0 [1, 2, 0]\n"
     );
 }
 

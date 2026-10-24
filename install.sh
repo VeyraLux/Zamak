@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install the latest Zamak compiler on Linux x64 or macOS arm64:
+# Install the latest Zamak compiler on Linux (x64 or arm64) or macOS (Apple silicon or Intel):
 #   curl -fsSL https://raw.githubusercontent.com/VeyraLux/Zamak/main/install.sh | sh
 # Environment: ZAMAK_HOME (install directory, default ~/.zamak), ZAMAK_VERSION (e.g. 0.1.0).
 set -eu
@@ -7,7 +7,9 @@ set -eu
 repo="VeyraLux/Zamak"
 case "$(uname -s)-$(uname -m)" in
     Linux-x86_64) name=linux-x64 ;;
+    Linux-aarch64 | Linux-arm64) name=linux-arm64 ;;
     Darwin-arm64) name=macos-arm64 ;;
+    Darwin-x86_64) name=macos-x64 ;;
     *)
         echo "zamak: no prebuilt compiler for $(uname -s) $(uname -m)." >&2
         echo "zamak: build from source instead: cargo install --git https://github.com/$repo zam --locked" >&2
@@ -53,7 +55,7 @@ case ":$PATH:" in
     *) echo "zamak: add it to PATH, for example in ~/.profile:  export PATH=\"$home/bin:\$PATH\"" ;;
 esac
 if ! command -v cc >/dev/null 2>&1 && ! command -v clang >/dev/null 2>&1 && ! command -v gcc >/dev/null 2>&1; then
-    if [ "$name" = macos-arm64 ]; then
+    if [ "$name" = macos-arm64 ] || [ "$name" = macos-x64 ]; then
         echo "zamak: no C compiler found; install one with: xcode-select --install"
     else
         echo "zamak: no C compiler found; install gcc or clang (for example: sudo apt install build-essential)"

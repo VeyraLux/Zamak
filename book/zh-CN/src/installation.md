@@ -4,7 +4,7 @@ Zamak 只有一个命令行程序 `zam`。它检查你的代码、把代码编�
 
 ## 快速安装
 
-有 Node.js（或 Bun）的话，这是最省事的方式。它会安装预编译好的 `zam`，支持 Windows x64、Linux x64 和 Apple 芯片的 macOS：
+有 Node.js（或 Bun）的话，这是最省事的方式。它会安装预编译好的 `zam`，支持 Windows x64、Linux（x64 与 arm64）和 macOS（Apple 芯片与 Intel）：
 
 ```sh
 npm install -g @veyralux/zamak      # 或：bun add -g @veyralux/zamak

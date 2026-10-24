@@ -450,8 +450,8 @@ fn main() -> !string:
 
 | 函数 | 作用 |
 | --- | --- |
-| `http.get(url, timeout=30.0)` | GET 请求，返回 `Response`。 |
-| `http.post(url, body, content_type="text/plain; charset=utf-8")`、`http.post_json(url, value)` | POST 文字或 JSON。 |
+| `http.get(url, params={}, headers={}, timeout=30.0)` | GET 请求，返回 `Response`。`params` 编码后接在 URL 的查询串里，同 `requests`。 |
+| `http.post(url, body, content_type="text/plain; charset=utf-8")`、`http.post_json(url, value)` | POST 文字，或把任何值写成 JSON 发出去。两者也接受 `params` 和 `headers`。 |
 | `http.request(method, url, body, headers)` | 任意方法，自己给请求头与 `bytes` 请求体。 |
 | `http.urljoin(base, link)` | 按网页地址补全链接，与 Python 的 `urllib.parse.urljoin` 相同。 |
 | `Response` | `status`、`reason`、`headers`（键是小写）、`body`，以及 `text()`、`json()`、`ok()`。 |

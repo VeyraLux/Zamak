@@ -103,6 +103,16 @@ and this file is the source for the text of each GitHub release.
   and `args` for positional arguments. Errors name the option, and `--help` prints the options. `env.program()` is the program's name.
   `examples/apps/todo` uses it.
 - `json.shape(sample)` describes a type's fields, for libraries that read data by type.
+- `http.get`, `http.post`, and `http.post_json` take `params` (encoded into the query string) and `headers`, as `requests` does,
+  and `http.post_json` takes any value.
+- A default parameter value can be a list or map of constants, such as `tags: &[string] = []` or `extra: &{string: string} = {}`.
+- **Prebuilt compilers for two more platforms**: macOS on Intel and Linux on arm64, from npm and the install script.
+  GitHub releases now carry the notes from this changelog, and the VS Code extension and the book site publish with each release.
+- Fixed: on Windows, builds running at the same time could report `corrupt cache entry`. MSVC's multithreaded code generation
+  sometimes picked different instructions for the same C under load; zam now asks for one code generation thread per file.
+- **Faster rebuilds.** zam remembers which C compiler it found, so a build where nothing changed takes about 4 ms
+  instead of about 100 ms on Windows. Builds also leave one CPU core free and run the C compiler at a lower priority,
+  so a cold build no longer makes the desktop stutter.
 - A multi-line `catch` block can end with a value: the lines before it run first, and the value is the result when the call fails.
 - **`http.serve` handles requests on several threads at once** (`workers=n`, by default twice the number of processors and at least 8),
   and HTTPS handshakes happen on those threads too. `Request` has `args()` and `arg(name)` for query parameters,
@@ -344,6 +354,14 @@ this preview.
   `i64`/`f64`/`string` 必须给值，`Option` 可以不写，列表可以写几次，`args` 收位置参数。出错时指出是哪个选项，`--help` 打印用法。
   `env.program()` 是程序名。`examples/apps/todo` 用上了它。
 - `json.shape(sample)` 描述一个类型的字段，给按类型读数据的库用。
+- `http.get`、`http.post`、`http.post_json` 接受 `params`（编码进查询串）和 `headers`，同 `requests`；`http.post_json` 可以直接传任何值。
+- 参数默认值可以是由常量组成的列表或字典，如 `tags: &[string] = []`、`extra: &{string: string} = {}`。
+- **又多了两个平台的预编译版**：Intel 芯片的 macOS 和 arm64 的 Linux，npm 与安装脚本都能装。
+  GitHub Release 的说明直接取自本文件，VS Code 插件与网站也随每次发布一起更新。
+- 修复：Windows 上几个构建同时进行时，可能报 `corrupt cache entry`。MSVC 的多线程代码生成在机器忙时偶尔为同一份 C
+  挑出不同的指令；现在每个文件只用一个代码生成线程。
+- **重新构建更快。** zam 记住找到的 C 编译器，什么都没改时一次构建约 4 毫秒，Windows 上以前约 100 毫秒。
+  构建时留出一个 CPU 核，C 编译器以较低优先级运行，冷构建不再让桌面卡顿。
 - 多行的 `catch` 块可以以一个值结尾：前面几行先执行，这个值就是调用失败时的结果。
 - **`http.serve` 用几个线程同时处理请求**（`workers=n`，默认是处理器个数的两倍，至少 8 个），HTTPS 握手也在这些线程里做。
   `Request` 有 `args()` 与 `arg(name)` 读查询参数，`http.quote`、`http.unquote`、`http.parse_query` 对应 Python 的

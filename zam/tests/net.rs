@@ -66,14 +66,24 @@ fn http_client_reads_plain_chunked_and_json_responses() {
     });
     let case = Case::new("net", "client");
     let output = case.run(&format!(
-        "use std/http\nuse std/json\n\nfn main() -> !string:\n    let a = http.get(\"http://127.0.0.1:{port}/first?q=1\")?\n    let tag = a.headers.get(\"x-test\", \"\")\n    println(f\"{{a.status}} {{a.text()?}} {{tag}}\")\n    let b = http.post(\"http://127.0.0.1:{port}/upload\", \"data!\")?\n    println(f\"{{b.status}} {{b.reason}} {{b.text()?}}\")\n    let c = http.get(\"http://127.0.0.1:{port}/json\")?\n    println(c.json()?.get(\"n\")?.as_i64()?)\n"
+        "use std/http\nuse std/json\n\nfn main() -> !string:\n    let a = http.get(\"http://127.0.0.1:{port}/first?q=1\", params={{\"name\": \"小 克\"}}, headers={{\"X-Agent\": \"zam\"}})?\n    let tag = a.headers.get(\"x-test\", \"\")\n    println(f\"{{a.status}} {{a.text()?}} {{tag}}\")\n    let b = http.post(\"http://127.0.0.1:{port}/upload\", \"data!\")?\n    println(f\"{{b.status}} {{b.reason}} {{b.text()?}}\")\n    let c = http.get(\"http://127.0.0.1:{port}/json\")?\n    println(c.json()?.get(\"n\")?.as_i64()?)\n"
     ));
     assert_eq!(
         stdout(&output),
         "200 hello a, b\n201 Created Wikipedia!\n3\n"
     );
     let requests = server.join().unwrap();
-    assert!(requests[0].starts_with("GET /first?q=1 HTTP/1.1\r\nHost: 127.0.0.1:"));
+    assert!(
+        requests[0]
+            .starts_with("GET /first?q=1&name=%E5%B0%8F%20%E5%85%8B HTTP/1.1\r\nHost: 127.0.0.1:"),
+        "{}",
+        requests[0]
+    );
+    assert!(
+        requests[0].contains("\r\nX-Agent: zam\r\n"),
+        "{}",
+        requests[0]
+    );
     assert!(requests[1].starts_with("POST /upload HTTP/1.1\r\n"));
     assert!(requests[1].contains("Content-Length: 5\r\n"));
     assert!(requests[1].ends_with("\r\n\r\ndata!"));
