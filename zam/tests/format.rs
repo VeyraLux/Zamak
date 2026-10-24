@@ -32,7 +32,7 @@ fn string_interpolation_reads_without_moving() {
         "fn main(): println(\"a}b\")",
         "fn main(): println(\"{a{b}}\")",
         "use std/fmt\nfn main():\n    let s = \"x\"\n    let t = s\n    fmt.println(\"{s}\")",
-        "fn main():\n    let a = [1, 2]\n    println(\"{a}\")",
+        "fn main():\n    let a: [i64; 2] = [1, 2]\n    println(\"{a}\")",
         "fn main():\n    let s = \"x\"\n    let n: i64 = \"v={s}\"",
     ] {
         fs::write(&path, source).unwrap();

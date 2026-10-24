@@ -7724,10 +7724,10 @@ impl<'a> Checker<'a> {
                 "type mismatch: an empty list literal needs a type annotation, such as let xs: [i64] = []"
                     .into(),
             ),
-            // 整数字面量列表是定长数组（`let xs = [1, 2]`）；其他元素按第一项的类型推断成列表
-            // （`["a", "b"]` 是 `[string]`）。
+            // 没写标注的列表字面量按第一项的类型推断成列表，和 Python 一样：`[1, 2]` 是 `[i64]`，
+            // `["a", "b"]` 是 `[string]`。定长数组要写标注：`let a: [i64; 2] = [1, 2]`。
             Expr::Array(values) => match self.ty(&values[0])? {
-                Type::Int => Ok(Type::ArrayInt(values.len())),
+                Type::Int => Ok(Type::List(Elem::Int)),
                 first => {
                     let first = match first.borrowable().map_or(first, |(owned, _)| owned) {
                         // `[[1, 2], [3]]`：内层的整数字面量也是列表。

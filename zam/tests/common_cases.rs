@@ -157,8 +157,8 @@ fn common_case_rejections_and_runtime_overflow() {
     let workspace = TempWorkspace::new();
     for source in [
         "fn main(): let values: [i64; 3] = [1, 2]",
-        "fn main():\n    let values = [1, 2]\n    println(values[2])",
-        "fn main():\n    let values = [1, 2]\n    println(values[-3])",
+        "fn main():\n    let values: [i64; 2] = [1, 2]\n    println(values[2])",
+        "fn main():\n    let values: [i64; 2] = [1, 2]\n    println(values[-3])",
         "fn main():\n    let mut values = [1, 2]\n    values[0] = true",
         "fn main(): println(1 == true)",
     ] {

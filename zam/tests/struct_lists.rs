@@ -183,7 +183,7 @@ fn compound_values_copy_compare_and_print() {
             "use after move: p",
         ),
         (
-            "let a = [1, 2]\n    let b = copy(&a)",
+            "let a: [i64; 2] = [1, 2]\n    let b = copy(&a)",
             "copy is for strings, lists, maps, structs and enums",
         ),
         (

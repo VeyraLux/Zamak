@@ -39,7 +39,7 @@ fn main() -> !string:
 
 ### Upgrading from 0.1
 
-Two changes can break existing code.
+Three changes can break existing code.
 
 - `xs.remove(i)` used to remove the element at index `i`. List methods now mean what they mean in
   Python: `remove(x)` removes the first element equal to `x`, and `pop(i)` removes and returns the
@@ -56,6 +56,12 @@ Two changes can break existing code.
 - `Json.Number(f64)` is now two variants, `Json.Int(i64)` and `Json.Float(f64)`. `1` and `1.0` keep
   their types through `loads` and `dumps`, and an integer too large for `i64` is an error instead
   of a rounded float. A `match` arm on `Json.Number(n)` becomes two arms.
+
+- A list literal of integers without an annotation is now a list, as in Python. `let xs = [3, 9, 4]`
+  used to make a fixed-size array, which couldn't grow, couldn't be passed to a `&[i64]` parameter,
+  and didn't work with `sum` or `sorted`. Now `xs.append(5)`, `sum(xs)`, and `largest(xs)` all work.
+  Like any list, it moves on assignment, so `let b = xs` leaves `xs` unusable. If you need a
+  fixed-size array, write its length in the type: `let grid: [i64; 9] = ...`.
 
 The build cache format changed too, so the first build after upgrading compiles everything again.
 
@@ -342,7 +348,7 @@ fn main() -> !string:
 
 ### 从 0.1 升级
 
-有两处改动可能让旧代码出问题。
+有三处改动可能让旧代码出问题。
 
 - 以前 `xs.remove(i)` 按下标删除。现在列表方法与 Python 同义：`remove(x)` 删掉第一个等于 `x` 的元素，
   `pop(i)` 删掉并返回下标 `i` 处的元素。在 `[i64]` 上，`xs.remove(0)` 仍然能编译，但意思变成了“删掉值 0”，
@@ -357,6 +363,11 @@ fn main() -> !string:
 
 - `Json.Number(f64)` 拆成了 `Json.Int(i64)` 和 `Json.Float(f64)` 两个变体。`1` 和 `1.0` 经过 `loads`、`dumps`
   之后类型不变；超出 `i64` 范围的整数会报错，不会悄悄变成一个近似的小数。原来匹配 `Json.Number(n)` 的分支要拆成两个。
+
+- 不写标注的整数列表字面量现在就是列表，和 Python 一样。以前 `let xs = [3, 9, 4]` 得到的是定长数组：不能增长，
+  不能传给 `&[i64]` 参数，也不能用 `sum`、`sorted`。现在 `xs.append(5)`、`sum(xs)`、`largest(xs)` 都能用。
+  和所有列表一样，赋值时会移动，`let b = xs` 之后 `xs` 就不能再用了。需要定长数组时，把长度写进类型：
+  `let grid: [i64; 9] = ...`。
 
 构建缓存的格式也变了，升级后第一次构建会全部重新编译。
 

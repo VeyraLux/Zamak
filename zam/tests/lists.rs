@@ -174,7 +174,7 @@ fn checker_rejects_list_misuse() {
         ),
         ("let n = 1\n    println(n.len())", "has no method len"),
         (
-            "let xs = [1, 2]\n    println(xs)",
+            "let xs: [i64; 2] = [1, 2]\n    println(xs)",
             "cannot print void or a fixed array",
         ),
         (
@@ -443,4 +443,45 @@ fn main():
         stdout(&output),
         "0 a\n1 b\n[1.5, 2.5, 3.0]\n[P(x: 1), P(x: 2)]\n[[1, 2], [3, 4]]\n[true, false]\n"
     );
+}
+
+#[test]
+fn integer_list_literals_are_lists() {
+    // 不写标注的 `[3, 9, 4]` 和 Python 一样是列表：能增长、能传给 `&[i64]` 和 `&[T]`、能用 sum/sorted。
+    // 要定长数组得写 `[i64; N]`。
+    let case = Case::new("lists", "integer_literals");
+    let output = case.run(
+        r#"fn total(items: &[i64]) -> i64:
+    sum(items)
+
+fn largest[T](items: &[T]) -> T:
+    let mut best = items[0]
+    for x in items:
+        if x > best:
+            best = x
+    best
+
+fn grow(items: &mut [i64]):
+    items.append(len(items))
+
+fn main():
+    let mut xs = [3, 9, 4]
+    xs.append(5)
+    grow(&mut xs)
+    println(xs)
+    println(total(xs))
+    println(largest(xs))
+    println(largest([7, 2]))
+    println(sorted(xs))
+    let fixed: [i64; 2] = [1, 2]
+    println(fixed[1])
+"#,
+    );
+    assert_eq!(
+        stdout(&output),
+        "[3, 9, 4, 5, 4]\n25\n9\n7\n[3, 4, 4, 5, 9]\n2\n"
+    );
+
+    let source = "fn main():\n    let xs = [1, 2]\n    let ys = xs\n    println(xs)";
+    rejected(&case.run(source), "use after move: xs", source);
 }

@@ -369,7 +369,7 @@ const REAL_SOURCE_CODES: &[(&str, &str, &str)] = &[
         "arithmetic",
     ),
     (
-        "fn main():\n    let a = [1, 2, 3]\n    println(a[5])\n",
+        "fn main():\n    let a: [i64; 3] = [1, 2, 3]\n    println(a[5])\n",
         "ZM406",
         "bounds",
     ),
