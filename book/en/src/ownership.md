@@ -148,6 +148,27 @@ fn main():
 
 Copying costs time and memory in proportion to the size of the value, which is why Zamak never does it silently. When you see `copy`, you know a copy happens there.
 
+## Move a field out of a struct
+
+A string field is copied when you read it. A list, map, or struct field is too big to copy silently, so taking it out of a struct you own uses up the whole struct; the other fields are freed as usual:
+
+```zamak
+struct Store:
+    name: string
+    tasks: [string]
+
+fn main():
+    let store = Store(name: "home", tasks: ["milk", "rent"])
+    let tasks = store.tasks
+    println(tasks)
+```
+
+```text
+["milk", "rent"]
+```
+
+After `let tasks = store.tasks`, using `store` is an error. To keep the struct, borrow the field instead, or copy it with `copy(&store.tasks)`.
+
 ## Move after the last use
 
 A move is only a problem if you use the old variable afterwards. Moving a value as the last thing you do with it is fine:

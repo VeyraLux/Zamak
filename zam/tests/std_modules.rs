@@ -145,3 +145,26 @@ fn datetime_matches_python() {
         "2026-11-01\n6\n305\n2026-12-31\n2025-09-27\n976\nThu Thursday Feb February 29/02/24 060\n1970-01-01\n1969-12-31\n-135080\n2026-11-01T08:05:09.250000+08:00\n1793491509.25\n2026-11-01T00:05:09.250000+00:00\n2026-11-01 08:05:09 08AM +0800 250000 %\n2023-11-14T22:13:20.500000+00:00\n2023-11-15T22:13:20.500000+00:00\n2026-11-01T23:59:00+00:00\nday is out of range for 2023-02: 29\nnot an ISO date (YYYY-MM-DD): 2026/11/01\n29\nfalse\n"
     );
 }
+
+#[test]
+fn json_converts_structs_lists_maps_options_and_enums() {
+    let case = Case::new("std", "json-structs");
+    let output = case.run(include_str!("../../examples/values/json_structs.zm"));
+    assert_eq!(
+        stdout(&output),
+        concat!(
+            "[{\"id\": 1, \"text\": \"write\", \"done\": false, \"tags\": [\"work\"], \"due\": \"2026-11-01\", \"shape\": {\"type\": \"Circle\", \"r\": 1.5}, \"scores\": {\"a\": 1}}, {\"id\": 2, \"text\": \"milk\", \"done\": true, \"tags\": [], \"due\": null, \"shape\": \"Empty\", \"scores\": {}}]\n",
+            "true\n",
+            "Task(id: 3, text: \"x\", done: false, tags: [\"a\", \"b\"], due: Option.None, shape: Shape.Rect(2.0, 3.0), scores: {})\n",
+            "error: [0].tags[1]: the JSON value is not a string\n",
+            "error: [0].id: the JSON number 1.5 is not an integer\n",
+            "error: [0].shape.h: missing\n",
+            "error: the JSON value is not an array\n",
+            "[[1, 2], [3]]\n",
+            "{\n  \"1\": \"one\",\n  \"2\": \"two\"\n}\n"
+        )
+    );
+    // 函数值没法写成 JSON：在编译时报错。
+    let output = case.run("use std/json\n\nstruct S:\n    f: fn(i64) -> i64\n\nfn twice(n: i64) -> i64: n * 2\n\nfn main():\n    println(json.encode(S(f: twice)))\n");
+    assert!(stderr(&output).contains("cannot be converted to or from JSON"));
+}

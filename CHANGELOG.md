@@ -84,6 +84,11 @@ and this file is the source for the text of each GitHub release.
   methods on struct literals, nested `catch e:`, `fail x` in several `catch` blocks, and a borrowed
   plain value where a value is needed.
 - `examples/apps/todo` is a command-line task list that stores its tasks as JSON.
+- **JSON for any type.** `json.encode(value)` and `json.decode(text)` convert structs, lists, maps,
+  `Option`, and enums to and from JSON with no code to write; errors give the path, such as
+  `[0].tags[1]: the JSON value is not a string`. `Json` also has `as_list`, `lookup`, and `is_str`.
+- Moving a list, map, or struct field out of a struct you own uses up the struct: `let tasks = store.tasks`.
+- `[]` and `{}` work as a `catch` fallback value.
 - A parenthesized value can take a method call: `(a + b).upper()`.
 
 ## 0.1.1
@@ -282,6 +287,11 @@ this preview.
   （`args[1].parse_i64()?`），结构体字面量上调方法，嵌套的 `catch e:`，几个 `catch` 块里 `fail` 同一个值，
   以及在要值的地方使用借来的纯数据值。
 - `examples/apps/todo`：命令行的待办事项，任务存成 JSON。
+- **任何类型都能转成 JSON。** `json.encode(value)` 与 `json.decode(text)` 在 JSON 和结构体、列表、字典、`Option`、
+  枚举之间直接转换，不用写转换代码；出错时带着路径，例如 `[0].tags[1]: the JSON value is not a string`。
+  `Json` 还新增了 `as_list`、`lookup`、`is_str`。
+- 从自己拥有的结构体里移出列表、字典或结构体字段，会用掉整个结构体：`let tasks = store.tasks`。
+- `[]` 和 `{}` 可以当 `catch` 的回退值。
 - 括号里的值也能接方法调用：`(a + b).upper()`。
 
 ## 0.1.1（中文）

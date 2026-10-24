@@ -148,6 +148,27 @@ fn main():
 
 复制花费的时间和内存与值的大小成正比，所以 Zamak 从不悄悄复制。看到 `copy`，就知道那里发生了复制。
 
+## 把字段从结构体里移出来
+
+字符串字段读出来是副本。列表、字典或结构体字段太大，不会悄悄复制，所以从自己拥有的结构体里取出它，会用掉整个结构体，其余字段照常释放：
+
+```zamak
+struct Store:
+    name: string
+    tasks: [string]
+
+fn main():
+    let store = Store(name: "home", tasks: ["milk", "rent"])
+    let tasks = store.tasks
+    println(tasks)
+```
+
+```text
+["milk", "rent"]
+```
+
+`let tasks = store.tasks` 之后再用 `store` 是编译错误。想保留结构体，就借用这个字段，或者用 `copy(&store.tasks)` 复制一份。
+
 ## 最后一次使用时再移动
 
 只有在移动之后还用旧变量，才会出问题。把移动放在最后一次使用这个值的地方，就没有问题：

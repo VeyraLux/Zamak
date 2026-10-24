@@ -154,3 +154,34 @@ fn main():
     );
     fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn moving_a_field_uses_up_the_struct() {
+    // 从局部结构体里移出列表、字典或结构体字段会用掉整个结构体；之后再用它是编译错误。
+    let root = std::env::temp_dir().join(format!("zam-field-move-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("main.zm");
+    let run = |source: &str| {
+        fs::write(&path, source).unwrap();
+        Command::new(env!("CARGO_BIN_EXE_zam"))
+            .arg("run")
+            .arg(&path)
+            .env("ZAMAK_CACHE_DIR", root.join("cache"))
+            .env("ZAMAK_LANG", "en")
+            .output()
+            .unwrap()
+    };
+    let output = run("struct Store:\n    name: string\n    tasks: [string]\n\nfn take(s: Store) -> [string]:\n    s.tasks\n\nfn main():\n    let s = Store(name: \"a\", tasks: [\"x\", \"y\"])\n    let tasks = s.tasks\n    println(tasks)\n    println(take(Store(name: \"b\", tasks: [\"z\"])))\n");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "[\"x\", \"y\"]\n[\"z\"]\n"
+    );
+    let output = run("struct S:\n    xs: [i64]\n\nfn main():\n    let s = S(xs: [1])\n    let a = s.xs\n    println(s.xs)\n");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("use after move: s"));
+    fs::remove_dir_all(&root).unwrap();
+}

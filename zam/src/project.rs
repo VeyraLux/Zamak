@@ -906,22 +906,14 @@ impl Project {
                 linked.functions.insert(format!("{id}:{name}"), function);
             }
         }
-        // `thread.spawn` 与按标注推断的泛型调用：检查之前改写（见 compiler::rewrite_block）。
-        let names: Vec<String> = linked
+        // 要在检查之前改写的函数（`thread.spawn` 与按标注推断的泛型调用，见 compiler::rewrite_block）：
+        // 模块里写的非泛型函数。改写放在最后，那时结构体表已经齐了（合成 JSON 转换要看字段）。
+        let rewrite: Vec<String> = linked
             .functions
             .iter()
             .filter(|(_, function)| function.generics.is_empty())
             .map(|(name, _)| name.clone())
             .collect();
-        for name in names {
-            let mut body =
-                std::mem::take(&mut linked.functions.get_mut(&name).expect("listed").body);
-            let rewritten = compiler::rewrite_block(&linked.functions, &mut body);
-            linked.functions.get_mut(&name).expect("listed").body = body;
-            rewritten.map_err(|error| {
-                self.located_function(error.replacen(": ", &format!(": {name}: "), 1))
-            })?;
-        }
         linked.functions.extend(native::builtin_functions());
         // 泛型函数按类型生成的副本（检查时生成，名字形如 `模块:largest[Int]`）。
         linked.functions.extend(compiler::instances());
@@ -971,6 +963,15 @@ impl Project {
             linked.structs.insert(name, instance);
         }
         compiler::note_plain(&linked.structs);
+        for name in rewrite {
+            let mut body =
+                std::mem::take(&mut linked.functions.get_mut(&name).expect("listed").body);
+            let rewritten = compiler::rewrite_block(&linked.functions, &mut body);
+            linked.functions.get_mut(&name).expect("listed").body = body;
+            rewritten.map_err(|error| {
+                self.located_function(error.replacen(": ", &format!(": {name}: "), 1))
+            })?;
+        }
         Ok(linked)
     }
 

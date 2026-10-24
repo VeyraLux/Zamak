@@ -271,6 +271,42 @@ Zamak
 - 取值：`get(key)`、`item(index)`、`as_str()`、`as_f64()`、`as_i64()`、`as_bool()`、`is_null()`、`len()`、`keys()`。
 - 数字按 `f64` 保存；整数值输出时不带小数点。`json.dumps(value, indent=2)` 分行缩进。
 
+### 结构体与 JSON 互相转换
+
+`json.encode(value)` 把任何结构体、列表、字典等值写成 JSON 文字，`json.decode(text)` 读回来。要读成什么类型，写在标注里：
+
+```zamak
+use std/json
+
+struct Task:
+    id: i64
+    text: string
+    tags: [string]
+    due: Option[string]
+
+fn main() -> !string:
+    let tasks = [Task(id: 1, text: "write", tags: ["work"], due: Option.None)]
+    let text = json.encode(tasks)
+    println(text)
+    let back: [Task] = json.decode(text)?
+    println(back[0].text)
+    let bad: [Task] = json.decode(r"""[{"id": 2, "text": "x", "tags": [7]}]""") catch e:
+        println(e)
+        return
+```
+
+```text
+[{"id": 1, "text": "write", "tags": ["work"], "due": null}]
+write
+[0].tags[0]: the JSON value is not a string
+```
+
+- 结构体是对象，键就是字段名；列表是数组，键为 `string` 或 `i64` 的字典是对象，`Option` 是 `null` 或值。`Option` 字段缺少这个键时读成 `None`。
+- 没有数据的枚举变体是字符串（如 `"Empty"`），带数据的是带 `"type"` 键的对象（如 `{"type": "Circle", "r": 1.5}`）。
+- 文字和类型对不上时，错误里带着位置：`[0].tags[0]`、`.shape.h: missing`。
+- `json.to_json(value)` 与 `json.from_json(j)` 在值和 `Json` 之间转换（不经过文字）。
+- 所有字符串都会做 `{...}` 插值，所以 JSON 字面量要写成原始字符串：`r"""{"id": 1}"""`。
+
 ## 正则表达式：std/re
 
 `std/re` 的函数与 Python 的 `re` 同名同参数，位置按字符计算。表达式里反斜杠多，用原始字符串 `r"..."` 写：

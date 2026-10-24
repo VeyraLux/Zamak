@@ -144,7 +144,7 @@ fn struct_declarations_and_rejections() {
     for source in [
         "struct A:\n    b: B\nstruct B:\n    a: A\nfn main(): pass",
         "struct A:\n    b: Missing\nfn main(): pass",
-        "struct B:\n    s: string\nstruct A:\n    b: B\nfn main():\n    let a = A(b: B(s: \"x\"))\n    let b = a.b",
+        "struct B:\n    s: string\nstruct A:\n    b: B\nfn main():\n    let a = A(b: B(s: \"x\"))\n    let b = a.b\n    println(a.b.s)",
         "struct B:\n    s: string\nstruct A:\n    b: B\nfn main():\n    let a = A(b: B(s: \"x\"))\n    println(a.b < a.b)",
         "struct B:\n    s: string\nstruct A:\n    b: B\nfn main():\n    let a = A(b: B(s: \"x\"))\n    println(a == 1)",
         "struct B:\n    s: string\nstruct A:\n    b: B\nfn main():\n    let mut a = A(b: B(s: \"x\"))\n    a.b = a.b",

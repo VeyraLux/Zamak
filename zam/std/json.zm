@@ -1,5 +1,13 @@
 # JSON 读写，接口照 Python 的 json 模块：loads 把文字变成 Json，dumps 把 Json 变成文字。
 # 数字一律按 f64 保存（同 JavaScript）；整数值输出时不带小数点。
+#
+# 结构体、列表、字典与 JSON 之间可以直接转换，不用手写 Json 值：
+#
+#     let text = json.encode(tasks)
+#     let tasks: [Task] = json.decode(text)?
+#
+# 结构体是对象（字段名就是键），列表是数组，{string: V} 与 {i64: V} 是对象，Option 是 null 或值，
+# 只有名字的枚举变体是字符串，带载荷的是 {"type": "变体名", 字段...}。
 use std/math
 use std/string
 
@@ -76,6 +84,52 @@ pub enum Json:
         match self:
             Object(fields): fields.keys()
             _: []
+
+    # 数组的各项（副本）。不是数组时返回错误。
+    pub fn as_list(&self) -> [Json]!string:
+        match self:
+            Array(items): return copy(&items)
+            _: fail "the JSON value is not an array"
+
+    # 对象的键（同 keys），不是对象时返回错误。
+    pub fn field_names(&self) -> [string]!string:
+        match self:
+            Object(fields): return fields.keys()
+            _: fail "the JSON value is not an object"
+
+    # 对象里键为 key 的值（副本）；没有这个键时是 null。不是对象时返回错误。
+    pub fn lookup(&self, key: &string) -> Json!string:
+        match self:
+            Object(fields):
+                if key in fields:
+                    return copy(&fields[key])
+
+                return Json.Null
+            _: fail f"cannot read key {key}: the JSON value is not an object"
+
+    pub fn is_str(&self) -> bool:
+        match self:
+            Str(_): true
+            _: false
+
+# 任意值变成 Json。函数体由编译器按 T 生成（见 compiler::derive_json），这里只是占位。
+pub fn to_json[T](value: &T) -> Json:
+    Json.Null
+
+# Json 变成 T（类型写在标注里：let task: Task = json.from_json(&j)?）。不合 T 的形状时返回错误，
+# 错误里带着出错的位置，如 tasks[2].due: the JSON value is not a string。函数体由编译器生成。
+pub fn from_json[T](value: &Json) -> T!string:
+    fail "unreachable"
+
+# 任意值写成 JSON 文字，同 dumps(to_json(value), indent)。
+pub fn encode[T](value: &T, indent: i64 = 0) -> string:
+    dumps(to_json(value), indent)
+
+# JSON 文字读成 T（类型写在标注里：let tasks: [Task] = json.decode(text)?）。
+pub fn decode[T](text: &string) -> T!string:
+    let parsed = loads(text)?
+    let value: T = from_json(parsed) catch e: fail e.removeprefix(".")
+    value
 
 # 把文字解析成 Json。格式不对时返回错误，错误里带着出错的字节位置。
 pub fn loads(text: &string) -> Json!string:

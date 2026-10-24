@@ -271,6 +271,42 @@ Zamak
 - Accessors: `get(key)`, `item(index)`, `as_str()`, `as_f64()`, `as_i64()`, `as_bool()`, `is_null()`, `len()`, and `keys()`.
 - Numbers are stored as `f64`, and whole numbers are written without a decimal point. `json.dumps(value, indent=2)` writes one item per line.
 
+### Structs to and from JSON
+
+`json.encode(value)` writes any struct, list, map, or other value as JSON text, and `json.decode(text)` reads it back. Write the type you want in the annotation:
+
+```zamak
+use std/json
+
+struct Task:
+    id: i64
+    text: string
+    tags: [string]
+    due: Option[string]
+
+fn main() -> !string:
+    let tasks = [Task(id: 1, text: "write", tags: ["work"], due: Option.None)]
+    let text = json.encode(tasks)
+    println(text)
+    let back: [Task] = json.decode(text)?
+    println(back[0].text)
+    let bad: [Task] = json.decode(r"""[{"id": 2, "text": "x", "tags": [7]}]""") catch e:
+        println(e)
+        return
+```
+
+```text
+[{"id": 1, "text": "write", "tags": ["work"], "due": null}]
+write
+[0].tags[0]: the JSON value is not a string
+```
+
+- A struct is an object whose keys are the field names. A list is an array, a map with `string` or `i64` keys is an object, and `Option` is `null` or the value. A missing key reads as `None` for an `Option` field.
+- An enum variant without data is a string, such as `"Empty"`. A variant with data is an object with a `"type"` key, such as `{"type": "Circle", "r": 1.5}`.
+- When the text doesn't match the type, the error shows where: `[0].tags[0]`, `.shape.h: missing`.
+- `json.to_json(value)` and `json.from_json(j)` convert to and from a `Json` value instead of text.
+- Every string interpolates `{...}`, so write JSON literals as raw strings: `r"""{"id": 1}"""`.
+
 ## Regular expressions: std/re
 
 The functions in `std/re` have the same names and parameters as Python's `re`, and positions count characters. Write patterns as raw strings, `r"..."`, because they have many backslashes:

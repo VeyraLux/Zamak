@@ -29,47 +29,19 @@ fn store() -> string:
     let home = env.var("HOME") catch e: env.var("USERPROFILE") catch e: "."
     path.join(home, ".zamak-todo.json")
 
+# 数据文件就是 {"tasks": [...]}：json.encode 与 json.decode 按 Store 的结构自动转换。
+struct Store:
+    tasks: [Task]
+
 fn load(file: &string) -> [Task]!string:
-    let mut tasks: [Task] = []
-
     if not fs.exists(file):
-        return tasks
+        return []
 
-    let data = json.loads(fs.read(file)?)?
-    let items = data.get("tasks")?
-
-    for i in range(items.len()):
-        let item = items.item(i)?
-        let mut tags: [string] = []
-        let names = item.get("tags")?
-
-        for j in range(names.len()):
-            tags.push(names.item(j)?.as_str()?)
-
-        tasks.push(Task(id: item.get("id")?.as_i64()?, text: item.get("text")?.as_str()?, done: item.get("done")?.as_bool()?, due: item.get("due")?.as_str()?, tags: tags))
-
-    tasks
+    let store: Store = json.decode(fs.read(file)?)?
+    store.tasks
 
 fn save(file: &string, tasks: &[Task]) -> !string:
-    let mut items: [json.Json] = []
-
-    for t in tasks:
-        let mut fields: {string: json.Json} = {}
-        fields["id"] = json.Json.Number(float(t.id))
-        fields["text"] = json.Json.Str(copy(t.text))
-        fields["done"] = json.Json.Bool(t.done)
-        fields["due"] = json.Json.Str(copy(t.due))
-        let mut tags: [json.Json] = []
-
-        for tag in t.tags:
-            tags.push(json.Json.Str(copy(tag)))
-
-        fields["tags"] = json.Json.Array(tags)
-        items.push(json.Json.Object(fields))
-
-    let mut root: {string: json.Json} = {}
-    root["tasks"] = json.Json.Array(items)
-    fs.write(file, json.dumps(json.Json.Object(root), indent=2))?
+    fs.write(file, json.encode(Store(tasks: copy(tasks)), indent=2))?
 
 fn find(tasks: &[Task], id: i64) -> i64!string:
     for i, t in tasks:

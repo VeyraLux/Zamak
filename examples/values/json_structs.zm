@@ -1,0 +1,42 @@
+# 结构体与 JSON 互相转换：json.encode 写成文字，json.decode 读回来（类型写在标注里）。
+# 结构体是对象，列表是数组，字典是对象，Option 是 null 或值，枚举的变体是字符串或 {"type": ...}。
+# 读的时候形状不对，错误里带着出错的位置。JSON 字面量用原始字符串 r"..."，里面的花括号不当插值。
+use std/json
+
+enum Shape:
+    Circle(r: f64)
+    Rect(w: f64, h: f64)
+    Empty
+
+struct Task:
+    id: i64
+    text: string
+    done: bool
+    tags: [string]
+    due: Option[string]
+    shape: Shape
+    scores: {string: i64}
+
+fn main() -> !string:
+    let mut scores: {string: i64} = {}
+    scores["a"] = 1
+    let tasks = [Task(id: 1, text: "write", done: false, tags: ["work"], due: Option.Some("2026-11-01"), shape: Shape.Circle(1.5), scores: scores), Task(id: 2, text: "milk", done: true, tags: [], due: Option.None, shape: Shape.Empty, scores: {})]
+    let text = json.encode(tasks)
+    println(text)
+
+    let back: [Task] = json.decode(text)?
+    println(json.encode(back) == text)
+
+    let one: Task = json.decode(r"""{"id": 3, "text": "x", "done": false, "tags": ["a", "b"], "shape": {"type": "Rect", "w": 2, "h": 3}, "scores": {}}""")?
+    println(one)
+
+    for bad in [r"""[{"id": 1, "text": "x", "done": false, "tags": ["a", 5], "shape": "Empty", "scores": {}}]""", r"""[{"id": 1.5}]""", r"""[{"id": 1, "text": "x", "done": false, "tags": [], "shape": {"type": "Rect", "w": 2}, "scores": {}}]""", r"""{"id": 1}"""]:
+        let parsed: [Task] = json.decode(bad) catch e:
+            println(f"error: {e}")
+            continue
+        println(parsed)
+
+    let grid: [[i64]] = json.decode("[[1, 2], [3]]") catch e: []
+    println(grid)
+    let names: {i64: string} = json.decode(r"""{"1": "one", "2": "two"}""") catch e: {}
+    println(json.encode(names, indent=2))

@@ -5853,6 +5853,14 @@ impl<'a> Generator<'a> {
                 let target = self.field(local, field);
                 self.temporary(&format!("copy(&{target})"))
             }
+            // 移出列表、字典或结构体字段：原位置清零，整个结构体之后释放时不会重复释放。
+            Expr::Field(local, field) if aggregate(self.ty(expr)) && !by_value(self.ty(expr)) => {
+                let ty = self.ty(expr);
+                let place = self.field(local, field);
+                let value = self.scalar(&format!("{}(&{place})", take_fn(ty)), ty);
+                self.owners.push((value.clone(), ty));
+                value
+            }
             Expr::Field(local, field) => self.scalar(&self.field(local, field), self.ty(expr)),
             // 移走结构体、列表、字典；纯数据的结构体与枚举按值复制，原变量不清零（走下面的分支）。
             Expr::Variable(name)
@@ -6382,7 +6390,9 @@ impl<'a> Generator<'a> {
                 self.owners.push((local, error));
                 // `f() catch e: default`：出错时把回退值写进结果，再释放错误值（规则与检查器相同）。
                 let fallback = crate::compiler::catch_fallback(block).filter(|value| {
-                    result != Type::Unit && crate::compiler::fallback_fits(self.ty(value), result)
+                    result != Type::Unit
+                        && (crate::compiler::empty_fallback(value, result)
+                            || crate::compiler::fallback_fits(self.ty(value), result))
                 });
                 let returned = if let Some(value) = fallback {
                     // 回退值的临时变量声明在 `if` 块里，也要在块里释放（移走后只剩空壳）。

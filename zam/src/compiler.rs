@@ -350,8 +350,16 @@ pub fn plain(id: u64) -> bool {
     PLAIN.read().expect("plain types").contains(&id)
 }
 
+/// 链接后的结构体表（编号 → 名字与声明）：生成泛型副本时按类型合成函数体要看字段（见 `derive_json`）。
+type StructTable = BTreeMap<u64, (String, Struct)>;
+static STRUCT_TABLE: std::sync::RwLock<StructTable> = std::sync::RwLock::new(BTreeMap::new());
+
 /// 按链接后的结构体表重新算纯数据类型（取不动点：字段是结构体时要先知道它是不是纯数据）。
 pub fn note_plain(structs: &BTreeMap<String, Struct>) {
+    *STRUCT_TABLE.write().expect("struct table") = structs
+        .iter()
+        .map(|(name, structure)| (record_id(name), (name.clone(), structure.clone())))
+        .collect();
     let mut found: BTreeSet<u64> = BTreeSet::new();
     loop {
         let before = found.len();
@@ -1630,6 +1638,17 @@ fn instance_full(
         *error = substitute(*error, &map)?;
     }
     substitute_block(&mut function.body, &map)?;
+    // `json.to_json[T]` 与 `json.from_json[T]`：函数体按 T 的结构合成。
+    if let Some(generic) = template.generics.first() {
+        if let Some(body) = derive_json(name, map[&type_param(generic)])? {
+            function.body = body;
+        }
+    }
+    // 先登记副本再改写函数体：函数体里又要这个副本时（递归的类型）直接用它，不会无限展开。
+    INSTANCES
+        .write()
+        .expect("instance table")
+        .insert(instance.clone(), function.clone());
     // 副本里的 `thread.spawn` 与按标注推断的调用：类型参数换成具体类型之后才能改写。
     rewrite_block(functions, &mut function.body)?;
     INSTANCES
@@ -1637,6 +1656,534 @@ fn instance_full(
         .expect("instance table")
         .insert(instance.clone(), function);
     Ok(instance)
+}
+
+const JSON: &str = "std/json:Json";
+const TO_JSON: &str = "std/json:to_json";
+const FROM_JSON: &str = "std/json:from_json";
+
+/// 按类型合成 `json.to_json[T]`（参数 `value: &T`，返回 Json）与 `json.from_json[T]`（参数
+/// `value: &Json`，返回 `T!string`）的函数体。结构体是对象，列表是数组，字典是对象，Option 是 null
+/// 或值，只有名字的枚举变体是字符串、带载荷的是 `{"type": 变体名, 字段...}`。其他函数返回 None。
+fn derive_json(name: &str, ty: Type) -> Result<Option<Block>, String> {
+    if name != TO_JSON && name != FROM_JSON {
+        return Ok(None);
+    }
+    let at: SourcePosition = (1, 1);
+    let var = |name: &str| Expr::Variable(name.to_owned());
+    let text = |value: &str| Expr::Text(value.to_owned());
+    let json = |variant: &str, args: Vec<Expr>| Expr::Variant(JSON.into(), variant.into(), args);
+    let to = |arg: Expr| Expr::Call(TO_JSON.into(), vec![arg]);
+    let from = |arg: Expr| Expr::Call(FROM_JSON.into(), vec![arg]);
+    let method = |receiver: &str, method: &str, args: Vec<Expr>| {
+        Expr::Method(receiver.to_owned(), method.to_owned(), args)
+    };
+    let tried = |expr: Expr| Expr::Try(Box::new(expr));
+    let ret = |expr: Expr| (Instruction::Return(Some(expr)), at);
+    let json_type = Type::Record(record_id(JSON));
+    let fields_type = Type::Map(Elem::Str, Elem::Record(record_id(JSON)));
+    let short = |ty: Type| -> String {
+        let table = STRUCT_TABLE.read().expect("struct table");
+        let structs: BTreeMap<String, Struct> = table.values().cloned().collect();
+        type_text(ty, &structs)
+    };
+    // `let one: T = from_json(source) catch e: fail ...`：出错时在错误前面加上位置，拼成
+    // `[0].tags[1]: the JSON value is not a string` 这样的路径（内层的错误以路径开头时直接接上）。
+    let read = |binding: &str, target: Type, source: Expr, place: Vec<Expr>| {
+        let mut joined = place.clone();
+        joined.push(var("e"));
+        let mut labelled = place;
+        labelled.push(text(": "));
+        labelled.push(var("e"));
+        let nested = Expr::Binary(
+            "||".into(),
+            Box::new(Expr::Method(
+                "e".into(),
+                "starts_with".into(),
+                vec![text("[")],
+            )),
+            Box::new(Expr::Method(
+                "e".into(),
+                "starts_with".into(),
+                vec![text(".")],
+            )),
+        );
+        let message = Expr::If(
+            Box::new(nested),
+            Box::new(Expr::Format(joined)),
+            Box::new(Expr::Format(labelled)),
+        );
+        (
+            Instruction::Let(
+                binding.to_owned(),
+                false,
+                Some(target),
+                Expr::Catch(
+                    Box::new(from(source)),
+                    "e".into(),
+                    vec![(Instruction::Fail(message), at)],
+                ),
+            ),
+            at,
+        )
+    };
+    let unsupported = |ty: Type| {
+        Err(format!(
+            "type mismatch: {} cannot be converted to or from JSON; use numbers, booleans, strings, lists, maps with string or i64 keys, structs, enums and Option",
+            short(ty)
+        ))
+    };
+    let table = STRUCT_TABLE.read().expect("struct table").clone();
+    let field_of = |field: &str, optional: bool| {
+        if optional {
+            tried(method("value", "lookup", vec![text(field)]))
+        } else {
+            Expr::Catch(
+                Box::new(method("value", "get", vec![text(field)])),
+                "e".into(),
+                vec![(Instruction::Fail(text(&format!(".{field}: missing"))), at)],
+            )
+        }
+    };
+    let body: Block = if name == TO_JSON {
+        match ty {
+            Type::Int => vec![ret(json(
+                "Number",
+                vec![Expr::Call("std/core:float".into(), vec![var("value")])],
+            ))],
+            Type::Float => vec![ret(json("Number", vec![var("value")]))],
+            Type::Bool => vec![ret(json("Bool", vec![var("value")]))],
+            Type::Owned => vec![ret(json(
+                "Str",
+                vec![Expr::Call(COPY.into(), vec![var("value")])],
+            ))],
+            Type::Record(id) if id == record_id(JSON) => {
+                vec![ret(Expr::Call(COPY.into(), vec![var("value")]))]
+            }
+            Type::List(elem) if elem != Elem::Byte => vec![
+                (
+                    Instruction::Let(
+                        "items".into(),
+                        true,
+                        Some(Type::List(Elem::Record(record_id(JSON)))),
+                        Expr::Array(Vec::new()),
+                    ),
+                    at,
+                ),
+                (
+                    Instruction::Each(
+                        "item".into(),
+                        None,
+                        "value".into(),
+                        false,
+                        vec![(
+                            Instruction::Call(method("items", "push", vec![to(var("item"))])),
+                            at,
+                        )],
+                    ),
+                    at,
+                ),
+                ret(json("Array", vec![var("items")])),
+            ],
+            Type::Map(key, _) if matches!(key, Elem::Str | Elem::Int) && !is_set(ty) => {
+                let name = if key == Elem::Str {
+                    var("key")
+                } else {
+                    Expr::Format(vec![var("key")])
+                };
+                vec![
+                    (
+                        Instruction::Let(
+                            "fields".into(),
+                            true,
+                            Some(fields_type),
+                            Expr::MapLit(Vec::new()),
+                        ),
+                        at,
+                    ),
+                    (
+                        Instruction::Each(
+                            "key".into(),
+                            Some("item".into()),
+                            "value".into(),
+                            false,
+                            vec![(
+                                Instruction::AssignIndex("fields".into(), name, to(var("item"))),
+                                at,
+                            )],
+                        ),
+                        at,
+                    ),
+                    ret(json("Object", vec![var("fields")])),
+                ]
+            }
+            Type::Record(id) => {
+                let Some((record, structure)) = table.get(&id).cloned() else {
+                    return unsupported(ty);
+                };
+                if structure.handle.is_some() || structure.interface {
+                    return unsupported(ty);
+                }
+                if structure.variants.is_empty() {
+                    let mut body = vec![(
+                        Instruction::Let(
+                            "fields".into(),
+                            true,
+                            Some(fields_type),
+                            Expr::MapLit(Vec::new()),
+                        ),
+                        at,
+                    )];
+                    for (field, _) in &structure.fields {
+                        body.push((
+                            Instruction::AssignIndex(
+                                "fields".into(),
+                                text(field),
+                                to(Expr::Field("value".into(), field.clone())),
+                            ),
+                            at,
+                        ));
+                    }
+                    body.push(ret(json("Object", vec![var("fields")])));
+                    body
+                } else if record.starts_with(&format!("{OPTION}[")) {
+                    vec![(
+                        Instruction::Match(
+                            var("value"),
+                            vec![
+                                (
+                                    (Some("Some".into()), vec!["inner".into()]),
+                                    vec![ret(to(var("inner")))],
+                                ),
+                                (
+                                    (Some("None".into()), Vec::new()),
+                                    vec![ret(json("Null", Vec::new()))],
+                                ),
+                            ],
+                        ),
+                        at,
+                    )]
+                } else {
+                    let mut arms = Vec::new();
+                    for (variant, first, count) in &structure.variants {
+                        let payload: Vec<String> = structure.fields[*first..first + count]
+                            .iter()
+                            .map(|(field, _)| field.rsplit('$').next().unwrap_or(field).to_owned())
+                            .collect();
+                        let block = if payload.is_empty() {
+                            vec![ret(json("Str", vec![text(variant)]))]
+                        } else {
+                            let mut block = vec![
+                                (
+                                    Instruction::Let(
+                                        "fields".into(),
+                                        true,
+                                        Some(fields_type),
+                                        Expr::MapLit(Vec::new()),
+                                    ),
+                                    at,
+                                ),
+                                (
+                                    Instruction::AssignIndex(
+                                        "fields".into(),
+                                        text("type"),
+                                        json("Str", vec![text(variant)]),
+                                    ),
+                                    at,
+                                ),
+                            ];
+                            for field in &payload {
+                                block.push((
+                                    Instruction::AssignIndex(
+                                        "fields".into(),
+                                        text(field),
+                                        to(var(&format!("p_{field}"))),
+                                    ),
+                                    at,
+                                ));
+                            }
+                            block.push(ret(json("Object", vec![var("fields")])));
+                            block
+                        };
+                        arms.push((
+                            (
+                                Some(variant.clone()),
+                                payload.iter().map(|field| format!("p_{field}")).collect(),
+                            ),
+                            block,
+                        ));
+                    }
+                    vec![(Instruction::Match(var("value"), arms), at)]
+                }
+            }
+            _ => return unsupported(ty),
+        }
+    } else {
+        let _ = json_type;
+        match ty {
+            Type::Int => vec![ret(tried(method("value", "as_i64", Vec::new())))],
+            Type::Float => vec![ret(tried(method("value", "as_f64", Vec::new())))],
+            Type::Bool => vec![ret(tried(method("value", "as_bool", Vec::new())))],
+            Type::Owned => vec![ret(tried(method("value", "as_str", Vec::new())))],
+            Type::Record(id) if id == record_id(JSON) => {
+                vec![ret(Expr::Call(COPY.into(), vec![var("value")]))]
+            }
+            Type::List(elem) if elem != Elem::Byte => vec![
+                (
+                    Instruction::Let(
+                        "items".into(),
+                        false,
+                        None,
+                        tried(method("value", "as_list", Vec::new())),
+                    ),
+                    at,
+                ),
+                (
+                    Instruction::Let("out".into(), true, Some(ty), Expr::Array(Vec::new())),
+                    at,
+                ),
+                (
+                    Instruction::Each(
+                        "i".into(),
+                        Some("item".into()),
+                        "items".into(),
+                        false,
+                        vec![
+                            read(
+                                "one",
+                                elem.ty(),
+                                var("item"),
+                                vec![text("["), var("i"), text("]")],
+                            ),
+                            (
+                                Instruction::Call(method("out", "push", vec![var("one")])),
+                                at,
+                            ),
+                        ],
+                    ),
+                    at,
+                ),
+                ret(var("out")),
+            ],
+            Type::Map(key, item) if matches!(key, Elem::Str | Elem::Int) && !is_set(ty) => {
+                let slot = if key == Elem::Str {
+                    var("key")
+                } else {
+                    tried(method("key", "parse_i64", Vec::new()))
+                };
+                vec![
+                    (
+                        Instruction::Let(
+                            "names".into(),
+                            false,
+                            None,
+                            tried(method("value", "field_names", Vec::new())),
+                        ),
+                        at,
+                    ),
+                    (
+                        Instruction::Let("out".into(), true, Some(ty), Expr::MapLit(Vec::new())),
+                        at,
+                    ),
+                    (
+                        Instruction::Each(
+                            "key".into(),
+                            None,
+                            "names".into(),
+                            false,
+                            vec![
+                                (
+                                    Instruction::Let(
+                                        "item".into(),
+                                        false,
+                                        None,
+                                        tried(method("value", "get", vec![var("key")])),
+                                    ),
+                                    at,
+                                ),
+                                read("one", item.ty(), var("item"), vec![text("."), var("key")]),
+                                (Instruction::AssignIndex("out".into(), slot, var("one")), at),
+                            ],
+                        ),
+                        at,
+                    ),
+                    ret(var("out")),
+                ]
+            }
+            Type::Record(id) => {
+                let Some((record, structure)) = table.get(&id).cloned() else {
+                    return unsupported(ty);
+                };
+                if structure.handle.is_some() || structure.interface {
+                    return unsupported(ty);
+                }
+                let optional = |field_ty: Type| matches!(field_ty, Type::Record(inner) if table.get(&inner).is_some_and(|(n, _)| n.starts_with(&format!("{OPTION}["))));
+                if structure.variants.is_empty() {
+                    // 先确认是对象，否则报的是第一个字段缺少，让人摸不着头脑。
+                    let mut body = vec![(
+                        Instruction::Call(tried(method("value", "field_names", Vec::new()))),
+                        at,
+                    )];
+                    let mut fields = Vec::new();
+                    for (field, field_ty) in &structure.fields {
+                        let local = format!("f_{field}");
+                        body.push((
+                            Instruction::Let(
+                                format!("j_{field}"),
+                                false,
+                                None,
+                                field_of(field, optional(*field_ty)),
+                            ),
+                            at,
+                        ));
+                        body.push(read(
+                            &local,
+                            *field_ty,
+                            var(&format!("j_{field}")),
+                            vec![text(&format!(".{field}"))],
+                        ));
+                        fields.push((field.clone(), var(&local)));
+                    }
+                    body.push(ret(Expr::Record(record.clone(), fields)));
+                    body
+                } else if record.starts_with(&format!("{OPTION}[")) {
+                    let inner = structure
+                        .fields
+                        .get(1)
+                        .map(|(_, ty)| *ty)
+                        .expect("Option has a value");
+                    vec![
+                        (
+                            Instruction::If(
+                                method("value", "is_null", Vec::new()),
+                                vec![ret(Expr::Variant(OPTION.into(), "None".into(), Vec::new()))],
+                                Vec::new(),
+                            ),
+                            at,
+                        ),
+                        (
+                            Instruction::Let(
+                                "inner".into(),
+                                false,
+                                Some(inner),
+                                tried(from(var("value"))),
+                            ),
+                            at,
+                        ),
+                        ret(Expr::Variant(
+                            OPTION.into(),
+                            "Some".into(),
+                            vec![var("inner")],
+                        )),
+                    ]
+                } else {
+                    let enumeration = record.split('[').next().unwrap_or(&record).to_owned();
+                    let mut body = Vec::new();
+                    // 只有名字的变体写成字符串。
+                    let mut named = Vec::new();
+                    for (variant, _, count) in &structure.variants {
+                        if *count == 0 {
+                            named.push((
+                                Instruction::If(
+                                    Expr::StringEqual(
+                                        Box::new(var("tag")),
+                                        Box::new(text(variant)),
+                                    ),
+                                    vec![ret(Expr::Variant(
+                                        enumeration.clone(),
+                                        variant.clone(),
+                                        Vec::new(),
+                                    ))],
+                                    Vec::new(),
+                                ),
+                                at,
+                            ));
+                        }
+                    }
+                    let mut unit = vec![(
+                        Instruction::Let(
+                            "tag".into(),
+                            false,
+                            None,
+                            tried(method("value", "as_str", Vec::new())),
+                        ),
+                        at,
+                    )];
+                    unit.extend(named);
+                    unit.push((
+                        Instruction::Fail(Expr::Format(vec![text("unknown variant "), var("tag")])),
+                        at,
+                    ));
+                    body.push((
+                        Instruction::If(method("value", "is_str", Vec::new()), unit, Vec::new()),
+                        at,
+                    ));
+                    // 带载荷的变体是 {"type": 变体名, 字段...}。
+                    body.push((
+                        Instruction::Let(
+                            "kind".into(),
+                            false,
+                            None,
+                            tried(method("value", "get", vec![text("type")])),
+                        ),
+                        at,
+                    ));
+                    body.push((
+                        Instruction::Let(
+                            "tag".into(),
+                            false,
+                            None,
+                            tried(method("kind", "as_str", Vec::new())),
+                        ),
+                        at,
+                    ));
+                    for (variant, first, count) in &structure.variants {
+                        let mut block = Vec::new();
+                        let mut args = Vec::new();
+                        for (field, field_ty) in &structure.fields[*first..first + count] {
+                            let field = field.rsplit('$').next().unwrap_or(field).to_owned();
+                            block.push((
+                                Instruction::Let(
+                                    format!("j_{field}"),
+                                    false,
+                                    None,
+                                    field_of(&field, optional(*field_ty)),
+                                ),
+                                at,
+                            ));
+                            block.push(read(
+                                &format!("f_{field}"),
+                                *field_ty,
+                                var(&format!("j_{field}")),
+                                vec![text(&format!(".{field}"))],
+                            ));
+                            args.push(var(&format!("f_{field}")));
+                        }
+                        block.push(ret(Expr::Variant(
+                            enumeration.clone(),
+                            variant.clone(),
+                            args,
+                        )));
+                        body.push((
+                            Instruction::If(
+                                Expr::StringEqual(Box::new(var("tag")), Box::new(text(variant))),
+                                block,
+                                Vec::new(),
+                            ),
+                            at,
+                        ));
+                    }
+                    body.push((
+                        Instruction::Fail(Expr::Format(vec![text("unknown variant "), var("tag")])),
+                        at,
+                    ));
+                    body
+                }
+            }
+            _ => return unsupported(ty),
+        }
+    };
+    Ok(Some(body))
 }
 
 /// 代码块里的每个表达式（含嵌套的代码块、`catch` 块与匿名函数体），子表达式先于外层。
@@ -3269,6 +3816,15 @@ pub fn numeric(ty: Type) -> Type {
 /// 循环体与非尾部分支里的末尾调用只求值、不返回（否则 `while c { f() }` 会在第一轮就返回）。
 /// `catch` 代码块必须返回，保持原样。
 /// `call() catch e: value` 的回退值：catch 块只有一个表达式语句时就是它。检查器与生成器共用。
+/// 空的列表或字典字面量（`[]`、`{}`）当回退值时，类型就是调用成功时的类型。
+pub fn empty_fallback(value: &Expr, success: Type) -> bool {
+    match value {
+        Expr::Array(items) => items.is_empty() && matches!(success, Type::List(_)),
+        Expr::MapLit(items) => items.is_empty() && matches!(success, Type::Map(_, _)),
+        _ => false,
+    }
+}
+
 pub fn catch_fallback(block: &Block) -> Option<&Expr> {
     match block.as_slice() {
         [(Instruction::Call(value), _)] => Some(value),
@@ -7479,15 +8035,27 @@ impl<'a> Checker<'a> {
                 }
                 self.expr(index, Type::Int, loans)
             }
-            Expr::Field(_, _) => {
+            Expr::Field(root, _) => {
                 if self.ty(expr)? != expected {
                     return Err("field type mismatch".into());
                 }
                 // 字符串字段读出来是副本（`let why = c.error`），结构体不变；纯数据的值按值复制。
-                // 列表、字典与其他结构体太大，不悄悄复制：借用它，或写 copy(&x.field)。
+                // 列表、字典与其他结构体字段从自己拥有的局部结构体里移出来（`store.tasks`），
+                // 这会用掉整个结构体，其余字段照常释放；借来的结构体不能移出字段。
                 if !copied(expected)
                     && matches!(expected, Type::Record(_) | Type::List(_) | Type::Map(_, _))
                 {
+                    let owner = self.binding(root)?.ty;
+                    if matches!(owner, Type::Record(_)) {
+                        if loans.contains_key(root.as_str()) {
+                            return Err(format!(
+                                "borrow conflict: cannot move a field of {root} during a borrow"
+                            ));
+                        }
+                        self.thawed(root)?;
+                        self.locals.get_mut(root.as_str()).expect("bound").live = false;
+                        return Ok(());
+                    }
                     return Err("owned field moves are not supported; borrow the field, or copy it with copy(&x.field)".into());
                 }
                 Ok(())
@@ -8089,7 +8657,8 @@ impl<'a> Checker<'a> {
                 // `f() catch e: default`：块只有一个表达式、类型合乎成功值时，它就是出错时的值。
                 if let Some(value) = catch_fallback(block) {
                     if success != Type::Unit
-                        && self.ty(value).is_ok_and(|ty| fallback_fits(ty, success))
+                        && (empty_fallback(value, success)
+                            || self.ty(value).is_ok_and(|ty| fallback_fits(ty, success)))
                     {
                         let checked = self.expr(value, success, loans);
                         self.locals.remove(binding);
