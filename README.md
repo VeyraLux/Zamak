@@ -38,6 +38,8 @@
 <p align="center">Zamak is a statically typed language for people and AI agents alike. Its syntax stays light and familiar. Its compiler produces standalone native executables. Ownership manages memory without a garbage collector, and every error comes with a stable code and a fix you can act on.</p>
 <p align="center">Created by <strong>rayL-K</strong> · <strong>VeyraLux</strong></p>
 
+<p align="center"><strong>Community</strong> · QQ group <code>1132190721</code> · <a href="https://discord.gg/kcbpFuSZt">Discord</a> <em>(invite renews about every 30 days)</em></p>
+
 <br/>
 
 ## Quickstart
