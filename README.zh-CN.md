@@ -28,7 +28,7 @@
 <p align="center">
   <a href="https://github.com/VeyraLux/Zamak/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/VeyraLux/Zamak/ci.yml?style=flat-square&label=ci&labelColor=161b22&logo=githubactions&logoColor=white" alt="CI"/></a>
   <a href="#许可证"><img src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-8b949e.svg?style=flat-square&labelColor=161b22" alt="许可证：MIT 或 Apache-2.0"/></a>
-  <img src="https://img.shields.io/badge/version-0.2.0-f97362.svg?style=flat-square&labelColor=161b22" alt="版本 0.2.0"/>
+  <img src="https://img.shields.io/badge/version-0.2.1-f97362.svg?style=flat-square&labelColor=161b22" alt="版本 0.2.1"/>
   <img src="https://img.shields.io/badge/platforms-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-6366f1.svg?style=flat-square&labelColor=161b22" alt="平台：Windows、Linux、macOS"/>
   <a href="https://github.com/VeyraLux/Zamak/stargazers"><img src="https://img.shields.io/github/stars/VeyraLux/Zamak.svg?style=flat-square&color=06b6d4&labelColor=161b22&logo=github&logoColor=white" alt="GitHub stars"/></a>
 </p>
@@ -232,7 +232,7 @@ cargo clippy --manifest-path zam/Cargo.toml --all-targets --locked -- -D warning
 
 报告问题和提交改动的方法见 [贡献指南](CONTRIBUTING.zh-CN.md)，每次改动都要遵守的规则（包括要同步哪些文档）见 [AGENTS.md](AGENTS.md)，测试方法与性能结论见 [案例验证](docs/VALIDATION.md)。
 
-Zamak 0.2.0 是早期版本，1.0 之前语法与库都可能变化。
+Zamak 0.2.1 是早期版本，1.0 之前语法与库都可能变化。
 
 ## 许可证
 

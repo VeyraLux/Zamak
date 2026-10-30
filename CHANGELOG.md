@@ -5,7 +5,14 @@ and this file is the source for the text of each GitHub release.
 
 <!-- 中文版在下半部分。Chinese version: scroll down or search for "## 0.1.1（中文）". -->
 
-## Unreleased
+## 0.2.1
+
+Released 2026-10-30.
+
+This release answers the first round of feedback from people using Zamak. The VS Code extension now
+finds `zam` however you installed it, `input()` reads a line as `println` writes one, structs can
+define operators, times subtract into a `TimeDelta`, and `std/bigint` adds integers of any size.
+Nothing breaks: programs that built with 0.2.0 build the same way.
 
 - The VS Code extension finds `zam` when you installed it with npm. Before, it looked only for a
   program named `zam` on `PATH`, and on Windows npm installs a `zam.cmd` wrapper that VS Code
@@ -350,7 +357,12 @@ this preview.
 
 ---
 
-## 未发布（中文）
+## 0.2.1（中文）
+
+2026-10-30 发布。
+
+这一版处理了第一批用户反馈：VS Code 插件不管你怎么安装的 `zam` 都能找到，`input()` 读一行和 `println` 写一行一样方便，
+结构体可以定义运算符，两个时间相减得到 `TimeDelta`，新增任意大小整数 `std/bigint`。没有不兼容的改动：0.2.0 能编译的程序照样能编译。
 
 - VS Code 扩展能找到用 npm 装的 `zam` 了。以前它只在 `PATH` 里找名为 `zam` 的程序，而 npm 在 Windows
   上装的是 VS Code 启动不了的 `zam.cmd` 包装，所以没有补全。现在它直接启动 npm 包里的编译器，还会去 npm

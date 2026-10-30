@@ -49,7 +49,7 @@ zam --version
 ```
 
 ```console
-0.2.0
+0.2.1
 ```
 
 If your shell can't find `zam`, open a new terminal so that it picks up the updated `PATH`.

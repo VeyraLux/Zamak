@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.1
 
 - Finds `zam` when you installed it with npm. On Windows, npm's `zam` is a `zam.cmd` wrapper that VS Code can't start, so the extension now starts the compiler inside npm's package directly. It also looks in npm's global packages, the install scripts' folders, and Cargo's, which helps when VS Code was opened before the install and its `PATH` is out of date.
 - After **Install with npm**, the extension notices when the install finishes and starts the language server. You don't need to select **I installed it**.
