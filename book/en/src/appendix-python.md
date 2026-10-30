@@ -28,6 +28,7 @@ Zamak keeps Python's names and rules wherever it can. This appendix lists what s
 | `int(s) if s.isdigit() else 0` | `int(s) catch e: 0` | Use a default value when a call fails. |
 | Exceptions propagate on their own | `call()?` | Passing an error on is visible in the code. |
 | `print(a, b)` | `println(f"{a} {b}")` | `println` takes one value. |
+| `name = input("Name: ")` | `let name = input("Name: ")` | At the end of the input, the program stops, as an uncaught `EOFError` does. |
 | `[1, 2, 3]` | `let mut xs = [1, 2, 3]` | `mut` lets you change the list. Only an empty list needs a type: `let xs: [i64] = []`. |
 | `{"a": 1}` | `{"a": 1}`; empty: `let m: {string: i64} = {}` | Keys are `i64` or `string`. |
 | `lambda x: x * 2` | `fn(x): x * 2` | |

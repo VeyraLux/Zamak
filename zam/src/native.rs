@@ -84,6 +84,8 @@ static const char *zam_zh(const char *en) {
         {"min() of an empty list", "对空列表调用 min()"},
         {"max() of an empty list", "对空列表调用 max()"},
         {"cannot start a thread", "无法启动线程"},
+        {"cannot read standard input", "无法读取标准输入"},
+        {"input() reached the end of standard input; use io.read_line()? to handle it", "input() 读到了标准输入的末尾；要自己处理这种情况，请用 io.read_line()?"},
         {NULL, NULL},
     };
     int i;
@@ -3801,6 +3803,37 @@ if (zam_stdin_error()) { free(p); return F_int_err(zam_message("cannot read stan
 if (n && p[n - 1] == '\r') n--;
 drop(p0); p0->data = p; p0->len = n; p0->chars = 0;
 return F_int_ok(any);"#,
+    },
+    // `input(prompt)`：和 Python 一样，先写提示（不换行），再读一行并去掉行尾换行。读到输入末尾
+    // 时程序停下，就像 Python 里没人接住的 EOFError；要自己处理输入末尾就用 io.read_line()?。
+    Builtin {
+        name: "std/core:input",
+        params: &[Type::Shared],
+        result: Type::Owned,
+        fallible: false,
+        body: r#"size_t cap = 64, n = 0; int c, any = 0;
+unsigned char *p, *q;
+if (p0->len) {
+    int locked = zam_threaded, ok;
+    if (locked) zam_lock_stdout();
+    ok = zam_write(stdout, p0->data, p0->len);
+    if (locked) zam_unlock_stdout();
+    if (!ok) exit(1);
+}
+fflush(stdout);
+p = (unsigned char*)malloc(cap);
+if (!p) zam_alloc_failed();
+zam_stdin_binary();
+while ((c = zam_stdin_getc()) != EOF) {
+    any = 1;
+    if (c == '\n') break;
+    if (n == cap) { q = (unsigned char*)realloc(p, cap * 2); if (!q) zam_alloc_failed(); p = q; cap *= 2; }
+    p[n++] = (unsigned char)c;
+}
+if (zam_stdin_error()) { zam_panic_one("cannot read standard input"); exit(1); }
+if (!any) { zam_panic_one("input() reached the end of standard input; use io.read_line()? to handle it"); exit(1); }
+if (n && p[n - 1] == '\r') n--;
+{ S line; line.data = p; line.len = n; line.chars = 0; return line; }"#,
     },
     Builtin {
         name: "std/io:read_all",

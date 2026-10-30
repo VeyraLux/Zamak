@@ -28,6 +28,22 @@ fn shown(token: Option<&Token>) -> String {
     }
 }
 
+/// 报错里的函数名写成用户调用时的样子：`std/fs:read` 是 `fs.read`，`int(text)` 改写成的
+/// `std/string:parse_i64` 是 `int`，自己模块和依赖里的函数只留函数名。
+fn called(name: &str) -> String {
+    match name {
+        "std/string:parse_i64" => "int".into(),
+        "std/string:parse_f64" => "float".into(),
+        _ => match name.split_once(':') {
+            Some((module, function)) => match module.strip_prefix("std/") {
+                Some("core") | None => function.into(),
+                Some(module) => format!("{}.{function}", module.trim_start_matches('_')),
+            },
+            None => name.into(),
+        },
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Type {
     Owned,
@@ -8814,16 +8830,17 @@ impl<'a> Checker<'a> {
                     .clone();
                 // 会失败的调用必须先被 `?` 或 `catch` 处理，错误值不会静默丢弃。
                 if callee.error.is_some() {
-                    return Err(format!("fallible call {name} must be handled with ?"));
+                    return Err(format!(
+                        "fallible call {} must be handled with ?",
+                        called(name)
+                    ));
                 }
                 self.call(name, &callee, args, expected, loans)
             }
             Expr::Try(inner) => {
                 if let Some((label, error, _)) = self.value_call(inner, expected, loans)? {
                     if Some(error) != self.error {
-                        return Err(format!(
-                            "? cannot propagate the error of {label} from this function"
-                        ));
+                        return Err(self.cannot_propagate(&label));
                     }
                     return Ok(());
                 }
@@ -8840,9 +8857,7 @@ impl<'a> Checker<'a> {
                     .error
                     .ok_or_else(|| format!("? requires a fallible call, but {name} cannot fail"))?;
                 if Some(error) != self.error {
-                    return Err(format!(
-                        "? cannot propagate the error of {name} from this function"
-                    ));
+                    return Err(self.cannot_propagate(name));
                 }
                 self.call(name, &callee, args, expected, loans)
             }
@@ -8959,6 +8974,19 @@ impl<'a> Checker<'a> {
         match self.place(path)?.1 {
             Type::Func(id) | Type::FuncRef(id) => Ok(func_error(id)),
             _ => Ok(None),
+        }
+    }
+    /// `?` 传不出去：当前函数不会失败，或者错误类型对不上。两种情况各给一个改法。
+    fn cannot_propagate(&self, name: &str) -> String {
+        let name = called(name);
+        if self.error.is_none() {
+            format!(
+                "? cannot propagate the error of {name}: this function can't fail; declare an error type, such as -> !string, or handle the error with catch"
+            )
+        } else {
+            format!(
+                "? cannot propagate the error of {name}: its error type differs from this function's; handle the error with catch"
+            )
         }
     }
     /// `?`、`catch` 包着的是对函数值的调用（`f(x)?`、`steps[0](x) catch e:`）：检查调用，返回

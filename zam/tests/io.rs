@@ -112,6 +112,32 @@ fn examples_read_files_stdin_and_arguments() {
 }
 
 #[test]
+fn input_reads_a_line_like_python() {
+    let sandbox = Sandbox::new("input");
+    let greet = include_str!("../../examples/io/greet.zm");
+    // 提示不换行；行尾的 \r\n 和 \n 都去掉。
+    assert_eq!(
+        stdout(&sandbox.run(greet, NONE, Some("扎马克\r\n36\n".as_bytes()))),
+        "Your name: Your age: Hi 扎马克, next year you'll be 37.\n"
+    );
+    // 读到输入末尾时程序停下，就像 Python 里没人接住的 EOFError。
+    failure(
+        &sandbox.run(greet, NONE, Some(b"Ada\n")),
+        "input() reached the end of standard input; use io.read_line()? to handle it",
+    );
+    // 不带提示也可以；最后一行没有换行也照样读到。
+    let echo =
+        "fn main():\n    let a = input()\n    let b = input()\n    println(f\"[{a}] [{b}]\")\n";
+    assert_eq!(
+        stdout(&sandbox.run(echo, NONE, Some(b"first\nlast"))),
+        "[first] [last]\n"
+    );
+    // 本模块自己定义了 input 时用自己的，和 abs、min 一样。
+    let own = "fn input(prompt: &string) -> string: \"mine\"\nfn main(): println(input(\"? \"))\n";
+    assert_eq!(stdout(&sandbox.run(own, NONE, None)), "mine\n");
+}
+
+#[test]
 fn arguments_survive_quoting_and_unicode() {
     let sandbox = Sandbox::new("args");
     let echo = "use std/env\nfn main() -> !string:\n    println(env.arg_count())\n    for i in 0..env.arg_count():\n        let value = env.arg(i)?\n        println(\"[{value}]\")\n";

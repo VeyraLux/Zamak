@@ -9,6 +9,7 @@
 | 函数 | 作用 |
 | --- | --- |
 | `println(x)`、`print(x)` | 打印一个值并换行。 |
+| `input()`、`input(prompt)` | 先显示 `prompt`（不换行），再读一行输入，去掉行尾的换行。 |
 | `len(x)` | 字符串的字符数，或列表、字典的元素数。 |
 | `str(x)` | 把值转成文字，与 `"{x}"` 相同。 |
 | `int(x)`、`float(x)` | 转换数字，或解析文字（可能失败）。 |
@@ -16,7 +17,18 @@
 | `min(xs)`、`max(xs)`、`sum(xs)`、`sorted(xs)` | 统计或排序一个列表。 |
 | `copy(&x)` | 深复制。 |
 
-## 读取输入：std/io
+## 读取输入
+
+`input` 和 Python 一样：显示提示，等用户输入一行，返回去掉换行的这一行：
+
+```zamak,check
+fn main() -> !string:
+    let name = input("Your name: ")
+    let age = int(input("Your age: "))?
+    println(f"Hi {name}, next year you'll be {age + 1}.")
+```
+
+如果 `input` 还没读到一行输入就结束了，程序会报错停下，就像 Python 里没人接住的 `EOFError`。要一直读到输入结束，用 `std/io` 里的 `io.read_line`。
 
 `io.read_line` 每次读一行，输入结束时返回 `false`。下面的程序给读到的每一行编号：
 

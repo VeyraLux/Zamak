@@ -751,7 +751,10 @@ static TABLE: &[(&str, &str)] = &[
     ("catch requires a function call", "catch 前面必须是函数调用"),
     ("catch block for % must return a value", "{0} 的 catch 块必须返回一个值"),
     ("cannot propagate %", "不能传播 {0}"),
-    ("cannot propagate the error of %", "不能把 {0} 的错误往外传"),
+    ("? cannot propagate the error of %: this function can't fail", "? 不能把 {0} 的错误往外传：这个函数不会失败"),
+    ("? cannot propagate the error of %: its error type differs from this function's", "? 不能把 {0} 的错误往外传：它的错误类型和这个函数的不一样"),
+    ("declare an error type, such as -> !string, or handle the error with catch", "给函数声明错误类型（例如 -> !string），或者用 catch 就地处理"),
+    ("handle the error with catch", "用 catch 就地处理"),
 
     // ---- extern fn ----
     ("extern fn % cannot declare an error type", "extern fn {0} 不能声明错误类型"),
@@ -939,7 +942,6 @@ static TABLE: &[(&str, &str)] = &[
     ("unsupported native cache path", "原生缓存路径不受支持"),
 
     // ---- main.rs 里补充的 Python 习惯提示 ----
-    ("read a line with io.read_line()? and use std/io", "用 io.read_line()? 读一行，并导入 std/io"),
     ("an optional value is written Option.None, or use a default value", "可选值写成 Option.None，或者用一个默认值"),
     ("methods take the value as a normal parameter, such as fn area(p: &Point)", "方法把值当作普通参数接收，例如 fn area(p: &Point)"),
     ("use .push(v) to add to the end", "用 .push(v) 加到末尾"),
@@ -968,6 +970,7 @@ static TABLE: &[(&str, &str)] = &[
     ("return a string on every path or change the function result type", "每条路径都返回字符串，或修改函数的返回类型"),
     ("add an arm for each missing variant or a final `_:` arm, and remove arms after `_`", "给每个缺少的变体加一个分支，或在最后加 `_:` 分支，并删掉 `_` 之后的分支"),
     ("handle the call with `?` or a `catch` block", "用 `?` 或 `catch` 块处理这个调用"),
+    ("`?` passes the error to the caller, so the function must declare the same error type; otherwise handle it with `catch`", "`?` 会把错误交给调用者，所以函数要声明同样的错误类型；否则就用 `catch` 就地处理"),
     ("use a string, a struct or an enum as the error type, such as `T!string` or `T!ParseError`", "错误类型用字符串、结构体或枚举，例如 `T!string` 或 `T!ParseError`"),
     ("use an f64 literal no larger than 1.7976931348623157e308", "f64 字面量不能大于 1.7976931348623157e308"),
     ("use a literal that fits in `i64` (max 9223372036854775807)", "使用 `i64` 范围内的字面量（最大 9223372036854775807）"),

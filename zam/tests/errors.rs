@@ -34,6 +34,13 @@ fn runtime_panics_follow_the_language() {
             "zam: integer arithmetic error",
             "zam: 整数运算出错",
         ),
+        // 编译期的报错也跟随语言，并且用用户写的名字（int），不是内部的 std/string:parse_i64。
+        (
+            "propagate",
+            "fn main():\n    let n = int(\"3\")?\n    println(n)\n",
+            "? cannot propagate the error of int: this function can't fail; declare an error type, such as -> !string, or handle the error with catch",
+            "? 不能把 int 的错误往外传：这个函数不会失败；给函数声明错误类型（例如 -> !string），或者用 catch 就地处理",
+        ),
     ] {
         let path = root.join(format!("{name}.zm"));
         fs::write(&path, source).unwrap();
@@ -226,7 +233,7 @@ fn custom_error_types() {
     for (source, message) in [
         (
             "enum E:\n    Bad\nuse std/fs\nfn f() -> !E:\n    let t = fs.read(\"x\")?\nfn main(): pass\n",
-            "? cannot propagate the error of std/fs:read",
+            "? cannot propagate the error of fs.read: its error type differs from this function's",
         ),
         (
             "enum E:\n    Bad\nfn f() -> !E:\n    fail \"text\"\nfn main(): pass\n",

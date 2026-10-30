@@ -9,6 +9,7 @@ These need no import:
 | Function | What it does |
 | --- | --- |
 | `println(x)`, `print(x)` | Print a value and a newline. |
+| `input()`, `input(prompt)` | Show `prompt` without a newline, then read one line of input without its line ending. |
 | `len(x)` | Characters in a string, or items in a list or map. |
 | `str(x)` | Convert a value to its text, as `"{x}"` does. |
 | `int(x)`, `float(x)` | Convert numbers, or parse text (can fail). |
@@ -16,7 +17,18 @@ These need no import:
 | `min(xs)`, `max(xs)`, `sum(xs)`, `sorted(xs)` | Summarize or sort a list. |
 | `copy(&x)` | Deep copy. |
 
-## Read input: std/io
+## Read input
+
+`input` works as in Python. It shows a prompt, waits for a line, and returns it without the line ending:
+
+```zamak,check
+fn main() -> !string:
+    let name = input("Your name: ")
+    let age = int(input("Your age: "))?
+    println(f"Hi {name}, next year you'll be {age + 1}.")
+```
+
+If the input ends before `input` gets a line, the program stops with an error, as an uncaught `EOFError` does in Python. To read until the input ends, use `io.read_line` from `std/io`.
 
 `io.read_line` reads one line at a time and returns `false` at the end of the input. This program numbers the lines it reads:
 

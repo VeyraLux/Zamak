@@ -1655,13 +1655,17 @@ impl Project {
                     (_, arg) => Expr::Chain(Box::new(arg), method, Vec::new()),
                 };
             }
-            // `abs`/`min`/`max`/`copy`/`int`/`float`：全局内建函数；本模块自己定义了同名函数时用自己的。
+            // `abs`/`min`/`max`/`copy`/`int`/`float`/`input`：全局内建函数；本模块自己定义了同名函数时用自己的。
             Expr::Call(name, args)
                 if matches!(
                     name.as_str(),
-                    "abs" | "min" | "max" | "copy" | "int" | "float" | "$pow"
+                    "abs" | "min" | "max" | "copy" | "int" | "float" | "input" | "$pow"
                 ) && self.resolve(module, name).is_err() =>
             {
+                // `input()` 和 Python 一样可以不带提示。
+                if name.as_str() == "input" && args.is_empty() {
+                    args.push(Expr::Text(String::new()));
+                }
                 *name = format!("std/core:{}", name.trim_start_matches('$'));
                 for arg in args.iter_mut() {
                     self.resolve_expr(module, locals, arg)?;

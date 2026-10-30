@@ -12,6 +12,13 @@ and this file is the source for the text of each GitHub release.
   can't start, so there was no completion. It now starts the compiler inside npm's package, also
   looks in npm's global packages, the install scripts' folders, and Cargo's, and starts the
   language server by itself when **Install with npm** finishes.
+- `input()` and `input(prompt)` read a line of input with no import, as in Python, so reading is
+  as easy as printing. The prompt appears without a newline, and the line comes back without its
+  line ending. If the input ends first, the program stops with an error, as an uncaught
+  `EOFError` does; use `io.read_line` to read until the input ends.
+- Using `?` in a function that can't fail now says so and suggests the fix, such as declaring
+  `-> !string`, and names the function the way you wrote it (`int`, `fs.read`) instead of its
+  internal name (`std/string:parse_i64`). The message was also missing its Chinese translation.
 
 ## 0.2.0
 
@@ -329,6 +336,11 @@ this preview.
 - VS Code 扩展能找到用 npm 装的 `zam` 了。以前它只在 `PATH` 里找名为 `zam` 的程序，而 npm 在 Windows
   上装的是 VS Code 启动不了的 `zam.cmd` 包装，所以没有补全。现在它直接启动 npm 包里的编译器，还会去 npm
   的全局包、安装脚本和 Cargo 用的文件夹里找；点了“用 npm 安装”之后，装好会自动启动语言服务器。
+- 新增内置的 `input()` 和 `input(prompt)`，和 Python 一样不用导入就能读一行输入，读和写一样方便。提示不换行，
+  读到的这一行去掉了行尾的换行。输入先结束时程序报错停下，就像没人接住的 `EOFError`；要一直读到输入结束，
+  用 `io.read_line`。
+- 在不会失败的函数里用 `?` 时，报错会说清原因并给出改法（例如声明 `-> !string`），函数名也按你写的样子显示
+  （`int`、`fs.read`），不再显示内部名字（`std/string:parse_i64`）。这条报错以前还缺中文翻译。
 
 ## 0.2.0（中文）
 

@@ -28,6 +28,7 @@ Zamak 尽可能沿用 Python 的名字和规则。这篇附录列出哪些与 Py
 | `int(s) if s.isdigit() else 0` | `int(s) catch e: 0` | 调用失败时改用默认值。 |
 | 异常自动向上传播 | `call()?` | 把错误传下去这件事在代码里看得见。 |
 | `print(a, b)` | `println(f"{a} {b}")` | `println` 只接收一个值。 |
+| `name = input("Name: ")` | `let name = input("Name: ")` | 读到输入末尾时程序停下，就像没人接住的 `EOFError`。 |
 | `[1, 2, 3]` | `let mut xs = [1, 2, 3]` | 要修改列表就加 `mut`。只有空列表需要写类型：`let xs: [i64] = []`。 |
 | `{"a": 1}` | `{"a": 1}`；空字典：`let m: {string: i64} = {}` | 键是 `i64` 或 `string`。 |
 | `lambda x: x * 2` | `fn(x): x * 2` | |

@@ -1,0 +1,5 @@
+# input() 和 Python 一样：先显示提示（不换行），再读一行，去掉行尾的换行。不用导入任何模块。
+fn main() -> !string:
+    let name = input("Your name: ")
+    let age = int(input("Your age: "))?
+    println(f"Hi {name}, next year you'll be {age + 1}.")

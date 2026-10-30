@@ -531,7 +531,6 @@ fn with_python_hint(message: String) -> String {
         .iter()
         .find_map(|prefix| message.rsplit_once(prefix).map(|(_, name)| name));
     let hint = match name {
-        Some("input") => "read a line with io.read_line()? and use std/io",
         Some("None") => "an optional value is written Option.None, or use a default value",
         Some("self") => "methods take the value as a normal parameter, such as fn area(p: &Point)",
         _ => return message,
@@ -692,7 +691,13 @@ fn classify(message: &str) -> (&'static str, &'static str, Option<&'static str>)
                 "a match subject is an enum, i64, f64, bool or string; give each arm a literal pattern such as `1:`, `\"go\":` or a variant name",
             ),
         )
-    } else if message.contains("fallible call") || message.contains("propagate the error") {
+    } else if message.contains("propagate the error") {
+        (
+            "ZM500",
+            "error_handling",
+            Some("`?` passes the error to the caller, so the function must declare the same error type; otherwise handle it with `catch`"),
+        )
+    } else if message.contains("fallible call") {
         (
             "ZM500",
             "error_handling",
