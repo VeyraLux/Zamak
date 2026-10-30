@@ -294,14 +294,20 @@ fn notes_serves_a_rest_api_backed_by_sqlite() {
                             "/notes",
                             &format!(r#"{{"title": "t{i}-{j}", "body": ""}}"#),
                         )
-                        .0
                     })
                     .collect::<Vec<_>>()
             })
         })
         .collect();
     for writer in writers {
-        assert!(writer.join().unwrap().iter().all(|status| *status == 201));
+        // 失败时把状态码和响应体都打出来，好分清是数据库忙还是别的问题。
+        let failed: Vec<_> = writer
+            .join()
+            .unwrap()
+            .into_iter()
+            .filter(|(status, _)| *status != 201)
+            .collect();
+        assert!(failed.is_empty(), "{failed:?}");
     }
     let (_, all) = request(port, "GET", "/notes", "");
     assert_eq!(all.matches(r#""id": "#).count(), 33, "{all}");
