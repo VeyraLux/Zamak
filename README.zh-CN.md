@@ -40,6 +40,8 @@
 <p align="center">Zamak 是一门为人与 AI 共同书写而设计的静态类型语言。语法轻盈而熟悉，编译产物是独立运行的原生程序；所有权模型无需垃圾回收即可管理内存，每一个错误都附有稳定的错误码和可直接采纳的修复建议。</p>
 <p align="center">作者 <strong>rayL-K</strong> · <strong>VeyraLux</strong></p>
 
+<p align="center"><strong>交流群</strong> · QQ 群 <code>1132190721</code> · <a href="https://discord.gg/kcbpFuSZt">Discord</a> <em>（邀请链接约 30 天失效）</em></p>
+
 <br/>
 
 ## 快速运行
