@@ -167,6 +167,33 @@ true
 - `time.time()` 是自 1970 年以来的秒数，`time.monotonic()` 用来测量时长，`time.sleep(seconds)` 暂停。`time.iso_utc(t)` 和 `time.iso_local(t)` 格式化时间。
 - `random.randint(a, b)` 包含两端，`random.randrange(a, b)` 不包含 `b`。`random.random()` 返回 [0, 1) 之间的 `f64`，`random.uniform(a, b)` 返回 [a, b) 之间的值。`random.seed(n)` 让随机序列可以重现，写测试时很有用。
 
+## 大整数：std/bigint
+
+`i64` 放不下时程序会停下。需要更多位数时（像 Python 的 `int` 那样），用 `BigInt`：
+
+```zamak
+use std/bigint
+
+fn main() -> !string:
+    let n = bigint.parse("123456789012345678901234567890")?
+    println(n * n)
+    println(bigint.from_int(2).pow(100))
+    println(n // bigint.from_int(-11))
+    println(n % bigint.from_int(-11))
+```
+
+```text
+15241578753238836750495351562536198787501905199875019052100
+1267650600228229401496703205376
+-11223344455667788991021324354
+-4
+```
+
+- `bigint.parse(text)` 读一个十进制整数，有其他字符就报错；`bigint.from_int(n)` 把 `i64` 转过来。
+- `+`、`-`、`*`、`//`、`%`、`-x` 和比较运算都能用，结果都是精确的。`//` 向下取整，`%` 和除数同号，同 Python。除以零时程序停下。
+- `pow(n)`、`abs()`、`to_int()`（放不进 `i64` 时报错）。`println`、`str()`、`f"{n}"` 显示十进制数字。
+- 运算符只在左边的值上找方法，所以要写 `n * bigint.from_int(3)`，不能写 `n * 3`。
+
 ## 日期与时间：std/datetime
 
 `std/datetime` 的用法参考 Python 的 `datetime`：
@@ -193,9 +220,32 @@ Sunday, 01 November 2026
 2026-11-01T00:30:00+00:00
 ```
 
+两个时间相减得到 `TimeDelta`，和 Python 的 `timedelta` 一样：
+
+```zamak
+use std/datetime
+
+fn main() -> !string:
+    let start = datetime.datetime_from_iso("2026-11-01T08:00:00+08:00")?
+    let end = datetime.datetime_from_iso("2026-11-01T09:30:15.500+08:00")?
+    let took = end - start
+    println(took.total_seconds())
+    println(took)
+    println((end + datetime.timedelta(days=1)).isoformat())
+    println(start < end)
+```
+
+```text
+5415.5
+1:30:15.500000
+2026-11-02T09:30:15.500000+08:00
+true
+```
+
 - `Date` 有 `year`、`month`、`day`。`datetime.today()` 是今天的日期，`datetime.date(y, m, d)` 会检查数值是否合法。
 - `DateTime` 还有 `hour`、`minute`、`second`、`microsecond` 和 `offset`（比 UTC 快多少秒）。`datetime.now()` 用本地时区，`datetime.utcnow()` 用 UTC，`datetime.from_timestamp(t)` 把 `time.time()` 的值转成时间。
-- `add_days(n)`、`days_since(other)`、`add_seconds(s)`、`seconds_since(other)` 做加减。`weekday()` 星期一是 0。
+- `end - start` 得到 `TimeDelta`，有 `days`、`seconds`、`microseconds` 三个字段（都是整数）和 `total_seconds()`。用 `datetime.timedelta(days=1, hours=2)` 创建。时间加上 `TimeDelta` 还是时间；往前算就加一个负的：`t + -delta`。`<`、`>`、`==` 比较的是实际时刻，时区不同也没关系。`TimeDelta` 显示成 Python 的样子，例如 `2 days, 1:30:15.500000`。日期也一样。
+- `add_days(n)`、`days_since(other)`、`add_seconds(s)`、`seconds_since(other)` 也能做加减。`weekday()` 星期一是 0。
 - `isoformat()`、`strftime(format)`、`date_from_iso(text)`、`datetime_from_iso(text)` 在时间和文字之间转换。
 - 日期和时间只含数字，赋值时像数字一样复制。
 

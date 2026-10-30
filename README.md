@@ -156,7 +156,7 @@ not: 1
 - **Checked where it matters.** Integer overflow, division by zero, and out-of-bounds access stop the program in every build, and the compiler removes the checks it can prove redundant.
 - **Fast feedback.** `zam check` needs no C compiler and finishes in under 0.1 s on a 5,000-line project; a one-line edit rebuilds in about 0.75 s.
 - **Native, standalone output.** Zamak generates C and compiles it with MSVC, GCC, or Clang. The executable needs neither Zamak nor Rust.
-- **Batteries included.** HTTP and HTTPS clients and a multithreaded server, threads and queues, SQLite, JSON for any type, regular expressions, dates, and command-line options read into a struct. They're built into `zam`, so there's nothing else to install.
+- **Batteries included.** HTTP and HTTPS clients and a multithreaded server, threads and queues, SQLite, JSON for any type, regular expressions, dates, big integers, and command-line options read into a struct. They're built into `zam`, so there's nothing else to install.
 - **Desktop windows.** Native controls on Windows, macOS, and Linux, plus a canvas and a set of ready-made controls you can restyle or draw yourself.
 
 See [Grammar at a glance](book/en/src/grammar.md) for the syntax and [B. Performance](book/en/src/appendix-performance.md) for build and run numbers.

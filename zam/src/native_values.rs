@@ -114,6 +114,20 @@ fn shared(ty: Type, protos: &mut String, defs: &mut String, body: (String, Strin
     ));
 }
 
+/// 结构体自己的显示方法 `fn __str__(&self) -> string` 的 C 名字；没有时返回 None。
+pub fn custom_text(module: &Module, name: &str) -> Option<String> {
+    let method = format!("{name}.__str__");
+    let function = module.functions.get(&method)?;
+    let fits = function.generics.is_empty()
+        && function.error.is_none()
+        && function.result == Type::Owned
+        && matches!(function.params.as_slice(), [(_, Type::RecordRef(_, false))]);
+    fits.then(|| {
+        let hex: String = method.bytes().map(|b| format!("{b:02x}")).collect();
+        format!("f{hex}")
+    })
+}
+
 /// 结构体或枚举的四个函数。枚举只复制、比较和显示选中变体的数据。
 fn record(module: &Module, name: &str, protos: &mut String, defs: &mut String) {
     let structure = &module.structs[name];
@@ -228,6 +242,12 @@ fn record(module: &Module, name: &str, protos: &mut String, defs: &mut String) {
         eq_body.push_str("return 1;");
     }
     copy_body.push_str("return out;");
+    // 定义了 `fn __str__(&self) -> string` 的结构体或枚举：显示文本由它决定，println、str() 和
+    // f"{x}" 都用它（同 Python）。方法的定义在函数原型之后，这里先声明一次。
+    if let Some(symbol) = custom_text(module, name) {
+        protos.push_str(&format!("S {symbol}(R{id}* p0);\n"));
+        show_body = format!("S s = {symbol}(p); zam_append(out, s.data, s.len); drop(&s);");
+    }
     shared(
         Type::Record(id),
         protos,

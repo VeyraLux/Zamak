@@ -1,0 +1,34 @@
+# 任意大小的整数（std/bigint）：结果与 Python 的 int 相同，不会溢出，也不会四舍五入。
+use std/bigint
+
+fn factorial(n: i64) -> bigint.BigInt:
+    let mut result = bigint.from_int(1)
+
+    for i in 1..n + 1:
+        result = result * bigint.from_int(i)
+
+    result
+
+fn main() -> !string:
+    let a = bigint.parse("123456789012345678901234567890")?
+    let b = bigint.parse("-987654321098765432109876543210")?
+    println(a * b)
+    println(a + b)
+    println(a - b)
+    println(b // a)
+    println(b % a)
+    println(a // bigint.from_int(-7))
+    println(a % bigint.from_int(-7))
+    println(bigint.from_int(2).pow(200))
+    println(factorial(30))
+    println(f"{factorial(25)} has {len(str(factorial(25)))} digits")
+    println(a < b)
+    println(-b > a)
+    println(bigint.from_int(-9223372036854775807 - 1))
+    println(bigint.parse("9223372036854775807")?.to_int()?)
+    bigint.parse("9223372036854775808")?.to_int() catch e:
+        println(e)
+    bigint.parse("12x3") catch e:
+        println(e)
+    println(bigint.parse("-0")? == bigint.from_int(0))
+    println(factorial(40) // factorial(38))

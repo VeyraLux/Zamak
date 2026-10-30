@@ -133,6 +133,48 @@ ink: 5
 
 不能用 `let x = stock[0]` 把结构体元素移出来，否则列表里会留下一个空洞。可以用 `&stock[0]` 借用它，用 `copy(&stock[0])` 复制它，或者用 `stock.pop()` 取出最后一个。
 
+## 运算符
+
+结构体可以自己定义 `+`、`-`、`<` 等运算符的意思，方法名和 Python 相同。`a + b` 调用的是 `a.__add__(b)`：
+
+```zamak
+struct Vec2:
+    x: f64
+    y: f64
+
+    fn __add__(&self, other: &Vec2) -> Vec2:
+        Vec2(x: self.x + other.x, y: self.y + other.y)
+
+    fn __mul__(&self, k: f64) -> Vec2:
+        Vec2(x: self.x * k, y: self.y * k)
+
+    fn __lt__(&self, other: &Vec2) -> bool:
+        self.x * self.x + self.y * self.y < other.x * other.x + other.y * other.y
+
+fn main():
+    let a = Vec2(x: 1.0, y: 2.0)
+    let b = Vec2(x: 3.0, y: 4.0)
+    println(a + b)
+    println((a + b) * 2.0)
+    println(a < b)
+```
+
+```text
+Vec2(x: 4.0, y: 6.0)
+Vec2(x: 8.0, y: 12.0)
+true
+```
+
+| 运算符 | 方法 |
+| --- | --- |
+| `+`、`-`、`*`、`/`、`//`、`%` | `__add__`、`__sub__`、`__mul__`、`__truediv__`、`__floordiv__`、`__mod__` |
+| `<`、`<=`、`>`、`>=` | `__lt__`、`__le__`、`__gt__`、`__ge__` |
+| `==`、`!=` | `__eq__`；`!=` 是它的反面 |
+| `-x` | `__neg__` |
+| `println(x)`、`str(x)`、`f"{x}"` | `__str__`，返回一个 `string` |
+
+运算符在左边的值上找方法，所以 `a * 2.0` 可以，`2.0 * a` 不行。没有定义 `__eq__` 的结构体逐项比较，没有定义 `__str__` 的结构体显示各个字段。
+
 ## 泛型结构体
 
 结构体可以带类型参数，写在名字后面的方括号里：

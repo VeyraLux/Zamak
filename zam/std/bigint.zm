@@ -1,0 +1,344 @@
+# 任意大小的整数，同 Python 的 int（Python 的整数本来就没有上限）：
+#
+#     let n = bigint.parse("123456789012345678901234567890")?
+#     println(n * n)
+#     println(bigint.from_int(2).pow(100))
+#
+# 结果都是精确的，不会溢出，也不会四舍五入。// 和 % 与 Python 一样向下取整，余数和除数同号。
+# 运算符只在左边找方法，所以要写 n * bigint.from_int(3)，不能写 3 * n。
+
+# 每个元素存 9 位十进制数字（10 亿进制）。两个元素相乘不超过 10^18，放得进 i64。
+const BASE = 1000000000
+# i64 能放下的最大值 9223372036854775807 和最小值的绝对值 9223372036854775808，按上面的进制写。
+const I64_MAX = [854775807, 223372036, 9]
+const I64_MIN = [854775808, 223372036, 9]
+
+pub struct BigInt:
+    # 是不是负数；0 不是负数。
+    negative: bool
+    # 绝对值，从低位到高位，每项 0 到 999999999，最高位不是 0；0 是空列表。
+    digits: [i64]
+
+    pub fn __add__(&self, other: &BigInt) -> BigInt:
+        if self.negative == other.negative:
+            return make(self.negative, add_abs(&self.digits, &other.digits))
+
+        # 符号不同：绝对值大的减去小的，符号跟大的走。
+        let order = compare_abs(&self.digits, &other.digits)
+
+        if order >= 0:
+            return make(self.negative, sub_abs(&self.digits, &other.digits))
+
+        make(other.negative, sub_abs(&other.digits, &self.digits))
+
+    pub fn __sub__(&self, other: &BigInt) -> BigInt:
+        self + -other
+
+    pub fn __mul__(&self, other: &BigInt) -> BigInt:
+        make(self.negative != other.negative, mul_abs(&self.digits, &other.digits))
+
+    # a // b：向下取整，同 Python。除以 0 时程序停下，和整数一样。
+    pub fn __floordiv__(&self, other: &BigInt) -> BigInt:
+        let result = divide(self, other)
+        result.quotient
+
+    # a % b：余数和除数同号，同 Python。
+    pub fn __mod__(&self, other: &BigInt) -> BigInt:
+        let result = divide(self, other)
+        result.remainder
+
+    pub fn __neg__(&self) -> BigInt:
+        make(not self.negative, copy(&self.digits))
+
+    pub fn __lt__(&self, other: &BigInt) -> bool:
+        compare(self, other) < 0
+
+    pub fn __le__(&self, other: &BigInt) -> bool:
+        compare(self, other) <= 0
+
+    pub fn __gt__(&self, other: &BigInt) -> bool:
+        compare(self, other) > 0
+
+    pub fn __ge__(&self, other: &BigInt) -> bool:
+        compare(self, other) >= 0
+
+    # self 的 exponent 次方，同 Python 的 n ** exponent。指数不能是负数，和整数的 ** 一样。
+    pub fn pow(&self, exponent: i64) -> BigInt:
+        if exponent < 0:
+            # 让整数的 ** 报同样的错：指数为负时结果不是整数。
+            let stop = 2 ** exponent
+            return from_int(stop)
+
+        let mut result = from_int(1)
+        let mut base = copy(self)
+        let mut rest = exponent
+
+        while rest > 0:
+            if rest % 2 == 1:
+                result = result * base
+
+            rest = rest // 2
+
+            if rest > 0:
+                base = base * base
+
+        result
+
+    # 绝对值。
+    pub fn abs(&self) -> BigInt:
+        make(false, copy(&self.digits))
+
+    # 放得进 i64 时转成 i64，否则报错（不会截断）。
+    pub fn to_int(&self) -> i64!string:
+        if self.negative and compare_abs(&self.digits, I64_MIN) == 0:
+            return -9223372036854775807 - 1
+
+        if compare_abs(&self.digits, I64_MAX) > 0:
+            fail f"{self} does not fit in i64"
+
+        let mut value = 0
+        let mut i = len(self.digits) - 1
+
+        while i >= 0:
+            value = value * BASE + self.digits[i]
+            i -= 1
+
+        if self.negative: -value else: value
+
+    # 十进制写法，同 Python 的 str(n)。
+    pub fn __str__(&self) -> string:
+        if len(self.digits) == 0:
+            return "0"
+
+        let mut out = if self.negative: "-" else: ""
+        let mut i = len(self.digits) - 1
+        out += f"{self.digits[i]}"
+        i -= 1
+
+        while i >= 0:
+            out += f"{self.digits[i]:09}"
+            i -= 1
+
+        out
+
+# i64 转成 BigInt。
+pub fn from_int(n: i64) -> BigInt:
+    # i64 最小值取负会溢出，单独写出它的各位。
+    if n == -9223372036854775807 - 1:
+        return BigInt(negative: true, digits: [854775808, 223372036, 9])
+
+    let mut value = if n < 0: -n else: n
+    let mut digits: [i64] = []
+
+    while value > 0:
+        digits.append(value % BASE)
+        value = value // BASE
+
+    make(n < 0, digits)
+
+# 读十进制的整数：前面可以有 + 或 -，其余只能是数字，同 Python 的 int(text)。
+pub fn parse(text: &string) -> BigInt!string:
+    let clean = text.strip()
+    let mut start = 0
+    let mut negative = false
+
+    if clean.startswith("-") or clean.startswith("+"):
+        negative = clean.startswith("-")
+        start = 1
+
+    let body = clean[start:]
+
+    if len(body) == 0:
+        fail f"not an integer: {text}"
+
+    for c in body.chars():
+        if c < "0" or c > "9":
+            fail f"not an integer: {text}"
+
+    let mut digits: [i64] = []
+    let mut end = len(body)
+
+    while end > 0:
+        let begin = if end > 9: end - 9 else: 0
+        digits.append(body[begin:end].parse_i64()?)
+        end = begin
+
+    make(negative, digits)
+
+struct Division:
+    quotient: BigInt
+    remainder: BigInt
+
+struct AbsDivision:
+    quotient: [i64]
+    remainder: [i64]
+
+fn make(negative: bool, digits: [i64]) -> BigInt:
+    let trimmed = trim(digits)
+    let sign = negative and len(trimmed) > 0
+    BigInt(negative: sign, digits: trimmed)
+
+fn trim(digits: [i64]) -> [i64]:
+    let mut out = digits
+
+    while len(out) > 0 and out[len(out) - 1] == 0:
+        out.pop()
+
+    out
+
+fn compare(a: &BigInt, b: &BigInt) -> i64:
+    if a.negative != b.negative:
+        return if a.negative: -1 else: 1
+
+    let order = compare_abs(&a.digits, &b.digits)
+    if a.negative: -order else: order
+
+fn compare_abs(a: &[i64], b: &[i64]) -> i64:
+    if len(a) != len(b):
+        return if len(a) < len(b): -1 else: 1
+
+    let mut i = len(a) - 1
+
+    while i >= 0:
+        if a[i] != b[i]:
+            return if a[i] < b[i]: -1 else: 1
+
+        i -= 1
+
+    0
+
+fn add_abs(a: &[i64], b: &[i64]) -> [i64]:
+    let mut out: [i64] = []
+    let mut carry = 0
+    let longest = if len(a) > len(b): len(a) else: len(b)
+
+    for i in 0..longest:
+        let x = if i < len(a): a[i] else: 0
+        let y = if i < len(b): b[i] else: 0
+        let sum = x + y + carry
+        out.append(sum % BASE)
+        carry = sum // BASE
+
+    if carry > 0:
+        out.append(carry)
+
+    out
+
+# a - b，要求 |a| >= |b|。
+fn sub_abs(a: &[i64], b: &[i64]) -> [i64]:
+    let mut out: [i64] = []
+    let mut borrow = 0
+
+    for i in 0..len(a):
+        let y = if i < len(b): b[i] else: 0
+        let mut diff = a[i] - y - borrow
+
+        if diff < 0:
+            diff += BASE
+            borrow = 1
+        else:
+            borrow = 0
+
+        out.append(diff)
+
+    trim(out)
+
+fn mul_abs(a: &[i64], b: &[i64]) -> [i64]:
+    if len(a) == 0 or len(b) == 0:
+        return []
+
+    let mut out: [i64] = []
+
+    for i in 0..len(a) + len(b):
+        out.append(0)
+
+    for i in 0..len(a):
+        let x = a[i]
+        let mut carry = 0
+
+        for j in 0..len(b):
+            let cur = out[i + j] + x * b[j] + carry
+            out[i + j] = cur % BASE
+            carry = cur // BASE
+
+        let mut k = i + len(b)
+
+        while carry > 0:
+            let cur = out[k] + carry
+            out[k] = cur % BASE
+            carry = cur // BASE
+            k += 1
+
+    trim(out)
+
+# |a| 乘以 0 到 BASE - 1 之间的整数。
+fn mul_small(a: &[i64], m: i64) -> [i64]:
+    let mut out: [i64] = []
+    let mut carry = 0
+
+    for i in 0..len(a):
+        let cur = a[i] * m + carry
+        out.append(cur % BASE)
+        carry = cur // BASE
+
+    if carry > 0:
+        out.append(carry)
+
+    trim(out)
+
+# 绝对值的商与余数（b 不是 0）。
+fn divmod_abs(a: &[i64], b: &[i64]) -> AbsDivision:
+    let mut quotient: [i64] = []
+
+    for i in 0..len(a):
+        quotient.append(0)
+
+    let mut remainder: [i64] = []
+    let mut i = len(a) - 1
+
+    while i >= 0:
+        # remainder = remainder * BASE + a[i]
+        remainder.insert(0, a[i])
+        remainder = trim(remainder)
+        # 这一位商：满足 b * q <= remainder 的最大 q，二分查找。
+        let mut low = 0
+        let mut high = BASE - 1
+
+        while low < high:
+            let middle = (low + high + 1) // 2
+
+            if compare_abs(&mul_small(b, middle), &remainder) <= 0:
+                low = middle
+            else:
+                high = middle - 1
+
+        if low > 0:
+            remainder = sub_abs(&remainder, &mul_small(b, low))
+
+        quotient[i] = low
+        i -= 1
+
+    AbsDivision(quotient: trim(quotient), remainder: remainder)
+
+# 向下取整的商与余数，同 Python 的 divmod。
+fn divide(a: &BigInt, b: &BigInt) -> Division:
+    if len(b.digits) == 0:
+        # 和整数一样，除以 0 时程序停下。
+        let zero = len(b.digits)
+        let stop = 1 // zero
+        return Division(quotient: from_int(stop), remainder: from_int(stop))
+
+    let parts = divmod_abs(&a.digits, &b.digits)
+
+    if a.negative == b.negative:
+        # 一个字段移走后整个 parts 就用完了，所以商先复制一份。
+        let quotient = copy(&parts.quotient)
+        return Division(quotient: make(false, quotient), remainder: make(b.negative, parts.remainder))
+
+    if len(parts.remainder) == 0:
+        return Division(quotient: make(true, parts.quotient), remainder: from_int(0))
+
+    let one: [i64] = [1]
+    let quotient = add_abs(&parts.quotient, &one)
+    let remainder = sub_abs(&b.digits, &parts.remainder)
+    Division(quotient: make(true, quotient), remainder: make(b.negative, remainder))

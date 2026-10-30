@@ -5784,6 +5784,12 @@ impl<'a> Generator<'a> {
         string_method(&self.module.functions, receiver, method, args)
     }
     fn ty(&self, expr: &Expr) -> Type {
+        // 与检查器一致：二元运算单独算，两边的类型各算一次，长表达式不会指数变慢。
+        if let Expr::Binary(op, left, right) = expr {
+            if op != "in" && op != "not in" {
+                return self.binary_ty(op, left, right);
+            }
+        }
         if let Some(call) = self.string_call(expr) {
             return self.ty(&call);
         }
@@ -5957,16 +5963,24 @@ impl<'a> Generator<'a> {
             Expr::Catch(inner, _, _) => self.ty(inner),
             Expr::Unary('!', _) => Type::Bool,
             Expr::Unary('f', _) => Type::Float,
-            Expr::Unary(_, value) => numeric(self.ty(value)),
-            Expr::Binary(op, left, _) if op == "+" && is_text(self.ty(left)) => Type::Owned,
-            Expr::Binary(op, _, _) if bitwise(op) => Type::Int,
-            Expr::Binary(op, left, _) => {
-                if matches!(op.as_str(), "+" | "-" | "*" | "/" | "//" | "%") {
-                    numeric(self.ty(left))
-                } else {
-                    Type::Bool
+            // 与检查器一致：操作数的类型每层只算一次，长表达式不会指数变慢。
+            Expr::Unary(op, value) => {
+                let ty = self.ty(value);
+                let owned = ty.borrowable().map_or(ty, |(owned, _)| owned);
+                if *op == '-' {
+                    if let Ok(Some((_, function))) = record_method_with(
+                        &self.module.structs,
+                        &self.module.functions,
+                        owned,
+                        "__neg__",
+                        &[],
+                    ) {
+                        return function.result;
+                    }
                 }
+                numeric(ty)
             }
+            Expr::Binary(op, left, right) => self.binary_ty(op, left, right),
             Expr::If(_, yes, _) => self.ty(yes),
         }
     }
@@ -6650,6 +6664,10 @@ impl<'a> Generator<'a> {
             ),
             Expr::Float(value) => self.scalar(&float_literal(*value), Type::Float),
             Expr::Bool(value) => self.scalar(if *value { "1" } else { "0" }, Type::Bool),
+            Expr::Unary(op, value) if self.negated(*op, value).is_some() => {
+                let call = self.negated(*op, value).expect("checked");
+                self.expr(&call)
+            }
             Expr::Unary(op, value) => {
                 let ty = self.ty(expr);
                 let value = self.expr(value);
@@ -6669,6 +6687,10 @@ impl<'a> Generator<'a> {
                     },
                     ty,
                 )
+            }
+            Expr::Binary(op, left, right) if self.overloaded(op, left, right).is_some() => {
+                let call = self.overloaded(op, left, right).expect("checked");
+                self.expr(&call)
             }
             Expr::Binary(op, left, right)
                 if matches!(op.as_str(), "==" | "!=")
@@ -7287,6 +7309,68 @@ impl<'a> Generator<'a> {
             .ok()??
         };
         Some((name, method_args(receiver, callee, method, args).ok()?))
+    }
+    /// 与检查器的 `binary_ty` 一致：左边的类型只算一次；右边只在整数遇到小数时才看。
+    fn binary_ty(&self, op: &str, left: &Expr, right: &Expr) -> Type {
+        if bitwise(op) {
+            return Type::Int;
+        }
+        // 自己看不出类型的构造（`Option.None == x`）用 known_type，不会 panic。
+        let left_ty = match crate::compiler::operator_method(op) {
+            Some(_) => self.known_type(left),
+            None => None,
+        };
+        if let (Some(ty), Some(method)) = (left_ty, crate::compiler::operator_method(op)) {
+            // 结果类型直接取方法的返回类型，不再按方法调用重算左边（见检查器的 binary_ty）。
+            if let Ok(Some((_, function))) = record_method_with(
+                &self.module.structs,
+                &self.module.functions,
+                ty,
+                method,
+                &[],
+            ) {
+                return if op == "!=" {
+                    Type::Bool
+                } else {
+                    function.result
+                };
+            }
+        }
+        if !matches!(op, "+" | "-" | "*" | "/" | "//" | "%") {
+            return Type::Bool;
+        }
+        let left_ty = left_ty.unwrap_or_else(|| self.ty(left));
+        if op == "+" && is_text(left_ty) {
+            return Type::Owned;
+        }
+        let left_ty = numeric(left_ty);
+        if left_ty == Type::Int && (op == "/" || self.ty(right) == Type::Float) {
+            return Type::Float;
+        }
+        left_ty
+    }
+    /// 与检查器一致：`-x` 的 x 是定义了 `__neg__` 的结构体时，按 `x.__neg__()` 生成。
+    fn negated(&self, op: char, value: &Expr) -> Option<Expr> {
+        if op != '-' {
+            return None;
+        }
+        let ty = self.known_type(value)?;
+        crate::compiler::negation_call(&self.module.structs, &self.module.functions, ty, value)
+    }
+    /// 与检查器一致：`a - b` 的左边是定义了 `__sub__` 的结构体时，按 `a.__sub__(b)` 生成。
+    fn overloaded(&self, op: &str, left: &Expr, right: &Expr) -> Option<Expr> {
+        // and、or、in 这些没有方法：不用算左边的类型。
+        crate::compiler::operator_method(op)?;
+        // 自己看不出类型的构造（`Option.None == x`）不是运算符方法的接收者。
+        let ty = self.known_type(left)?;
+        crate::compiler::operator_call(
+            &self.module.structs,
+            &self.module.functions,
+            op,
+            ty,
+            left,
+            right,
+        )
     }
     fn record_call(&self, expr: &Expr) -> bool {
         matches!(
@@ -8270,12 +8354,14 @@ pub fn generate_with(
         .filter_map(|(name, _)| name.rsplit_once('.').map(|(_, m)| m))
         .collect();
     for (name, function) in &module.functions {
+        // 显示结构体时会调用它的 `__str__`（见 native_values::custom_text）：程序里所有的都带上原型。
+        let shows = name.ends_with(".__str__");
         if !function.dispatch
             && !function.builtin
             && function.generics.is_empty()
             && name
                 .rsplit_once('.')
-                .is_some_and(|(owner, m)| owner.contains(':') && dispatched.contains(m))
+                .is_some_and(|(owner, m)| owner.contains(':') && (shows || dispatched.contains(m)))
         {
             needed.insert(name.clone());
         }
@@ -8296,6 +8382,30 @@ pub fn generate_with(
                     if module.functions.contains_key("std/string:contains") {
                         needed.insert("std/string:contains".to_owned());
                     }
+                }
+                // `a - b` 可能是结构体的 `__sub__`，`-x` 可能是 `__neg__`：同名的结构体方法都带上原型，
+                // 和方法调用一样。
+                Expr::Binary(..) | Expr::Unary('-', _) => {
+                    let method = match expr {
+                        Expr::Binary(op, _, _) => match crate::compiler::operator_method(op) {
+                            Some(method) => method,
+                            None => return,
+                        },
+                        _ => "__neg__",
+                    };
+                    let suffix = format!(".{method}");
+                    let instance = format!(".{method}[");
+                    needed.extend(
+                        module
+                            .functions
+                            .iter()
+                            .filter(|(name, function)| {
+                                (name.ends_with(&suffix) || name.contains(&instance))
+                                    && !function.builtin
+                                    && function.generics.is_empty()
+                            })
+                            .map(|(name, _)| name.clone()),
+                    );
                 }
                 Expr::Call(name, _) if name != COPY => {
                     for ty in [Type::Int, Type::Float, Type::Owned] {

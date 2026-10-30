@@ -19,6 +19,25 @@ and this file is the source for the text of each GitHub release.
 - Using `?` in a function that can't fail now says so and suggests the fix, such as declaring
   `-> !string`, and names the function the way you wrote it (`int`, `fs.read`) instead of its
   internal name (`std/string:parse_i64`). The message was also missing its Chinese translation.
+- Structs can define operators with Python's method names: `a + b` calls `a.__add__(b)`, and
+  `__sub__`, `__mul__`, `__truediv__`, `__floordiv__`, `__mod__`, `__lt__`, `__le__`, `__gt__`,
+  `__ge__`, `__eq__` (with `!=` as its opposite), and `__neg__` work the same way. Using an
+  operator a struct doesn't define names the method to add.
+- `end - start` on two `DateTime` values gives a `TimeDelta`, as Python's `timedelta` does, with
+  `days`, `seconds`, `microseconds`, and `total_seconds()`. It counts whole microseconds, so nothing
+  is rounded. `datetime.timedelta(days=1, hours=2)` makes one, `t + delta` and `t + -delta` move a
+  time, and `<`, `==`, and the other comparisons compare the actual moments, even across time zones.
+  `Date` values subtract and compare the same way.
+- `fn __str__(&self) -> string` decides what `println(x)`, `str(x)`, and `f"{x}"` show for a struct,
+  as in Python. A `TimeDelta` now prints as Python's does, such as `2 days, 1:30:15.500000`.
+- `std/bigint`: integers of any size, as Python's `int`. `bigint.parse(text)` and `bigint.from_int(n)`
+  make one, and `+`, `-`, `*`, `//`, `%`, `-x`, comparisons, `pow`, `abs`, and `to_int` work on it.
+  Results are exact, `//` rounds down as in Python, and `println` shows the digits.
+- Fixed: checking a long expression took twice as long for each extra term, so `a + b + ...` with
+  22 terms took 20 seconds and 40 terms never finished. It's now linear: 300 terms check in a
+  fraction of a second. Very deep expressions no longer overflow the stack either.
+- Type errors name the types you wrote: `this value is i64, but P is expected` instead of
+  `string type mismatch`, and `P` instead of `main:P`.
 
 ## 0.2.0
 
@@ -341,6 +360,20 @@ this preview.
   用 `io.read_line`。
 - 在不会失败的函数里用 `?` 时，报错会说清原因并给出改法（例如声明 `-> !string`），函数名也按你写的样子显示
   （`int`、`fs.read`），不再显示内部名字（`std/string:parse_i64`）。这条报错以前还缺中文翻译。
+- 结构体可以用 Python 的方法名定义运算符：`a + b` 调用 `a.__add__(b)`，`__sub__`、`__mul__`、`__truediv__`、
+  `__floordiv__`、`__mod__`、`__lt__`、`__le__`、`__gt__`、`__ge__`、`__eq__`（`!=` 是它的反面）和 `__neg__` 同理。
+  对没定义的运算符，报错会说出要加哪个方法。
+- 两个 `DateTime` 相减（`end - start`）得到 `TimeDelta`，和 Python 的 `timedelta` 一样，有 `days`、`seconds`、
+  `microseconds` 和 `total_seconds()`。按整数微秒计算，不会四舍五入。`datetime.timedelta(days=1, hours=2)` 创建时长，
+  `t + delta`、`t + -delta` 移动时间，`<`、`==` 等比较的是实际时刻，时区不同也没关系。`Date` 也能这样相减和比较。
+- 结构体定义 `fn __str__(&self) -> string` 后，`println(x)`、`str(x)`、`f"{x}"` 显示它返回的文字，同 Python。
+  `TimeDelta` 因此显示成 Python 的样子，例如 `2 days, 1:30:15.500000`。
+- 新增 `std/bigint`：任意大小的整数，同 Python 的 `int`。用 `bigint.parse(text)`、`bigint.from_int(n)` 创建，
+  支持 `+`、`-`、`*`、`//`、`%`、`-x`、比较、`pow`、`abs`、`to_int`。结果都是精确的，`//` 同 Python 向下取整，
+  `println` 显示十进制数字。
+- 修复：表达式每多一项，检查时间就翻一倍，`a + b + ...` 22 项要 20 秒，40 项一直卡住。现在是线性的：
+  300 项不到一秒就检查完。嵌套很深的表达式也不会再栈溢出。
+- 类型报错写出你写的类型：显示“这个值是 i64，这里需要 P”，不再是“字符串类型不匹配”；类型名显示 `P`，不再是 `main:P`。
 
 ## 0.2.0（中文）
 

@@ -1,0 +1,57 @@
+# 运算符方法，和 Python 一样：结构体定义了 __add__，a + b 就调用 a.__add__(b)。
+# 能定义的有 __add__ __sub__ __mul__ __truediv__ __floordiv__ __mod__（+ - * / // %）、
+# __lt__ __le__ __gt__ __ge__（< <= > >=）、__eq__（==，!= 是它的反面）和 __neg__（-x）。
+# __str__ 决定 println、str() 和 f"{x}" 显示成什么样。
+
+struct Vec2:
+    x: f64
+    y: f64
+
+    fn __add__(&self, other: &Vec2) -> Vec2:
+        Vec2(x: self.x + other.x, y: self.y + other.y)
+
+    fn __sub__(&self, other: &Vec2) -> Vec2:
+        Vec2(x: self.x - other.x, y: self.y - other.y)
+
+    fn __mul__(&self, k: f64) -> Vec2:
+        Vec2(x: self.x * k, y: self.y * k)
+
+    fn __neg__(&self) -> Vec2:
+        Vec2(x: -self.x, y: -self.y)
+
+# 金额用整数分；__eq__ 只比较金额，不比较备注。
+struct Money:
+    cents: i64
+    note: string
+
+    fn __add__(&self, other: &Money) -> Money:
+        Money(cents: self.cents + other.cents, note: "sum")
+
+    fn __lt__(&self, other: &Money) -> bool:
+        self.cents < other.cents
+
+    fn __eq__(&self, other: &Money) -> bool:
+        self.cents == other.cents
+
+    fn __str__(&self) -> string:
+        f"¥{self.cents // 100}.{self.cents % 100:02}"
+
+fn main():
+    let a = Vec2(x: 1.0, y: 2.0)
+    let b = Vec2(x: 3.0, y: 5.0)
+    println(a + b)
+    println(b - a)
+    println((a + b) * 2.0)
+    println(-a)
+    let points = [a, b]
+    println(points[0] + points[1])
+
+    let lunch = Money(cents: 1850, note: "lunch")
+    let taxi = Money(cents: 2300, note: "taxi")
+    println((lunch + taxi).cents)
+    println(lunch < taxi)
+    println(lunch == Money(cents: 1850, note: "other"))
+    println(lunch != taxi)
+    println(lunch + taxi)
+    println(f"taxi: {taxi}")
+    println([lunch, taxi])

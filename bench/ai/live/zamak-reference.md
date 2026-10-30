@@ -75,7 +75,8 @@ Escapes: `\n \r \t \0 \" \\`, `\xNN`, `\uXXXX`, `\UXXXXXXXX`. `r"C:\dir\{x}"` is
 - `match f():` (matching a call result) gives arms owned, mutable bindings you can move (`Some(job): out.append(job)`); `match local:` borrows.
 - JSON for any type: `json.encode(value, indent=0) -> string` and `let x: T = json.decode(text)?` convert structs (objects keyed by field name), lists, `{string: V}`/`{i64: V}` maps, `Option` (null or value; a missing key is `None`) and enums (`"Unit"` or `{"type": "Variant", fields...}`); errors give a path like `[0].tags[1]: ...`. Write JSON literals as raw strings `r"""{"a": 1}"""` (normal strings interpolate braces).
 - Moving a list/map/struct field out of an owned local struct uses up the struct (`let tasks = store.tasks`); string fields are copied instead.
-- `std/datetime`: `datetime.date(y, m, d)?`, `datetime.today()`, `datetime.date_from_iso("2026-11-01")?`, `d.isoformat()`, `d.weekday()` (Monday 0), `d.add_days(n)`, `d.days_since(&other)`, `d.strftime("%Y-%m-%d")`; `datetime.now()` / `utcnow()` / `from_timestamp(t)` / `datetime_from_iso(text)?` give a `DateTime` with `hour`, `minute`, `second`, `microsecond`, `offset`, `timestamp()`, `isoformat()`, `add_seconds(s)`, `to_utc()`. Dates are plain values (copied).
+- `std/bigint`: `bigint.parse("123...")?`, `bigint.from_int(n)`; `+ - * // %`, `-x`, comparisons, `n.pow(e)`, `n.abs()`, `n.to_int()?`; prints its digits. Exact; `//` rounds down as in Python. Operators look at the left operand: `n * bigint.from_int(3)`.
+- `std/datetime`: `datetime.date(y, m, d)?`, `datetime.today()`, `datetime.date_from_iso("2026-11-01")?`, `d.isoformat()`, `d.weekday()` (Monday 0), `d.add_days(n)`, `d.days_since(&other)`, `d.strftime("%Y-%m-%d")`; `datetime.now()` / `utcnow()` / `from_timestamp(t)` / `datetime_from_iso(text)?` give a `DateTime` with `hour`, `minute`, `second`, `microsecond`, `offset`, `timestamp()`, `isoformat()`, `add_seconds(s)`, `to_utc()`. `end - start` gives a `TimeDelta` (`days`, `seconds`, `microseconds`, `total_seconds()`); `datetime.timedelta(days=1, hours=2)` makes one; `t + delta`, `t + -delta`, and `<`/`==` on times work. Dates are plain values (copied).
 - Call results take indexes, slices, fields and methods: `line.split(",")[0]`, `s.upper()[:3]`, `user().name`; `xs[i].method()?` works.
 - `std/hashlib`: `sha256`, `sha1`, `md5(&bytes) -> bytes`, `hmac_sha256(&key, &data) -> bytes`; call `.hex()` for text. `std/base64`: `b64encode(&bytes) -> string`, `b64decode(&text) -> bytes!string`, `urlsafe_b64encode`, `urlsafe_b64decode`.
 
@@ -230,6 +231,8 @@ struct Point:
     fn shift(&mut self, d: i64):
         self.x += d
 ```
+
+Operators call Python's method names on the left operand: `a + b` is `a.__add__(b)` (also `__sub__`, `__mul__`, `__truediv__`, `__floordiv__`, `__mod__`, `__lt__`, `__le__`, `__gt__`, `__ge__`, `__eq__` for `==` with `!=` its opposite, and `__neg__` for `-x`). There are no reflected methods, so `2.0 * v` doesn't work; write `v * 2.0`. Without `__eq__`, `==` compares field by field. `fn __str__(&self) -> string` decides what `println(x)`, `str(x)`, and `f"{x}"` show.
 
 ## Interfaces
 

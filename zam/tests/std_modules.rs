@@ -136,13 +136,59 @@ fn raw_triple_quoted_and_unicode_strings() {
 }
 
 #[test]
+fn bigint_matches_python() {
+    // 期望值是 Python 的 int 对同样输入的结果（布尔值按 Zamak 的写法）。
+    let case = Case::new("std", "bigint");
+    let output = case.run(include_str!("../../examples/values/bigint.zm"));
+    assert_eq!(
+        stdout(&output),
+        concat!(
+            "-121932631137021795226185032733622923332237463801111263526900\n",
+            "-864197532086419753208641975320\n",
+            "1111111110111111111011111111100\n",
+            "-9\n",
+            "123456780012345678001234567800\n",
+            "-17636684144620811271604938270\n",
+            "0\n",
+            "1606938044258990275541962092341162602522202993782792835301376\n",
+            "265252859812191058636308480000000\n",
+            "15511210043330985984000000 has 26 digits\n",
+            "false\n",
+            "true\n",
+            "-9223372036854775808\n",
+            "9223372036854775807\n",
+            "9223372036854775808 does not fit in i64\n",
+            "not an integer: 12x3\n",
+            "true\n",
+            "1560\n",
+        )
+    );
+    // 除以 0 与负指数和整数一样让程序停下。
+    let output = case
+        .run("use std/bigint\nfn main():\n    println(bigint.from_int(1) // bigint.from_int(0))\n");
+    assert!(!output.status.success());
+    assert!(
+        stderr(&output).contains("division by zero"),
+        "{}",
+        stderr(&output)
+    );
+    let output = case.run("use std/bigint\nfn main():\n    println(bigint.from_int(2).pow(-1))\n");
+    assert!(!output.status.success());
+    assert!(
+        stderr(&output).contains("negative exponent"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
 fn datetime_matches_python() {
     // 期望值是 Python 的 datetime 对同样输入的输出（布尔值按 Zamak 的写法）。
     let case = Case::new("std", "datetime");
     let output = case.run(include_str!("../../examples/values/dates.zm"));
     assert_eq!(
         stdout(&output),
-        "2026-11-01\n6\n305\n2026-12-31\n2025-09-27\n976\nThu Thursday Feb February 29/02/24 060\n1970-01-01\n1969-12-31\n-135080\n2026-11-01T08:05:09.250000+08:00\n1793491509.25\n2026-11-01T00:05:09.250000+00:00\n2026-11-01 08:05:09 08AM +0800 250000 %\n2023-11-14T22:13:20.500000+00:00\n2023-11-15T22:13:20.500000+00:00\n2026-11-01T23:59:00+00:00\nday is out of range for 2023-02: 29\nnot an ISO date (YYYY-MM-DD): 2026/11/01\n29\nfalse\n"
+        "2026-11-01\n6\n305\n2026-12-31\n2025-09-27\n976\nThu Thursday Feb February 29/02/24 060\n1970-01-01\n1969-12-31\n-135080\n2026-11-01T08:05:09.250000+08:00\n1793491509.25\n2026-11-01T00:05:09.250000+00:00\n2026-11-01 08:05:09 08AM +0800 250000 %\n2023-11-14T22:13:20.500000+00:00\n2023-11-15T22:13:20.500000+00:00\n2026-11-01T23:59:00+00:00\nday is out of range for 2023-02: 29\nnot an ISO date (YYYY-MM-DD): 2026/11/01\n29\nfalse\n2 309 250000\n173109.25\n-3 86090 750000\n2026-10-30T09:30:00+08:00\n2026-10-30T08:00:00+08:00\ntrue true\ntrue\n54\n"
     );
 }
 

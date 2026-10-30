@@ -22,6 +22,8 @@ Zamak 尽可能沿用 Python 的名字和规则。这篇附录列出哪些与 Py
 | `class Shape(Protocol):`、抽象基类 | `interface Shape:` 列出方法 | 有这些方法的类型自动满足，不用继承。 |
 | `class Point:` 加 `__init__` | `struct Point:` 列出字段，`Point(x: 1, y: 2)` | 字段只声明一次，不用写构造函数。 |
 | `def norm(self):` | `fn norm(&self) -> f64:` | `&self`、`&mut self` 或 `self` 说明方法怎样使用这个值。 |
+| `def __add__(self, other):` | `fn __add__(&self, other: &Vec2) -> Vec2:` | 运算符调用的方法和 Python 相同，`__str__` 决定值显示成什么样。 |
+| `2 ** 100` | `bigint.from_int(2).pow(100)` | `i64` 大小固定；`std/bigint` 和 Python 的 `int` 一样没有上限。 |
 | `None` | `Option.None`，类型是 `Option[T]` | 不存在的值不会被误用。 |
 | `raise ValueError("bad")` | `fail "bad"`，函数声明为 `-> T!string` | 失败是类型的一部分。 |
 | `try: ... except ValueError as e:` | `call() catch e:` | 在出错的地方就地处理。 |
@@ -34,7 +36,7 @@ Zamak 尽可能沿用 Python 的名字和规则。这篇附录列出哪些与 Py
 | `lambda x: x * 2` | `fn(x): x * 2` | |
 | `import math` | `use std/math` | |
 | `import requests`、`socket`、`http.server` | `use std/http`、`std/net` | `http.get(url)`、`http.post(url, body)`，服务端 `http.serve`；支持 HTTPS。 |
-| `import datetime` | `use std/datetime` | `datetime.today()`、`date_from_iso(s)`、`d.add_days(n)`、`d.days_since(other)`、`t.strftime(fmt)`。 |
+| `import datetime` | `use std/datetime` | `datetime.today()`、`date_from_iso(s)`、`end - start`、`datetime.timedelta(hours=1)`、`t.strftime(fmt)`。 |
 | `import tkinter` | `use std/ui` | `ui.window`、`ui.button`、`app.on_click(button, f)`、`app.run(window, state)`；用系统原生控件。 |
 | `import threading`、`queue`、`concurrent.futures` | `use std/thread` | `thread.spawn(f, x)` 后 `t.join()?`；`thread.Queue[T]`。 |
 | `import re`、`json`、`subprocess`、`hashlib`、`base64` | `use std/re`、`std/json`、`std/process`、`std/hashlib`、`std/base64` | 函数名同 Python；`re` 不支持反向引用与环视。 |

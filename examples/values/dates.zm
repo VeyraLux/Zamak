@@ -29,3 +29,16 @@ fn main() -> !string:
         println(e)
     println(datetime.days_in_month(2000, 2))
     println(datetime.is_leap(1900))
+
+    # 相减得到 TimeDelta（同 Python 的 timedelta），按微秒的整数算，不丢精度。
+    let start = datetime.datetime_from_iso("2026-10-30T08:00:00+08:00")?
+    let gap = t - start
+    println(f"{gap.days} {gap.seconds} {gap.microseconds}")
+    println(gap.total_seconds())
+    let back = start - t
+    println(f"{back.days} {back.seconds} {back.microseconds}")
+    println((start + datetime.timedelta(hours=1, minutes=30)).isoformat())
+    println((t + -gap).isoformat())
+    println(f"{t.to_utc() == t} {start < t}")
+    println(datetime.timedelta(weeks=1) * 2 == datetime.timedelta(days=14))
+    println((datetime.date(2026, 12, 25)? - d).days)

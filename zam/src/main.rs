@@ -1038,6 +1038,18 @@ fn demo() -> project::Result<()> {
 }
 
 fn main() {
+    // 检查器和生成器沿着语法树递归，几十项相加的表达式就有几十层。Windows 主线程默认只有 1 MB 栈，
+    // 所以在大栈线程里运行（只是预留地址空间，实际用多少占多少）。
+    let worker = std::thread::Builder::new()
+        .stack_size(project::STACK)
+        .spawn(run)
+        .expect("start the compiler thread");
+    if worker.join().is_err() {
+        std::process::exit(101);
+    }
+}
+
+fn run() {
     if let Err(error) = execute() {
         // 带行列的诊断渲染成「错误码 + 位置 + 源码行 + 下划线 + 建议」；其余错误保持一行。
         // 没有位置的错误不渲染源码，兜底文件名用不到。

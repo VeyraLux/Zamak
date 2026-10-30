@@ -3,8 +3,9 @@
 #     let d = datetime.date_from_iso("2026-11-01")?
 #     println(d.add_days(30).isoformat())
 #     println(datetime.now().strftime("%Y-%m-%d %H:%M"))
+#     let took = datetime.now() - start          # TimeDelta，同 Python 的 timedelta
 #
-# Date 与 DateTime 都是普通的值（只有数字），赋值时复制。DateTime 记着它相对 UTC 的偏移（秒），
+# Date、DateTime 与 TimeDelta 都是普通的值（只有数字），赋值时复制。DateTime 记着它相对 UTC 的偏移（秒），
 # now() 与 from_timestamp(t) 用本地时区，utcnow() 用 UTC。日期按公历算，年份可以是任何整数。
 use std/math
 use std/time
@@ -51,6 +52,26 @@ pub struct Date:
         let moment = DateTime(year: self.year, month: self.month, day: self.day, hour: 0, minute: 0, second: 0, microsecond: 0, offset: 0)
         moment.strftime(format)
 
+    # a - b：相隔的时长（整天），同 Python。
+    pub fn __sub__(&self, other: &Date) -> TimeDelta:
+        timedelta(days=self.to_days() - other.to_days())
+
+    # d + delta：加上 delta 的整天部分，不足一天的部分不算，同 Python。往前数就加负的：d + -delta。
+    pub fn __add__(&self, delta: &TimeDelta) -> Date:
+        date_from_days(self.to_days() + delta.days)
+
+    pub fn __lt__(&self, other: &Date) -> bool:
+        self.to_days() < other.to_days()
+
+    pub fn __le__(&self, other: &Date) -> bool:
+        self.to_days() <= other.to_days()
+
+    pub fn __gt__(&self, other: &Date) -> bool:
+        self.to_days() > other.to_days()
+
+    pub fn __ge__(&self, other: &Date) -> bool:
+        self.to_days() >= other.to_days()
+
 pub struct DateTime:
     year: i64
     month: i64
@@ -92,6 +113,35 @@ pub struct DateTime:
 
     pub fn to_utc(&self) -> DateTime:
         self.with_offset(0)
+
+    # end - start：两个时刻之间的时长，同 Python。按微秒的整数算，偏移不同也没关系。
+    pub fn __sub__(&self, other: &DateTime) -> TimeDelta:
+        microseconds_delta(self.epoch_microseconds() - other.epoch_microseconds())
+
+    # t + delta：往后 delta 的时刻，偏移不变。往前就加负的：t + -delta。
+    pub fn __add__(&self, delta: &TimeDelta) -> DateTime:
+        from_microseconds(self.epoch_microseconds() + delta.total_microseconds(), self.offset)
+
+    # 按实际时刻比较：同一时刻写在不同偏移下也相等，同 Python。
+    pub fn __eq__(&self, other: &DateTime) -> bool:
+        self.epoch_microseconds() == other.epoch_microseconds()
+
+    pub fn __lt__(&self, other: &DateTime) -> bool:
+        self.epoch_microseconds() < other.epoch_microseconds()
+
+    pub fn __le__(&self, other: &DateTime) -> bool:
+        self.epoch_microseconds() <= other.epoch_microseconds()
+
+    pub fn __gt__(&self, other: &DateTime) -> bool:
+        self.epoch_microseconds() > other.epoch_microseconds()
+
+    pub fn __ge__(&self, other: &DateTime) -> bool:
+        self.epoch_microseconds() >= other.epoch_microseconds()
+
+    # 1970-01-01T00:00:00Z 以来的微秒数。
+    fn epoch_microseconds(&self) -> i64:
+        let seconds = days_from_civil(self.year, self.month, self.day) * 86400 + self.hour * 3600 + self.minute * 60 + self.second - self.offset
+        seconds * 1000000 + self.microsecond
 
     # 按格式写出时间，同 Python 的 strftime：%Y 年、%m 月、%d 日、%H 时、%M 分、%S 秒、%f 微秒、
     # %y 两位年、%I 十二小时制、%p AM/PM、%j 年内第几天、%a/%A 星期、%b/%B 月份名、%z 偏移、%% 百分号。
@@ -153,6 +203,58 @@ pub struct DateTime:
 
         out
 
+# 一段时长，同 Python 的 timedelta。只有整数，不会因为小数丢精度：days 可以是负数，seconds 在
+# 0 到 86399 之间，microseconds 在 0 到 999999 之间。所以 -1 秒是 days -1、seconds 86399。
+pub struct TimeDelta:
+    days: i64
+    seconds: i64
+    microseconds: i64
+
+    # 总共多少秒，同 Python 的 total_seconds()。
+    pub fn total_seconds(&self) -> f64:
+        float(self.total_microseconds()) / 1000000.0
+
+    # 总共多少微秒，是整数，不丢精度。
+    pub fn total_microseconds(&self) -> i64:
+        (self.days * 86400 + self.seconds) * 1000000 + self.microseconds
+
+    pub fn __add__(&self, other: &TimeDelta) -> TimeDelta:
+        microseconds_delta(self.total_microseconds() + other.total_microseconds())
+
+    pub fn __sub__(&self, other: &TimeDelta) -> TimeDelta:
+        microseconds_delta(self.total_microseconds() - other.total_microseconds())
+
+    # delta * 3：n 倍的时长。
+    pub fn __mul__(&self, n: i64) -> TimeDelta:
+        microseconds_delta(self.total_microseconds() * n)
+
+    # -delta：反方向的时长。
+    pub fn __neg__(&self) -> TimeDelta:
+        microseconds_delta(-self.total_microseconds())
+
+    pub fn __lt__(&self, other: &TimeDelta) -> bool:
+        self.total_microseconds() < other.total_microseconds()
+
+    pub fn __le__(&self, other: &TimeDelta) -> bool:
+        self.total_microseconds() <= other.total_microseconds()
+
+    pub fn __gt__(&self, other: &TimeDelta) -> bool:
+        self.total_microseconds() > other.total_microseconds()
+
+    pub fn __ge__(&self, other: &TimeDelta) -> bool:
+        self.total_microseconds() >= other.total_microseconds()
+
+    # 显示成 Python 的 str(timedelta) 的样子：2 days, 1:30:15.250000、-1 day, 23:59:59。
+    pub fn __str__(&self) -> string:
+        let clock = f"{self.seconds // 3600}:{self.seconds % 3600 // 60:02}:{self.seconds % 60:02}"
+        let fraction = if self.microseconds > 0: f".{self.microseconds:06}" else: ""
+
+        if self.days == 0:
+            return clock + fraction
+
+        let unit = if self.days == 1 or self.days == -1: "day" else: "days"
+        f"{self.days} {unit}, {clock}{fraction}"
+
 # 检查过的日期：月份 1 到 12，日子不超过这个月的天数。
 pub fn date(year: i64, month: i64, day: i64) -> Date!string:
     if month < 1 or month > 12:
@@ -173,6 +275,12 @@ pub fn datetime(year: i64, month: i64, day: i64, hour: i64 = 0, minute: i64 = 0,
     let utc_guess = float(days_from_civil(year, month, day) * 86400 + hour * 3600 + minute * 60 + second)
     let offset = time.local_offset(utc_guess)
     DateTime(year: year, month: month, day: day, hour: hour, minute: minute, second: second, microsecond: 0, offset: offset)
+
+# 一段时长，参数顺序与 Python 的 timedelta 相同：timedelta(days=1, hours=2)。都是整数，结果按
+# days、seconds、microseconds 规整。
+pub fn timedelta(days: i64 = 0, seconds: i64 = 0, microseconds: i64 = 0, milliseconds: i64 = 0, minutes: i64 = 0, hours: i64 = 0, weeks: i64 = 0) -> TimeDelta:
+    let total_seconds = (((weeks * 7 + days) * 24 + hours) * 60 + minutes) * 60 + seconds
+    microseconds_delta(total_seconds * 1000000 + milliseconds * 1000 + microseconds)
 
 # 今天的日期（本地时区）。
 pub fn today() -> Date:
@@ -304,6 +412,20 @@ fn moment(t: f64, offset: i64) -> DateTime:
     let day = date_from_days(seconds // 86400)
     let rest = seconds % 86400
     DateTime(year: day.year, month: day.month, day: day.day, hour: rest // 3600, minute: rest % 3600 // 60, second: rest % 60, microsecond: microsecond, offset: offset)
+
+# 微秒数规整成 days、seconds、microseconds（// 与 % 向下取整，所以负的时长 days 是负数）。
+fn microseconds_delta(total: i64) -> TimeDelta:
+    let day = 86400 * 1000000
+    let rest = total % day
+    TimeDelta(days: total // day, seconds: rest // 1000000, microseconds: rest % 1000000)
+
+# 1970-01-01T00:00:00Z 以来的微秒数在偏移 offset（秒）下的时刻。
+fn from_microseconds(total: i64, offset: i64) -> DateTime:
+    let local = total + offset * 1000000
+    let seconds = local // 1000000
+    let day = date_from_days(seconds // 86400)
+    let rest = seconds % 86400
+    DateTime(year: day.year, month: day.month, day: day.day, hour: rest // 3600, minute: rest % 3600 // 60, second: rest % 60, microsecond: local % 1000000, offset: offset)
 
 # +08:00（colon 为 false 时是 +0800），同 Python 的 isoformat 与 %z。
 fn zone(offset: i64, colon: bool) -> string:

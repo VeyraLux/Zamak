@@ -133,6 +133,48 @@ ink: 5
 
 A struct element can't be moved out with `let x = stock[0]`, because the list would be left with a hole. Borrow it with `&stock[0]`, copy it with `copy(&stock[0])`, or take the last one out with `stock.pop()`.
 
+## Operators
+
+A struct can define what `+`, `-`, `<`, and the other operators mean, with the same method names as Python. `a + b` calls `a.__add__(b)`:
+
+```zamak
+struct Vec2:
+    x: f64
+    y: f64
+
+    fn __add__(&self, other: &Vec2) -> Vec2:
+        Vec2(x: self.x + other.x, y: self.y + other.y)
+
+    fn __mul__(&self, k: f64) -> Vec2:
+        Vec2(x: self.x * k, y: self.y * k)
+
+    fn __lt__(&self, other: &Vec2) -> bool:
+        self.x * self.x + self.y * self.y < other.x * other.x + other.y * other.y
+
+fn main():
+    let a = Vec2(x: 1.0, y: 2.0)
+    let b = Vec2(x: 3.0, y: 4.0)
+    println(a + b)
+    println((a + b) * 2.0)
+    println(a < b)
+```
+
+```text
+Vec2(x: 4.0, y: 6.0)
+Vec2(x: 8.0, y: 12.0)
+true
+```
+
+| Operator | Method |
+| --- | --- |
+| `+`, `-`, `*`, `/`, `//`, `%` | `__add__`, `__sub__`, `__mul__`, `__truediv__`, `__floordiv__`, `__mod__` |
+| `<`, `<=`, `>`, `>=` | `__lt__`, `__le__`, `__gt__`, `__ge__` |
+| `==`, `!=` | `__eq__`; `!=` is its opposite |
+| `-x` | `__neg__` |
+| `println(x)`, `str(x)`, `f"{x}"` | `__str__`, which returns a `string` |
+
+The operator looks for the method on the left operand, so `a * 2.0` works but `2.0 * a` doesn't. A struct without `__eq__` compares field by field, and one without `__str__` prints its fields.
+
 ## Generic structs
 
 A struct can take type parameters, written in brackets after its name:

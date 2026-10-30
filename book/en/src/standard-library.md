@@ -167,6 +167,33 @@ true
 - `time.time()` is the current time in seconds since 1970, and `time.monotonic()` measures durations. `time.sleep(seconds)` pauses. `time.iso_utc(t)` and `time.iso_local(t)` format a time.
 - `random.randint(a, b)` includes both ends, and `random.randrange(a, b)` excludes `b`. `random.random()` returns an `f64` in [0, 1), and `random.uniform(a, b)` one in [a, b). `random.seed(n)` makes the sequence repeatable, which helps in tests.
 
+## Big integers: std/bigint
+
+`i64` stops the program when a value doesn't fit. When you need more digits, as Python's `int` gives you, use a `BigInt`:
+
+```zamak
+use std/bigint
+
+fn main() -> !string:
+    let n = bigint.parse("123456789012345678901234567890")?
+    println(n * n)
+    println(bigint.from_int(2).pow(100))
+    println(n // bigint.from_int(-11))
+    println(n % bigint.from_int(-11))
+```
+
+```text
+15241578753238836750495351562536198787501905199875019052100
+1267650600228229401496703205376
+-11223344455667788991021324354
+-4
+```
+
+- `bigint.parse(text)` reads a decimal integer and fails on anything else. `bigint.from_int(n)` converts an `i64`.
+- `+`, `-`, `*`, `//`, `%`, `-x`, and the comparisons work, and every result is exact. `//` rounds down and `%` takes the sign of the divisor, as in Python. Dividing by zero stops the program.
+- `pow(n)`, `abs()`, and `to_int()` (which fails if the value doesn't fit in `i64`). `println`, `str()`, and `f"{n}"` show the digits.
+- The operators look at the left operand, so write `n * bigint.from_int(3)`, not `n * 3`.
+
 ## Dates and times: std/datetime
 
 `std/datetime` follows Python's `datetime`:
@@ -193,9 +220,32 @@ Sunday, 01 November 2026
 2026-11-01T00:30:00+00:00
 ```
 
+Subtract two times to get a `TimeDelta`, as with Python's `timedelta`:
+
+```zamak
+use std/datetime
+
+fn main() -> !string:
+    let start = datetime.datetime_from_iso("2026-11-01T08:00:00+08:00")?
+    let end = datetime.datetime_from_iso("2026-11-01T09:30:15.500+08:00")?
+    let took = end - start
+    println(took.total_seconds())
+    println(took)
+    println((end + datetime.timedelta(days=1)).isoformat())
+    println(start < end)
+```
+
+```text
+5415.5
+1:30:15.500000
+2026-11-02T09:30:15.500000+08:00
+true
+```
+
 - A `Date` has `year`, `month`, and `day`. `datetime.today()` is today's date, and `datetime.date(y, m, d)` checks the values.
 - A `DateTime` also has `hour`, `minute`, `second`, `microsecond`, and `offset` (seconds east of UTC). `datetime.now()` uses the local time zone, and `datetime.utcnow()` uses UTC. `datetime.from_timestamp(t)` converts a `time.time()` value.
-- `add_days(n)`, `days_since(other)`, `add_seconds(s)`, and `seconds_since(other)` do arithmetic. `weekday()` is 0 for Monday.
+- `end - start` gives a `TimeDelta` with `days`, `seconds`, and `microseconds`, all whole numbers, and `total_seconds()`. Make one with `datetime.timedelta(days=1, hours=2)`. A time plus a `TimeDelta` is a time; to go back, add a negative one: `t + -delta`. `<`, `>`, and `==` compare the actual moments, even across time zones. A `TimeDelta` prints as Python's does, such as `2 days, 1:30:15.500000`. Dates work the same way.
+- `add_days(n)`, `days_since(other)`, `add_seconds(s)`, and `seconds_since(other)` also do arithmetic. `weekday()` is 0 for Monday.
 - `isoformat()`, `strftime(format)`, `date_from_iso(text)`, and `datetime_from_iso(text)` convert to and from text.
 - Dates and times hold only numbers, so they're copied like numbers.
 

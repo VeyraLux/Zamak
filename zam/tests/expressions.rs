@@ -31,6 +31,41 @@ fn everyday_expressions_run() {
 
 /// if 表达式的分支各自移动值，之后只能使用在两边都还有效的变量。
 #[test]
+fn long_expressions_check_in_linear_time() {
+    // 以前每多一项检查时间翻倍（22 项要 20 秒，40 项卡住），项数再多还会栈溢出。
+    // 这里 300 项整数相加、混着小数的 100 项、100 个条件的 and、带运算符方法的 50 项都要很快通过。
+    let ints = vec!["a"; 300].join(" + ");
+    let mixed = (0..100)
+        .map(|i| {
+            if i % 2 == 0 {
+                "a".to_owned()
+            } else {
+                "0.5".to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" + ");
+    let conditions = (0..100)
+        .map(|i| format!("a > {}", i - 200))
+        .collect::<Vec<_>>()
+        .join(" and ");
+    let deltas = vec!["datetime.timedelta(seconds=1)"; 50].join(" + ");
+    let source = format!(
+        "use std/datetime\n\nfn main():\n    let a = 1\n    println({ints})\n    println({mixed})\n    println({conditions})\n    println({deltas})\n"
+    );
+    let case = Case::new("expressions", "long");
+    let started = std::time::Instant::now();
+    let output = case.run(&source);
+    assert_eq!(stdout(&output), "300\n75.0\ntrue\n0:00:50\n");
+    // 包括编译 C 在内，正常不到 10 秒；指数级时远远超过。
+    assert!(
+        started.elapsed().as_secs() < 60,
+        "took {:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
 fn if_expression_branches_merge_ownership() {
     let case = Case::new("expressions", "merge");
     let output = case.run("fn main():\n    let s = \"x\"\n    let t = if true: \"y\" else: \"z\"\n    println(t)\n    println(s)\n    let u = if false: s else: \"kept\"\n    println(u)\n");

@@ -34,7 +34,9 @@ Zamak keeps Python's names and rules wherever it can. This appendix lists what s
 | `lambda x: x * 2` | `fn(x): x * 2` | |
 | `import math` | `use std/math` | |
 | `import requests`, `socket`, `http.server` | `use std/http`, `std/net` | `http.get(url)`, `http.post(url, body)`, and `http.serve` for servers, with HTTPS. |
-| `import datetime` | `use std/datetime` | `datetime.today()`, `date_from_iso(s)`, `d.add_days(n)`, `d.days_since(other)`, `t.strftime(fmt)`. |
+| `import datetime` | `use std/datetime` | `datetime.today()`, `date_from_iso(s)`, `end - start`, `datetime.timedelta(hours=1)`, `t.strftime(fmt)`. |
+| `def __add__(self, other):` | `fn __add__(&self, other: &Vec2) -> Vec2:` | Operators call the same methods as in Python, and `__str__` decides how a value prints. |
+| `2 ** 100` | `bigint.from_int(2).pow(100)` | `i64` has a fixed size; `std/bigint` grows as Python's `int` does. |
 | `import tkinter` | `use std/ui` | `ui.window`, `ui.button`, `app.on_click(button, f)`, `app.run(window, state)`; native controls. |
 | `import threading`, `queue`, `concurrent.futures` | `use std/thread` | `thread.spawn(f, x)`, then `t.join()?`; `thread.Queue[T]`. |
 | `import re`, `json`, `subprocess`, `hashlib`, `base64` | `use std/re`, `std/json`, `std/process`, `std/hashlib`, `std/base64` | Same function names; `re` has no backreferences or lookaround. |

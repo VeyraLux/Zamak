@@ -302,6 +302,76 @@ pub fn record_method_with<'f>(
     }
 }
 
+/// Python 的运算符方法：结构体定义了 `__sub__`，`a - b` 就是 `a.__sub__(b)`。定义了 `__eq__`
+/// 时 `==` 调用它，`!=` 是它的反面（同 Python）；没定义时照旧逐项比较。
+pub fn operator_method(op: &str) -> Option<&'static str> {
+    Some(match op {
+        "==" | "!=" => "__eq__",
+        "+" => "__add__",
+        "-" => "__sub__",
+        "*" => "__mul__",
+        "/" => "__truediv__",
+        "//" => "__floordiv__",
+        "%" => "__mod__",
+        "<" => "__lt__",
+        "<=" => "__le__",
+        ">" => "__gt__",
+        ">=" => "__ge__",
+        _ => return None,
+    })
+}
+
+/// 左边是结构体、而且它定义了 `op` 对应的方法时，`a op b` 写成的方法调用（接收者是变量或字段时
+/// 是 `Method`，其他是 `Chain`），检查器与生成器都按这个调用处理。不是这种情况时返回 None。
+pub fn operator_call(
+    structs: &BTreeMap<String, Struct>,
+    functions: &BTreeMap<String, Function>,
+    op: &str,
+    left_ty: Type,
+    left: &Expr,
+    right: &Expr,
+) -> Option<Expr> {
+    let call = method_call_on(
+        structs,
+        functions,
+        operator_method(op)?,
+        left_ty,
+        left,
+        vec![right.clone()],
+    )?;
+    Some(if op == "!=" {
+        Expr::Unary('!', Box::new(call))
+    } else {
+        call
+    })
+}
+
+/// `-x` 的 x 是定义了 `__neg__` 的结构体时，写成方法调用 `x.__neg__()`。
+pub fn negation_call(
+    structs: &BTreeMap<String, Struct>,
+    functions: &BTreeMap<String, Function>,
+    ty: Type,
+    value: &Expr,
+) -> Option<Expr> {
+    method_call_on(structs, functions, "__neg__", ty, value, Vec::new())
+}
+
+fn method_call_on(
+    structs: &BTreeMap<String, Struct>,
+    functions: &BTreeMap<String, Function>,
+    method: &str,
+    ty: Type,
+    receiver: &Expr,
+    args: Vec<Expr>,
+) -> Option<Expr> {
+    record_method_with(structs, functions, ty, method, &[]).ok()??;
+    Some(match receiver {
+        Expr::Variable(name) => Expr::Method(name.clone(), method.into(), args),
+        Expr::Field(local, field) => Expr::Method(format!("{local}.{field}"), method.into(), args),
+        _ => Expr::Chain(Box::new(receiver.clone()), method.into(), args),
+    })
+}
+
 /// `p.m(a)` 改写成普通调用 `Owner.m(接收者, a)` 的实参：`&self`、`&mut self` 借用接收者，
 /// `self` 把它移进去。检查器与生成器共用。
 pub fn method_args(
@@ -7671,6 +7741,13 @@ impl<'a> Checker<'a> {
             })
     }
     fn ty(&self, expr: &Expr) -> Result<Type, String> {
+        // 二元运算单独算：两边的类型各算一次。经过 string_call 会先算一遍两边、改写后再算一遍，
+        // `a + b + c + ...` 每多一项时间翻倍。
+        if let Expr::Binary(op, left, right) = expr {
+            if op != "in" && op != "not in" {
+                return self.binary_ty(op, left, right);
+            }
+        }
         if let Some(call) = self.string_call(expr)? {
             return self.ty(&call);
         }
@@ -7849,14 +7926,21 @@ impl<'a> Checker<'a> {
             Expr::Unary('!', _) => Ok(Type::Bool),
             Expr::Unary('~', _) => Ok(Type::Int),
             Expr::Unary('f', _) => Ok(Type::Float),
-            Expr::Unary(_, value) => Ok(numeric(self.ty(value)?)),
-            Expr::Binary(op, left, _) if op == "+" && is_text(self.ty(left)?) => Ok(Type::Owned),
-            Expr::Binary(op, _, _) if bitwise(op) => Ok(Type::Int),
-            Expr::Binary(op, left, _) => Ok(if matches!(op.as_str(), "+" | "-" | "*" | "/" | "//" | "%") {
-                numeric(self.ty(left)?)
-            } else {
-                Type::Bool
-            }),
+            // 操作数的类型每层只算一次，运算符方法与结果类型都用它：否则 `a + b + c + ...` 每多一层
+            // 计算量翻倍，长表达式会让检查卡住。
+            Expr::Unary(op, value) => {
+                let ty = self.ty(value)?;
+                let owned = ty.borrowable().map_or(ty, |(owned, _)| owned);
+                if *op == '-' {
+                    if let Ok(Some((_, function))) =
+                        record_method_with(self.structs, self.functions, owned, "__neg__", &[])
+                    {
+                        return Ok(function.result);
+                    }
+                }
+                Ok(numeric(ty))
+            }
+            Expr::Binary(op, left, right) => self.binary_ty(op, left, right),
             Expr::If(_, yes, _) => self.ty(yes),
         }
     }
@@ -8449,6 +8533,9 @@ impl<'a> Checker<'a> {
                 }
             }
             Expr::Unary(op, value) => {
+                if let Some(call) = self.negated(*op, value) {
+                    return self.expr(&call, expected, loans);
+                }
                 let ty = match op {
                     '!' => Type::Bool,
                     '~' => Type::Int,
@@ -8469,12 +8556,27 @@ impl<'a> Checker<'a> {
                 self.expr(value, ty, loans)
             }
             Expr::Binary(op, left, right) => {
-                if matches!(op.as_str(), "<" | "<=" | ">" | ">=")
-                    && compound(self.value_type(left)?)
-                {
+                if let Some(call) = self.overloaded(op, left, right) {
+                    return self.expr(&call, expected, loans);
+                }
+                // 左边自己看不出类型时（`Option.None == x`）不在这里报错，后面按另一边的类型检查。
+                let left_ty = self.value_type(left).ok();
+                // 结构体可以自己定义运算符：报错里说出要定义的方法名。
+                let define = match (left_ty, operator_method(op)) {
+                    // == 和 != 没有 __eq__ 时逐项比较，不报错。
+                    _ if matches!(op.as_str(), "==" | "!=") => String::new(),
+                    (Some(Type::Record(_)), Some(method)) => {
+                        format!("; define fn {method}(&self, other: ...) in the struct to use {op}")
+                    }
+                    _ => String::new(),
+                };
+                if matches!(op.as_str(), "<" | "<=" | ">" | ">=") && left_ty.is_some_and(compound) {
                     return Err(format!(
-                        "type mismatch: {op} compares i64, f64, bool and string values; structs, enums, lists and maps only support == and !="
+                        "type mismatch: {op} compares i64, f64, bool and string values; structs, enums, lists and maps only support == and !={define}"
                     ));
+                }
+                if matches!(left_ty, Some(Type::Record(_))) && !define.is_empty() {
+                    return Err(format!("type mismatch: {op} needs numbers{define}"));
                 }
                 // 结构体、枚举、列表、字典的 == / !=：逐项比较，两边都只读，不移动。一边自己看不出
                 // 类型时（`x == Option.None`）按另一边的类型构造。
@@ -8966,7 +9068,18 @@ impl<'a> Checker<'a> {
             Expr::Borrow(_, _) => {
                 Err("borrow escape: references only belong in call arguments".into())
             }
-            _ => Err("string type mismatch".into()),
+            // 其他组合都是类型对不上：说出两边各是什么，例如给 &P 参数传了 5。
+            _ => Err(match self.value_type(expr) {
+                Ok(found) => {
+                    let wanted = expected.borrowable().map_or(expected, |(owned, _)| owned);
+                    format!(
+                        "type mismatch: this value is {}, but {} is expected",
+                        type_text(found, self.structs),
+                        type_text(wanted, self.structs)
+                    )
+                }
+                Err(_) => "type mismatch".into(),
+            }),
         }
     }
     /// 函数值（局部变量、参数、结构体字段）的错误类型。
@@ -8975,6 +9088,55 @@ impl<'a> Checker<'a> {
             Type::Func(id) | Type::FuncRef(id) => Ok(func_error(id)),
             _ => Ok(None),
         }
+    }
+    /// 二元运算的结果类型。左边的类型只算一次；右边只在整数遇到小数时才看（Python 的规则：
+    /// 整数与小数混用、或者 `/`，结果是小数）。
+    fn binary_ty(&self, op: &str, left: &Expr, right: &Expr) -> Result<Type, String> {
+        let left_ty = self.ty(left);
+        if let (Some(method), Ok(ty)) = (operator_method(op), &left_ty) {
+            let owned = ty.borrowable().map_or(*ty, |(owned, _)| owned);
+            // 结果类型直接取方法声明的返回类型：再按方法调用算一遍会把左边的类型重算好几次，
+            // `t1 + t2 + t3 + ...` 又变成指数级。
+            if let Ok(Some((_, function))) =
+                record_method_with(self.structs, self.functions, owned, method, &[])
+            {
+                return Ok(if op == "!=" {
+                    Type::Bool
+                } else {
+                    function.result
+                });
+            }
+        }
+        if bitwise(op) {
+            return Ok(Type::Int);
+        }
+        if !matches!(op, "+" | "-" | "*" | "/" | "//" | "%") {
+            return Ok(Type::Bool);
+        }
+        let left_ty = left_ty?;
+        if op == "+" && is_text(left_ty) {
+            return Ok(Type::Owned);
+        }
+        let left_ty = numeric(left_ty);
+        if left_ty == Type::Int && (op == "/" || self.ty(right) == Ok(Type::Float)) {
+            return Ok(Type::Float);
+        }
+        Ok(left_ty)
+    }
+    /// `a - b` 的左边是定义了 `__sub__` 的结构体时，按方法调用 `a.__sub__(b)` 检查。
+    fn overloaded(&self, op: &str, left: &Expr, right: &Expr) -> Option<Expr> {
+        // and、or、in 这些没有方法：不用算左边的类型。
+        operator_method(op)?;
+        let ty = self.value_type(left).ok()?;
+        operator_call(self.structs, self.functions, op, ty, left, right)
+    }
+    /// `-x` 的 x 是定义了 `__neg__` 的结构体时，按 `x.__neg__()` 检查。
+    fn negated(&self, op: char, value: &Expr) -> Option<Expr> {
+        if op != '-' {
+            return None;
+        }
+        let ty = self.value_type(value).ok()?;
+        negation_call(self.structs, self.functions, ty, value)
     }
     /// `?` 传不出去：当前函数不会失败，或者错误类型对不上。两种情况各给一个改法。
     fn cannot_propagate(&self, name: &str) -> String {
@@ -9958,12 +10120,19 @@ fn elem_text(elem: Elem, structs: &BTreeMap<String, Struct>) -> String {
 }
 
 /// 结构体 id → 显示用的名字：在结构体表里找编号对得上的那个（表里的键是 `模块:名字`）。
+/// 报错里的结构体名写成用户写类型时的样子：自己模块和依赖里的是 `P`，标准库里的是
+/// `datetime.DateTime`。
 fn record_text(id: u64, structs: &BTreeMap<String, Struct>) -> String {
-    structs
-        .keys()
-        .find(|name| record_id(name) == id)
-        .cloned()
-        .unwrap_or_else(|| format!("#{id}"))
+    let Some(name) = structs.keys().find(|name| record_id(name) == id) else {
+        return format!("#{id}");
+    };
+    match name.split_once(':') {
+        Some((module, short)) => match module.strip_prefix("std/") {
+            Some("core") | None => short.to_owned(),
+            Some(module) => format!("{}.{short}", module.trim_start_matches('_')),
+        },
+        None => name.clone(),
+    }
 }
 
 fn func_text(id: u64, structs: &BTreeMap<String, Struct>) -> String {

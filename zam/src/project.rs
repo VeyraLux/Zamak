@@ -176,6 +176,9 @@ type Parse = fn(&str) -> std::result::Result<compiler::Module, String>;
 
 /// 用 Zamak 写的标准库模块：源码编进编译器，被 `use` 时像普通模块一样加载（模块 id 就是
 /// `std/<名字>`）。它们可以再 `use` C 实现的内部模块，例如 `std/_process`。
+/// 编译器线程的栈大小：检查与生成沿语法树递归，很长、嵌套很深的表达式也不会栈溢出。
+pub const STACK: usize = 256 * 1024 * 1024;
+
 const STD_SOURCES: &[(&str, &str)] = &[
     ("std/process", include_str!("../std/process.zm")),
     ("std/json", include_str!("../std/json.zm")),
@@ -188,6 +191,7 @@ const STD_SOURCES: &[(&str, &str)] = &[
     ("std/sqlite", include_str!("../std/sqlite.zm")),
     ("std/widgets", include_str!("../std/widgets.zm")),
     ("std/cli", include_str!("../std/cli.zm")),
+    ("std/bigint", include_str!("../std/bigint.zm")),
 ];
 
 /// Mbed TLS 的源码（vendor/mbedtls，build.rs 压缩后嵌进来）：程序用到 std/net 时解压到缓存编译。
@@ -2054,32 +2058,42 @@ impl Project {
                     .iter()
                     .map(|id| {
                         let (linked, entry, identity) = (&linked, &entry, &identity);
-                        scope.spawn(move || -> Result<(String, String, Option<Vec<u8>>)> {
-                            let source = native::generate_with(linked, entry, id, tests, headers);
-                            // 调试生成的 C：`ZAMAK_DUMP_C=<目录>` 时把每个模块的 C 源码写出来。
-                            if let Some(dir) = env::var_os("ZAMAK_DUMP_C") {
-                                let name = id.replace(['/', ':'], "_");
-                                let _ = fs::create_dir_all(&dir);
-                                let _ =
-                                    fs::write(Path::new(&dir).join(format!("{name}.c")), &source);
-                            }
-                            let key = hash(&[
-                                VERSION.as_bytes(),
-                                source.as_bytes(),
-                                header_text.as_bytes(),
-                                identity.as_bytes(),
-                                native::OPTIONS.as_bytes(),
-                                env::consts::OS.as_bytes(),
-                                env::consts::ARCH.as_bytes(),
-                            ]);
-                            let bytes = cached(cache, &key, "obj")?;
-                            eprintln!(
-                                "OBJECT {} {:.12} {id}",
-                                if bytes.is_some() { "HIT" } else { "MISS" },
-                                key
-                            );
-                            Ok((key, source, bytes))
-                        })
+                        // 生成 C 也沿语法树递归，用和主线程一样大的栈。
+                        std::thread::Builder::new()
+                            .stack_size(STACK)
+                            .spawn_scoped(
+                                scope,
+                                move || -> Result<(String, String, Option<Vec<u8>>)> {
+                                    let source =
+                                        native::generate_with(linked, entry, id, tests, headers);
+                                    // 调试生成的 C：`ZAMAK_DUMP_C=<目录>` 时把每个模块的 C 源码写出来。
+                                    if let Some(dir) = env::var_os("ZAMAK_DUMP_C") {
+                                        let name = id.replace(['/', ':'], "_");
+                                        let _ = fs::create_dir_all(&dir);
+                                        let _ = fs::write(
+                                            Path::new(&dir).join(format!("{name}.c")),
+                                            &source,
+                                        );
+                                    }
+                                    let key = hash(&[
+                                        VERSION.as_bytes(),
+                                        source.as_bytes(),
+                                        header_text.as_bytes(),
+                                        identity.as_bytes(),
+                                        native::OPTIONS.as_bytes(),
+                                        env::consts::OS.as_bytes(),
+                                        env::consts::ARCH.as_bytes(),
+                                    ]);
+                                    let bytes = cached(cache, &key, "obj")?;
+                                    eprintln!(
+                                        "OBJECT {} {:.12} {id}",
+                                        if bytes.is_some() { "HIT" } else { "MISS" },
+                                        key
+                                    );
+                                    Ok((key, source, bytes))
+                                },
+                            )
+                            .expect("start a build thread")
                     })
                     .collect();
                 handles
