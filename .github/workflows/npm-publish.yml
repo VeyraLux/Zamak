@@ -52,6 +52,23 @@ jobs:
           if [ "${{ inputs.only_main }}" != "true" ]; then
             packages="zamak-win32-x64 zamak-linux-x64 zamak-linux-arm64 zamak-darwin-arm64 zamak-darwin-x64 zamak"
           fi
+          # Skip a package whose version is already on npm, and retry a failed publish: the signature
+          # log npm uses for provenance sometimes answers with a conflict (409) that goes away.
+          publish() {
+            package="$1"
+            # The name on npm (the main package is @veyralux/zamak) isn't always the folder name.
+            published="$(node -p "require('./npm-out/$package/package.json').name")"
+            for attempt in 1 2 3; do
+              if npm view "$published@$version" version >/dev/null 2>&1; then
+                echo "$published@$version is on npm."
+                return 0
+              fi
+              (cd "npm-out/$package" && npm publish --access public --provenance --tag "$dist") && return 0
+              echo "npm publish failed for $package (attempt $attempt of 3)."
+              sleep 30
+            done
+            return 1
+          }
           for package in $packages; do
-            (cd "npm-out/$package" && npm publish --access public --provenance --tag "$dist")
+            publish "$package"
           done

@@ -181,11 +181,28 @@ jobs:
           npm install -g npm@11
           version="${GITHUB_REF_NAME#v}"
           # Pre-releases go to the "next" tag, so `npm install -g @veyralux/zamak` keeps installing the latest release.
-          tag=latest
-          case "$version" in *-*) tag=next ;; esac
+          dist=latest
+          case "$version" in *-*) dist=next ;; esac
           node tools/package-npm.mjs "$version" assets npm-out
+          # Skip a package whose version is already on npm, and retry a failed publish: the signature
+          # log npm uses for provenance sometimes answers with a conflict (409) that goes away.
+          publish() {
+            package="$1"
+            # The name on npm (the main package is @veyralux/zamak) isn't always the folder name.
+            published="$(node -p "require('./npm-out/$package/package.json').name")"
+            for attempt in 1 2 3; do
+              if npm view "$published@$version" version >/dev/null 2>&1; then
+                echo "$published@$version is on npm."
+                return 0
+              fi
+              (cd "npm-out/$package" && npm publish --access public --provenance --tag "$dist") && return 0
+              echo "npm publish failed for $package (attempt $attempt of 3)."
+              sleep 30
+            done
+            return 1
+          }
           for package in zamak-win32-x64 zamak-linux-x64 zamak-linux-arm64 zamak-darwin-arm64 zamak-darwin-x64 zamak; do
-            (cd "npm-out/$package" && npm publish --access public --provenance --tag "$tag")
+            publish "$package"
           done
 
   # VS Code extension: published to the Marketplace with the VSCE_PAT secret (an Azure DevOps token for the
