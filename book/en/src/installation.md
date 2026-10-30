@@ -59,21 +59,11 @@ If your shell can't find `zam`, open a new terminal so that it picks up the upda
 
 ## Editor support
 
-The VS Code extension in [editors/vscode](https://github.com/VeyraLux/Zamak/tree/main/editors/vscode) adds syntax highlighting and starts `zam lsp`, the Zamak language server, for diagnostics as you type, completion, hover, go to definition, and formatting. To install it, run `npm install` in that folder, link the folder into your VS Code extensions folder, and restart VS Code:
+Install the **Zamak** extension for VS Code: open the Extensions view, search for `Zamak`, and select **Install**. It highlights `.zm` files and starts `zam lsp`, the Zamak language server, for diagnostics as you type, completion, hover, go to definition, and formatting.
 
-```sh
-# Linux and macOS
-cd /path/to/Zamak/editors/vscode && npm install
-ln -s /path/to/Zamak/editors/vscode ~/.vscode/extensions/zamak-0.2.0
-```
+The extension looks for `zam` on your `PATH`, in npm's global packages, and in the folders that the install scripts and Cargo use, so it finds `zam` however you installed it. If it doesn't, run `where zam` (Windows) or `which zam` (Linux and macOS) in a terminal, and set **zamak.path** in the VS Code settings to the path it prints.
 
-```powershell
-# Windows
-cd C:\path\to\Zamak\editors\vscode; npm install
-New-Item -ItemType Junction -Path "$env:USERPROFILE\.vscode\extensions\zamak-0.2.0" -Target "C:\path\to\Zamak\editors\vscode"
-```
-
-The extension runs the `zam` on your `PATH`. To use another one, set **zamak.path** in the VS Code settings. Other editors that speak the Language Server Protocol can run `zam lsp` the same way.
+Other editors that speak the Language Server Protocol can run `zam lsp` the same way.
 
 ## Update and uninstall
 

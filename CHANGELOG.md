@@ -5,6 +5,14 @@ and this file is the source for the text of each GitHub release.
 
 <!-- 中文版在下半部分。Chinese version: scroll down or search for "## 0.1.1（中文）". -->
 
+## Unreleased
+
+- The VS Code extension finds `zam` when you installed it with npm. Before, it looked only for a
+  program named `zam` on `PATH`, and on Windows npm installs a `zam.cmd` wrapper that VS Code
+  can't start, so there was no completion. It now starts the compiler inside npm's package, also
+  looks in npm's global packages, the install scripts' folders, and Cargo's, and starts the
+  language server by itself when **Install with npm** finishes.
+
 ## 0.2.0
 
 Released 2026-10-24.
@@ -315,6 +323,12 @@ interop layer, and the `zam lsp` server. Everything under "new in this release" 
 this preview.
 
 ---
+
+## 未发布（中文）
+
+- VS Code 扩展能找到用 npm 装的 `zam` 了。以前它只在 `PATH` 里找名为 `zam` 的程序，而 npm 在 Windows
+  上装的是 VS Code 启动不了的 `zam.cmd` 包装，所以没有补全。现在它直接启动 npm 包里的编译器，还会去 npm
+  的全局包、安装脚本和 Cargo 用的文件夹里找；点了“用 npm 安装”之后，装好会自动启动语言服务器。
 
 ## 0.2.0（中文）
 

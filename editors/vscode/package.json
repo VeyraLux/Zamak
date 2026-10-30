@@ -53,8 +53,8 @@
       "properties": {
         "zamak.path": {
           "type": "string",
-          "default": "zam",
-          "markdownDescription": "Path to the `zam` command. The extension runs `zam lsp` for diagnostics, completion, hover, go to definition, and formatting."
+          "default": "",
+          "markdownDescription": "Full path to the `zam` program. Leave it empty to let the extension find it on `PATH`, in npm's global packages, or where the install scripts and Cargo put it. The extension runs `zam lsp` for diagnostics, completion, hover, go to definition, and formatting."
         }
       }
     },

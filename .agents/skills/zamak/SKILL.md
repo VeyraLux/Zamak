@@ -166,7 +166,7 @@ Zamak 是静态类型、编译到原生可执行文件的小语言，支持 Wind
 5. 示例放 `examples/<主题>/*.zm`（多模块项目为 `<主题>/src/main.zm` + `zam.toml`），并在 `zam/tests/<主题>.rs` 里用 `include_str!(...)` 引用示例做正例与反例，真正运行产物并断言 stdout/stderr/退出码。
 6. 文档边界：`README.md`（英文，GitHub 首页）与 `README.zh-CN.md`（中文，更详细）都入库，改能力范围时两份都要同步；`SYNTAX.md`、`ROADMAP.md`、`DESIGN.md`、`NAMING.md`、`MIGRATION.md` 被 `.gitignore` 忽略，只在本地维护。二者都要同步（README 如实标注缺口，ROADMAP 记进度）。
 7. 提交：编译器、标准库、测试、示例的改动先上 `dev`，CI 在三个平台通过后再把 `main` 快进到同一提交；只改文档的可以直接上 `main`。提交信息用英文 `<type>: summary`（feat/fix/docs/refactor/test/perf/build/chore），正文说明改了什么、为什么。**不加任何 AI 署名**（`Co-Authored-By`、`Generated with` 等），PR 和发布说明也一样。改完按仓库根目录 `AGENTS.md` 的「Done means everything is in sync」清单同步文档。
-8. 编辑器/AI 生态：`editors/vscode/` 是 TextMate 语法高亮加一个很薄的客户端（`extension.js`，用 `vscode-languageclient` 启动 `zam lsp`；诊断、补全、悬停、跳转、重命名都在 `zam` 里实现），改动关键字、符号或类型时要同步 `editors/vscode/syntaxes/zamak.tmLanguage.json` 与 `language-configuration.json`。
+8. 编辑器/AI 生态：`editors/vscode/` 是 TextMate 语法高亮加一个很薄的客户端（`extension.js`，用 `vscode-languageclient` 启动 `zam lsp`；诊断、补全、悬停、跳转、重命名都在 `zam` 里实现）。**找 zam 在 `locate.js`**：npm 在 Windows 上装的是 `zam.cmd`，Node 启动 .cmd 会报 EINVAL，Linux/macOS 上是指向 zam.js 的链接（要 PATH 上有 node），所以顺着包装找到平台包里的原生 zam 直接启动；顺序是 zamak.path（只写名字不算）→ PATH → `npm root -g` → 安装脚本/Cargo 的常见目录。测试 `editors/vscode/scripts/check-locate.mjs`（CI 的 editor-config 任务），改动关键字、符号或类型时要同步 `editors/vscode/syntaxes/zamak.tmLanguage.json` 与 `language-configuration.json`。
 
 ## 参考资料
 

@@ -15,15 +15,15 @@ Created by rayL-K · VeyraLux
 
 ## Requirements
 
-Install Zamak so that `zam` is on your `PATH`, or set **zamak.path** to the full path of `zam`. The extension starts `zam lsp` in the background. Without `zam`, highlighting still works.
+Install Zamak, for example with `npm install -g @veyralux/zamak`. The extension looks for `zam` on your `PATH`, in npm's global packages, and in the folders that the install scripts and Cargo use, then starts `zam lsp` in the background. Without `zam`, highlighting still works.
 
-If the extension can't find `zam`, it offers a **Install with npm** button that runs `npm install -g @veyralux/zamak` in a terminal. The status bar shows the `zam` version the extension is using, and turns into a warning with an install link when `zam` is missing.
+If the extension can't find `zam`, it offers an **Install with npm** button that runs `npm install -g @veyralux/zamak` in a terminal, and starts the language server by itself when the install finishes. The status bar shows the `zam` version in use; hover over it to see which file it runs.
 
 ## Settings
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| `zamak.path` | `zam` | The `zam` command to run. |
+| `zamak.path` | (empty) | The full path of the `zam` program. Leave it empty to let the extension find it. If it can't, run `where zam` (Windows) or `which zam` (Linux and macOS) in a terminal and use the path it prints. |
 
 Diagnostics follow the VS Code display language: Chinese when VS Code is in Chinese, English otherwise. Set the `ZAMAK_LANG` environment variable to `zh` or `en` to choose yourself.
 
@@ -31,7 +31,7 @@ If you change your Zamak installation, run **Zamak: Restart Language Server** fr
 
 ## 中文说明
 
-Zamak 语言的 VS Code 扩展：语法高亮，边写边报错（没保存的内容也检查），补全（`x.` 后面按检查器推断出的真实类型列出方法与字段），输入调用时显示参数提示，本文件内的重命名与查找引用，悬停查看签名，跳到定义，以及与 `zam fmt` 相同的格式化。需要先安装 Zamak，让 `zam` 在 `PATH` 里，或者在设置里把 `zamak.path` 设为 `zam` 的完整路径。找不到 `zam` 时扩展会给出「用 npm 安装」按钮，直接执行 `npm install -g @veyralux/zamak`；状态栏显示当前用的 `zam` 版本，没装时变成带安装入口的警告。VS Code 界面是中文时，报错也是中文。
+Zamak 语言的 VS Code 扩展：语法高亮，边写边报错（没保存的内容也检查），补全（`x.` 后面按检查器推断出的真实类型列出方法与字段），输入调用时显示参数提示，本文件内的重命名与查找引用，悬停查看签名，跳到定义，以及与 `zam fmt` 相同的格式化。需要先安装 Zamak，例如 `npm install -g @veyralux/zamak`。扩展会在 `PATH`、npm 的全局包，以及安装脚本和 Cargo 用的文件夹里自己找 `zam`。还是找不到时，在终端里运行 `where zam`（Windows）或 `which zam`（Linux、macOS），把显示的路径填进设置 `zamak.path`。没装 `zam` 时扩展会给出「用 npm 安装」按钮，在终端里执行安装，装好后自动启动语言服务器；状态栏显示当前用的 `zam` 版本，鼠标悬停能看到用的是哪个文件。VS Code 界面是中文时，报错也是中文。
 
 ## Development
 

@@ -35,6 +35,8 @@ jobs:
           node-version: '22'
       - name: 编辑器语法配置检查
         run: node editors/vscode/scripts/check-grammar.mjs
+      - name: VS Code extension finds zam
+        run: node editors/vscode/scripts/check-locate.mjs
 
   ai-workflow:
     runs-on: windows-latest
