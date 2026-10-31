@@ -208,16 +208,44 @@ static int64_t checked_index(int64_t index, size_t length) {
 __declspec(dllimport) int __stdcall GetConsoleMode(void *, unsigned long *);
 __declspec(dllimport) int __stdcall WriteConsoleW(void *, const void *, unsigned long, unsigned long *, void *);
 __declspec(dllimport) int __stdcall MultiByteToWideChar(unsigned int, unsigned long, const char *, int, wchar_t *, int);
+#ifdef _WIN64
+// 链接器提供的映像基址：从程序自己的 PE 头读出子系统。`zam build --noconsole` 链接成 GUI 子系统（2）。
+extern unsigned char __ImageBase;
+static int zam_gui_program(void) {
+    static int state = -1;
+    if (state < 0) {
+        const unsigned char *base = &__ImageBase;
+        unsigned long pe = *(const unsigned long *)(base + 0x3C);
+        state = *(const unsigned short *)(base + pe + 24 + 68) == 2;
+    }
+    return state;
+}
+#else
+static int zam_gui_program(void) { return 0; }
 #endif
+// GUI 程序从资源管理器启动时没有标准输出和错误输出（文件描述符是 -2，没有系统句柄）：往里写没有意义，
+// 当作写成功。控制台程序照旧：写失败就是失败。
+static int zam_stream_missing(FILE *f) {
+    intptr_t handle;
+    if (!zam_gui_program()) return 0;
+    handle = _get_osfhandle(_fileno(f));
+    return handle == -1 || handle == -2 || handle == 0;
+}
+#else
+#define zam_stream_missing(f) 0
+#endif
+static int zam_newline(FILE *f) { return zam_stream_missing(f) || fputc('\n', f) != EOF; }
+static int zam_flush(FILE *f) { return zam_stream_missing(f) || fflush(f) != EOF; }
 static void output_mode(void) {
 #ifdef _WIN32
-    if (_setmode(_fileno(stdout), _O_BINARY) == -1) exit(1);
+    if (!zam_stream_missing(stdout) && _setmode(_fileno(stdout), _O_BINARY) == -1) exit(1);
 #endif
 }
 // Windows 控制台按本地代码页（中文系统是 936）解释字节，直接写 UTF-8 会乱码。输出目标是
 // 控制台时先转成 UTF-16 再用 WriteConsoleW；重定向到文件或管道时照常写原始 UTF-8 字节。
 // 控制台输入见 STD_PRELUDE 的 zam_stdin_getc：同样按 UTF-16 读，再转成 UTF-8。
 static int zam_write(FILE *f, const unsigned char *p, size_t n) {
+    if (zam_stream_missing(f)) return 1;
 #ifdef _WIN32
     void *console = (void*)_get_osfhandle(_fileno(f));
     unsigned long mode, done;
@@ -289,7 +317,7 @@ static int string_compare(S *a, S *b) {
 static void print(S *s) {
     int locked = zam_threaded, ok;
     if (locked) zam_lock_stdout();
-    ok = zam_write(stdout, s->data, s->len) && fputc('\n', stdout) != EOF;
+    ok = zam_write(stdout, s->data, s->len) && zam_newline(stdout);
     if (locked) zam_unlock_stdout();
     if (!ok) exit(1);
 }
@@ -297,7 +325,7 @@ static void print(S *s) {
 static void uncaught_error(S *s) {
     fflush(stdout);
     if (!zam_write(stderr, s->data, s->len)) exit(1);
-    if (fputc('\n', stderr) == EOF) exit(1);
+    if (!zam_newline(stderr)) exit(1);
 }
 static S copy(S *s) { return own(s->data, s->len); }
 // extern fn 的 &string 参数：复制成以 \0 结尾的 C 字符串，调用后释放。
@@ -3782,7 +3810,7 @@ exit(1);"#,
         result: Type::Unit,
         fallible: false,
         body: r#"fflush(stdout);
-if (!zam_write(stderr, p0->data, p0->len) || fputc('\n', stderr) == EOF) exit(1);"#,
+if (!zam_write(stderr, p0->data, p0->len) || !zam_newline(stderr)) exit(1);"#,
     },
     Builtin {
         name: "std/io:read_line",
@@ -8983,7 +9011,7 @@ pub fn generate_with(
                 }
             };
             dispatch.push_str(&format!(
-                "if (strcmp(argv[1], \"{test}\") == 0) {{ {call} return fflush(stdout) == EOF ? 1 : 0; }}\n"
+                "if (strcmp(argv[1], \"{test}\") == 0) {{ {call} return zam_flush(stdout) ? 0 : 1; }}\n"
             ));
         }
         source.push_str(&format!(
@@ -9005,12 +9033,12 @@ pub fn generate_with(
                 )
             };
             source.push_str(&format!(
-                "int main(int argc, char **argv) {{ zam_argc = argc; zam_argv = argv; output_mode(); {structure} r = {}(); if (!r.ok) {{ {report} return 1; }} return fflush(stdout) == EOF ? 1 : 0; }}\n",
+                "int main(int argc, char **argv) {{ zam_argc = argc; zam_argv = argv; output_mode(); {structure} r = {}(); if (!r.ok) {{ {report} return 1; }} return zam_flush(stdout) ? 0 : 1; }}\n",
                 symbols[entry]
             ));
         } else {
             source.push_str(&format!(
-                "int main(int argc, char **argv) {{ zam_argc = argc; zam_argv = argv; output_mode(); {}(); return fflush(stdout) == EOF ? 1 : 0; }}\n",
+                "int main(int argc, char **argv) {{ zam_argc = argc; zam_argv = argv; output_mode(); {}(); return zam_flush(stdout) ? 0 : 1; }}\n",
                 symbols[entry]
             ));
         }
@@ -9933,8 +9961,52 @@ pub fn compile_source(
     std::fs::read(dir.join("program.obj")).map_err(|e| e.to_string())
 }
 
+/// 在 `PATH`（MSVC 的环境里那一份）里找一个工具，比如 Windows SDK 的 `rc.exe`。
+fn environment_tool(
+    environment: &BTreeMap<String, String>,
+    name: &str,
+) -> Result<std::path::PathBuf> {
+    let path = environment
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case("PATH"))
+        .map(|(_, value)| value.as_str())
+        .unwrap_or_default();
+    std::env::split_paths(path)
+        .map(|dir| dir.join(name))
+        .find(|path| path.is_file())
+        .ok_or_else(|| format!("{name} not found; install the Windows SDK (part of Visual Studio Build Tools) to set an icon"))
+}
+
+/// 图标资源：一个只有 `1 ICON "app.ico"` 的资源脚本，编译成 `app.res`（MSVC）或 `app.res.o`（MinGW）。
+/// 编号最小的图标就是资源管理器里显示的程序图标。
+fn compile_icon(
+    dir: &Path,
+    icon: &[u8],
+    compiler: &mut Command,
+    arguments: &[&str],
+    what: &str,
+) -> Result<()> {
+    std::fs::write(dir.join("app.ico"), icon).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("app.rc"), "1 ICON \"app.ico\"\r\n").map_err(|e| e.to_string())?;
+    let output = compiler
+        .current_dir(dir)
+        .args(arguments)
+        .output()
+        .map_err(|e| format!("cannot run {what}: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "compiling the icon failed:\n{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(())
+}
+
 /// 把目标文件链接成可执行文件。`extra` 是额外的链接参数（如 macOS 的 `-framework Cocoa`、
 /// Windows 的清单），`cpp` 表示有 C++ 目标文件，GCC/Clang 要带上 C++ 运行库。
+/// `gui` 链接成没有控制台窗口的程序，`icon` 是 `.ico` 文件的内容，都只在 Windows 上用。
+#[allow(clippy::too_many_arguments)]
 pub fn link_with(
     tool: &str,
     dir: &Path,
@@ -9943,6 +10015,8 @@ pub fn link_with(
     library_paths: &[std::path::PathBuf],
     extra: &[String],
     cpp: bool,
+    gui: bool,
+    icon: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
     let mut names = Vec::new();
     // ponytail: Windows 之外统一用 .o —— clang/ld（macOS）对 .obj 的识别不如 .o 可靠，MSVC 侧不变。
@@ -9954,8 +10028,24 @@ pub fn link_with(
     }
     let output = if uses_msvc(tool) {
         let environment = msvc_environment(tool)?;
-        low(Command::new(msvc_tool(&environment, "link.exe")?))
-            .current_dir(dir)
+        if let Some(icon) = icon {
+            let mut rc = low(Command::new(environment_tool(&environment, "rc.exe")?));
+            rc.envs(&environment);
+            compile_icon(
+                dir,
+                icon,
+                &mut rc,
+                &["/nologo", "/fo", "app.res", "app.rc"],
+                "rc.exe",
+            )?;
+            names.push("app.res".into());
+        }
+        let mut link = low(Command::new(msvc_tool(&environment, "link.exe")?));
+        // 没有控制台的程序：GUI 子系统，入口还是 main（默认的入口要 WinMain）。
+        if gui {
+            link.args(["/SUBSYSTEM:WINDOWS", "/ENTRY:mainCRTStartup"]);
+        }
+        link.current_dir(dir)
             .envs(&environment)
             .args(["/nologo", "/Brepro", "/INCREMENTAL:NO", "/OUT:program.exe"])
             .args(&names)
@@ -9973,10 +10063,47 @@ pub fn link_with(
         // std/math 的函数在 Linux 上属于 libm，要显式链接；macOS 与 MinGW 也接受 -lm。
         // MinGW 的 ld 默认把链接时间写进 PE 头，同一个链接键两次链接字节不同，
         // 会被缓存当成 corrupt cache entry；关掉时间戳，与 MSVC 的 /Brepro 对应。
+        if cfg!(windows) {
+            if let Some(icon) = icon {
+                // windres 在编译器旁边（MinGW）；clang 配 LLVM 时叫 llvm-windres。
+                let beside = Path::new(tool)
+                    .parent()
+                    .filter(|dir| !dir.as_os_str().is_empty());
+                let windres = ["windres", "llvm-windres"]
+                    .into_iter()
+                    .find_map(|name| {
+                        let exe = format!("{name}.exe");
+                        beside
+                            .map(|dir| dir.join(&exe))
+                            .filter(|path| path.is_file())
+                            .or_else(|| find_executable(name))
+                    })
+                    .ok_or(
+                        "windres not found; install MinGW binutils (or llvm-mingw) to set an icon",
+                    )?;
+                compile_icon(
+                    dir,
+                    icon,
+                    &mut low(Command::new(windres)),
+                    &[
+                        "--input",
+                        "app.rc",
+                        "--output",
+                        "app.res.o",
+                        "--output-format=coff",
+                    ],
+                    "windres",
+                )?;
+                names.push("app.res.o".into());
+            }
+        }
         let mut command = low(Command::new(tool));
         command.current_dir(dir).args(&names);
         if cfg!(windows) {
             command.arg("-Wl,--no-insert-timestamp");
+            if gui {
+                command.arg("-mwindows");
+            }
         }
         let winsock = if cfg!(windows) {
             &["-lws2_32"][..]

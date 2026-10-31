@@ -15,7 +15,7 @@ if [ -s "$repo/zam/target/wsl.patch" ]; then git apply "$repo/zam/target/wsl.pat
 cargo fmt --manifest-path zam/Cargo.toml -- --check && echo FMT_OK
 for cc in gcc clang; do
   echo "== $cc"
-  CC=$cc cargo test --manifest-path zam/Cargo.toml --locked 2>&1 \
+  CC=$cc cargo test --manifest-path zam/Cargo.toml --locked --no-fail-fast 2>&1 \
     | grep -E "^test result|FAILED|panicked" \
     | awk '/test result/{p+=$4; f+=$6} /FAILED|panicked/{print} END {print "passed=" p, "failed=" f}'
 done

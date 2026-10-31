@@ -24,6 +24,7 @@ pub struct Manifest {
     pub entry: Option<PathBuf>,
     pub dependencies: BTreeMap<String, Source>,
     pub native: Native,
+    pub app: App,
     // 发布到公共包索引时要写的版本号与一句话介绍。
     pub version: Option<Version>,
     pub description: Option<String>,
@@ -43,6 +44,44 @@ pub struct Native {
     // Windows 的清单），zam.toml 里不能写。
     pub flags: Vec<String>,
     pub link_args: Vec<String>,
+}
+
+/// `[app]`：最终的可执行文件的设置。目前只在 Windows 上生效，别的系统忽略。
+#[derive(Clone, Debug, Default)]
+pub struct App {
+    /// `console = false`：不要控制台窗口（Windows 的 GUI 子系统），桌面程序双击运行时不带黑窗口。
+    pub noconsole: bool,
+    /// 程序的图标，一个 `.ico` 文件，路径相对项目根目录。
+    pub icon: Option<PathBuf>,
+}
+
+fn app(config: &toml::Table) -> Result<App> {
+    let Some(table) = config.get("app") else {
+        return Ok(App::default());
+    };
+    let table = table.as_table().ok_or("[app] must be a table")?;
+    if let Some(key) = table
+        .keys()
+        .find(|key| !matches!(key.as_str(), "console" | "icon"))
+    {
+        return Err(format!(
+            "unknown app setting {key}; [app] accepts console and icon"
+        ));
+    }
+    let console = match table.get("console") {
+        None => true,
+        Some(value) => value.as_bool().ok_or("app.console must be true or false")?,
+    };
+    let icon = match table.get("icon") {
+        None => None,
+        Some(value) => Some(relative(
+            value.as_str().ok_or("app.icon must be a string")?,
+        )?),
+    };
+    Ok(App {
+        noconsole: !console,
+        icon,
+    })
 }
 
 fn native(config: &toml::Table) -> Result<Native> {
@@ -152,9 +191,9 @@ pub fn manifest(path: &Path, library: bool) -> Result<Manifest> {
         .map_err(|e| format!("{}: invalid zam.toml: {e}", path.display()))?;
     if config
         .keys()
-        .any(|key| !matches!(key.as_str(), "project" | "dependencies" | "native"))
+        .any(|key| !matches!(key.as_str(), "project" | "dependencies" | "native" | "app"))
     {
-        return Err("zam.toml accepts only [project], [dependencies] and [native]".into());
+        return Err("zam.toml accepts only [project], [dependencies], [native] and [app]".into());
     }
     let table = config
         .get("project")
@@ -252,6 +291,7 @@ pub fn manifest(path: &Path, library: bool) -> Result<Manifest> {
         entry,
         dependencies,
         native: native(&config)?,
+        app: app(&config)?,
         version,
         description,
     })

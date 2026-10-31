@@ -89,6 +89,7 @@ Escapes: `\n \r \t \0 \" \\`, `\xNN`, `\uXXXX`, `\UXXXXXXXX`. `r"C:\dir\{x}"` is
 
 - `extern fn name(x: i64, s: &string) -> f64` declares a C function; there is no body. Parameters are `i64`, `f64`, `bool`, `&string`, `&bytes`/`&mut bytes` (C gets a pointer; pass the length separately) or a C handle; results are nothing, `i64`, `f64`, `bool`, `string` or `Option[Handle]`.
 - `extern type Db: "sqlite3", close = sqlite3_close` declares a C handle. It has one owner, moves like a string, can be borrowed as `&Db`, and is closed exactly once when it goes out of scope; it cannot be copied or constructed in Zamak. A C function returning a handle is declared `-> Option[Db]` (NULL is `None`); an output parameter `sqlite3 **` is `&mut Option[Db]`. Use the handle through `match`: `match open(path): Some(db): ...`.
+- `zam.toml` `[app]` (Windows only; other systems print a NOTE and ignore it): `console = false` builds a program with no console window, and `icon = "assets/app.ico"` sets its icon (a `.ico` file; other formats are an error). The command line takes `zam build --noconsole --icon app.ico`. Without a console, `println` does nothing.
 - `zam.toml` `[native]`: `sources` (C files), `include` (folders), `headers` (such as `["sqlite3.h"]`: Zamak then calls through the library's own prototypes), `libraries`, `library_paths`.
 
 ## Ownership and borrowing

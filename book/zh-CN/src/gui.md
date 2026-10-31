@@ -161,6 +161,28 @@ fn main():
 
 [`examples/ui/widgets.zm`](https://github.com/VeyraLux/Zamak/tree/main/examples/ui/widgets.zm) 把所有组件放在一块画布上，深色模式开关会让整套主题渐变过去。
 
+## 隐藏控制台窗口、设置图标
+
+在 Windows 上，程序启动时默认带一个控制台窗口，也就是那个黑色的终端。桌面程序不想要它，还想要自己的图标。把两项都写进 `zam.toml`：
+
+```toml
+[app]
+console = false
+icon = "assets/app.ico"
+```
+
+也可以写在命令里，单个文件时更方便：
+
+```sh
+zam build counter.zm --noconsole --icon assets/app.ico
+```
+
+- `console = false`（或 `--noconsole`）编译出的程序，双击运行时不会打开控制台窗口。它的 `println` 没有地方写，什么都不做；从终端启动并把输出写进文件时除外，例如 `app.exe > log.txt`。
+- 图标必须是 Windows 的 `.ico` 文件，里面可以放好几种尺寸。别的格式 `zam` 直接拒绝，不去猜；PNG 等图片请先转换。`zam.toml` 里的路径相对项目目录，命令行里的相对你运行 `zam` 的目录。图标会显示在文件资源管理器、任务栏和 Alt+Tab 里。
+- 没有控制台的程序遇到错误停下时，没有地方显示错误信息，会静默地以退出码 1 结束。请在带控制台的状态下测试，并用 `window.error(title, text)` 把问题告诉用户。
+- 这两项只在 Windows 上生效。Linux 和 macOS 上 `zam build` 会输出一行 `NOTE` 并忽略它们，所以同一份 `zam.toml` 到处都能用。macOS 的图标属于应用包，Linux 的属于 `.desktop` 文件，`zam` 还不会生成这两样。
+- `zam test` 始终保留控制台。用 MinGW 而不是 MSVC 设置图标时，要装 `windres`。
+
 ## 编译与运行
 
 - 程序第一次用到 `std/ui` 时，`zam` 把自带的 libui-ng（MIT）编译进缓存，之后直接复用。

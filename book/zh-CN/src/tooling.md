@@ -10,7 +10,7 @@
 | --- | --- |
 | `zam new NAME` | 创建项目。加上 `--template ai` 会同时生成给 AI 编程助手用的文件。 |
 | `zam check` | 检查类型和所有权，不编译，不需要 C 编译器。 |
-| `zam build` | 编译成独立的可执行文件，放在 `build/` 里。 |
+| `zam build [--noconsole] [--icon 文件]` | 编译成独立的可执行文件，放在 `build/` 里。在 Windows 上，`--noconsole` 编出没有控制台窗口的程序，`--icon` 设置程序图标，见[窗口程序](gui.md)。 |
 | `zam run [-- ARGS]` | 构建并运行，把 `ARGS` 传给程序。 |
 | `zam test [WORD]` | 运行 `test_...` 函数；给了 `WORD` 时只运行名字里包含它的测试。 |
 | `zam fmt` | 规范缩进和空行。 |

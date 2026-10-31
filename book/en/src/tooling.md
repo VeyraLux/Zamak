@@ -10,7 +10,7 @@ Most subcommands take a project folder or a single `.zm` file. Without one, they
 | --- | --- |
 | `zam new NAME` | Creates a project. Add `--template ai` to include files for AI coding agents. |
 | `zam check` | Checks types and ownership without compiling. Doesn't need a C compiler. |
-| `zam build` | Compiles to a standalone executable in `build/`. |
+| `zam build [--noconsole] [--icon FILE]` | Compiles to a standalone executable in `build/`. On Windows, `--noconsole` builds a program with no console window, and `--icon` sets its icon; see [Windows and controls](gui.md). |
 | `zam run [-- ARGS]` | Builds and runs, passing `ARGS` to the program. |
 | `zam test [WORD]` | Runs the `test_...` functions, optionally only those whose names contain `WORD`. |
 | `zam fmt` | Normalizes indentation and blank lines. |

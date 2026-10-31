@@ -12,7 +12,7 @@ use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, String>;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-75");
+const VERSION: &str = concat!("zam-", env!("CARGO_PKG_VERSION"), "-native-c-76");
 
 pub fn hash(parts: &[&[u8]]) -> String {
     let mut digest = Sha256::new();
@@ -96,6 +96,8 @@ pub struct Project {
     modules: BTreeMap<String, Input>,
     // 项目与各个依赖包的 `[native]`：（包的根目录, 设置）。
     native: Vec<(PathBuf, package::Native)>,
+    // `[app]` 与命令行的 `--noconsole`、`--icon`；图标路径已经是完整路径。
+    app: package::App,
     // 库：`zam.toml` 没写 entry，没有 main，只能检查和测试。`entry` 是它的第一个模块，测试的
     // 入口生成在那里。
     pub library: bool,
@@ -176,6 +178,19 @@ type Parse = fn(&str) -> std::result::Result<compiler::Module, String>;
 
 /// 用 Zamak 写的标准库模块：源码编进编译器，被 `use` 时像普通模块一样加载（模块 id 就是
 /// `std/<名字>`）。它们可以再 `use` C 实现的内部模块，例如 `std/_process`。
+/// 读程序图标：必须是 `.ico` 文件（开头是 0、0、1、0，再是图像个数）。别的格式明确拒绝，不猜。
+fn read_icon(path: &Path) -> Result<Vec<u8>> {
+    let bytes =
+        fs::read(path).map_err(|e| format!("cannot read the icon {}: {e}", path.display()))?;
+    if bytes.len() < 22 || bytes[..4] != [0, 0, 1, 0] || (bytes[4] == 0 && bytes[5] == 0) {
+        return Err(format!(
+            "icon {} must be a Windows .ico file; convert other images with an image editor or a converter",
+            path.display()
+        ));
+    }
+    Ok(bytes)
+}
+
 /// 编译器线程的栈大小：检查与生成沿语法树递归，很长、嵌套很深的表达式也不会栈溢出。
 pub const STACK: usize = 256 * 1024 * 1024;
 
@@ -557,6 +572,15 @@ impl Project {
         Self::load_with(input, compiler::parse, Some(false))
     }
 
+    /// 命令行的 `--noconsole` 与 `--icon <文件>`：盖过 `zam.toml` 里的 `[app]`。图标路径相对当前目录。
+    pub fn with_app(mut self, noconsole: bool, icon: Option<PathBuf>) -> Self {
+        self.app.noconsole |= noconsole;
+        if let Some(icon) = icon {
+            self.app.icon = Some(std::path::absolute(&icon).unwrap_or(icon));
+        }
+        self
+    }
+
     /// `zam update`：忽略 `zam.lock`，把每个 git 依赖的 rev 重新解析成最新的提交。
     pub fn load_updating(input: &Path) -> Result<Self> {
         Self::load_with(input, compiler::parse, Some(true))
@@ -605,6 +629,7 @@ impl Project {
                 single: true,
                 modules,
                 native: Vec::new(),
+                app: package::App::default(),
                 library: false,
                 version: None,
                 description: None,
@@ -675,6 +700,10 @@ impl Project {
             }
             add_std_sources(&mut modules, parse)?;
         }
+        let app = package::App {
+            noconsole: config.app.noconsole,
+            icon: config.app.icon.as_ref().map(|icon| root.join(icon)),
+        };
         Ok(Self {
             name,
             root,
@@ -682,6 +711,7 @@ impl Project {
             single: false,
             modules,
             native,
+            app,
             library,
             version: config.version,
             description: config.description.clone(),
@@ -2290,7 +2320,20 @@ impl Project {
             object_keys.push(key);
             objects.push(bytes.ok_or("native cache entry was not produced")?);
         }
-        let link_settings = format!("{libraries:?}\n{library_paths:?}\n{link_args:?}\n{cpp}");
+        // `[app]` 只用在最终的程序上（测试程序保持控制台），而且只在 Windows 上生效。
+        let (mut gui, mut icon) = (false, None);
+        if tests.is_empty() && (self.app.noconsole || self.app.icon.is_some()) {
+            if cfg!(windows) {
+                gui = self.app.noconsole;
+                icon = self.app.icon.as_deref().map(read_icon).transpose()?;
+            } else {
+                eprintln!("NOTE --noconsole and --icon only apply on Windows; ignored here");
+            }
+        }
+        let link_settings = format!(
+            "{libraries:?}\n{library_paths:?}\n{link_args:?}\n{cpp}\n{gui}\n{}",
+            hash(&[icon.as_deref().unwrap_or_default()])
+        );
         let app_key = hash(&[
             VERSION.as_bytes(),
             object_keys.join("\n").as_bytes(),
@@ -2308,6 +2351,8 @@ impl Project {
                 &library_paths,
                 &link_args,
                 cpp,
+                gui,
+                icon.as_deref(),
             )
         })?;
         let link_ms = link_started.elapsed().as_secs_f64() * 1000.0;

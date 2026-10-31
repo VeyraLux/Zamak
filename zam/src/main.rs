@@ -28,6 +28,33 @@ fn execute() -> project::Result<()> {
     if program_args.is_some() && raw_args.first().map(String::as_str) != Some("run") {
         return Err("usage: only zam run accepts program arguments after --".into());
     }
+    // `--noconsole`（不要控制台窗口）与 `--icon <文件>`（程序图标）：只对 build 和 run 有意义，
+    // 先抽出来，后面的参数个数检查就不用管它们。
+    let mut noconsole = false;
+    let mut icon: Option<std::path::PathBuf> = None;
+    let mut rest = Vec::new();
+    let mut flags = raw_args.into_iter();
+    while let Some(arg) = flags.next() {
+        match arg.as_str() {
+            "--noconsole" => noconsole = true,
+            "--icon" => {
+                let path = flags
+                    .next()
+                    .ok_or("usage: --icon needs the path of a .ico file")?;
+                icon = Some(path.into());
+            }
+            _ => rest.push(arg),
+        }
+    }
+    let raw_args = rest;
+    if (noconsole || icon.is_some())
+        && !matches!(raw_args.first().map(String::as_str), Some("build" | "run"))
+    {
+        return Err("usage: --noconsole and --icon work with zam build and zam run".into());
+    }
+    let load = |input: &Path| {
+        project::Project::load(input).map(|project| project.with_app(noconsole, icon.clone()))
+    };
     let json_count = raw_args
         .iter()
         .filter(|arg| arg.as_str() == "--json")
@@ -73,8 +100,9 @@ fn execute() -> project::Result<()> {
         // ponytail: 只有 check/build 会产生诊断；其余命令直接拒绝，避免静默忽略。
         let outcome = match args.first().map(String::as_str) {
             Some("check") => project::Project::load(input).and_then(|project| project.check()),
-            Some("build") => project::Project::load(input)
-                .and_then(|project| project.build(&project::cache_dir()).map(|_| ())),
+            Some("build") => {
+                load(input).and_then(|project| project.build(&project::cache_dir()).map(|_| ()))
+            }
             _ => return Err("--json is only supported by check and build".into()),
         };
         println!(
@@ -94,7 +122,9 @@ fn execute() -> project::Result<()> {
             project.check()?;
             println!("CHECK OK {}", project.name);
         }
-        Some("build") => { project::Project::load(input)?.build(&project::cache_dir())?; }
+        Some("build") => {
+            load(input)?.build(&project::cache_dir())?;
+        }
         Some("fmt") => format_sources(input)?,
         // `zam add <名字>`（索引里的最新版本）、`zam add <名字> <版本范围>`、
         // `zam add <名字> <git 地址|本地目录> [rev]`：在当前目录的 zam.toml 里加一个依赖并拉取。
@@ -166,7 +196,7 @@ fn execute() -> project::Result<()> {
             // 源码后缀统一为 .zm；其余已存在的文件按原生产物直接执行。
             let source = input.extension().is_some_and(|ext| ext == "zm");
             let artifact = if input.is_file() && !source { input.into() }
-                else { project::Project::load(input)?.build(&project::cache_dir())? };
+                else { load(input)?.build(&project::cache_dir())? };
             project::run_artifact(&artifact, &program_args.unwrap_or_default())?;
         }
         Some("demo") if args.len() == 1 => demo()?,

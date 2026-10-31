@@ -5,6 +5,14 @@ and this file is the source for the text of each GitHub release.
 
 <!-- 中文版在下半部分。Chinese version: scroll down or search for "## 0.1.1（中文）". -->
 
+## Unreleased
+
+- **No console window and your own icon.** A desktop program no longer needs the black terminal that
+  Windows opens next to it. Write `[app]` with `console = false` and `icon = "assets/app.ico"` in
+  `zam.toml`, or run `zam build --noconsole --icon assets/app.ico`. The icon must be a `.ico` file
+  (anything else is an error), and a program without a console no longer stops when it prints. Both
+  settings apply on Windows only; other systems print a `NOTE` and build as before.
+
 ## 0.2.1
 
 Released 2026-10-30.
@@ -356,6 +364,13 @@ interop layer, and the `zam lsp` server. Everything under "new in this release" 
 this preview.
 
 ---
+
+## 未发布（中文）
+
+- **没有控制台窗口，用自己的图标。** 桌面程序不用再带着 Windows 打开的那个黑色终端了。在 `zam.toml` 里写
+  `[app]`，设 `console = false` 和 `icon = "assets/app.ico"`，或者运行 `zam build --noconsole --icon assets/app.ico`。
+  图标必须是 `.ico` 文件（别的格式直接报错）；没有控制台的程序打印时也不会再停下。两项都只在 Windows 上生效，
+  别的系统输出一行 `NOTE`，照常构建。
 
 ## 0.2.1（中文）
 

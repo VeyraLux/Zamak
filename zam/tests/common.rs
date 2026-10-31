@@ -21,6 +21,7 @@ impl Case {
         self.root.join(name)
     }
 
+    #[allow(dead_code)]
     pub fn run(&self, source: &str) -> Output {
         let file = self.root.join("main.zm");
         fs::write(&file, source).unwrap();

@@ -161,6 +161,28 @@ fn main():
 
 [`examples/ui/widgets.zm`](https://github.com/VeyraLux/Zamak/tree/main/examples/ui/widgets.zm) puts every widget on one canvas, with a dark-mode switch that fades the whole theme.
 
+## Hide the console window and set an icon
+
+On Windows, a program starts with a console window, the black terminal, unless you ask for none. A desktop program wants no console and an icon of its own. Put both in `zam.toml`:
+
+```toml
+[app]
+console = false
+icon = "assets/app.ico"
+```
+
+Or pass them to the command, which is handy for a single file:
+
+```sh
+zam build counter.zm --noconsole --icon assets/app.ico
+```
+
+- `console = false`, or `--noconsole`, builds a program that opens no console window when you double-click it. Its `println` has nowhere to write and does nothing, unless you start it from a terminal with the output sent to a file, as in `app.exe > log.txt`.
+- The icon must be a Windows `.ico` file, which can hold several sizes. `zam` rejects any other format instead of guessing; convert PNG and other images first. In `zam.toml` the path is relative to the project folder, and on the command line it's relative to where you run `zam`. The icon shows in File Explorer, the taskbar, and Alt+Tab.
+- A program without a console that stops on an error has nowhere to show the message, so it exits with code 1 and says nothing. Test with the console on, and report problems to the user with `window.error(title, text)`.
+- Both settings apply only on Windows. On Linux and macOS, `zam build` prints a `NOTE` line and ignores them, so one `zam.toml` works everywhere. On macOS, an icon belongs to an app bundle, and on Linux to a `.desktop` file; `zam` doesn't create either yet.
+- `zam test` always keeps the console. To set an icon with MinGW instead of MSVC, install `windres`.
+
 ## Building and running
 
 - The first build of a program that uses `std/ui` compiles libui-ng (MIT), which `zam` carries, into the cache. Later builds reuse it.
