@@ -1,0 +1,19 @@
+id = "zamak"
+name = "Zamak"
+description = "Zamak language support: syntax highlighting, diagnostics as you type, completion, hover, go to definition, and formatting."
+version = "0.2.1"
+schema_version = 1
+authors = ["rayL-K"]
+repository = "https://github.com/VeyraLux/Zamak"
+
+# The grammar lives in this repository. `rev` must be a pushed commit that contains
+# editors/zed/grammar as it is now: after you change the grammar, push, then set `rev`
+# to that commit.
+[grammars.zamak]
+repository = "https://github.com/VeyraLux/Zamak"
+rev = "GRAMMAR_REV"
+path = "editors/zed/grammar"
+
+[language_servers.zam]
+name = "zam lsp"
+languages = ["Zamak"]

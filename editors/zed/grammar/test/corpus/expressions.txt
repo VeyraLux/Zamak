@@ -1,0 +1,373 @@
+========================
+Operators and precedence
+========================
+
+x = a + b * c ** 2 ** 3 // d % e
+y = not a and b or c
+z = a & 1 == 1 and x not in xs
+w = -x << 2 | ~y ^ z
+
+---
+
+(source_file
+  (assignment
+    (identifier)
+    (binary_expression
+      (identifier)
+      (binary_expression
+        (binary_expression
+          (binary_expression
+            (identifier)
+            (binary_expression
+              (identifier)
+              (binary_expression
+                (integer)
+                (integer))))
+          (identifier))
+        (identifier))))
+  (assignment
+    (identifier)
+    (boolean_operator
+      (boolean_operator
+        (not_expression
+          (identifier))
+        (identifier))
+      (identifier)))
+  (assignment
+    (identifier)
+    (boolean_operator
+      (comparison
+        (binary_expression
+          (identifier)
+          (integer))
+        (integer))
+      (comparison
+        (identifier)
+        (identifier))))
+  (assignment
+    (identifier)
+    (binary_expression
+      (binary_expression
+        (unary_expression
+          (identifier))
+        (integer))
+      (binary_expression
+        (unary_expression
+          (identifier))
+        (identifier)))))
+
+=========================================
+Calls, attributes, subscripts, and slices
+=========================================
+
+p.norm()
+connect(host, timeout=1.5)
+Point(x: 1, y: 2)
+Pair(i64, string)(first: 1, second: "one")
+s[a:b]
+s[:3]
+xs[-1]
+t.0
+doc.get("user")?.get("name")?
+
+---
+
+(source_file
+  (expression_statement
+    (call
+      (attribute
+        (identifier)
+        (identifier))
+      (arguments)))
+  (expression_statement
+    (call
+      (identifier)
+      (arguments
+        (identifier)
+        (keyword_argument
+          (identifier)
+          (float)))))
+  (expression_statement
+    (call
+      (identifier)
+      (arguments
+        (keyword_argument
+          (identifier)
+          (integer))
+        (keyword_argument
+          (identifier)
+          (integer)))))
+  (expression_statement
+    (call
+      (call
+        (identifier)
+        (arguments
+          (identifier)
+          (identifier)))
+      (arguments
+        (keyword_argument
+          (identifier)
+          (integer))
+        (keyword_argument
+          (identifier)
+          (string
+            (string_content))))))
+  (expression_statement
+    (subscript
+      (identifier)
+      (slice
+        (identifier)
+        (identifier))))
+  (expression_statement
+    (subscript
+      (identifier)
+      (slice
+        (integer))))
+  (expression_statement
+    (subscript
+      (identifier)
+      (unary_expression
+        (integer))))
+  (expression_statement
+    (attribute
+      (identifier)
+      (integer)))
+  (expression_statement
+    (try_expression
+      (call
+        (attribute
+          (try_expression
+            (call
+              (attribute
+                (identifier)
+                (identifier))
+              (arguments
+                (string
+                  (string_content)))))
+          (identifier))
+        (arguments
+          (string
+            (string_content)))))))
+
+===========
+Collections
+===========
+
+a = [1, 2, 3]
+b = {"a": 1, "b": 2}
+c = {1, 2}
+d = {}
+e = (3, "three")
+f = (1,)
+g = (1)
+
+---
+
+(source_file
+  (assignment
+    (identifier)
+    (list
+      (integer)
+      (integer)
+      (integer)))
+  (assignment
+    (identifier)
+    (dictionary
+      (pair
+        (string
+          (string_content))
+        (integer))
+      (pair
+        (string
+          (string_content))
+        (integer))))
+  (assignment
+    (identifier)
+    (set
+      (integer)
+      (integer)))
+  (assignment
+    (identifier)
+    (dictionary))
+  (assignment
+    (identifier)
+    (tuple
+      (integer)
+      (string
+        (string_content))))
+  (assignment
+    (identifier)
+    (tuple
+      (integer)))
+  (assignment
+    (identifier)
+    (parenthesized_expression
+      (integer))))
+
+===================================
+Conditional expressions and lambdas
+===================================
+
+v = a if c else b
+w = if c: a elif d: b else: e
+xs.sort_by(fn(a, b): a.age < b.age)
+f = fn(x: i64) -> i64: x * 2
+
+---
+
+(source_file
+  (assignment
+    (identifier)
+    (conditional_expression
+      (identifier)
+      (identifier)
+      (identifier)))
+  (assignment
+    (identifier)
+    (if_expression
+      (identifier)
+      (identifier)
+      (identifier)
+      (identifier)
+      (identifier)))
+  (expression_statement
+    (call
+      (attribute
+        (identifier)
+        (identifier))
+      (arguments
+        (lambda
+          (parameters
+            (parameter
+              (identifier))
+            (parameter
+              (identifier)))
+          (comparison
+            (attribute
+              (identifier)
+              (identifier))
+            (attribute
+              (identifier)
+              (identifier)))))))
+  (assignment
+    (identifier)
+    (lambda
+      (parameters
+        (parameter
+          (identifier)
+          (type_identifier
+            (identifier))))
+      (type_identifier
+        (identifier))
+      (binary_expression
+        (identifier)
+        (integer)))))
+
+========
+Literals
+========
+
+a = 0xFF + 0b1010 + 0o17 + 1_000
+b = 1.5 + 2e-3 + 1_000.5
+c = 'a' + '\n'
+d = true and True and false and False
+e = null
+f = b"GIF\x89"
+g = r"C:\dir\{x}"
+h = r"""{"a": 1}"""
+i = """say "hi" {n}"""
+
+---
+
+(source_file
+  (assignment
+    (identifier)
+    (binary_expression
+      (binary_expression
+        (binary_expression
+          (integer)
+          (integer))
+        (integer))
+      (integer)))
+  (assignment
+    (identifier)
+    (binary_expression
+      (binary_expression
+        (float)
+        (float))
+      (float)))
+  (assignment
+    (identifier)
+    (binary_expression
+      (character)
+      (character)))
+  (assignment
+    (identifier)
+    (boolean_operator
+      (boolean_operator
+        (boolean_operator
+          (true)
+          (true))
+        (false))
+      (false)))
+  (assignment
+    (identifier)
+    (null))
+  (assignment
+    (identifier)
+    (bytes
+      (string_content)
+      (escape_sequence)))
+  (assignment
+    (identifier)
+    (raw_string))
+  (assignment
+    (identifier)
+    (raw_string))
+  (assignment
+    (identifier)
+    (string)))
+
+===============================================
+String interpolation, escapes, and format specs
+===============================================
+
+s = "a\tb {{x}} {name} {p.age:>8} {xs[i]:03} # not a comment"
+t = f"{d["key"]}"
+
+---
+
+(source_file
+  (assignment
+    (identifier)
+    (string
+      (string_content)
+      (escape_sequence)
+      (string_content)
+      (brace_escape)
+      (string_content)
+      (brace_escape)
+      (string_content)
+      (interpolation
+        (identifier))
+      (string_content)
+      (interpolation
+        (attribute
+          (identifier)
+          (identifier))
+        (format_spec))
+      (string_content)
+      (interpolation
+        (subscript
+          (identifier)
+          (identifier))
+        (format_spec))
+      (string_content)))
+  (assignment
+    (identifier)
+    (string
+      (interpolation
+        (subscript
+          (identifier)
+          (string
+            (string_content)))))))

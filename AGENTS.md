@@ -20,6 +20,7 @@ If a file named `AGENTS.local.md` exists next to this one, read it too. It holds
 | `examples/` | Runnable examples, including the apps in `examples/apps/`. |
 | `book/` | The Zamak Book, in English and Chinese. Every code block is compiled and its output checked. |
 | `bench/` | The language comparison (`bench/compare`) and the AI benchmark (`bench/ai`). |
+| `editors/` | The VS Code extension (`editors/vscode`) and the Zed extension (`editors/zed`), which has its own tree-sitter grammar. |
 | `.agents/skills/zamak/SKILL.md` | Detailed notes on how the compiler works, in Chinese. Read the parts about the area you change. |
 
 ## Build and test
@@ -63,7 +64,7 @@ These are the steps people most often forget. A change isn't done until each one
 
 | If you changed… | Also update |
 | --- | --- |
-| Syntax or a language rule | `book/en` **and** `book/zh-CN` (the chapter, plus `grammar.md` and `appendix-python.md` if they mention it), `bench/ai/live/zamak-reference.md`, `SKILL.md`, `CHANGELOG.md` (English and Chinese halves), and `editors/vscode/syntaxes/zamak.tmLanguage.json` for new keywords. |
+| Syntax or a language rule | `book/en` **and** `book/zh-CN` (the chapter, plus `grammar.md` and `appendix-python.md` if they mention it), `bench/ai/live/zamak-reference.md`, `SKILL.md`, `CHANGELOG.md` (English and Chinese halves), `editors/vscode/syntaxes/zamak.tmLanguage.json` for new keywords, and `editors/zed/grammar/grammar.js` (regenerate `grammar/src/`, add a case to `grammar/test/corpus/`) plus `editors/zed/languages/zamak/highlights.scm`. |
 | A standard library module | `book/*/src/standard-library.md`, `zamak-reference.md`, `CHANGELOG.md`, and an example in `examples/`. |
 | An error message | Add its Chinese in `zam/src/zh.rs` (a test fails otherwise). A new error code also goes in `book/*/src/appendix-diagnostics.md`. |
 | Something that used to be rejected and now works | Run `pwsh -File bench/ai/run.ps1 -ZamPath zam/target/debug/zam.exe` and `python bench/ai/live/run.py --verify-solutions --zam zam/target/debug/zam.exe`. Replace any counterexample in `bench/ai/cases.json` that now compiles. Update "not supported yet" lists in the book and README. |

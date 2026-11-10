@@ -1,0 +1,16 @@
+[package]
+name = "zed_zamak"
+version = "0.2.1"
+edition = "2021"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[lib]
+path = "src/zamak.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+zed_extension_api = "0.7.0"
+
+# Keep this crate out of any parent workspace.
+[workspace]

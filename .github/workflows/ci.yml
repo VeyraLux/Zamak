@@ -38,6 +38,24 @@ jobs:
       - name: VS Code extension finds zam
         run: node editors/vscode/scripts/check-locate.mjs
 
+  zed-extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Zed 扩展：语法测试、查询编译，仓库里每个 .zm 都能解析
+        run: node editors/zed/scripts/check.mjs
+      - name: Zed 扩展：提交的解析器与 grammar.js 一致
+        run: git diff --exit-code -- editors/zed/grammar/src
+      - name: Zed 扩展：Rust 代码
+        working-directory: editors/zed
+        run: |
+          rustup target add wasm32-wasip2
+          cargo fmt --check
+          cargo clippy --release --target wasm32-wasip2 --locked -- -D warnings
+
   ai-workflow:
     runs-on: windows-latest
     steps:

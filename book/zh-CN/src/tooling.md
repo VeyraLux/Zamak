@@ -17,7 +17,7 @@
 | `zam add`、`zam remove`、`zam update` | 管理依赖。 |
 | `zam search WORD`、`zam publish` | 查找和发布包。 |
 | `zam doc [目录]` | 从 `pub` 声明生成 HTML 的 API 页面。 |
-| `zam lsp` | 运行给编辑器用的语言服务器。VS Code 扩展会自动启动它。 |
+| `zam lsp` | 运行给编辑器用的语言服务器。VS Code 和 Zed 扩展会自动启动它。 |
 | `zam mcp` | 运行给 AI 编程助手用的 MCP 服务器，见[配合 AI 编程助手](ai-agents.md)。 |
 | `zam --version` | 打印版本号。 |
 

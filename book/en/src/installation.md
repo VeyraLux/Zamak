@@ -63,6 +63,12 @@ Install the **Zamak** extension for VS Code: open the Extensions view, search fo
 
 The extension looks for `zam` on your `PATH`, in npm's global packages, and in the folders that the install scripts and Cargo use, so it finds `zam` however you installed it. If it doesn't, run `where zam` (Windows) or `which zam` (Linux and macOS) in a terminal, and set **zamak.path** in the VS Code settings to the path it prints.
 
+For Zed, install the extension in [`editors/zed`](https://github.com/VeyraLux/Zamak/tree/main/editors/zed): run **zed: install dev extension** and choose that folder. It highlights `.zm` files, closes brackets and quotes as you type, indents after a line that ends with `:`, and starts `zam lsp` from your shell's `PATH`. If Zed can't find `zam`, add this to your Zed settings, with the path that `which zam` prints:
+
+```json
+{ "lsp": { "zam": { "binary": { "path": "/home/you/.zamak/bin/zam", "arguments": ["lsp"] } } } }
+```
+
 Other editors that speak the Language Server Protocol can run `zam lsp` the same way.
 
 ## Update and uninstall

@@ -20,6 +20,8 @@
   &nbsp;·&nbsp;
   <a href="./editors/vscode">VS Code</a>
   &nbsp;·&nbsp;
+  <a href="./editors/zed">Zed</a>
+  &nbsp;·&nbsp;
   <a href="https://github.com/VeyraLux/zamak-index">Packages</a>
 </p>
 
@@ -254,6 +256,7 @@ No REPL or debugger yet. On Linux, window programs need GTK 3, and the canvas ca
 ## Editor and agent support
 
 - **VS Code.** The extension in [editors/vscode](editors/vscode) adds syntax highlighting and runs `zam lsp`, the Zamak language server, for diagnostics as you type, completion, hover, go to definition, and formatting. Other editors that support the Language Server Protocol can run `zam lsp` too.
+- **Zed.** The extension in [editors/zed](editors/zed) adds a tree-sitter grammar for highlighting, outline, and folding, closes brackets and quotes as you type, indents after a line that ends with `:`, and runs `zam lsp` for the same language features.
 - **AI coding agents.** `zam mcp` is an MCP server with tools to check, build, run, test, and format code, explain diagnostics, and look up docs. `zam new --template ai` adds a skill file, `AGENTS.md`, and `.mcp.json` to a new project, and [.agents/skills/zamak/SKILL.md](.agents/skills/zamak/SKILL.md) guides agents that work on the compiler itself.
 
 ## Contribute

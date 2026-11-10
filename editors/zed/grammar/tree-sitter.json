@@ -1,0 +1,21 @@
+{
+  "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/config.schema.json",
+  "grammars": [
+    {
+      "name": "zamak",
+      "camelcase": "Zamak",
+      "scope": "source.zamak",
+      "path": ".",
+      "file-types": ["zm"],
+      "highlights": "../languages/zamak/highlights.scm",
+      "injection-regex": "^(zamak|zm)$"
+    }
+  ],
+  "metadata": {
+    "version": "0.2.1",
+    "license": "MIT OR Apache-2.0",
+    "description": "Zamak grammar for tree-sitter",
+    "links": { "repository": "https://github.com/VeyraLux/Zamak" }
+  },
+  "bindings": { "c": false, "go": false, "node": false, "python": false, "rust": false, "swift": false }
+}

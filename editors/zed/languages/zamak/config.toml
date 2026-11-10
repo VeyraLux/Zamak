@@ -1,0 +1,21 @@
+name = "Zamak"
+grammar = "zamak"
+path_suffixes = ["zm"]
+line_comments = ["# "]
+tab_size = 4
+hard_tabs = false
+autoclose_before = ";:.,=}])>"
+brackets = [
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "\"", end = "\"", close = true, newline = false, not_in = ["string", "comment"] },
+    { start = "'", end = "'", close = true, newline = false, not_in = ["string", "comment"] },
+]
+# A line that ends with `:` opens a block, as in the compiler; `elif` and `else` line up
+# with the `if` they belong to.
+increase_indent_pattern = "^[^#]*:\\s*(#.*)?$"
+decrease_indent_patterns = [
+    { pattern = "^\\s*elif\\b.*:", valid_after = ["if", "elif"] },
+    { pattern = "^\\s*else\\b.*:", valid_after = ["if", "elif"] },
+]

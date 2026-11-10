@@ -1,0 +1,355 @@
+========================================
+Let, assignment, and compound assignment
+========================================
+
+let n = 1
+let mut count: i64 = 0
+let (q, r) = divmod(17, 5)
+count += 1
+xs[i] //= 2
+p.x = 3
+
+---
+
+(source_file
+  (let_statement
+    (identifier)
+    (integer))
+  (let_statement
+    (mutable)
+    (identifier)
+    (type_identifier
+      (identifier))
+    (integer))
+  (let_statement
+    (tuple_pattern
+      (identifier)
+      (identifier))
+    (call
+      (identifier)
+      (arguments
+        (integer)
+        (integer))))
+  (augmented_assignment
+    (identifier)
+    (integer))
+  (augmented_assignment
+    (subscript
+      (identifier)
+      (identifier))
+    (integer))
+  (assignment
+    (attribute
+      (identifier)
+      (identifier))
+    (integer)))
+
+==============
+If, elif, else
+==============
+
+if n < 0:
+    println("negative")
+elif n == 0: println("zero")
+else:
+    pass
+
+---
+
+(source_file
+  (if_statement
+    (comparison
+      (identifier)
+      (integer))
+    (block
+      (expression_statement
+        (call
+          (identifier)
+          (arguments
+            (string
+              (string_content))))))
+    (elif_clause
+      (comparison
+        (identifier)
+        (integer))
+      (block
+        (expression_statement
+          (call
+            (identifier)
+            (arguments
+              (string
+                (string_content)))))))
+    (else_clause
+      (block
+        (pass_statement)))))
+
+=====
+Loops
+=====
+
+for i, x in &xs:
+    if x > 1: continue
+    break
+for i in 0..n:
+    pass
+while io.read_line(&mut line)?:
+    pass
+
+---
+
+(source_file
+  (for_statement
+    (loop_variables
+      (identifier)
+      (identifier))
+    (borrow_expression
+      (identifier))
+    (block
+      (if_statement
+        (comparison
+          (identifier)
+          (integer))
+        (block
+          (continue_statement)))
+      (break_statement)))
+  (for_statement
+    (loop_variables
+      (identifier))
+    (range
+      (integer)
+      (identifier))
+    (block
+      (pass_statement)))
+  (while_statement
+    (try_expression
+      (call
+        (attribute
+          (identifier)
+          (identifier))
+        (arguments
+          (borrow_expression
+            (mutable)
+            (identifier)))))
+    (block
+      (pass_statement))))
+
+====================
+Return, fail, assert
+====================
+
+fn f() -> !string:
+    assert n > 0, "n must be positive"
+    fail "bad {n}"
+    return
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameters)
+    (error_type
+      (type_identifier
+        (identifier)))
+    (block
+      (assert_statement
+        (comparison
+          (identifier)
+          (integer))
+        (string
+          (string_content)))
+      (fail_statement
+        (string
+          (string_content)
+          (interpolation
+            (identifier))))
+      (return_statement))))
+
+============================
+Match on variants and values
+============================
+
+let area = match s:
+    Circle(r): math.pi * r * r
+    Shape.Rect(w, _): w
+    1 | 2: 0.0
+    _:
+        println("other")
+
+---
+
+(source_file
+  (let_statement
+    (identifier)
+    (match_expression
+      (identifier)
+      (match_body
+        (match_arm
+          (variant_pattern
+            (identifier)
+            (identifier))
+          (block
+            (expression_statement
+              (binary_expression
+                (binary_expression
+                  (attribute
+                    (identifier)
+                    (identifier))
+                  (identifier))
+                (identifier)))))
+        (match_arm
+          (variant_pattern
+            (scoped_identifier
+              (identifier)
+              (identifier))
+            (identifier)
+            (identifier))
+          (block
+            (expression_statement
+              (identifier))))
+        (match_arm
+          (or_pattern
+            (integer)
+            (integer))
+          (block
+            (expression_statement
+              (float))))
+        (match_arm
+          (identifier)
+          (block
+            (expression_statement
+              (call
+                (identifier)
+                (arguments
+                  (string
+                    (string_content)))))))))))
+
+=============================
+Catch inline and with a block
+=============================
+
+let port = int(text) catch e: 8080
+let conn = listener.accept() catch e: continue
+let v = f() catch e:
+    fail "invalid: {e}"
+
+---
+
+(source_file
+  (let_statement
+    (identifier)
+    (catch_expression
+      (call
+        (identifier)
+        (arguments
+          (identifier)))
+      (identifier)
+      (integer)))
+  (let_statement
+    (identifier)
+    (catch_expression
+      (call
+        (attribute
+          (identifier)
+          (identifier))
+        (arguments))
+      (identifier)
+      (continue_statement)))
+  (let_statement
+    (identifier)
+    (catch_expression
+      (call
+        (identifier)
+        (arguments))
+      (identifier)
+      (block
+        (fail_statement
+          (string
+            (string_content)
+            (interpolation
+              (identifier))))))))
+
+===============================
+Block ends inside nested blocks
+===============================
+
+fn main():
+    if a:
+        if b:
+            pass
+    x()
+y()
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameters)
+    (block
+      (if_statement
+        (identifier)
+        (block
+          (if_statement
+            (identifier)
+            (block
+              (pass_statement)))))
+      (expression_statement
+        (call
+          (identifier)
+          (arguments)))))
+  (expression_statement
+    (call
+      (identifier)
+      (arguments))))
+
+==================================
+Comments do not affect indentation
+==================================
+
+fn main():
+    let a = 1
+# a comment at column 0
+    let b = 2  # trailing
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameters)
+    (block
+      (let_statement
+        (identifier)
+        (integer))
+      (comment)
+      (let_statement
+        (identifier)
+        (integer))
+      (comment))))
+
+===================
+Brackets span lines
+===================
+
+let xs = [
+    1,
+        2,
+]
+f(a,
+  b)
+
+---
+
+(source_file
+  (let_statement
+    (identifier)
+    (list
+      (integer)
+      (integer)))
+  (expression_statement
+    (call
+      (identifier)
+      (arguments
+        (identifier)
+        (identifier)))))

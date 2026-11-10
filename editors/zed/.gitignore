@@ -1,0 +1,10 @@
+# Build output: `cargo build`, and what Zed writes when it installs the extension.
+/target/
+/extension.wasm
+/grammars/
+# `tree-sitter build` and `tree-sitter parse` output.
+/grammar/*.wasm
+/grammar/*.so
+/grammar/*.dylib
+/grammar/*.dll
+/grammar/build/
