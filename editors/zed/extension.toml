@@ -11,7 +11,7 @@ repository = "https://github.com/VeyraLux/Zamak"
 # to that commit.
 [grammars.zamak]
 repository = "https://github.com/VeyraLux/Zamak"
-rev = "GRAMMAR_REV"
+rev = "0f038ef87759f93c4d11b8ee1118c4062e92fdd7"
 path = "editors/zed/grammar"
 
 [language_servers.zam]
