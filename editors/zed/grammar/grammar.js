@@ -113,6 +113,7 @@ module.exports = grammar({
 
     extern_function: ($) =>
       seq(
+        optional($.visibility),
         'extern',
         'fn',
         field('name', $.identifier),
@@ -122,6 +123,7 @@ module.exports = grammar({
 
     extern_type: ($) =>
       seq(
+        optional($.visibility),
         'extern',
         'type',
         field('name', $.identifier),

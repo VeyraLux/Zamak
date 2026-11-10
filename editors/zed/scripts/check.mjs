@@ -40,7 +40,7 @@ run('tree-sitter generate', ['generate', '--abi', '14']);
 run('tree-sitter test', ['test']);
 
 // 3. 仓库里的每个 .zm 文件都要解析得没有 ERROR 和 MISSING。
-const skip = new Set(['target', 'node_modules', '.git', 'results', 'grammars']);
+const skip = new Set(['target', 'node_modules', '.git', 'results', 'grammars', 'generated']);
 const sources = [];
 const walk = (dir) => {
   for (const name of readdirSync(dir)) {

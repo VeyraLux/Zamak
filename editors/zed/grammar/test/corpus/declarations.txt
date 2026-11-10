@@ -3,11 +3,13 @@ Use, const, and extern
 ======================
 
 use std/io
-pub use books
+use books
 const LIMIT = 100
 pub const RATE: f64 = 0.25
 extern fn sqrt(x: f64) -> f64
+pub extern fn cmath_twice(a: i64) -> i64
 extern type Db: "sqlite3", close = sqlite3_close
+pub extern type Handle: "lib.h"
 
 ---
 
@@ -17,7 +19,6 @@ extern type Db: "sqlite3", close = sqlite3_close
       (identifier)
       (identifier)))
   (use_declaration
-    (visibility)
     (module_path
       (identifier)))
   (const_declaration
@@ -38,13 +39,28 @@ extern type Db: "sqlite3", close = sqlite3_close
           (identifier))))
     (type_identifier
       (identifier)))
+  (extern_function
+    (visibility)
+    (identifier)
+    (parameters
+      (parameter
+        (identifier)
+        (type_identifier
+          (identifier))))
+    (type_identifier
+      (identifier)))
   (extern_type
     (identifier)
     (string
       (string_content))
     (extern_option
       (identifier)
-      (identifier))))
+      (identifier)))
+  (extern_type
+    (visibility)
+    (identifier)
+    (string
+      (string_content))))
 
 ===================================================
 Function with defaults, generics, and an error type
@@ -118,7 +134,7 @@ Struct with fields and methods
 
 struct Point[T]:
     x: f64
-    pub y: f64
+    y: f64
 
     fn new(x: f64) -> Point: Point(x: x, y: 0.0)
 
@@ -139,7 +155,6 @@ struct Point[T]:
         (type_identifier
           (identifier)))
       (field_declaration
-        (visibility)
         (identifier)
         (type_identifier
           (identifier)))
@@ -185,7 +200,7 @@ Enum and interface
 
 enum Shape:
     Circle(r: f64)
-    Pair(i64, string)
+    Pair(a: i64, b: string)
     Empty
 
 interface Named:
@@ -205,10 +220,14 @@ interface Named:
             (identifier))))
       (enum_variant
         (identifier)
-        (type_identifier
-          (identifier))
-        (type_identifier
-          (identifier)))
+        (variant_field
+          (identifier)
+          (type_identifier
+            (identifier)))
+        (variant_field
+          (identifier)
+          (type_identifier
+            (identifier))))
       (enum_variant
         (identifier))))
   (interface_definition

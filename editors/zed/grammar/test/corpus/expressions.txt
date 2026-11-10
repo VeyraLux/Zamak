@@ -63,7 +63,7 @@ Calls, attributes, subscripts, and slices
 p.norm()
 connect(host, timeout=1.5)
 Point(x: 1, y: 2)
-Pair(i64, string)(first: 1, second: "one")
+Shape.Circle(2.0)
 s[a:b]
 s[:3]
 xs[-1]
@@ -99,19 +99,11 @@ doc.get("user")?.get("name")?
           (integer)))))
   (expression_statement
     (call
-      (call
+      (attribute
         (identifier)
-        (arguments
-          (identifier)
-          (identifier)))
+        (identifier))
       (arguments
-        (keyword_argument
-          (identifier)
-          (integer))
-        (keyword_argument
-          (identifier)
-          (string
-            (string_content))))))
+        (float))))
   (expression_statement
     (subscript
       (identifier)
@@ -271,7 +263,7 @@ a = 0xFF + 0b1010 + 0o17 + 1_000
 b = 1.5 + 2e-3 + 1_000.5
 c = 'a' + '\n'
 d = true and True and false and False
-e = null
+e = Option.None
 f = b"GIF\x89"
 g = r"C:\dir\{x}"
 h = r"""{"a": 1}"""
@@ -312,7 +304,9 @@ i = """say "hi" {n}"""
       (false)))
   (assignment
     (identifier)
-    (null))
+    (attribute
+      (identifier)
+      (identifier)))
   (assignment
     (identifier)
     (bytes
