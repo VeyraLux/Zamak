@@ -195,6 +195,7 @@ Zamak 想把 C、Rust、Go 与 Python 各自最擅长的部分融合在一起。
 ## 编辑器与 AI 工具
 
 - **VS Code 扩展**：`editors/vscode/`。提供语法高亮，并运行 Zamak 的语言服务器 `zam lsp`：边写边报错（没保存的内容也检查）、补全、悬停查看签名、跳到定义，以及与 `zam fmt` 相同的格式化。其他支持语言服务器协议（LSP）的编辑器也能运行 `zam lsp`。同一份 `syntaxes/zamak.tmLanguage.json` 也能给 Sublime Text、TextMate 等编辑器使用。本地安装、打包 `.vsix` 与上架市场的步骤见 `editors/vscode/README.md`。
+- **Zed 扩展**：`editors/zed/`。用 tree-sitter 语法提供高亮、大纲与折叠，输入括号和引号时自动补上另一半，以 `:` 结尾的行之后自动缩进，并运行 `zam lsp` 提供同样的语言功能。安装与开发步骤见 `editors/zed/README.md`。
 - **MCP 服务器**：`zam mcp`，给 AI 编程助手调用的工具：检查、构建、运行、测试、格式化、解释错误码、查文档。`zam new --template ai` 会在新项目里放好 Skill、`AGENTS.md` 和 `.mcp.json`。
 - **AI 技能**：`.agents/skills/zamak/SKILL.md`，给修改编译器本身的 AI 编程代理（DSH、Claude Code 等）使用：命令与环境变量、语法速览、常见诊断、示例与测试的位置，以及修改编译器时的验收命令和 IR/缓存版本号规则。
 - **CLI**：`zam` 本身，包括 `check`/`build`/`run`/`test`/`fmt`/`new`、包管理（`add`/`remove`/`update`/`search`/`publish`）、`lsp`、`--help`、`--version`；`check`/`build` 支持 `--json` 机器可读诊断；缓存目录可用 `ZAMAK_CACHE_DIR` 覆盖。

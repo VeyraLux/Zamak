@@ -1,0 +1,294 @@
+======================
+Use, const, and extern
+======================
+
+use std/io
+pub use books
+const LIMIT = 100
+pub const RATE: f64 = 0.25
+extern fn sqrt(x: f64) -> f64
+extern type Db: "sqlite3", close = sqlite3_close
+
+---
+
+(source_file
+  (use_declaration
+    (module_path
+      (identifier)
+      (identifier)))
+  (use_declaration
+    (visibility)
+    (module_path
+      (identifier)))
+  (const_declaration
+    (identifier)
+    (integer))
+  (const_declaration
+    (visibility)
+    (identifier)
+    (type_identifier
+      (identifier))
+    (float))
+  (extern_function
+    (identifier)
+    (parameters
+      (parameter
+        (identifier)
+        (type_identifier
+          (identifier))))
+    (type_identifier
+      (identifier)))
+  (extern_type
+    (identifier)
+    (string
+      (string_content))
+    (extern_option
+      (identifier)
+      (identifier))))
+
+===================================================
+Function with defaults, generics, and an error type
+===================================================
+
+@wrapping
+pub fn largest[T: Shape](items: &[T], port: i64 = 80) -> T!string:
+    pass
+
+---
+
+(source_file
+  (decorated_definition
+    (decorator
+      (identifier))
+    (function_definition
+      (visibility)
+      (identifier)
+      (type_parameters
+        (type_parameter
+          (identifier)
+          (type_identifier
+            (identifier))))
+      (parameters
+        (parameter
+          (identifier)
+          (reference_type
+            (list_type
+              (type_identifier
+                (identifier)))))
+        (parameter
+          (identifier)
+          (type_identifier
+            (identifier))
+          (integer)))
+      (error_type
+        (type_identifier
+          (identifier))
+        (type_identifier
+          (identifier)))
+      (block
+        (pass_statement)))))
+
+=================
+One-line function
+=================
+
+fn double(n: i64) -> i64: n * 2
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameters
+      (parameter
+        (identifier)
+        (type_identifier
+          (identifier))))
+    (type_identifier
+      (identifier))
+    (block
+      (expression_statement
+        (binary_expression
+          (identifier)
+          (integer))))))
+
+==============================
+Struct with fields and methods
+==============================
+
+struct Point[T]:
+    x: f64
+    pub y: f64
+
+    fn new(x: f64) -> Point: Point(x: x, y: 0.0)
+
+    fn shift(&mut self, d: f64):
+        self.x += d
+
+---
+
+(source_file
+  (struct_definition
+    (identifier)
+    (type_parameters
+      (type_parameter
+        (identifier)))
+    (struct_body
+      (field_declaration
+        (identifier)
+        (type_identifier
+          (identifier)))
+      (field_declaration
+        (visibility)
+        (identifier)
+        (type_identifier
+          (identifier)))
+      (function_definition
+        (identifier)
+        (parameters
+          (parameter
+            (identifier)
+            (type_identifier
+              (identifier))))
+        (type_identifier
+          (identifier))
+        (block
+          (expression_statement
+            (call
+              (identifier)
+              (arguments
+                (keyword_argument
+                  (identifier)
+                  (identifier))
+                (keyword_argument
+                  (identifier)
+                  (float)))))))
+      (function_definition
+        (identifier)
+        (parameters
+          (self_parameter
+            (self))
+          (parameter
+            (identifier)
+            (type_identifier
+              (identifier))))
+        (block
+          (augmented_assignment
+            (attribute
+              (self)
+              (identifier))
+            (identifier)))))))
+
+==================
+Enum and interface
+==================
+
+enum Shape:
+    Circle(r: f64)
+    Pair(i64, string)
+    Empty
+
+interface Named:
+    fn name(&self) -> string
+
+---
+
+(source_file
+  (enum_definition
+    (identifier)
+    (enum_body
+      (enum_variant
+        (identifier)
+        (variant_field
+          (identifier)
+          (type_identifier
+            (identifier))))
+      (enum_variant
+        (identifier)
+        (type_identifier
+          (identifier))
+        (type_identifier
+          (identifier)))
+      (enum_variant
+        (identifier))))
+  (interface_definition
+    (identifier)
+    (interface_body
+      (function_signature
+        (identifier)
+        (parameters
+          (self_parameter
+            (self)))
+        (type_identifier
+          (identifier))))))
+
+=====
+Types
+=====
+
+fn f(a: [i64; 3], b: {string: [string]}, c: {i64}, d: (i64, string), e: kept fn(&mut T, &Key) -> !string, g: thread.Task[i64], h: Option[Db]):
+    pass
+
+---
+
+(source_file
+  (function_definition
+    (identifier)
+    (parameters
+      (parameter
+        (identifier)
+        (list_type
+          (type_identifier
+            (identifier))
+          (integer)))
+      (parameter
+        (identifier)
+        (map_type
+          (type_identifier
+            (identifier))
+          (list_type
+            (type_identifier
+              (identifier)))))
+      (parameter
+        (identifier)
+        (set_type
+          (type_identifier
+            (identifier))))
+      (parameter
+        (identifier)
+        (tuple_type
+          (type_identifier
+            (identifier))
+          (type_identifier
+            (identifier))))
+      (parameter
+        (identifier)
+        (function_type
+          (reference_type
+            (mutable)
+            (type_identifier
+              (identifier)))
+          (reference_type
+            (type_identifier
+              (identifier)))
+          (error_type
+            (type_identifier
+              (identifier)))))
+      (parameter
+        (identifier)
+        (generic_type
+          (scoped_type
+            (identifier)
+            (type_identifier
+              (identifier)))
+          (type_identifier
+            (identifier))))
+      (parameter
+        (identifier)
+        (generic_type
+          (type_identifier
+            (identifier))
+          (type_identifier
+            (identifier)))))
+    (block
+      (pass_statement))))

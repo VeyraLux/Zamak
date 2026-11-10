@@ -63,6 +63,12 @@ zam --version
 
 扩展会在 `PATH`、npm 的全局包，以及安装脚本和 Cargo 用的文件夹里找 `zam`，不管你用哪种方式安装都能找到。如果还是找不到，在终端里运行 `where zam`（Windows）或 `which zam`（Linux、macOS），把显示的路径填进 VS Code 设置里的 **zamak.path**。
 
+Zed 用 [`editors/zed`](https://github.com/VeyraLux/Zamak/tree/main/editors/zed) 里的扩展：运行 **zed: install dev extension**，选择这个文件夹。它为 `.zm` 文件提供语法高亮，输入括号和引号时自动补上另一半，以 `:` 结尾的行之后自动缩进，并从 shell 的 `PATH` 上找到 `zam` 启动 `zam lsp`。如果 Zed 找不到 `zam`，把下面这段加进 Zed 设置，路径换成 `which zam` 显示的那个：
+
+```json
+{ "lsp": { "zam": { "binary": { "path": "/home/you/.zamak/bin/zam", "arguments": ["lsp"] } } } }
+```
+
 其他支持语言服务器协议（LSP）的编辑器也可以用同样的方式运行 `zam lsp`。
 
 ## 更新与卸载
